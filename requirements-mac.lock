@@ -1,0 +1,2 @@
+# Portable harness dependencies; native Outlook probing uses macOS system tools.
+tzdata==2026.3

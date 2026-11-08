@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "name": "Your name",
+  "timezone": "Europe/London",
+  "mail": {
+    "mail:work": "work@example.invalid",
+    "mail:personal": "personal@example.invalid",
+    "mail:shared": "shared@example.invalid"
+  },
+  "calendars": [
+    "calendar:work",
+    "calendar:primary",
+    "calendar:shared",
+    "calendar:icloud"
+  ],
+  "permission_defaults": {},
+  "instructions": {}
+}

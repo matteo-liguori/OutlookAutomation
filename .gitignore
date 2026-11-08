@@ -1,0 +1,66 @@
+# Generated and mailbox-derived data
+/output/
+/tmp/
+/OneOff.ps1
+/.venv/
+/.local/
+/data/
+/private/
+/user-data/
+/userdata/
+
+# Per-user setup and credentials (the example profile remains shareable)
+profile.json
+profile.local.json
+runtime.json
+icloud-caldav.json
+google-calendar-config.json
+credentials.json
+
+# Local operational context and state
+/.last_wrapper_selftest_subject.txt
+/EMAIL_CONTEXT.md
+/EMAIL_CONTEXT_GENERAL.md
+/EMAIL_THREAD_ARCHIVE.md
+/EMAIL_THREAD_TRACKER.md
+/EMAIL_NOTES/*
+!/EMAIL_NOTES/README.md
+/EMAIL_EXCEPTIONS/*.md
+!/EMAIL_EXCEPTIONS/README.md
+/LUNA_ESCALATION_LOG.md
+/SELFTEST_RESULTS_*.md
+/diagnostics/
+/_juan_approval_only.docx
+/__pycache__/
+__pycache__/
+*.py[cod]
+
+# Harness contents and private mailbox artifacts, including accidental root exports
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
+*.eml
+*.msg
+*.pst
+*.ost
+/backups/
+/reports/
+/scratch/
+/threads/
+/.env
+/.env.*
+!/.env.example
+
+# Incident-specific send scripts containing personal message details
+/Send-Discovery602-Referencing-Movein-*.ps1
+/Send-Moveout-*.ps1
+
+# Common local/editor artifacts
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

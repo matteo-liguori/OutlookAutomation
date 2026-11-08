@@ -1,0 +1,24 @@
+# Tested project dependencies, including transitive dependencies.
+# Recreate with Setup-OutlookAutomation.ps1.
+caldav==3.2.1
+charset-normalizer==3.5.2
+click==8.5.0
+dnspython==2.9.0
+h11==0.16.0
+icalendar==7.2.2
+icalendar-searcher==1.3.0
+jh2==5.0.15
+lxml==6.1.3
+niquests==3.21.2
+pillow==12.3.0
+pypdf==6.14.2
+pypdfium2==5.12.1
+python-dateutil==2.9.0.post0
+PyYAML==6.0.3
+qh3==2.1.0
+recurring-ical-events==3.8.2
+six==1.17.0
+tzdata==2026.3
+urllib3-future==2.25.905
+wassima==2.1.5
+x-wr-timezone==2.0.1
