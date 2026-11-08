@@ -130,7 +130,10 @@ status/clean --dry-run/clean/threads expose it; unknown ownership needs reconcil
 Keep two daily, two weekly, at most one version/schema backup. First write per London
 day/ISO week creates its slot; verify replacements before rotation. Keep backups
 within these slots. Backups exclude disposable caches/expired records,
-preserving obligations/approvals/checkpoints. Restore current format to a new path
+preserving obligations/approvals/checkpoints and the matching private profile JSON.
+Recover the profile with `python manage_data.py --restore-profile-from <backup.db>
+--profile-output <new-profile.json>`; existing files are preserved.
+Restore current format to a new path
 with writers closed, doctor/compare before switching; never copy a live WAL alone.
 
 For code changes run Test-Harness.ps1 and relevant offline fixtures;

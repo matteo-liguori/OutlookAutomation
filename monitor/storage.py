@@ -97,6 +97,8 @@ class Storage:
         self.db.close()
 
     def backup(self, label=None):
+        from .backups import capture_profile, embedded_profile, include_profile
+        profile = capture_profile(self)
         folder = self.path.parent / "backups"
         folder.mkdir(exist_ok=True)
         if folder.is_symlink() or (hasattr(folder, 'is_junction') and folder.is_junction()):
@@ -116,7 +118,9 @@ class Storage:
                     check=sqlite3.connect(target.resolve().as_uri()+'?mode=ro&immutable=1',uri=True)
                     try:current_format=check.execute('PRAGMA user_version').fetchone()[0]==CURRENT_SCHEMA
                     finally:check.close()
-                except sqlite3.Error:pass
+                    if current_format and profile is not None:
+                        current_format = embedded_profile(target) is not None
+                except (sqlite3.Error, ValueError):current_format=False
             if not current_format:
                 temporary = folder / f".{name}-{uuid.uuid4().hex}.tmp"
                 out = sqlite3.connect(temporary)
@@ -132,6 +136,7 @@ class Storage:
                     from .threadcache import sanitize_backup
 
                     sanitize_backup(out)
+                    include_profile(out, profile, now())
                     if out.execute('PRAGMA quick_check').fetchone()[0]!='ok' or out.execute('PRAGMA foreign_key_check').fetchall():
                         raise ValueError('Replacement backup validation failed; existing slot preserved')
                 except BaseException:

@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sqlite3
 from contextlib import contextmanager
-from automation_paths import ROOT, data_root, configure_data
+from automation_paths import ROOT, data_root
 
 
 @contextmanager
@@ -28,6 +28,18 @@ def replace_paths(value, old, new):
             if value.casefold() == prefix.casefold() or value.casefold().startswith(prefix.casefold()+'/') or value.casefold().startswith(prefix.casefold()+'\\'):
                 return target+value[len(prefix):]
     return value
+
+
+def restore_profile(backup, destination):
+    from monitor.backups import embedded_profile
+    raw=embedded_profile(backup)
+    if raw is None:
+        raise ValueError('This backup has no profile snapshot')
+    destination=Path(destination)
+    destination.parent.mkdir(parents=True,exist_ok=True)
+    with destination.open('xb') as output:
+        output.write(raw)
+    return dict(profile=str(destination),restored=True)
 
 
 def relocate(destination, root=ROOT):
@@ -88,6 +100,10 @@ def relocate(destination, root=ROOT):
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--to',required=True,help='New data folder; stop other harness processes before running')
+    operation=parser.add_mutually_exclusive_group(required=True)
+    operation.add_argument('--to',help='New data folder; stop other harness processes before running')
+    operation.add_argument('--restore-profile-from',help='Recover embedded profile JSON from a backup')
+    parser.add_argument('--profile-output',help='Recovery destination; refuses to overwrite an existing file')
     args=parser.parse_args()
-    print(json.dumps(relocate(args.to),indent=2))
+    result=relocate(args.to) if args.to else restore_profile(args.restore_profile_from,args.profile_output or data_root()/'monitor/profile.json')
+    print(json.dumps(result,indent=2))

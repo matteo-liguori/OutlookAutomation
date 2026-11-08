@@ -121,6 +121,7 @@
   "tests/test_guidance.py": "tests/test_guidance.py",
   "tests/test_reviews.py": "tests/test_reviews.py",
   "tests/test_data_separation.py": "tests/test_data_separation.py",
+  "tests/test_profile_backups.py": "tests/test_profile_backups.py",
   "tests/test_outlook_helpers.py": "tests/test_outlook_helpers.py",
   "tests/test_packaging.py": "tests/test_packaging.py",
   "tests/test_review_organization.py": "tests/test_review_organization.py",

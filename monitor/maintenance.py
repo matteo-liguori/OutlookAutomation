@@ -112,7 +112,9 @@ def file_hash(path):
 
 def verified_backup(path):
     from .storage import CURRENT_SCHEMA
+    from .backups import embedded_profile
     try:
+        embedded_profile(path)  # Legacy DB-only backups remain usable; corrupt profile snapshots do not.
         db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
         try:
             return (
@@ -126,7 +128,7 @@ def verified_backup(path):
             )
         finally:
             db.close()
-    except (OSError, sqlite3.Error):
+    except (OSError, sqlite3.Error, ValueError):
         return False
 
 
