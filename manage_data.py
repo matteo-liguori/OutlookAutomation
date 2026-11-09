@@ -27,6 +27,14 @@ def replace_paths(value, old, new):
         for prefix, target in [(str(old),str(new)), (old.as_posix(),new.as_posix())]:
             if value.casefold() == prefix.casefold() or value.casefold().startswith(prefix.casefold()+'/') or value.casefold().startswith(prefix.casefold()+'\\'):
                 return target+value[len(prefix):]
+        # macOS /var may alias /private/var. Rebase owned absolute paths by
+        # identity as well as spelling, without modifying message body text.
+        try:
+            path=Path(value)
+            if path.is_absolute() and path.resolve().is_relative_to(old):
+                return str(new/path.resolve().relative_to(old))
+        except (OSError,ValueError):
+            pass
     return value
 
 

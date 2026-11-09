@@ -11,13 +11,13 @@ SCRIPT = Path(__file__).with_name('native_outlook.js')
 
 
 def request_for(command, mailbox, start=None, end=None, limit=25, subject=None, include_body=False, selected_inbox_id=None, calendar_id=None, entry_id=None, unread_only=False):
-    if command not in {'check', 'mail', 'calendar', 'calendars', 'discover'}:
+    if command not in {'check', 'mail', 'message', 'calendar', 'calendars', 'discover', 'folders'}:
         raise ValueError('Supported commands: check, discover, mail, calendar, calendars')
     if not isinstance(mailbox, str) or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', mailbox):
         raise ValueError('Supply the exact confirmed mailbox email address')
     request = dict(command=command, mailbox=mailbox, limit=limit, include_body=include_body)
     if entry_id is not None:
-        if command != 'mail' or not re.fullmatch(r'[0-9]+', str(entry_id)):
+        if command not in {'mail','message'} or not re.fullmatch(r'[0-9]+', str(entry_id)):
             raise ValueError('Use a numeric native message EntryId with mail')
         request['entry_id'] = str(entry_id)
     if unread_only:
@@ -29,22 +29,29 @@ def request_for(command, mailbox, start=None, end=None, limit=25, subject=None, 
             raise ValueError('Selected inbox ID must be numeric and is available only for check/mail')
         request.update(binding='selected-inbox', folder_id=str(selected_inbox_id))
     if calendar_id is not None:
-        if selected_inbox_id is not None or command == 'mail' or not re.fullmatch(r'[0-9]+', str(calendar_id)):
+        if selected_inbox_id is not None or command in {'mail','message'} or not re.fullmatch(r'[0-9]+', str(calendar_id)):
             raise ValueError('Use one numeric calendar ID with check/calendars/calendar')
         request.update(binding='named-calendar', calendar_id=str(calendar_id))
-    if command in {'check', 'calendars', 'discover'}:
+    if command in {'check', 'calendars', 'discover', 'folders'}:
         return request
-    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
-        raise ValueError('Limit must be an integer from 1 to 100')
+    if command=='message':
+        if entry_id is None:raise ValueError('Exact EntryId required')
+        request['limit']=1
+        return request
+    cap=5000 if command=='calendar' else 100
+    if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= cap:
+        raise ValueError('Invalid result limit')
     try:
         first, last = (datetime.fromisoformat(value) for value in (start, end))
     except (TypeError, ValueError):
         raise ValueError('Supply ISO start/end timestamps with explicit timezone offsets') from None
     if first.utcoffset() is None or last.utcoffset() is None:
         raise ValueError('Start/end timestamps must include timezone offsets')
-    if not timedelta(0) < last - first <= timedelta(days=7):
-        raise ValueError('The end must follow the start by no more than seven days')
+    if not timedelta(0) < last - first <= timedelta(days=31 if command=='calendar' else 7):
+        raise ValueError('The end must follow the start within the platform collection window')
     request.update(start=first.isoformat(), end=last.isoformat())
+    if command == 'calendar':
+        request.update(expand_recurrence=True, max_scan=5000, timezone='Europe/London')
     if subject is not None:
         if command != 'mail' or not isinstance(subject, str) or not subject.strip():
             raise ValueError('An exact non-empty subject is supported only for mail')
@@ -68,12 +75,15 @@ def execute(request, runner=subprocess.run, system=None):
         return dict(status='blocked', code='invalid-native-response', writes_performed=False)
     if not isinstance(result, dict) or result.get('status') not in {'ok', 'blocked'}:
         return dict(status='blocked', code='invalid-native-response', writes_performed=False)
+    if request.get('command') == 'calendar' and result.get('status') == 'ok':
+        from .calendar import expand_result
+        result = expand_result(result, request)
     return result
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['check', 'discover', 'mail', 'calendar', 'calendars'])
+    parser.add_argument('command', choices=['check', 'discover', 'mail', 'message', 'calendar', 'calendars', 'folders'])
     parser.add_argument('--mailbox', required=True)
     parser.add_argument('--start')
     parser.add_argument('--end')

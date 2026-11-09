@@ -75,4 +75,4 @@ class PlatformCommandTests(unittest.TestCase):
         self.assertTrue(Path(argv[5]).is_file())
         self.assertEqual(argv[-1], literal)
         with self.assertRaises(ValueError):
-            command_line('Send-OutlookStoreMail', [], 'powershell')
+            command_line('Unsupported-OutlookWrite', [], 'powershell')

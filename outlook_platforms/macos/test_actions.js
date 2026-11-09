@@ -53,16 +53,34 @@ function nativeTestAction(request, app) {
         if (request.action === 'calendar-create') {
             var calendar = namedCalendar(app, request);
             var start = new Date(request.start), end = new Date(request.end);
-            if (!isFinite(start.getTime()) || !isFinite(end.getTime()) || end <= start || end-start > 30*60000) reject('invalid-test-event-times', 'validation');
+            if (!isFinite(start.getTime()) || !isFinite(end.getTime()) || end <= start || end-start > (request.all_day ? 27*3600000 : 30*60000)) reject('invalid-test-event-times', 'validation');
             if (calendar.calendarEvents.whose({subject:subject})().length) reject('test-token-already-exists', 'identity');
-            calendar.calendarEvents.push(app.CalendarEvent({subject:subject, startTime:start, endTime:end,
+            var properties={subject:subject, startTime:start, endTime:end,
                 plainTextContent:'Synthetic native Outlook connectivity test. Test ID: ' + request.token,
-                allDayFlag:false, isPrivate:true}));
+                allDayFlag:request.all_day===true, isPrivate:true};
+            if(request.timezone_name)properties.timezone={name:request.timezone_name};
+            if(request.daily_count) {
+                if(request.daily_count%1!==0 || request.daily_count<2 || request.daily_count>5)reject('invalid-test-recurrence','validation');
+                properties.recurrence={startDate:start,endDate:{endType:'end numbered type',data:request.daily_count},recurrenceType:'daily',occurrenceInterval:1};
+            }
+            calendar.calendarEvents.push(app.CalendarEvent(properties));
             var created = calendar.calendarEvents.whose({subject:subject})();
             if (created.length !== 1) reject('created-event-not-verified', phase);
             result.id = String(created[0].id());
             result.start = iso(created[0].startTime()); result.end = iso(created[0].endTime());
             result.subject = created[0].subject();
+            result.recurring=created[0].isRecurring();result.all_day=created[0].allDayFlag();
+        } else if(request.action==='calendar-import') {
+            var importCalendar=namedCalendar(app,request);
+            if(importCalendar.calendarEvents.whose({subject:subject})().length)reject('test-token-already-exists','identity');
+            app.importIcs(Path(request.ics_path),{to:importCalendar});
+            var imported=importCalendar.calendarEvents.whose({subject:subject})();
+            result.ids=imported.map(function(event){return String(event.id());});
+            result.recurring=imported.length ? imported[0].isRecurring() : null;
+            if(!imported.length)reject('imported-fixture-not-verified',phase);
+        } else if (request.action==='calendar-find') {
+            var found=namedCalendar(app,request).calendarEvents.whose({_or:[{subject:subject},{subject:subject+' updated'}]})();
+            result.items=found.map(function(event){return {id:String(event.id()),subject:event.subject()};});
         } else if (request.action === 'calendar-update') {
             var event = testCalendarEvent(app, request);
             var newEnd = new Date(request.end);

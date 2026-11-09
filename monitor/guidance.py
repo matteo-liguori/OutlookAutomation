@@ -8,15 +8,7 @@ RELEVANCE_REVIEW = (
 )
 
 GUIDES = {
-    'outlook': '''Outlook access: `outlook status` lists the profile's platform, backend, operations and payload fields.
-Use `outlook <operation> --input -` with JSON and a configured source ID, not an account override.
-Common fields: source, start/end (ISO timestamps with offsets), limit; read also needs entry_id.
-Mac recent/read need start/end; verified folder/calendar IDs live in platform.bindings in the private profile.
-Windows search needs query; collect needs start/end. Unsupported capabilities fail before access, without fallback.
-Send needs approval_id for the exact message, to/cc/bcc, subject/body and attachment paths.
-Materialise applicable conversation/standing authority as a one-off without asking again.
-Refresh/duplicate/Sent checks remain required. Use help permissions/calendar-decisions for authority.
-Native mutation tests stay outside this everyday interface.''',
+    'outlook': 'Outlook access: `outlook <operation> --input -` takes JSON. Enabled operations and fields are listed below.\nUse configured source IDs and ISO timestamps with offsets. The harness handles account binding and backend sequencing.\n`collect` prepares/checks the source and returns a bounded page; optional run_id imports all pages into that run.\n`send` and draft operations use approval_id; omitted message fields come from the exact SQLite approval.\nMaterialise applicable conversation/standing scope without asking again. Submission is not verified delivery.\nPreserve read state and inspect completeness/errors. Use help permissions/calendar-decisions for authority.\nInstallation internals are available only when diagnosing with `outlook status --details`.',
     'case-organisation': '`case merge/split --input -` requires expected_revisions, idempotency_key, reason and evidence_ids. Merge: target_id and source_ids. Split: source_id, new target_id, action_ids and target title/position. Preserve action IDs, dependencies, clocks and permissions; reconcile context after organisation. This does not complete obligations.',
     'scheduling': '`schedule plan` supplies future London/UTC instants; create the applicable app schedule and read it back, then use schedule verify. Same-date continuations target the current mail chat. Schedule only authorised future work and stop it when no useful work remains.',
     'accounts': 'Account identities, source roles and personal routing come from the private profile. Respect explicit account choices and applicable permissions.',
@@ -252,9 +244,12 @@ def guide(topic):
         result['effective_permission_defaults'] = effective(PROFILE)
         result['permission_source'] = 'Individual grants and approval scope are in SQLite; profile overrides affect default boundaries only.'
     if topic == 'accounts':
-        result['profile'] = {k:PROFILE[k] for k in ('name','timezone','mail','calendars','roles','calendar_providers','paths','platform') if k in PROFILE}
+        result['profile'] = {k:PROFILE[k] for k in ('name','timezone','mail','calendars','roles','calendar_providers','paths') if k in PROFILE}
         from automation_paths import data_root
         result['data_root'] = str(data_root())
+    if topic == 'outlook':
+        from outlook_platforms.api import status
+        result.update(status())
     return result
 
 
@@ -278,6 +273,9 @@ def help_for(words):
                 'topics': [{'topic': k, 'summary': v.splitlines()[0].lstrip('# ')}
                            for k, v in sorted(GUIDES.items())],
                 'examples': ['help case update', 'help action review', 'help filing']}
+    if words[0]=='outlook' and len(words)>1:
+        from outlook_platforms.api import available_operations
+        if words[1] not in available_operations():raise ValueError('Unknown Outlook operation; use help outlook')
     target = ' '.join(words)
     topic = target if target in GUIDES else COMMAND_TOPICS.get(target)
     if topic is None:

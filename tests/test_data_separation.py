@@ -10,10 +10,20 @@ import unittest
 from unittest.mock import patch
 from automation_paths import data_root, configure_data, ROOT
 from manage_data import relocate
+from manage_data import replace_paths
 from setup_outlook import initialise
 
 
 class DataSeparationTests(unittest.TestCase):
+    def test_owned_path_alias_is_rebased_by_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base=Path(tmp).resolve();old=base/'old';new=base/'new';alias=base/'alias'
+            resolve=Path.resolve
+            def canonical(path,*args,**kwargs):
+                if path==alias/'owned.txt':return old/'owned.txt'
+                return resolve(path,*args,**kwargs)
+            with patch.object(Path,'resolve',canonical):
+                self.assertEqual(replace_paths(str(alias/'owned.txt'),old,new),str(new/'owned.txt'))
     def test_permission_defaults_overlay_does_not_export_individual_grants(self):
         from monitor.policy import DEFAULTS,effective
         current=effective({})
@@ -29,8 +39,8 @@ class DataSeparationTests(unittest.TestCase):
     def test_configured_data_root_and_env_override(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ):
             os.environ.pop('OUTLOOK_AUTOMATION_DATA',None)
-            root=Path(tmp)/'code';root.mkdir()
-            first=Path(tmp)/'first';second=Path(tmp)/'second'
+            root=Path(tmp).resolve()/'code';root.mkdir()
+            first=Path(tmp).resolve()/'first';second=Path(tmp).resolve()/'second'
             self.assertEqual(configure_data(first,root),first)
             self.assertEqual(data_root(root),first)
             with self.assertRaises(ValueError):configure_data(second,root)
@@ -43,7 +53,7 @@ class DataSeparationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ):
             os.environ.pop('OUTLOOK_AUTOMATION_PROFILE',None)
             os.environ.pop('OUTLOOK_AUTOMATION_DATA',None)
-            root=Path(tmp)/'code';root.mkdir();private=Path(tmp)/'private'
+            root=Path(tmp).resolve()/'code';root.mkdir();private=Path(tmp).resolve()/'private'
             initialise('Example','example@example.invalid',root,data_dir=private)
             self.assertTrue((private/'monitor/profile.json').is_file())
             self.assertFalse((root/'.local/monitor/profile.json').exists())
@@ -54,8 +64,8 @@ class DataSeparationTests(unittest.TestCase):
     def test_relocation_rebases_owned_paths_but_preserves_full_message_body(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ):
             os.environ.pop('OUTLOOK_AUTOMATION_DATA',None)
-            root=Path(tmp)/'code';old=root/'.local';old.mkdir(parents=True)
-            new=Path(tmp)/'private';(old/'monitor').mkdir()
+            root=Path(tmp).resolve()/'code';old=root/'.local';old.mkdir(parents=True)
+            new=Path(tmp).resolve()/'private';(old/'monitor').mkdir()
             attachment=old/'monitor/owned.txt';attachment.write_text('Attachment')
             db=sqlite3.connect(old/'monitor/monitor.db')
             db.executescript('CREATE TABLE thread_attachments(path TEXT);CREATE TABLE thread_messages(body TEXT);')
@@ -75,7 +85,7 @@ class DataSeparationTests(unittest.TestCase):
     def test_two_users_have_independent_identity_database_and_private_guidance(self):
         with tempfile.TemporaryDirectory() as tmp:
             for label in ['first','second']:
-                private=Path(tmp)/label;(private/'monitor').mkdir(parents=True)
+                private=Path(tmp).resolve()/label;(private/'monitor').mkdir(parents=True)
                 profile=dict(schema_version=1,name=label,timezone='Europe/London',mail={'mail:work':label+'@example.invalid'},calendars=['calendar:work'],instructions={'mail-access':label+' private recovery preference'})
                 (private/'monitor/profile.json').write_text(json.dumps(profile))
                 env=dict(os.environ,OUTLOOK_AUTOMATION_DATA=str(private))

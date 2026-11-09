@@ -27,6 +27,9 @@ def handle_doctor(h, args, payload, kind):
 
 
 def handle_outlook(h,args,payload,kind):
+    if args.operation=='status' and getattr(args,'details',False):
+        from outlook_platforms.api import status
+        return status(details=True)
     from outlook_platforms.api import invoke
     return invoke(args.operation,payload,h)
 

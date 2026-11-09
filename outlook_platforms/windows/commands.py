@@ -8,7 +8,7 @@ import os
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = {name:name + '.ps1' for name in (
-    'Inspect-Outlook', 'Read-OutlookMail', 'Get-OutlookMessage', 'Read-OutlookMonitorCalendar')}
+    'Inspect-Outlook', 'Read-OutlookMail', 'Get-OutlookMessage', 'Read-OutlookMonitorCalendar', 'Collect-OutlookMonitor','Test-OutlookMailboxFreshness','Save-OutlookStoreDraft','Update-OutlookStoreDraft','Send-OutlookStoreMail')}
 
 # The JSON interface keeps argument parsing out of shell command strings.
 JSON_HELPERS = {
@@ -23,6 +23,7 @@ JSON_HELPERS = {
     'collect':('Collect-OutlookMonitor.ps1',dict(start='Since',end='Until',page_size='PageSize',max_scan='MaxScan',offset='Offset',snapshot_id='SnapshotId'),{}),
     'calendar':('Read-OutlookMonitorCalendar.ps1',dict(start='Start',end='End',limit='Limit'),{}),
     'refresh':('Start-OutlookSendReceive.ps1',dict(wait_seconds='WaitSeconds'),{}),
+    'freshness':('Test-OutlookMailboxFreshness.ps1',dict(freshness_minutes='FreshnessMinutes',interval_seconds='ProbeIntervalSeconds',max_wait_seconds='MaxWaitSeconds'),dict(Output='Json')),
     'contacts':('Search-OutlookContacts.ps1',dict(query='Query',limit='Limit',max_items_per_folder='MaxItemsPerFolder',include_recipient_cache='IncludeRecipientCache'),{}),
     'duplicates':('Test-OutlookSendDuplicate.ps1',dict(subject='Subject',body='Body',recipients='Recipients',lookback_days='LookbackDays',max_scan='MaxScan',limit='Limit'),{}),
     'send':('Send-OutlookStoreMailSafe.ps1',dict(to='To',cc='Cc',bcc='Bcc',subject='Subject',body='Body',attachments='Attachments',high_importance='HighImportance',reply_to_entry_id='ReplyToEntryId'),dict(BatchSubmitOnly=True)),
@@ -39,6 +40,15 @@ def execute_json(operation,payload,store,h=None,runner=subprocess.run):
     if not shell:raise ValueError('PowerShell runtime unavailable')
     env=dict(os.environ)
     if h:env['OUTLOOK_AUTOMATION_DATABASE']=str(h.path.resolve())
+    key='outlook-send:'+payload.get('approval_id','')
+    if operation=='send' and h:
+        with h.write():
+            saved=h.db.execute('SELECT value FROM meta WHERE key=?',(key,)).fetchone()
+            if saved:
+                saved=json.loads(saved[0])
+                if saved['stage']=='submitted':return dict(data=saved['data'],duplicate_prevented=True)
+                raise ValueError('Prior send attempt needs reconciliation; no resubmission performed')
+            h.db.execute('INSERT INTO meta VALUES(?,?)',(key,json.dumps(dict(stage='attempting'))))
     try:
         result=runner([shell,'-NoLogo','-NoProfile','-NonInteractive','-File',str(Path(__file__).with_name('invoke.ps1'))],
                       input=json.dumps(dict(helper=helper,parameters=parameters)),capture_output=True,text=True,encoding='utf-8-sig',
@@ -51,6 +61,8 @@ def execute_json(operation,payload,store,h=None,runner=subprocess.run):
     except ValueError:raise ValueError('Outlook helper returned invalid JSON; do not infer completion') from None
     if operation=='accounts':data=[r for r in (data if isinstance(data,list) else [data]) if r.get('SmtpAddress','').casefold()==store.casefold()]
     if operation=='stores':data=[r for r in (data if isinstance(data,list) else [data]) if r.get('DisplayName','').casefold()==store.casefold()]
+    if operation=='send' and h:
+        with h.write():h.db.execute('UPDATE meta SET value=? WHERE key=?',(json.dumps(dict(stage='submitted',data=data)),key))
     return dict(data=data)
 
 

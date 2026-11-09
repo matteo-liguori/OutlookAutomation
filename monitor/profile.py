@@ -20,14 +20,29 @@ def platform_settings(value):
     if not isinstance(bindings,dict) or set(bindings)-set(value['mail'])-set(value['calendars']):
         raise ValueError('Platform bindings must name configured sources')
     for binding in bindings.values():
-        if not isinstance(binding,dict) or set(binding)-{'selected_inbox_id','calendar_id','mail_source'}:
+        if not isinstance(binding,dict) or set(binding)-{'selected_inbox_id','calendar_id','draft_folder_id','mail_source'}:
             raise ValueError('Unknown platform binding field')
-        for key in ('selected_inbox_id','calendar_id'):
+        for key in ('selected_inbox_id','calendar_id','draft_folder_id'):
             if key in binding and not re.fullmatch(r'[0-9]+',str(binding[key])):
                 raise ValueError('Native binding IDs must be numeric')
         if 'mail_source' in binding and binding['mail_source'] not in value['mail']:
             raise ValueError('Calendar binding must use a configured mailbox')
     return config
+
+
+def native_bindings(value,mailbox,source=None):
+    sources=[key for key,address in value['mail'].items() if address.casefold()==mailbox.casefold()]
+    if len(sources)!=1:raise ValueError('Mailbox does not match the private profile')
+    bindings=platform_settings(value).get('bindings',{})
+    mail=bindings.get(sources[0],{})
+    calendar=bindings.get(source if source in value['calendars'] else value.get('roles',{}).get('work_calendar','calendar:work'),{})
+    legacy=value.get('outlook_native',{})
+    if legacy and len(value['mail'])!=1:raise ValueError('Map legacy native bindings to individual sources before using multiple mailboxes')
+    result=dict(legacy)
+    for key,target in [('selected_inbox_id','inbox_id'),('draft_folder_id','draft_folder_id')]:
+        if key in mail:result[target]=mail[key]
+    if 'calendar_id' in calendar:result['calendar_id']=calendar['calendar_id']
+    return result
 
 
 def load(path=None):

@@ -1,6 +1,8 @@
 """One profile-selected interface preserves native scope and Windows contracts."""
 import copy
 import hashlib
+import contextlib
+import io
 import json
 import os
 from pathlib import Path
@@ -19,6 +21,82 @@ PROFILE=dict(name='Fixture',mail={'mail:work':'fixture@example.invalid'},calenda
 
 
 class OutlookApiTests(unittest.TestCase):
+    def test_windows_send_journal_prevents_duplicate_after_success_or_uncertain_failure(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as tmp,patch('shutil.which',return_value='powershell'):
+            h=Harness(Path(tmp)/'monitor.db',create=True)
+            try:
+                runner=Mock(return_value=subprocess.CompletedProcess([],0,json.dumps(dict(Status='submitted')),''))
+                first=execute_json('send',{'approval_id':'one'},'fixture@example.invalid',h,runner)
+                second=execute_json('send',{'approval_id':'one'},'fixture@example.invalid',h,runner)
+                self.assertEqual(first['data'],second['data']);self.assertTrue(second['duplicate_prevented'])
+                self.assertEqual(runner.call_count,1)
+                runner.side_effect=subprocess.TimeoutExpired('helper',180)
+                with self.assertRaises(ValueError):execute_json('send',{'approval_id':'two'},'fixture@example.invalid',h,runner)
+                with self.assertRaisesRegex(ValueError,'reconciliation'):execute_json('send',{'approval_id':'two'},'fixture@example.invalid',h,runner)
+                self.assertEqual(runner.call_count,2)
+            finally:h.close()
+
+    def test_windows_send_runs_transport_internally(self):
+        calls=[]
+        def backend(operation,*args):
+            calls.append(operation)
+            return dict(data=dict(success=True) if operation=='refresh' else dict(Status='submitted',NextStep='old helper instruction'))
+        with patch('platform.system',return_value='Windows'),patch('outlook_platforms.api.check_send'),patch('outlook_platforms.windows.commands.execute_json',side_effect=backend):
+            result=invoke('send',{'approval_id':'fixture'},profile=PROFILE)
+        self.assertEqual(calls,['refresh','send','refresh'])
+        self.assertFalse(result['data']['Verified'])
+        self.assertNotIn('old helper',result['data']['NextStep'])
+
+    def test_normal_help_and_parser_show_only_working_commands_without_platform_details(self):
+        from monitor.__main__ import parser
+        from monitor.commands import execute
+        from outlook_platforms.api import status
+        with patch.dict('outlook_platforms.api.PROFILE',self.mac_profile(),clear=True),patch('platform.system',return_value='Darwin'):
+            public=status()
+            self.assertNotIn('platform',public);self.assertNotIn('bindings',public)
+            self.assertNotIn('move',public['operations']);self.assertNotIn('refresh',public['operations'])
+            self.assertIn('collect',public['operations']);self.assertIn('send',public['operations'])
+            partial=self.mac_profile();partial['platform']['bindings']['mail:work'].pop('draft_folder_id')
+            self.assertNotIn('send',status(partial)['operations'])
+            self.assertIn('read',status(partial)['operations'])
+            self.assertIn('native',status(details=True)['backend'])
+            help_text=execute(None,parser().parse_args(['help','outlook']))
+            self.assertNotIn('Windows',json.dumps(help_text));self.assertNotIn('macos',json.dumps(help_text))
+            for command in ['move','refresh','contacts','session']:
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit):parser().parse_args(['outlook',command])
+                with self.assertRaises(ValueError):execute(None,parser().parse_args(['help','outlook',command]))
+
+    def test_collection_runs_preparation_internally_and_returns_same_contract(self):
+        from outlook_platforms.api import collect_workflow
+        page=dict(Store='fixture@example.invalid',Complete=True,Count=0,Items=[],NextOffset=None)
+        outputs=[]
+        for selected in ['windows','macos']:
+            calls=[]
+            def backend(operation,payload):
+                calls.append(operation)
+                if operation=='refresh':return dict(data=dict(success=True))
+                if operation=='freshness':
+                    proof=dict(Store=page['Store'],Current=True)
+                    return dict(data=[proof] if selected=='windows' else proof)
+                return dict(data=copy.deepcopy(page))
+            outputs.append(collect_workflow(None,{},backend,selected,'mail:work'))
+            self.assertEqual(calls,['refresh','freshness','collect'] if selected=='windows' else ['freshness','collect'])
+        self.assertEqual(outputs[0],outputs[1])
+
+    def test_mac_profile_bindings_replace_legacy_setting_and_keep_grant_body_out_of_argv(self):
+        from outlook_platforms.macos.commands import execute_json as native_json
+        from monitor.profile import native_bindings
+        p=self.mac_profile();p['platform']['bindings']['mail:work']['draft_folder_id']='127'
+        self.assertEqual(native_bindings(p,PROFILE['mail']['mail:work'])['draft_folder_id'],'127')
+        completed=subprocess.CompletedProcess([],0,json.dumps(dict(status='ok',Status='submitted')), '')
+        with patch('subprocess.run',return_value=completed) as run:
+            native_json('send',dict(approval_id='approved',body='PRIVATE BODY',to=['other@example.invalid']),PROFILE['mail']['mail:work'],None,'mail:work',profile=p)
+        argv=run.call_args.args[0]
+        self.assertNotIn('PRIVATE BODY',' '.join(argv))
+        self.assertIn('--drafts-folder-id',argv)
+
     def test_profile_dispatch_and_windows_json_preserve_literal_payload(self):
         literal='literal $(not code) `not code`; café\nsecond line'
         completed=subprocess.CompletedProcess([],0,json.dumps({'Rows':[]}), '')
@@ -26,7 +104,9 @@ class OutlookApiTests(unittest.TestCase):
             # Explicit runner is patched below because backend function defaults bind at import.
             with patch('outlook_platforms.windows.commands.execute_json',return_value={'data':[]} ) as execute:
                 result=invoke('search',{'source':'mail:work','query':literal},profile=PROFILE)
-            self.assertEqual(result['platform'],'windows')
+            self.assertEqual(result['operation'],'search')
+            self.assertNotIn('platform',result)
+            self.assertNotIn('backend',result)
             self.assertEqual(execute.call_args.args[1]['query'],literal)
             execute_json('search',{'query':literal},PROFILE['mail']['mail:work'],runner=run)
         args,kwargs=run.call_args
@@ -36,22 +116,27 @@ class OutlookApiTests(unittest.TestCase):
 
     def mac_profile(self):
         p=copy.deepcopy(PROFILE)
-        p['platform']=dict(os='macos',outlook_backend='native',bindings={'mail:work':{'selected_inbox_id':'131'},'calendar:work':{'calendar_id':'23'}})
+        p['platform']=dict(os='macos',outlook_backend='native',bindings={'mail:work':{'selected_inbox_id':'131','draft_folder_id':'127'},'calendar:work':{'calendar_id':'23'}})
         return p
 
     def test_mac_binding_and_partial_coverage_survive_common_interface(self):
         raw=dict(status='ok',items=[],truncated=True,matched_count=0,read_state_preserved=True,window={'start':'2026-11-08T00:00:00Z','end_exclusive':'2026-11-09T00:00:00Z'})
-        with patch('platform.system',return_value='Darwin'),patch('outlook_platforms.macos.native.execute',return_value=raw) as native:
+        completed=subprocess.CompletedProcess([],0,json.dumps(dict(data=[],coverage=raw)), '')
+        with patch('platform.system',return_value='Darwin'),patch('subprocess.run',return_value=completed) as native:
             result=invoke('recent',dict(start='2026-11-08T00:00:00Z',end='2026-11-09T00:00:00Z'),profile=self.mac_profile())
-        self.assertEqual(native.call_args.args[0]['folder_id'],'131')
+        argv=native.call_args.args[0]
+        self.assertEqual(argv[argv.index('--selected-inbox-id')+1],'131')
         self.assertTrue(result['coverage']['truncated'])
         self.assertEqual(result['data'],[])
 
     def test_mac_calendar_preserves_recurrence_gap_and_profile_source(self):
         raw=dict(status='ok',items=[],truncated=False,matched_count=0,window={'start':'2026-11-08T00:00:00Z','end_exclusive':'2026-11-09T00:00:00Z'})
-        with patch('platform.system',return_value='Darwin'),patch('outlook_platforms.macos.native.execute',return_value=raw) as native:
+        data=dict(source='calendar:work',events=[],complete=False,errors=['Native recurrence expansion has not been verified.'])
+        completed=subprocess.CompletedProcess([],0,json.dumps(dict(data=data,coverage=raw)), '')
+        with patch('platform.system',return_value='Darwin'),patch('subprocess.run',return_value=completed) as native:
             result=invoke('calendar',dict(start='2026-11-08T00:00:00Z',end='2026-11-09T00:00:00Z'),profile=self.mac_profile())
-        self.assertEqual(native.call_args.args[0]['calendar_id'],'23')
+        argv=native.call_args.args[0]
+        self.assertEqual(argv[argv.index('--calendar-id')+1],'23')
         self.assertFalse(result['data']['complete'])
         self.assertIn('recurrence',result['data']['errors'][0])
 
@@ -61,9 +146,9 @@ class OutlookApiTests(unittest.TestCase):
             with patch('platform.system',return_value='Windows'):
                 with self.assertRaises(ValueError):invoke('recent',{},profile=p)
             with patch('platform.system',return_value='Darwin'):
-                self.assertEqual(invoke('send',{},profile=p)['status'],'unsupported')
+                self.assertEqual(invoke('refresh',{},profile=p)['status'],'unsupported')
                 p['platform']['bindings']={}
-                with self.assertRaises(ValueError):invoke('read',{'entry_id':'1'},profile=p)
+                self.assertEqual(invoke('read',{'entry_id':'1'},profile=p)['status'],'unsupported')
             native.assert_not_called()
 
     def test_invalid_source_timestamp_or_backend_cannot_redirect_access(self):

@@ -94,7 +94,7 @@ class GuidanceTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def call(self, *words, at='2026-11-08T09:00:00+00:00'):
-        with patch('monitor.commands.now', return_value=at):
+        with patch('monitor.commands.now', return_value=at), patch('monitor.views.now',return_value=at):
             return execute(self.h, parser().parse_args(list(words)))
 
     def prompt_types(self, result):

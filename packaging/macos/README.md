@@ -61,18 +61,29 @@ Agree any recurring schedule separately.
 The supervised November 2026 pilot used macOS 15.6.1 (arm64), Python 3.12.16 and
 Outlook 16.111 in Legacy mode with the user's confirmed Gmail account.
 
-Passed: native account/window binding; known-message full read with sender,
-recipient and attachment-name metadata; bounded mail/calendar queries; empty
-results; repeated reads; preserved mail read flags; native calendar inventory;
-new private test appointment creation, title/time update and deletion; one
-self-addressed test draft, native submission, verified Inbox delivery, body check,
-preserved unread flag, and normal deletion of the recorded Inbox/Sent test copies.
-All created test objects were tracked and their removal from active sources was
-verified. Local authorization and results stay outside source control.
+| Result | Live evidence |
+| --- | --- |
+| Passed | Account/window/folder binding, known-message body and recipient reads, native Message-ID, 37-folder inventory, literal search, unread filter and preview. |
+| Passed | Bounded, empty and repeated mail/calendar reads with preserved mail read flags. |
+| Passed | Native recurrence expansion; three daily occurrences across spring DST; a 23-hour all-day appointment; private fixture creation/update/deletion. |
+| Passed | Immutable native collector paging and shared-harness ingestion; current coverage only with two stable recent Inbox freshness samples. |
+| Passed | Exact approved draft save/display/update, attachment byte-hash verification, one native self-mail submission and duplicate suppression. |
+| Passed with manual synchronization | Self-mail Inbox/Sent delivery and updated body/attachment hash comparison after Outlook Send & Receive. Native submission alone had left the message queued. |
+| Passed | Native attachment export, isolated case cache, repeated cached reads, cache case closure and harness doctor. |
+| Failed | Native move to the verified Gmail Codex Triage folder did not take effect despite Outlook accepting the command. Equivalent native AppleScript also had no effect. The adapter reports failure and blocks a blind retry. |
+| Cleaned up | All created calendar fixtures and the recorded self-test mail copies were removed from active sources; finite test approvals retired. Mail deletion was normal recoverable deletion. |
 
-Still untested: full message/appointment body comparison against the Outlook UI,
-which became unavailable through the UI tool; New Outlook after the new adapter
-was implemented; recurrence expansion, all-day/timezone edge cases; general
-non-self sending, attachment downloads and other Windows-only helpers. Native
-source coverage is bounded and partial. Portable tests alone do not establish
-full Mac compatibility.
+The UI tool successfully compared the new synthetic message body after reopening
+its view. An already open composer had displayed stale text after native update;
+the native envelope and delivered body contained the updated text. Exact original
+message/appointment UI comparison remains incomplete. Private authorization,
+mail, receipts and databases stay outside source control.
+
+Still untested: New Outlook after adapter implementation; Windows runtime on a
+Windows host; non-self recipients; general filing and recovery after interrupted
+writes; large/complex attachments; live recurring exceptions/cancellations and
+meeting invitations. Recurrence exceptions, exclusions, cancellations, timezone
+conversion and conflicting exports have synthetic coverage. Calendar source and
+occurrence scan caps report partial results. Portable tests alone do not establish
+full Mac compatibility. See `outlook_platforms/README.md` for command contracts and
+current limits.

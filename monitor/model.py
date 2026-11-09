@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -9,7 +10,7 @@ from .profile import PROFILE
 from automation_paths import data_root
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DB = data_root() / 'monitor/monitor.db'
+DEFAULT_DB = Path(os.environ['OUTLOOK_AUTOMATION_DATABASE']) if os.environ.get('OUTLOOK_AUTOMATION_DATABASE') else data_root() / 'monitor/monitor.db'
 LONDON = ZoneInfo("Europe/London")
 BUDGET = 12000
 OPEN = {"needs-user", "waiting", "watch"}
