@@ -47,8 +47,21 @@ Reusable fixes stay on `codex/mac-integration-test`; private receipts stay local
   IDs after synchronization. Reconcile by the exact test token and verify delayed
   absence; immediate ID disappearance is insufficient. Calendar writes remain
   absent from normal help.
-- Native Gmail filing remains hidden after the earlier verified move failure;
-  this rerun did not repeat that write. Open-composer refresh, real interrupted
+- Native Gmail filing remains hidden. A follow-up reproduced the failure on a
+  newly delivered synthetic message: ordinary/global-ID/object-directed moves,
+  alternate destination references, native copy, command-side selection and
+  synchronize/move/synchronize failed independent source/destination readback.
+  The account was not exposed through normal account collections, default
+  account or Inbox ownership. Registered App Intents provided no filing action.
+  A diagnostic UI move worked, but UI control and Gmail connector backends are
+  excluded from the requested command-only Outlook implementation.
+- Microsoft [documents AppleScript automation of Google accounts synced through
+  Microsoft Cloud as unsupported](https://support.microsoft.com/en-us/support/known-issues/known-issues-syncing-google-accounts-to-the-microsoft-cloud).
+  This matches the observed account binding and move failures; it does not prove
+  every Outlook account type lacks command-driven filing. An isolated direct-IMAP
+  connection inside Outlook is the next proposed test, requiring user-authorized
+  account setup and sign-in. It has not been tested. Windows filing is unchanged.
+- Open-composer refresh, real interrupted
   transport/concurrent-edit recovery, live recurrence exceptions/cancellations,
   non-self sends, complex/large attachments, meeting invitations, secondary
   calendars, New Outlook and Windows runtime remain unverified here.
