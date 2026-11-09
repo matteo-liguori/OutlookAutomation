@@ -155,6 +155,7 @@
   "tests/test_outlook_api.py": "tests/test_outlook_api.py",
   "tests/test_profile_backups.py": "tests/test_profile_backups.py",
   "tests/test_review_organization.py": "tests/test_review_organization.py",
+  "tests/test_reliability.py": "tests/test_reliability.py",
   "tests/test_reviews.py": "tests/test_reviews.py",
   "tests/test_simplification.py": "tests/test_simplification.py",
   "tests/test_threadcache.py": "tests/test_threadcache.py",

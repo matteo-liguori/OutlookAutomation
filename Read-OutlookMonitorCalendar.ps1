@@ -19,6 +19,7 @@ $items.IncludeRecurrences = $true
 $filter = New-OutlookCalendarFilter -Start $Start -End $End
 $restricted = $items.Restrict($filter)
 $events = @()
+$cancellations = @()
 $errors = @()
 $scanned = 0
 $item = $restricted.GetFirst()
@@ -30,13 +31,17 @@ while ($null -ne $item -and $scanned -lt $Limit) {
         $errors += "Out-of-window or invalid event rejected: $([string]$item.EntryID)"
     }
     else {
-        $events += [pscustomobject]@{id = [string]$item.EntryID
+        $meetingStatus = if ($null -ne $item.MeetingStatus) { [int]$item.MeetingStatus } else { 0 }
+        $event = [pscustomobject]@{id = [string]$item.EntryID
             title = [string]$item.Subject
             start = $eventStart.ToUniversalTime().ToString('o')
             end = $eventEnd.ToUniversalTime().ToString('o')
             location = [string]$item.Location
             all_day = [bool]$item.AllDayEvent
+            meeting_status = $meetingStatus
         }
+        if ($meetingStatus -in @(5, 7)) { $cancellations += $event }
+        else { $events += $event }
     }
     $item = $restricted.GetNext()
 }
@@ -46,6 +51,7 @@ if ($null -ne $item) {
 [pscustomobject]@{source = $calendarSource
     complete = ($null -eq $item -and $errors.Count -eq 0)
     events = $events
+    explicit_cancellations = $cancellations
     start = $Start.ToString('o')
     end = $End.ToString('o')
     scanned = $scanned

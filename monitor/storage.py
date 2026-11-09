@@ -230,6 +230,10 @@ class Storage:
             for r in self.db.execute("PRAGMA foreign_key_check")
         )
         from .evidence import references
+        from .records import validate_match_keys
+        for row in self.db.execute('SELECT id,details FROM cases'):
+            try:validate_match_keys(json.loads(row[1]).get('match_keys', {}))
+            except ValueError as error:problems.append('Invalid matching keys in ' + row[0] + ': ' + str(error))
         available = {r[0] for r in self.db.execute('SELECT id FROM evidence')}
         for table in ('cases', 'actions', 'decisions', 'context', 'approvals', 'standing_approvals'):
             for row in self.db.execute(f'SELECT id,details FROM {table}'):

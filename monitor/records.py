@@ -3,6 +3,15 @@ from .model import OPEN, now, stamp, dumps, digest
 from .scheduling import next_review
 
 
+def validate_match_keys(keys):
+    if not isinstance(keys, dict) or set(keys) - {'sources', 'conversation_ids', 'references'}:
+        raise ValueError('match_keys must be an object with sources, conversation_ids and/or references')
+    for name, values in keys.items():
+        if not isinstance(values, list) or any(not isinstance(v, str) or not v.strip() for v in values):
+            raise ValueError('match_keys.' + name + ' must be a list of nonempty strings')
+    return keys
+
+
 class CaseRecords:
     def all_cases(self, open_only=False):
         """Load current rows in three queries, without historical/evidence bodies."""
@@ -29,6 +38,7 @@ class CaseRecords:
         """Persist validated case metadata inside its caller's transaction."""
         if not self.db.in_transaction:
             raise ValueError("Case persistence requires a transaction")
+        if 'match_keys' in case:validate_match_keys(case['match_keys'])
         from .threadcache import lifecycle
 
         old = self.db.execute("SELECT details,status FROM cases WHERE id=?", (cid,)).fetchone()
@@ -363,7 +373,8 @@ class CaseRecords:
         suggestions = []
         for row in self.db.execute("SELECT id,details FROM cases").fetchall():
             current = json.loads(row["details"])
-            keys = current.get("match_keys", {})
+            try:keys = validate_match_keys(current.get('match_keys', {}))
+            except ValueError:keys = {}  # Legacy bad hints cannot stop unrelated ingestion.
             reasons = []
             if (
                 message.get("conversation_id")

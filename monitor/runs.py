@@ -4,6 +4,12 @@ from datetime import datetime, timedelta
 from .model import LONDON, MAIL, CAL, now, stamp, dumps
 
 
+def roundup_eligible(started_at):
+    local = datetime.fromisoformat(stamp(started_at)).astimezone(LONDON)
+    # The scheduled 09:00 startup can begin a few minutes early or late.
+    return local.weekday() == 6 and 8 * 60 + 30 <= local.hour * 60 + local.minute < 10 * 60
+
+
 class RunRecords:
     def start_run(self, activated=False, at=None):
         at = stamp(at or now())
@@ -64,6 +70,9 @@ class RunRecords:
             source = payload["source"]
             if source not in MAIL + CAL:
                 raise ValueError("Unknown or deprecated source")
+            if source in CAL:
+                from .sources import calendar_cancellations
+                payload = calendar_cancellations(payload)
             self.evidence_exists(payload.get("evidence_ids", []))
             self.evidence_exists(payload.get("freshness_evidence_ids", []))
             if not payload.get("evidence_ids") or payload.get("provenance") not in {
@@ -281,7 +290,7 @@ class RunRecords:
                     ):
                         items.append({"type": "cancellation", "source": s, **event})
                         cancelled_ids.add(event["id"])
-        if start.weekday() == 6:
+        if roundup_eligible(run['started_at']):
             items.extend(
                 {"type": "roundup", "id": r[0], **json.loads(r[1])}
                 for r in self.db.execute(
@@ -660,7 +669,8 @@ class RunRecords:
                     if card.get('last_reported_at','')<=run['started_at']:
                         card['last_reported_at']=run['started_at'];self.db.execute('UPDATE cases SET details=? WHERE id=?',(dumps(card),cid))
             if state == "complete":
-                for eid in run["details"].get("handoff", {}).get("roundup_ids", []):
+                eligible_roundups = {i['id'] for i in self.report_items(rid) if i['type'] == 'roundup'}
+                for eid in set(run["details"].get("handoff", {}).get("roundup_ids", [])) & eligible_roundups:
                     self.db.execute("DELETE FROM roundup WHERE id=?", (eid,))
                 details = run["details"]
                 details["final_verification"] = dict(status, status="complete")

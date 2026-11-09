@@ -192,6 +192,14 @@ function Get-OutlookStoreByName($ns,$storeName){
         self.assertFalse(capped["complete"])
         self.assertIn("Calendar scan limit reached.", capped["errors"])
 
+    def test_calendar_separates_cancelled_residuals_without_title_guessing(self):
+        cancelled=[dict(self.event('cancel-'+str(status),'2026-10-02T09:00','2026-10-02T10:00'),MeetingStatus=status) for status in (5,7)]
+        active=dict(self.event('replacement','2026-10-03T09:00','2026-10-03T10:00'),Subject='Canceled discussion: next steps',MeetingStatus=3)
+        result=self.calendar(cancelled+[active])
+        self.assertTrue(result['complete'])
+        self.assertEqual([e['id'] for e in result['events']],['replacement'])
+        self.assertEqual([e['meeting_status'] for e in result['explicit_cancellations']],[5,7])
+
     def test_restart_waits_with_immediately_ready_com(self):
         with tempfile.TemporaryDirectory() as tmp:
             common = r"""

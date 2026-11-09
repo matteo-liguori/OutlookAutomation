@@ -33,14 +33,26 @@ class TimingTests(unittest.TestCase):
         altered["eligible"][0]["time"] = "10:00"
         with self.assertRaises(ValueError):
             timing.verify({"plan": altered, "actual_rrule": p["rrule"]})
-        self.assertIsNone(
-            timing.plan("2026-10-16", ["09:00"], "reminder", "2026-10-13T20:00:00Z")["rrule"]
-        )
+        future=timing.plan("2026-10-16", ["09:00"], "reminder", "2026-10-13T20:00:00Z")
+        self.assertTrue(timing.verify(dict(plan=future,actual_rrule=future['rrule']))['verified'])
         self.assertIsNone(
             timing.plan("2026-10-14", ["09:15", "10:30"], "reminder", "2026-10-13T20:00:00Z")[
                 "rrule"
             ]
         )
+
+    def test_utc_anchor_receipts_and_invalid_rules(self):
+        p=timing.plan('2026-11-09',['19:00'],'reminder','2026-11-09T15:00:00Z')
+        rule='DTSTART:20261109T190000Z\nRRULE:FREQ=DAILY;COUNT=1'
+        self.assertEqual(timing.verify(dict(plan=p,actual_rrule=rule,triggered_at='2026-11-09T19:00:21Z'))['trigger_check']['delay_seconds'],21)
+        with self.assertRaisesRegex(ValueError,'before'):timing.verify(dict(plan=p,actual_rrule=rule,triggered_at='2026-11-09T18:00:00Z'))
+        self.assertEqual(timing.verify(dict(plan=p,actual_rrule=rule,triggered_at='2026-11-09T19:06:00Z'))['trigger_check']['status'],'late')
+        for bad in ['DTSTART:20261109T190000\nRRULE:FREQ=DAILY;COUNT=1',rule+';COUNT=2',rule.replace('COUNT=1','COUNT=999'),rule.replace('190000','180000')]:
+            with self.assertRaises(ValueError):timing.verify(dict(plan=p,actual_rrule=bad))
+        mixed=timing.plan('2026-11-10',['09:15','10:30'],'reminder','2026-11-09T15:00:00Z')
+        self.assertIsNone(mixed['rrule']);self.assertEqual(len(mixed['one_shot_rules']),2)
+        points=[timing.recurrence_instants(r,mixed['as_of'])[0].isoformat() for r in mixed['one_shot_rules']]
+        self.assertEqual(points,[e['utc'] for e in mixed['eligible']])
 
 
 class GoogleTests(unittest.TestCase):

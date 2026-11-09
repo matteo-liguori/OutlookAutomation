@@ -12,7 +12,7 @@ GUIDES = {
     'ui': 'Optional current-work viewer: install requirements-ui.lock in the project environment, then run ui. Opens a local card grid and action timeline; click for details, label edits or a note for the next agent pass. Notes stay pending until explicitly handled; help card-input. Browsing and label edits preserve task/review clocks. No Outlook scans. Ctrl+C stops it; --no-browser prints the private local link.',
     'outlook': 'Outlook access: `outlook <operation> --input -` takes JSON. Enabled operations and fields are listed below.\nUse configured source IDs and ISO timestamps with offsets. The harness handles account binding and backend sequencing.\n`collect` prepares/checks the source and returns a bounded page; optional run_id imports all pages into that run.\n`send` and draft operations use approval_id; omitted message fields come from the exact SQLite approval.\nMaterialise applicable conversation/standing scope without asking again. Submission is not verified delivery.\nPreserve read state and inspect completeness/errors. Use help permissions/calendar-decisions for authority.\nInstallation internals are available only when diagnosing with `outlook status --details`.',
     'case-organisation': '`case merge/split --input -` requires expected_revisions, idempotency_key, reason and evidence_ids. Merge: target_id and source_ids. Split: source_id, new target_id, action_ids and target title/position. Preserve action IDs, dependencies, clocks and permissions; reconcile context after organisation. This does not complete obligations.',
-    'scheduling': '`schedule plan` supplies future London/UTC instants; create the applicable app schedule and read it back, then use schedule verify. Same-date continuations target the current mail chat. Schedule only authorised future work and stop it when no useful work remains.',
+    'scheduling': '`schedule plan` supplies future London/UTC instants; create the applicable app schedule and read it back, then use schedule verify. Use its bounded UTC DTSTART/RRULE or individual one_shot_rules; optional triggered_at checks a recorded firing time. Same-date continuations target the current mail chat. Schedule only authorised future work and stop it when no useful work remains.',
     'accounts': 'Account identities, source roles and personal routing come from the private profile. Respect explicit account choices and applicable permissions.',
     'briefing': 'briefing has four sections: open-thread recognition/goals, due actions/alerts, periodic card reviews, commands. Use review next for due reviews; briefing --case <id> or --message-input - for related work, case show <id> for the full card, help <operation> for procedures. Follow paging cursors. Future/snoozed work and full card bodies stay out of the default briefing.',
     'context': '`context put --input -` takes id, entity, text and evidence_ids (plus relevant provenance). Keep one current canonical record for the subject; update it rather than making parallel notes. Retrieve only matching records with context get <term>. Use the structured stdin bridge shown by help records.',
@@ -53,6 +53,7 @@ Commands below take `--input -`:
 | `action review` | action_id, parent expected_revision, idempotency_key, review_kind (records/mail/source-check), outcome, evidence_ids, review_policy |
 
 Case: title, purpose, context, position, status open/closed; optional aliases/match_keys.
+match_keys is an object with sources/conversation_ids/references lists of nonempty strings.
 Action: id, owner, status needs-user/waiting/watch/done/dismissed, next_step,
 completion_condition, reopening_condition, follow_up; optional deadline, promised_at,
 explicit_review, snooze_until, reviewed_at/review_outcome. Dates use offsets; unknown
@@ -102,7 +103,11 @@ For scoped quiet decisions, handoff accepts quiet_cases with case_id, revision,
 reason and evidence_ids. These acknowledge review, not delivery; required work
 cannot be suppressed. Report data exposes quiet_allowed.
 
-Events: stable id/title, offset-qualified start/end, location, all_day. Mail receipts
+Weekly roundups appear only for Sunday runs starting 08:30-10:00 London (allowing
+early/late 09:00 startup); incomplete or ineligible handoffs preserve the queue.
+
+Events: stable id/title, offset-qualified start/end, location, all_day.
+Use explicit_cancellations for authoritative cancelled records; preserve active replacements. Mail receipts
 come from ingest. Follow `report data`, check `run status`, then `run finalize`;
 incomplete gates/sources remain partial. Acknowledge only actual delivered verified
 coverage; undelivered work/cancellations remain pending. Finalization records metrics;

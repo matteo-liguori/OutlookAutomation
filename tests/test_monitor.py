@@ -444,6 +444,35 @@ class HarnessTests(unittest.TestCase):
         self.assertTrue(self.h.run_status(rid)["fully_verified"])
         self.assertEqual(self.h.finalize(rid)["status"], "complete")
 
+    def test_verified_empty_inboxes_finalize_and_advance_checkpoints(self):
+        from monitor.collect import import_pages
+        rid=self.verified_run()
+        with self.h.write():self.h.db.execute('DELETE FROM candidates WHERE run_id=?',(rid,))
+        for source in MAIL:
+            page=dict(Store=MAIL_STORES[source],StoreId='store',SnapshotId='empty-'+source,
+                      StartedAt='2026-09-17T12:00:00Z',Since='2026-09-15T12:00:00Z',Until='2026-09-17T12:00:00Z',
+                      Offset=0,FirstId=None,Items=[],Complete=True,NextOffset=None,Errors=[])
+            probe=dict(Store=MAIL_STORES[source],LatestStoreId='store',Status='current',Current=True,Samples=2,
+                       CheckedAt='2026-09-17T12:00:00Z',LatestReceived='2026-09-17T11:00:00Z',LatestFolder='Topic folder')
+            result=import_pages(self.h,rid,source,[page],page['StartedAt'],probe)
+            self.assertEqual(result['count'],0);self.assertEqual(result['status'],'current')
+        self.assertTrue(self.h.run_status(rid)['fully_verified'])
+        self.assertEqual(self.h.finalize(rid)['status'],'complete')
+        for row in self.h.db.execute('SELECT * FROM checkpoints'):
+            self.assertEqual(row['reviewed'],'2026-09-17T12:00:00+00:00')
+
+    def test_bad_match_keys_are_rejected_atomically_and_legacy_keys_do_not_crash(self):
+        for keys in [[],['ref'],{'references':'text'},{'sources':[42]},{'references':['']},{'unknown':[]}]:
+            p=self.payload();p['case']['match_keys']=keys
+            with self.assertRaises(ValueError):self.h.update(p)
+            self.assertIsNone(self.h.db.execute("SELECT id FROM cases WHERE id='T1'").fetchone())
+        p=self.payload();self.h.update(p)
+        with self.h.write():
+            raw=json.loads(self.h.db.execute("SELECT details FROM cases WHERE id='T1'").fetchone()[0]);raw['match_keys']=[]
+            self.h.db.execute("UPDATE cases SET details=? WHERE id='T1'",(dumps(raw),))
+        self.h.suggest_cases(dict(source=MAIL[0],subject='Unrelated',conversation_id='conversation'))
+        self.assertTrue(any('Invalid matching keys' in p for p in self.h.doctor()['problems']))
+
     def report_case(self, rid, cids=("T1",), actions=("T1-a",), delivered=True):
         self.h.record_run(
             rid,
