@@ -31,7 +31,8 @@ The Mac implementation has already been tested successfully for reading and sear
 There are still a few limitations:
 
 * Moving emails between folders isn’t working reliably yet.
-* Sending worked in testing, but required manually triggering Outlook’s Send & Receive.
+* Automatic self-mail delivery passed the latest test; each send still needs independent delivery verification. See [Mac test status](outlook_platforms/macos/STATUS.md).
+* Calendar updates and removal can race with synchronization; calendar writes remain outside the normal interface.
 * Testing so far has mainly involved a Gmail account in Legacy Outlook. Microsoft 365, Exchange and New Outlook still need more testing.
 
 Both platforms share the same underlying database and assistant interface, although not every operation is available on both yet.

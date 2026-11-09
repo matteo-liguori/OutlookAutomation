@@ -268,7 +268,9 @@ function nativeCollect(request, app) {
                     for (var ri = 0; ri < selected.length; ri++) {
                         if (String(selected[ri].calendar().id()) !== String(calendars[ci].id())) reject('event-calendar-mismatch','identity');
                         try {
-                            result.calendar_sources.push({id:String(selected[ri].id()),calendar_id:String(calendars[ci].id()),all_day:selected[ri].allDayFlag(),icalendar:selected[ri].icalendarData()});
+                            var nativeEvent=selected[ri];
+                            result.calendar_sources.push({id:String(nativeEvent.id()),calendar_id:String(calendars[ci].id()),all_day:nativeEvent.allDayFlag(),icalendar:nativeEvent.icalendarData(),
+                                native:{subject:nativeEvent.subject(),start:iso(nativeEvent.startTime()),end:iso(nativeEvent.endTime()),recurring:nativeEvent.isRecurring()}});
                         } catch (exportError) {
                             result.errors.push('Native calendar export failed for ID '+String(selected[ri].id()));
                             result.calendar_scan_complete = false;

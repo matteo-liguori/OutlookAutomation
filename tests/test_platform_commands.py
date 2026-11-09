@@ -53,6 +53,28 @@ class PlatformCommandTests(unittest.TestCase):
         self.assertEqual(set(rows[0]), {'DisplayName','SmtpAddress','AccountType'})
         self.assertEqual(rows[0]['SmtpAddress'], MAILBOX)
 
+    def test_logical_drafts_uses_verified_binding_when_outlook_lists_duplicates(self):
+        inventory=dict(status='ok',folders=[
+            dict(id='127',name='Drafts',path=MAILBOX+'/Drafts'),
+            dict(id='128',name='Drafts',path=MAILBOX+'/Drafts')])
+        args=['-Store',MAILBOX,'-Folder','drafts','--selected-inbox-id','131',
+              '-Start','2026-11-08T00:00:00Z','-End','2026-11-09T00:00:00Z']
+        with patch('monitor.profile.native_bindings',return_value={'draft_folder_id':'127'}), \
+             patch('outlook_platforms.macos.commands.execute',side_effect=[inventory,MAIL]) as run, \
+             contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(main('Read-OutlookMail',args),0)
+        self.assertEqual(run.call_args.args[0]['target_folder_id'],'127')
+
+    def test_logical_drafts_does_not_fall_back_when_verified_folder_is_missing(self):
+        inventory=dict(status='ok',folders=[dict(id='128',name='Drafts',path=MAILBOX+'/Drafts')])
+        args=['-Store',MAILBOX,'-Folder','drafts','--selected-inbox-id','131',
+              '-Start','2026-11-08T00:00:00Z','-End','2026-11-09T00:00:00Z']
+        with patch('monitor.profile.native_bindings',return_value={'draft_folder_id':'127'}), \
+             patch('outlook_platforms.macos.commands.execute',return_value=inventory) as run, \
+             contextlib.redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):main('Read-OutlookMail',args)
+        self.assertEqual(run.call_count,1)
+
     def test_calendar_schema_discloses_recurrence_gap(self):
         result = dict(status='ok',truncated=False,matched_count=1,window=MAIL['window'],
             items=[dict(id='23',subject='Fixture event',start='2026-11-08T12:00:00Z',end='2026-11-08T13:00:00Z',location='Room',all_day=False)])

@@ -66,6 +66,18 @@ class CalendarExpansionTests(unittest.TestCase):
         self.assertFalse(result['bounded_complete'])
         self.assertTrue(result['errors'])
 
+    def test_stale_nonrecurring_export_is_excluded_and_coverage_is_incomplete(self):
+        native=dict(subject='Fixture',start='2026-11-10T12:00:00+00:00',end='2026-11-10T13:00:00+00:00',recurring=False)
+        source=dict(id='1',calendar_id='142',icalendar=calendar(event()),native=native)
+        current=self.expand('',sources=[source])
+        self.assertTrue(current['bounded_complete'])
+        for change in ({'subject':'Updated'}, {'start':'2026-11-10T12:15:00+00:00'}, {'end':'2026-11-10T13:15:00+00:00'}):
+            with self.subTest(change=change):
+                result=self.expand('',sources=[dict(source,native=dict(native,**change))])
+                self.assertEqual(result['items'],[])
+                self.assertFalse(result['bounded_complete'])
+                self.assertIn('disagree',result['errors'][0])
+
     def test_shared_uid_in_distinct_calendars_is_not_lost(self):
         sources=[dict(id='1',calendar_id=cid,icalendar=calendar(event())) for cid in ('142','143')]
         result=self.expand('',sources=sources)

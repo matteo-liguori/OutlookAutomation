@@ -114,8 +114,9 @@ source_folder_id, entry_id, destination_folder_id and internet_message_id.
 
 A completed send approval cannot submit again. Timeouts/uncertain writes require
 reconciliation before retry. `submitted` means queued by Outlook, not delivered.
-The live attachment send required Outlook's Send & Receive UI before delivery;
-automatic transport flushing is not established. Displayed composers can show
+Self-mail delivery without manual synchronization passed the latest integration
+test; earlier tests needed Send & Receive. Verify each delivery independently;
+automatic transport completion is not guaranteed. Displayed composers can show
 stale bodies after native updates; close/reopen and verify before manual action.
 
 ## Verified limits
@@ -128,3 +129,7 @@ bounded by scan/result caps; invalid exports and conflicting versions report
 incomplete coverage. General external-recipient sending, broad filing, contact
 lookup, meeting invitations, automatic refresh and other Windows helpers remain
 untested or unsupported. Portable tests do not establish full Mac compatibility.
+Nonrecurring exports are checked against native subject/start/end properties;
+disagreements exclude that source and make coverage incomplete. Calendar writes
+remain outside normal help: asynchronous synchronization can replace native IDs
+and undo an immediate update/removal. See `macos/STATUS.md` for current evidence.

@@ -61,6 +61,17 @@ def expand_result(result, request):
     for source in sources:
         try:
             exported = Calendar.from_ical(source['icalendar'])
+            native = source.get('native')
+            if native and native.get('recurring') is False:
+                components = exported.walk('VEVENT')
+                if len(components) != 1:
+                    raise ValueError('Nonrecurring export does not identify one event')
+                component = components[0]
+                if (str(component.get('SUMMARY', '')) != native['subject']
+                    or _instant(component.decoded('DTSTART'), zone) != _instant(datetime.fromisoformat(native['start']), zone)
+                    or _instant(component.decoded('DTEND'), zone) != _instant(datetime.fromisoformat(native['end']), zone)):
+                    errors.append('Native calendar properties disagree with iCalendar export: ' + str(source['id']))
+                    continue
             for component in exported.walk():
                 if component.name == 'VTIMEZONE':
                     key = str(component.get('TZID'))

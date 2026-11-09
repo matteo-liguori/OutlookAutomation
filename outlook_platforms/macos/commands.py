@@ -240,6 +240,8 @@ def main(command, arguments):
             aliases={'inbox':{'inbox'},'sent':{'sent','sent mail','sent items'},'drafts':{'drafts'},'trash':{'trash','bin','deleted items'}}
             names=aliases.get(name,{name})
             matching=[item for item in inventory['folders'] if item['name'].casefold() in names or item['path'].casefold()==name or item['path'].split('/',1)[-1].casefold()==name]
+            if name=='drafts' and bindings.get('draft_folder_id'):
+                matching=[item for item in matching if item['id']==str(bindings['draft_folder_id'])]
             if len(matching)!=1:parser.error('Folder is missing or ambiguous; use --folder-id from Folders')
             request['target_folder_id']=matching[0]['id']
         if args.action=='Search':

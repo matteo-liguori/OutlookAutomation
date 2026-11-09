@@ -21,7 +21,7 @@ OLD = "2026-01-01T12:00:00+00:00"
 class MaintenanceTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        self.root = Path(self.tmp.name).resolve()
         self.h = Harness(self.root / "monitor.db", create=True)
         self.h.put_evidence(dict(id="proof", source="test", body="Original evidence"))
 
