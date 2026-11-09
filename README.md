@@ -20,3 +20,11 @@ coverage and unsupported capabilities explicitly.
 Run `Test-Harness.ps1` for Windows offline checks. On Mac, use Python 3.12 or later
 and run `python3 setup_outlook.py --smoke-test`, then the supervised native checks
 in the Mac guide. Portable tests alone do not establish native compatibility.
+
+## Testing and contributions
+
+Fork the repository and submit a pull request; include your Outlook version,
+tested capabilities and synthetic reproduction steps. Keep mailbox contents,
+profiles, credentials and live receipts out of issues and patches. Begin with
+offline checks, then use your own account and explicitly authorised test fixtures.
+Report suspected security issues through GitHub's private vulnerability reporting.
