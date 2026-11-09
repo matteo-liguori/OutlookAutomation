@@ -10,7 +10,15 @@
   }
   const token = sessionStorage.getItem(tokenKey) || '';
   const labels = {'needs-user':'Needs you',waiting:'Waiting',watch:'Watching',deadline:'Deadline',promise:'Promised',
-    'follow-up':'Follow-up',review:'Review','snooze-end':'Snooze ends'};
+    'follow-up':'Follow-up',review:'Review','snooze-end':'Snooze ends',unscheduled:'No date recorded'};
+  const kindSymbols = {
+    deadline:[['path',{d:'M5 21V3m0 1h13l-3 4 3 4H5'}]],
+    promise:[['path',{d:'M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2m3 11 3 3 5-6'}]],
+    'follow-up':[['path',{d:'M20 7v5h-5M4 17v-5h5m-4-4a8 8 0 0 1 13-3l2 2M4 17l2 2a8 8 0 0 0 13-3'}]],
+    review:[['path',{d:'M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z'}],['circle',{cx:12,cy:12,r:3}]],
+    'snooze-end':[['circle',{cx:12,cy:13,r:8}],['path',{d:'M12 9v4l3 2M3 5l3-3m12 0 3 3M6 20l-2 2m14-2 2 2'}]],
+    unscheduled:[['path',{d:'M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2m4 11h6'}]]
+  };
   const dateFormat = new Intl.DateTimeFormat('en-GB', {timeZone:'Europe/London', day:'numeric',month:'short',year:'numeric'});
   const dayFormat = new Intl.DateTimeFormat('en-GB', {timeZone:'Europe/London', weekday:'long'});
   const timeFormat = new Intl.DateTimeFormat('en-GB', {timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'});
@@ -27,6 +35,16 @@
     return node;
   }
   function dot(colour) {const node = el('span', 'dot'); node.style.backgroundColor = colour; return node;}
+  function kindBadge(kind) {
+    const badge=el('span','kind '+kind), svg=document.createElementNS('http://www.w3.org/2000/svg','svg');
+    for(const [key,value] of Object.entries({viewBox:'0 0 24 24',fill:'none',stroke:'currentColor','stroke-width':'1.7','stroke-linecap':'round','stroke-linejoin':'round','aria-hidden':'true',focusable:'false'}))svg.setAttribute(key,value);
+    for(const [tag,attributes] of kindSymbols[kind] || kindSymbols.unscheduled){
+      const shape=document.createElementNS('http://www.w3.org/2000/svg',tag);
+      for(const [key,value] of Object.entries(attributes))shape.setAttribute(key,value);
+      svg.append(shape);
+    }
+    badge.append(svg,document.createTextNode(labels[kind] || kind));return badge;
+  }
   async function api(path, payload) {
     const options = {headers:{'X-Viewer-Token':token}, cache:'no-store', signal:AbortSignal.timeout(10000)};
     if (payload) { options.method='POST'; options.headers['Content-Type']='application/json'; options.body=JSON.stringify(payload); }
@@ -93,8 +111,8 @@
   function renderEvent(event, unscheduled = false) {
     const node = openButton('event',event.case_id); node.style.borderLeftColor = event.colour;
     const top = el('div','event-top'), kinds = el('div','');
-    if (unscheduled) kinds.append(el('span','kind','No date recorded'));
-    else for (const kind of event.kinds) kinds.append(el('span','kind '+kind,labels[kind]));
+    if (unscheduled) kinds.append(kindBadge('unscheduled'));
+    else for (const kind of event.kinds) kinds.append(kindBadge(kind));
     top.append(kinds);
     if (!unscheduled) top.append(el('span','',formatTime(event.at)));
     const thread = el('div','event-thread');thread.append(dot(event.colour),el('span','',event.title));
