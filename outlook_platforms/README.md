@@ -1,5 +1,31 @@
 # Platform adapters
 
+Normal entry point: `monitor.ps1 outlook <operation>` (Windows) or
+`.venv/bin/python -m monitor outlook <operation>` (Mac). Use `outlook status` for
+operation-specific fields and `help outlook` for the workflow. The profile chooses
+the platform; the dispatcher refuses a host mismatch or an unsupported operation.
+
+Private profile example:
+
+```json
+"platform": {
+  "os": "macos",
+  "outlook_backend": "native",
+  "bindings": {
+    "mail:work": {"selected_inbox_id": "131"},
+    "calendar:work": {"calendar_id": "23", "mail_source": "mail:work"}
+  }
+}
+```
+
+Use IDs from the supervised discovery/UI check, not these illustrative IDs.
+Windows uses `{"os":"windows","outlook_backend":"com","bindings":{}}`.
+Bindings identify sources; they grant no permissions. New platform capabilities
+are added to the adapter registry. Coverage metadata is returned alongside data.
+
+The commands below are compatibility/backend contracts, not a second required
+interface for the agent.
+
 The SQLite harness in `monitor/` is shared. Platform-specific access lives in two
 parallel adapter paths:
 

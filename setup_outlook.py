@@ -48,7 +48,7 @@ def initialise(name, store, root=ROOT, data_dir=None):
     if data_dir:
         configure_data(data_dir, root)
     folder.mkdir(parents=True, exist_ok=True)
-    profile = dict(schema_version=1, name=name, timezone="Europe/London", mail={"mail:work": store}, calendars=["calendar:work"], access="outlook-macos-pilot")
+    profile = dict(schema_version=1, name=name, timezone="Europe/London", platform=dict(os='macos',outlook_backend='native',bindings={}), mail={"mail:work": store}, calendars=["calendar:work"], access="outlook-macos-pilot")
     with target.open("x", encoding="utf-8") as output:
         json.dump(profile, output, indent=2)
         output.write("\n")
@@ -79,7 +79,7 @@ def main(argv=None):
         env = dict(os.environ, OUTLOOK_AUTOMATION_PROFILE=str(ROOT / "profile.example.json"))
         # These tests exercise the portable harness with synthetic data; platform
         # specific PowerShell fixtures are a separate Windows check.
-        patterns = ["test_monitor.py", "test_cards.py", "test_followups.py", "test_approvals.py", "test_threadcache.py", "test_mac_support.py", "test_mac_probe_fallback.py", "test_mac_native.py", "test_mac_test_actions.py", "test_platform_commands.py", "test_reviews.py", "test_guidance.py", "test_data_separation.py", "test_profile_backups.py"]
+        patterns = ["test_monitor.py", "test_cards.py", "test_followups.py", "test_approvals.py", "test_threadcache.py", "test_mac_support.py", "test_mac_probe_fallback.py", "test_mac_native.py", "test_mac_test_actions.py", "test_platform_commands.py", "test_outlook_api.py", "test_reviews.py", "test_guidance.py", "test_data_separation.py", "test_profile_backups.py"]
         for pattern in patterns:
             subprocess.run([str(python), "-X", "utf8", "-m", "unittest", "discover", "-s", "tests", "-p", pattern], cwd=ROOT, env=env, check=True)
         print(json.dumps(dict(smoke_test="passed", system=platform.system(), machine=platform.machine(), python=platform.python_version(), native_macos=platform.system() == "Darwin", mailbox_access_tested=False)))

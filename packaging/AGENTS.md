@@ -13,7 +13,7 @@ project folder. Use `monitor.ps1 help accounts` for the private profile and acco
 | Monitoring pass | TRIAGE_RULES.md, MONITOR_REPORT_TEMPLATE.md |
 | Records and permissions | MONITOR_HARNESS.md |
 | Card creation/upkeep | THREAD_CARD_UPKEEP.md |
-| Mail and send helpers | MAIL_HELPERS.md |
+| Outlook access | `outlook status`, `help outlook` |
 | Private iCloud calendar | ICLOUD_CALDAV.md |
 
 The profile's `work` role means the user's work mailbox/calendar; `shared` means

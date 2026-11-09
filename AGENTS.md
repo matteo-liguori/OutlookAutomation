@@ -4,14 +4,13 @@ Keep instructions brief and positive; state the desired behaviour, give each rul
 one home and link to it elsewhere.
 
 Keep the user's mail, calendars and follow-ups useful and current. Work in this
-project folder. Start with README.md and outlook_platforms/README.md for platform
-routing. Use `monitor.ps1` on Windows or `.venv/bin/python -m monitor` on Mac for
-account guidance and briefing. SQLite is current authority.
+project folder. Use `monitor.ps1` on Windows or `.venv/bin/python -m monitor` on Mac.
+Start with briefing; use `outlook status` and `help outlook` for platform access. SQLite is current authority.
 
 | Task | Instructions |
 | --- | --- |
 | First setup | README.md |
-| Native platform commands and capability gaps | outlook_platforms/README.md |
+| Outlook access and capability gaps | `outlook status`, `help outlook` |
 | Monitoring pass | TRIAGE_RULES.md, MONITOR_REPORT_TEMPLATE.md |
 | Records and permissions | MONITOR_HARNESS.md |
 | Card creation/upkeep | THREAD_CARD_UPKEEP.md |

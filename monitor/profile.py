@@ -3,11 +3,31 @@
 import json
 import os
 import re
+import platform as host_platform
 from pathlib import Path
 from automation_paths import data_root
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROVIDERS = {'calendar:work':'outlook', 'calendar:primary':'google', 'calendar:shared':'google', 'calendar:icloud':'icloud'}
+
+
+def platform_settings(value):
+    default_os = 'macos' if host_platform.system() == 'Darwin' else 'windows'
+    config = value.get('platform', {'os':default_os,'outlook_backend':'native' if default_os=='macos' else 'com'})
+    if not isinstance(config,dict) or (config.get('os'),config.get('outlook_backend')) not in {('windows','com'),('macos','native')}:
+        raise ValueError('Profile platform must select windows/com or macos/native')
+    bindings=config.get('bindings',{})
+    if not isinstance(bindings,dict) or set(bindings)-set(value['mail'])-set(value['calendars']):
+        raise ValueError('Platform bindings must name configured sources')
+    for binding in bindings.values():
+        if not isinstance(binding,dict) or set(binding)-{'selected_inbox_id','calendar_id','mail_source'}:
+            raise ValueError('Unknown platform binding field')
+        for key in ('selected_inbox_id','calendar_id'):
+            if key in binding and not re.fullmatch(r'[0-9]+',str(binding[key])):
+                raise ValueError('Native binding IDs must be numeric')
+        if 'mail_source' in binding and binding['mail_source'] not in value['mail']:
+            raise ValueError('Calendar binding must use a configured mailbox')
+    return config
 
 
 def load(path=None):
@@ -48,6 +68,7 @@ def load(path=None):
         raise ValueError('Profile instructions must contain text')
     from .policy import effective
     effective(value)
+    platform_settings(value)
     return value
 
 

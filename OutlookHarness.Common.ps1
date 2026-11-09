@@ -4,6 +4,7 @@ function Invoke-OutlookHarness {
     . "$PSScriptRoot/AutomationEnvironment.Common.ps1"
     $runtime = Get-AutomationPython
     $cli = @('-X', 'utf8', '-m', 'monitor', '--format', 'json')
+    if (-not $Database -and $env:OUTLOOK_AUTOMATION_DATABASE) { $Database = $env:OUTLOOK_AUTOMATION_DATABASE }
     if ($Database) { $cli += @('--db', $Database) }
     $cli += $Arguments
     Push-Location $PSScriptRoot

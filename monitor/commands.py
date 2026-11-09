@@ -26,6 +26,11 @@ def handle_doctor(h, args, payload, kind):
     return h.page(kind, [h.doctor()])
 
 
+def handle_outlook(h,args,payload,kind):
+    from outlook_platforms.api import invoke
+    return invoke(args.operation,payload,h)
+
+
 def handle_backup(h, args, payload, kind):
     cmd, op = args.command, getattr(args, "operation", None)
     return {"backups": h.backup()}
@@ -331,6 +336,7 @@ def handle_health(h,args,payload,kind):
 
 
 HANDLERS = {
+    "outlook": handle_outlook,
     "review": handle_review,
     "activation": handle_activation,
     "help": handle_guide,

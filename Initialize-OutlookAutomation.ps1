@@ -54,7 +54,7 @@ if ($DataDirectory) {
     New-Item -ItemType Directory -Path (Join-Path $PSScriptRoot '.local') -Force | Out-Null
     $DataDirectory | Set-Content -LiteralPath (Join-Path $PSScriptRoot '.local/data-root.txt') -Encoding utf8
 }
-@{schema_version=1;name=$Name;timezone='Europe/London';mail=$mail;calendars=$calendars} |
+@{schema_version=1;name=$Name;timezone='Europe/London';platform=@{os='windows';outlook_backend='com';bindings=@{}};mail=$mail;calendars=$calendars} |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $path -Encoding utf8
 if ($google.Count) {
     $google | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'google-calendar-config.json') -Encoding utf8

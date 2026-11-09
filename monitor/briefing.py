@@ -47,7 +47,7 @@ def compact(h, at):
             [dict(type='briefing_section', title='Periodic reviews')] + reviews +
             ([dict(type='review_hint', instruction='Use review next; record keep/close, then repeat until complete.')] if reviews else []) +
             [dict(type='briefing_section', title='Commands'), dict(type='command_hint', instruction=
-        'Inspect: case show <id>, thread messages <id>. Passes: run start/candidates/status, report data. '
+        'Outlook: outlook status; help outlook. Inspect: case show <id>, thread messages <id>. Passes: run start/candidates/status, report data. '
         'Reviews: review next/complete. Records: case/action/approval/context/evidence. Other: calendar/filing/health/schedule. '
         'Use help <topic or command> for details; follow paging cursors.')])
 

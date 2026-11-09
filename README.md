@@ -7,9 +7,11 @@ Reusable Outlook helpers and one shared SQLite mail/calendar follow-up harness.
 - [Parallel platform adapters and command contracts](outlook_platforms/README.md)
 - [Assistant instructions](AGENTS.md)
 
-`outlook.py` routes matching command names through `outlook_platforms/windows/`
-or `outlook_platforms/macos/`. Existing Windows PowerShell helpers remain intact;
-the Mac adapter talks directly to Outlook through native Apple events.
+Use `monitor.ps1 outlook <operation>` on Windows or
+`.venv/bin/python -m monitor outlook <operation>` on Mac. `outlook status` lists
+capabilities; `help outlook` explains payloads. The private profile's `platform`
+selects Windows COM or native macOS and holds verified native source bindings.
+Existing helper scripts and `outlook.py` remain compatibility entry points.
 
 Keep private profiles, records, credentials, live test receipts and mail outside
 Git. Specific permissions remain in SQLite. Each platform reports incomplete

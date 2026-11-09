@@ -8,6 +8,15 @@ RELEVANCE_REVIEW = (
 )
 
 GUIDES = {
+    'outlook': '''Outlook access: `outlook status` lists the profile's platform, backend, operations and payload fields.
+Use `outlook <operation> --input -` with JSON and a configured source ID, not an account override.
+Common fields: source, start/end (ISO timestamps with offsets), limit; read also needs entry_id.
+Mac recent/read need start/end; verified folder/calendar IDs live in platform.bindings in the private profile.
+Windows search needs query; collect needs start/end. Unsupported capabilities fail before access, without fallback.
+Send needs approval_id for the exact message, to/cc/bcc, subject/body and attachment paths.
+Materialise applicable conversation/standing authority as a one-off without asking again.
+Refresh/duplicate/Sent checks remain required. Use help permissions/calendar-decisions for authority.
+Native mutation tests stay outside this everyday interface.''',
     'case-organisation': '`case merge/split --input -` requires expected_revisions, idempotency_key, reason and evidence_ids. Merge: target_id and source_ids. Split: source_id, new target_id, action_ids and target title/position. Preserve action IDs, dependencies, clocks and permissions; reconcile context after organisation. This does not complete obligations.',
     'scheduling': '`schedule plan` supplies future London/UTC instants; create the applicable app schedule and read it back, then use schedule verify. Same-date continuations target the current mail chat. Schedule only authorised future work and stop it when no useful work remains.',
     'accounts': 'Account identities, source roles and personal routing come from the private profile. Respect explicit account choices and applicable permissions.',
@@ -243,7 +252,7 @@ def guide(topic):
         result['effective_permission_defaults'] = effective(PROFILE)
         result['permission_source'] = 'Individual grants and approval scope are in SQLite; profile overrides affect default boundaries only.'
     if topic == 'accounts':
-        result['profile'] = {k:PROFILE[k] for k in ('name','timezone','mail','calendars','roles','calendar_providers','paths') if k in PROFILE}
+        result['profile'] = {k:PROFILE[k] for k in ('name','timezone','mail','calendars','roles','calendar_providers','paths','platform') if k in PROFILE}
         from automation_paths import data_root
         result['data_root'] = str(data_root())
     return result
@@ -252,6 +261,7 @@ def guide(topic):
 COMMAND_TOPICS = {
     'briefing': 'briefing',
     'case': 'card-upkeep', 'review': 'card-upkeep',
+    'outlook': 'outlook',
     'case update': 'card-writes', 'case merge': 'case-organisation',
     'case split': 'case-organisation', 'action review': 'action-review',
     'approval': 'permissions', 'run': 'pass-receipts', 'report': 'pass-receipts',

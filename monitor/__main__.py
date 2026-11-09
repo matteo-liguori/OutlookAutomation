@@ -31,6 +31,10 @@ def parser():
     sub.add_parser("doctor")
     sub.add_parser('health')
     sub.add_parser("backup")
+    from outlook_platforms.api import OPERATIONS
+    outlook = sub.add_parser('outlook', help='Profile-selected Outlook access').add_subparsers(dest='operation', required=True)
+    for operation in OPERATIONS:
+        outlook.add_parser(operation).add_argument('--input', help='JSON payload, or - for stdin')
     maintenance = sub.add_parser("maintenance").add_subparsers(dest="operation", required=True)
     maintenance.add_parser("status")
     maintenance.add_parser("clean").add_argument("--dry-run", action="store_true")

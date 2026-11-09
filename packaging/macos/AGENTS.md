@@ -4,8 +4,8 @@ Keep instructions brief and positive; state the desired behaviour, give each rul
 one home and link to it elsewhere.
 
 Work in this folder. Start with README.md for the native Mac pilot and capability
-checks. Once initialised, read `.local/monitor/profile.json` and
-`.venv/bin/python -m monitor briefing`. SQLite is current authority.
+checks. Once initialised, use `.venv/bin/python -m monitor briefing`; retrieve
+account/platform details with `help accounts` and `outlook status`. SQLite is current authority.
 
 | Task | Instructions |
 | --- | --- |
@@ -15,11 +15,11 @@ checks. Once initialised, read `.local/monitor/profile.json` and
 | Report structure | MONITOR_REPORT_TEMPLATE.md |
 
 Match reads to the configured user's verified account, especially on borrowed
-computers. Use the native adapter and command contracts in
-`outlook_platforms/README.md`; keep the portable harness shared with Windows.
+computers. Use `python -m monitor outlook <operation>` and `help outlook`. The private
+profile selects the native backend and its verified bindings.
 Verify the account, source
 coverage and relevant full messages before reconciling tasks. State partial
-coverage clearly. Keep private records in `.local/` and use thread caches for mail.
+coverage clearly. Keep private records in the configured data directory and use thread caches for mail.
 
 Sending needs conversation approval or an applicable harness permission covering
 sender, recipients, subject, wording and attachments. Calendar writes and routine

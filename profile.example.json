@@ -2,6 +2,7 @@
   "schema_version": 1,
   "name": "Your name",
   "timezone": "Europe/London",
+  "platform": {"os":"windows","outlook_backend":"com","bindings":{}},
   "mail": {
     "mail:work": "work@example.invalid",
     "mail:personal": "personal@example.invalid",

@@ -3,7 +3,9 @@
 Keep instructions brief and positive; state the desired behaviour, give each rule
 one home and link to it elsewhere.
 
-Run helpers in the project folder. Scope and permissions: AGENTS.md.
+Use `monitor.ps1 outlook <operation>` (Mac: `python -m monitor outlook`).
+`outlook status` lists capabilities/fields; `help outlook` gives the workflow.
+The helpers below are backend/compatibility references. Scope: AGENTS.md.
 
 | Need | Helper |
 | --- | --- |

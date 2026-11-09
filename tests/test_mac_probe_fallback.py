@@ -67,7 +67,11 @@ class BundledDictionaryTests(unittest.TestCase):
             app = self.app(tmp)
             outside = Path(tmp) / "outside.sdef"
             outside.write_text("<dictionary/>")
-            (app / "Contents/Resources/Outlook.sdef").symlink_to(outside)
+            try:
+                (app / "Contents/Resources/Outlook.sdef").symlink_to(outside)
+            except OSError as error:
+                if getattr(error,'winerror',None)==1314:self.skipTest('Host denies symlink creation; native macOS test remains enabled')
+                raise
             self.assertEqual(probe(app_path=app, runner=self.unavailable, system="Darwin")["status"], "scripting-unavailable")
 
     def test_resources_symlink_cannot_escape_app(self):
@@ -78,5 +82,9 @@ class BundledDictionaryTests(unittest.TestCase):
             outside = Path(tmp) / "other-resources"
             outside.mkdir()
             (outside / "Outlook.sdef").write_text("<dictionary/>")
-            resources.symlink_to(outside, target_is_directory=True)
+            try:
+                resources.symlink_to(outside, target_is_directory=True)
+            except OSError as error:
+                if getattr(error,'winerror',None)==1314:self.skipTest('Host denies symlink creation; native macOS test remains enabled')
+                raise
             self.assertEqual(probe(app_path=app, runner=self.unavailable, system="Darwin")["status"], "scripting-unavailable")

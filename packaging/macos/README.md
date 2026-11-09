@@ -31,7 +31,9 @@ the mailbox in Outlook's UI, select its Inbox and run:
 .venv/bin/python mac_outlook_native.py discover --mailbox 'you@example.com'
 ```
 
-Use the returned Inbox/calendar IDs with the mirrored commands documented in
+Store the verified Inbox/calendar IDs in the private profile platform.bindings;
+use `python -m monitor outlook status` and `help outlook` for the shared interface.
+The underlying mirrored commands remain documented in
 `outlook_platforms/README.md`. Leave the verified mailbox Inbox selected during
 the pilot. Bindings stop if the window, selected folder, item parent, calendar ID
 or calendar name changes. The Mac pilot's primary calendar name must match the
