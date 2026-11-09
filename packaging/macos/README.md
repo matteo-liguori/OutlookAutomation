@@ -90,3 +90,8 @@ current limits.
 
 Licence: PolyForm Noncommercial 1.0.0; see the included LICENSE.md.
 Commercial uses outside its permissions require agreement with the repository owner.
+
+Optional visual viewer: `.venv/bin/python -m pip install -r requirements-ui.lock`,
+then `.venv/bin/python -m monitor ui`. The local browser shows current cards and
+action dates; click for detail. It is read-only and does not scan Outlook.
+Ctrl+C stops it.

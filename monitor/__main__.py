@@ -14,6 +14,9 @@ def parser():
     p.add_argument("--cursor")
     p.add_argument("--limit", type=int, default=50)
     sub = p.add_subparsers(dest="command", required=True)
+    ui = sub.add_parser('ui', help='Open the local read-only card grid and action timeline')
+    ui.add_argument('--port', type=int, default=0, help='Local port; default selects a free port')
+    ui.add_argument('--no-browser', action='store_true')
     sub.add_parser("init")
     from .guidance import GUIDES
     sub.add_parser("guide").add_argument("topic", choices=sorted(GUIDES))
@@ -138,6 +141,12 @@ def main():
         raise SystemExit("--limit must be 1..100")
     h = None
     try:
+        if args.command == 'ui':
+            from .ui import serve
+            if not 0 <= args.port <= 65535:
+                raise ValueError('Port must be between 0 and 65535')
+            serve(args.db, args.port, not args.no_browser)
+            return
         pure = args.command in {"schedule", "guide", "help"} or (
             args.command == "calendar"
             and args.operation != "google-ingest"

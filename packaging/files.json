@@ -159,5 +159,12 @@
   "tests/test_simplification.py": "tests/test_simplification.py",
   "tests/test_threadcache.py": "tests/test_threadcache.py",
   "tests/test_timing_google.py": "tests/test_timing_google.py",
-  "tooling.json": "tooling.json"
+  "tooling.json": "tooling.json",
+  "monitor/viewer.py": "monitor/viewer.py",
+  "monitor/ui/__init__.py": "monitor/ui/__init__.py",
+  "monitor/ui/static/index.html": "monitor/ui/static/index.html",
+  "monitor/ui/static/viewer.css": "monitor/ui/static/viewer.css",
+  "monitor/ui/static/viewer.js": "monitor/ui/static/viewer.js",
+  "tests/test_viewer.py": "tests/test_viewer.py",
+  "requirements-ui.lock": "requirements-ui.lock"
 }
