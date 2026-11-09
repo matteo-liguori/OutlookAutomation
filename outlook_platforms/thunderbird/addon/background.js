@@ -3,7 +3,7 @@ const HOST = 'outlookautomation_thunderbird_pilot';
 const MAX_SCAN = 5000;
 let port;
 let writeBusy = false;
-const READS = new Set(['status','accounts','folders','query','read','calendar-list','calendar-query','calendar-read','reconcile-move','reconcile-trash']);
+const READS = new Set(['status','accounts','folders','query','read','calendar-list','calendar-query','calendar-read','reconcile-move','reconcile-trash','attachment-upload','attachment-open','attachment-chunk','duplicates','send-verify','draft-reconcile','draft-inspect','read-extended','contacts','client-refresh','address-books']);
 
 function check(condition, code) {
   if (!condition) throw new Error(code);
@@ -14,7 +14,7 @@ function fingerprint(value) {
   return JSON.stringify(value);
 }
 function sameFingerprint(stored, request) {
-  try{return fingerprint(JSON.parse(stored))===fingerprint(request);}catch(e){return false;}
+  try{return mailWriteIdentity(JSON.parse(stored))===mailWriteIdentity(request);}catch(e){return false;}
 }
 async function account(r) {
   check(typeof r.mailbox === 'string' && typeof r.account_id === 'string', 'exact-account-required');
@@ -29,20 +29,22 @@ async function folder(r, id) {
 }
 async function message(r) {
   const h = await messenger.messages.get(r.message_id);
-  check(h.folder && h.folder.accountId === r.account_id, 'message-account-mismatch');
+  check(h.folder && (h.folder.accountId===r.account_id || (r.allow_local_outbox===true && (h.folder.specialUse || []).includes('outbox') && await mailOwn(h,r))), 'message-account-mismatch');
   if (r.source_folder_id) check(h.folder.id === r.source_folder_id, 'message-parent-changed');
   if (r.internet_message_id) check(h.headerMessageId === r.internet_message_id, 'internet-message-id-changed');
   return h;
 }
 function header(h) {
   return {id:h.id, internet_message_id:h.headerMessageId, subject:h.subject, date:h.date,
-    author:h.author, recipients:h.recipients, cc:h.ccList || [], read:h.read, folder:h.folder};
+    author:h.author, recipients:h.recipients, cc:h.ccList || [], bcc:h.bccList || [], priority:h.priority, read:h.read, folder:h.folder};
 }
 async function query(r, folderId, internetId) {
   const q = {accountId:r.account_id, messagesPerPage:50};
   if (folderId) q.folderId = folderId;
   if (internetId) q.headerMessageId = internetId;
-  if (r.subject) q.subject = r.subject;
+  // Thunderbird's subject query is case-sensitive and omits reply prefixes.
+  // Scan the bounded folder/date window and apply our canonical comparison.
+
   if (r.query) q.fullText = r.query;
   if (r.unread_only) q.unread = true;
   if (r.start) q.fromDate = new Date(r.start);
@@ -51,10 +53,10 @@ async function query(r, folderId, internetId) {
   while (true) {
     scanned += page.messages.length;
     for (const h of page.messages) {
-      if ((!r.subject || r.subject_contains || h.subject === r.subject) && (!internetId || h.headerMessageId === internetId)) out.push(h);
+      if ((!r.subject || (r.subject_contains ? mailSubject(h.subject).includes(mailSubject(r.subject)) : mailSubject(h.subject) === mailSubject(r.subject))) && (!internetId || h.headerMessageId === internetId)) out.push(h);
     }
     if (!page.id) return {messages:out, complete:true, scanned};
-    if (scanned >= MAX_SCAN) {
+    if (scanned >= Math.min(r.max_scan || MAX_SCAN,MAX_SCAN)) {
       await messenger.messages.abortList(page.id);
       return {messages:out, complete:false, scanned};
     }
@@ -64,7 +66,7 @@ async function query(r, folderId, internetId) {
 async function previous(r) {
   check(typeof r.approval_id === 'string' && r.approval_id.length > 0, 'approval-id-required');
   const key = 'pilot:' + r.action + ':' + r.approval_id;
-  const identity = fingerprint(r);
+  const identity = mailWriteIdentity(r);
   const old = (await messenger.storage.local.get(key))[key];
   if (old) {
     check(sameFingerprint(old.fingerprint,r), 'approval-request-changed');
@@ -76,7 +78,7 @@ async function previous(r) {
 async function once(r, action, metadata={}) {
   const old=await previous(r); if(old)return old;
   const key = 'pilot:' + r.action + ':' + r.approval_id;
-  const identity = fingerprint(r);
+  const identity = mailWriteIdentity(r);
   await messenger.storage.local.set({[key]:{stage:'attempting', fingerprint:identity,...metadata}});
   const result = await action();
   check(!result.status || result.status==='ok',result.code || 'write-not-verified');
@@ -111,7 +113,8 @@ async function dispatch(r) {
   if (r.action === 'status') return {status:'ok', client:await messenger.runtime.getBrowserInfo(),
     transport:'thunderbird-native-messaging', api:{read:!!messenger.messages.getFull,
       move:!!messenger.messages.move, send:!!(messenger.compose && messenger.compose.sendMessage)},
-    write_scope:'exact-approval-broker', calendar:!!messenger.harnessCalendar,write_busy:writeBusy};
+    write_scope:'exact-approval-broker', calendar:!!messenger.harnessCalendar,sync:!!messenger.harnessMail,drafts:!!messenger.compose.saveMessage,attachments:true,contacts:!!messenger.addressBooks,write_busy:writeBusy};
+  if(r.action==='address-books')return {status:'ok',address_books:(await messenger.addressBooks.list(false)).map(b=>({id:b.id,name:b.name,read_only:b.readOnly,remote:b.remote}))};
   if (r.action === 'accounts') return {status:'ok', accounts:(await messenger.accounts.list(false)).map(a =>
     ({id:a.id,type:a.type,name:a.name,identities:a.identities.map(i=>({id:i.id,email:i.email,name:i.name}))}))};
   if(r.action.startsWith('calendar-')) {
@@ -120,6 +123,7 @@ async function dispatch(r) {
     return messenger.harnessCalendar.execute(r);
   }
   const a = await account(r);
+  const extended=await dispatchMail(r,a);if(extended!==null)return extended;
   if (r.action === 'folders') {
     const out=[]; const visit=f=>{out.push({id:f.id,name:f.name,path:f.path,accountId:f.accountId,specialUse:f.specialUse}); for(const child of f.subFolders||[])visit(child);};
     visit(a.rootFolder); return {status:'ok', folders:out};
@@ -134,21 +138,6 @@ async function dispatch(r) {
     const before=await message(r); const full=await messenger.messages.getFull(before.id);
     const after=await message(r);check(before.read===after.read,'read-state-changed');
     return {status:'ok',message:header(after),full,read_state_preserved:true};
-  }
-  if(r.action==='send-message') {
-    const cached=await previous(r);if(cached)return cached;
-    const ids=a.identities.filter(i=>i.email.toLowerCase()===r.mailbox.toLowerCase());
-    check(ids.length===1,'sender-identity-ambiguous');
-    check(Array.isArray(r.to) && r.to.length>0 && typeof r.subject==='string' && typeof r.body==='string','invalid-envelope');
-    return once(r,async()=>{
-      const tab=await messenger.compose.beginNew({identityId:ids[0].id,to:r.to,cc:r.cc,bcc:r.bcc,
-        subject:r.subject,plainTextBody:r.body,isPlainText:true,deliveryFormat:'plaintext'});
-      const d=await messenger.compose.getComposeDetails(tab.id);
-      check(d.identityId===ids[0].id && d.subject===r.subject && d.plainTextBody.trimEnd()===r.body.trimEnd() &&
-        fingerprint(d.to)===fingerprint(r.to) && fingerprint(d.cc)===fingerprint(r.cc) && fingerprint(d.bcc)===fingerprint(r.bcc),
-        'approved-composer-changed');
-      return {status:'ok',submission:await messenger.compose.sendMessage(tab.id,{mode:'sendNow'}),delivery_verified:false};
-    });
   }
   if(r.action==='move-message' || r.action==='trash-message') {
     const cached=await previous(r);if(cached)return cached;
@@ -198,7 +187,15 @@ function connect() {
     let deadline;
     const timeout=new Promise((_,reject)=>{deadline=setTimeout(()=>reject(new Error('client-operation-timeout')),40000);});
     Promise.race([task,timeout]).then(result=>channel.postMessage({id:envelope.id,result}),
-      e=>channel.postMessage({id:envelope.id,result:{status:'blocked',code:e.message,mutation_may_have_occurred:isWrite}}))
+      async e=>{
+        let possible=isWrite;
+        if(isWrite && envelope.request.approval_id && envelope.request.action!=='draft-discard') {
+          const key='pilot:'+envelope.request.action+':'+envelope.request.approval_id;
+          const journal=(await messenger.storage.local.get(key))[key];
+          possible=!!(journal && journal.stage==='attempting' && sameFingerprint(journal.fingerprint,envelope.request));
+        }
+        channel.postMessage({id:envelope.id,result:{status:'blocked',code:e.message,mutation_may_have_occurred:possible,not_attempted:isWrite && !possible}});
+      })
       .catch(()=>{}).finally(()=>clearTimeout(deadline));
   });
   port.onDisconnect.addListener(()=>{setTimeout(connect,1500);});

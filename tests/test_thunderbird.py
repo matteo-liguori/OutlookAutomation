@@ -43,8 +43,8 @@ class ThunderbirdTests(unittest.TestCase):
             info=status(self.p,details=True)
             self.assertEqual(info['source_backends'],{'mail:work':'thunderbird','calendar:work':'native'})
             self.assertIn('move',info['operations']);self.assertNotIn('calendar-create',info['operations'])
-            self.assertNotIn('download_attachments',info['payload_fields']['read'])
-            self.assertNotIn('include_preview',info['payload_fields']['recent'])
+            self.assertIn('download_attachments',info['payload_fields']['read'])
+            self.assertIn('include_preview',info['payload_fields']['recent'])
             with patch('outlook_platforms.thunderbird.commands.execute_json',return_value={'data':[]}) as tb,patch('outlook_platforms.macos.commands.execute_json',return_value={'data':[]}) as native:
                 invoke('read',dict(entry_id='1'),self.h,self.p);tb.assert_called_once();native.assert_not_called()
                 invoke('calendar',dict(source='calendar:work'),self.h,self.p);native.assert_called_once()
@@ -153,7 +153,8 @@ class ThunderbirdTests(unittest.TestCase):
         self.p['platform']['bindings']['mail:work']['selected_inbox_id']='account9://INBOX'
         with self.assertRaises(ValueError):execute_json('collect',continuation,'fixture@example.invalid',self.h,'mail:work',profile=self.p,runner=runner)
         freshness=execute_json('freshness',{},'fixture@example.invalid',self.h,'mail:work',profile=self.p,runner=runner)
-        self.assertFalse(freshness['data']['Current']);self.assertEqual(runner.call_count,1)
+        self.assertFalse(freshness['data']['Current']);self.assertEqual(runner.call_count,2)
+        self.assertEqual(runner.call_args.args[0]['action'],'client-refresh')
         from monitor.sources import validate_mail
         with patch('monitor.sources.MAIL_STORES',{'mail:work':'fixture@example.invalid'}):
             self.assertFalse(validate_mail('mail:work',[first,second],first['StartedAt'],freshness['data']))
@@ -173,7 +174,8 @@ class ThunderbirdTests(unittest.TestCase):
             first=prepare(manifest_dir=root/'hosts')
             import zipfile
             with zipfile.ZipFile(first['package']) as z:
-                self.assertNotIn('experiment_apis',json.loads(z.read('manifest.json')))
+                self.assertEqual(set(json.loads(z.read('manifest.json'))['experiment_apis']),{'harnessMail'})
+                self.assertIn('client-api.js',z.namelist())
             with patch('outlook_platforms.thunderbird.setup.data_root',return_value=root/'other'):
                 with self.assertRaises(ValueError):prepare(manifest_dir=root/'hosts')
             second=prepare(calendar=True,manifest_dir=root/'hosts')

@@ -24,15 +24,17 @@ option; its Exchange Online dependency is being retired.
    In Copies & Folders, select the actual server Sent Items folder. In the tested
    Microsoft 365 account, the default `/Sent` failed, while `/Sent Items` worked.
    Display names alone can be ambiguous. Confirm Drafts and Trash separately.
+   The harness also enforces the bound Sent destination on every composer, including
+   reopened drafts and replies; a stale inherited `/Sent` override must not win.
 4. Initialise the ordinary harness private profile/database first. Select the same
    private data directory for setup and every command, using
    `OUTLOOK_AUTOMATION_DATA` or the existing `.local/data-root.txt` pointer.
 5. Run `.venv/bin/python -m outlook_platforms.thunderbird.setup`. Add `--calendar`
    to include the optional calendar module. Install the returned versioned XPI via
-   Thunderbird Add-ons Manager → Tools → Install Add-on From File. Mail-only uses
-   normal read/move/send permissions; recoverable Trash uses the move permission. Calendar uses an Experiment API and Thunderbird
-   therefore requires full, unrestricted application/computer access; obtain the
-   user's explicit approval for that build. No provider connector is required.
+   Thunderbird Add-ons Manager → Tools → Install Add-on From File. Mail builds include a narrow Experiment API for native draft reopening, composer
+   ownership and IMAP completion callbacks. Thunderbird therefore requests full,
+   unrestricted application/computer access; obtain explicit approval before first
+   installation. `--calendar` adds calendar access at the same permission level. No provider connector is required.
 6. The installer registers the local native host in
    `~/Library/Mozilla/NativeMessagingHosts` (verified against the official Mac build).
    Its launcher points to this checkout's Python and the selected private data
@@ -42,7 +44,9 @@ option; its Exchange Online dependency is being retired.
    binding for each mailbox. Start with `outlook discover`; match the exact email
    identity, then set its account and Inbox IDs. `outlook folders` supplies exact
    folder IDs. Never copy account IDs from another device. `outlook discover` also lists calendar metadata when the calendar module is
-   installed; bind only the user's verified calendar UUID.
+   installed; bind only the user's verified calendar UUID. Discovery lists address-book
+   metadata too. Bind only the user's verified books with `address_book_ids`; on a
+   borrowed Mac, do not bind its owner's system address book.
 
 Example private profile fragment (merge into the existing profile):
 
@@ -57,7 +61,8 @@ Example private profile fragment (merge into the existing profile):
         "selected_inbox_id": "account1://INBOX",
         "sent_folder_id": "account1://Sent Items",
         "draft_folder_id": "account1://Drafts",
-        "trash_folder_id": "account1://Deleted Items"
+        "trash_folder_id": "account1://Deleted Items",
+        "address_book_ids": ["verified-user-address-book-id"]
       },
       "calendar:work": {
         "backend": "native",
@@ -96,8 +101,44 @@ screenshots or provider connector are used to execute these commands.
   copies sharing a folder/RFC ID are deliberately ambiguous; use a freshly
   discovered `TransientId` only for an immediate, exact copy-specific command.
 - `send` takes an exact-message SQLite `approval_id`; omitted
-  envelope fields come from that grant. Outgoing attachments are not implemented.
-  A submitted message still needs independent Sent/delivery verification.
+  envelope fields come from that grant. Attachments need approved private file paths
+  and SHA-256 hashes; the bridge verifies transferred and composed bytes. Optional
+  `high_importance` and `reply_to_entry_id` belong in the same exact message grant.
+  Replies preserve real In-Reply-To/References headers. The bound Sent folder is
+  explicitly applied and checked before SMTP. Independent readback checks the
+  envelope, normalised body, priority, reply header and attachment hashes.
+  `send-reconcile` only reads outcomes; it never reissues a send. Self-Inbox delivery
+  can prove submission even if the local Sent copy failed. External recipient
+  delivery is never inferred from a Sent copy.
+- `draft-save` uses an exact message grant whose `scope.actions` includes
+  `save-draft`; `display_only` leaves its owned composer open. `draft-update` needs
+  `update-draft` plus exact scope fields `draft_id` (returned stable EntryId),
+  `draft_folder_id`, and `expected_raw_sha256` from `read` with `content_hash:true`.
+  It edits that draft through Thunderbird's MIME loader, checks its current raw
+  bytes, and returns the new EntryId/ContentHash. Saved draft IDs can change.
+  Include `send` in the grant's actions to send the same verified saved draft.
+- A draft save is attempted once, followed by bounded read-only polling while the
+  provider processes MIME. `draft-reconcile` validates an uncertain saved result
+  without saving again. `draft-inspect` reads only its journalled owned composer;
+  `draft-discard` requires the returned `compose_hash` and closes that unchanged
+  composer only after client save/send has stopped. It never deletes saved mail.
+  The original write grant remains blocked after abandonment. Reconcile any saved
+  copies and transport evidence before considering a fresh recovery grant.
+  Automatic draft saving is paused in harness-owned composers to prevent a failed
+  preflight from silently saving later. Manual user edits invalidate approval.
+- `duplicates` scans bounded Sent/Drafts and sender-scoped local Outbox, comparing
+  subjects without case/reply-prefix differences, exact normalised bodies and
+  recipient overlap. Incomplete scans block normal submission. This diagnoses
+  possible duplicates; it never removes arbitrary queued messages or flushes them.
+- `contacts` searches explicitly bound client books, optionally adding that account's
+  recent sent-recipient cache. It does not supply the university/global directory
+  or synchronise missing contacts. `stores` and `session` expose client/account state.
+- `read` supports `download_attachments`, `download_large_attachments`, `case_id`,
+  `force_refresh` and `content_hash`. Binary transfers are chunked below native-frame
+  limits and verified by size/SHA-256; downloads remain in private storage. Individual
+  files are limited to 100 MiB; files above 10 MiB need explicit large-file opt-in.
+  Case attachments use the shared disposable cache. HTML-only Exchange bodies use
+  Thunderbird's parser. Search and recent previews include readable bodies and names.
 - `move` takes an exact one-off scope with `operation: move-message`, `mailbox`,
   `source_folder_id`, `entry_id`, `destination_folder_id`, `internet_message_id`.
   The adapter checks the configured account, moves once, verifies source absence
@@ -110,7 +151,10 @@ screenshots or provider connector are used to execute these commands.
   the receipt reports `read_state_preserved: false` and leaves existing Trash
   flags unchanged. Ordinary filing still requires preserved read state.
   `move-reconcile` and `trash-reconcile` use the original `approval_id` for read-only
-  outcome checks after an uncertain result; they never repeat the mutation.
+  outcome checks after an uncertain result; they never repeat the mutation. These
+  checks refresh the exact source and destination first, because IMAP can finish
+  the move before Thunderbird updates its destination cache. A failed initial
+  readback gets this same bounded read-only reconciliation automatically.
 - `calendar` reads a bounded window with recurrence expansion and all-day dates;
   `calendar-read` takes `event_id`. Calendar writes take `approval_id` with an
   exact scope: `operation: calendar-create|calendar-update|calendar-delete`,
@@ -125,11 +169,14 @@ screenshots or provider connector are used to execute these commands.
   do not create a fresh approval to blindly retry a timed-out mutation.
 
 Calendar results describe the client's calendar, with `server_verified: false`.
-Local readback does not prove remote sync. Standard mail APIs also provide no
-server-sync completion proof: `freshness` reports unknown, and collected runs
-remain partial rather than claiming current provider coverage. Attachment file
-export, outgoing attachments, draft save/update, contacts and duplicate cleanup remain
-unimplemented and are not advertised as commands.
+Local readback does not prove remote sync. `refresh` uses the IMAP provider's completion callbacks for bound Inbox/Sent/Drafts/Trash.
+A timeout or callback error returns partial coverage. `freshness` requires a successful
+Inbox callback and two stable, recent samples; otherwise it reports unknown. A local
+watermark alone does not certify sync. Calendar provider sync remains unverified.
+Windows-specific COM restart and destructive stuck-Outbox requeue/repair are not
+ported: Thunderbird diagnoses/reconciles uncertain transport without blindly
+resending. Calendar invitation responses and individual recurrence exceptions
+remain unsupported; KCL calendar connectivity is outside this mail work.
 
 ## Infrequent maintenance
 

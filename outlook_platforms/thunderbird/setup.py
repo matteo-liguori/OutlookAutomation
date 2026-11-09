@@ -17,13 +17,16 @@ def prepare(*, calendar=False, manifest_dir=None, replace_host_path=None):
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     addon = Path(__file__).with_name('addon')
     manifest = json.loads((addon / 'manifest.json').read_text())
-    files = ['background.js']
+    files = ['mail.js','background.js','client-schema.json','client-api.js']
+    manifest['description']='Local mail harness bridge. Draft editing and sync use a privileged Experiment API.'
+    manifest['experiment_apis']={'harnessMail':{'schema':'client-schema.json','parent':{
+        'scopes':['addon_parent'],'paths':[['harnessMail']],'script':'client-api.js'}}}
     if calendar:
         manifest['name'] += ' and Calendar'
         manifest['description'] = 'Local mail and calendar harness bridge. Calendar access uses a privileged Experiment API.'
-        manifest['experiment_apis'] = {'harnessCalendar': {
+        manifest['experiment_apis']['harnessCalendar'] = {
             'schema': 'calendar-schema.json', 'parent': {
-                'scopes': ['addon_parent'], 'paths': [['harnessCalendar']], 'script': 'calendar-api.js'}}}
+                'scopes': ['addon_parent'], 'paths': [['harnessCalendar']], 'script': 'calendar-api.js'}}
         files += ['calendar-schema.json', 'calendar-api.js']
     package = root / (('bridge-calendar-' if calendar else 'bridge-mail-')+manifest['version']+'.xpi')
     with zipfile.ZipFile(package, 'w', zipfile.ZIP_DEFLATED) as archive:
@@ -51,7 +54,7 @@ def prepare(*, calendar=False, manifest_dir=None, replace_host_path=None):
             import uuid
             (root/('previous-native-host-'+uuid.uuid4().hex+'.json')).write_text(json.dumps(old,indent=2)+'\n')
     target.write_text(json.dumps(registration,indent=2)+'\n');target.chmod(0o600)
-    return dict(package=str(package),native_manifest=str(target),calendar_experiment=calendar,
+    return dict(package=str(package),native_manifest=str(target),calendar_experiment=calendar,client_mail_experiment=True,
                 instruction='Install the XPI through Thunderbird Add-ons Manager once; keep Thunderbird running for commands.')
 
 

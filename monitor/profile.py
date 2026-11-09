@@ -20,11 +20,15 @@ def platform_settings(value):
     if not isinstance(bindings,dict) or set(bindings)-set(value['mail'])-set(value['calendars']):
         raise ValueError('Platform bindings must name configured sources')
     for binding in bindings.values():
-        if not isinstance(binding,dict) or set(binding)-{'backend','account_id','selected_inbox_id','calendar_id','draft_folder_id','sent_folder_id','trash_folder_id','mail_source'}:
+        if not isinstance(binding,dict) or set(binding)-{'backend','account_id','selected_inbox_id','calendar_id','draft_folder_id','sent_folder_id','trash_folder_id','mail_source','address_book_ids'}:
             raise ValueError('Unknown platform binding field')
         selected=binding.get('backend',config['outlook_backend'])
         if selected not in ({'native','thunderbird'} if config['os']=='macos' else {'com'}):
             raise ValueError('Invalid source backend for this platform')
+        if 'address_book_ids' in binding:
+            books=binding['address_book_ids']
+            if selected!='thunderbird' or not isinstance(books,list) or any(not isinstance(v,str) or not v for v in books) or len(books)!=len(set(books)):
+                raise ValueError('Thunderbird address_book_ids must be a list of unique verified IDs')
         for key in ('selected_inbox_id','calendar_id','draft_folder_id','sent_folder_id','trash_folder_id','account_id'):
             if key not in binding:continue
             if selected=='thunderbird':

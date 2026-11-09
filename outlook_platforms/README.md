@@ -36,7 +36,10 @@ The SQLite harness in `monitor/` is shared. Platform-specific access has three p
 Mac Outlook, and [Mac Thunderbird](thunderbird/README.md). The Thunderbird guide
 covers one-off setup, per-source client selection, exact mail/calendar write
 contracts and live validation. Its normal operations use the same harness entry
-point. The table below describes the retained native Mac Outlook modules:
+point. Its core mail commands now include attachments, case caching, approved drafts,
+replies/priority, contacts, duplicates, provider refresh and read-only transport
+reconciliation; see the Thunderbird guide for verified coverage and limits.
+The table below describes the retained native Mac Outlook modules:
 
 | Mac module | Role |
 | --- | --- |
