@@ -37,6 +37,13 @@ def evidence_index(h, ids, previous=()):
 def prepare(h, case, prior, at):
     """Maintain one current row, without creating a diary or scheduling new actions."""
     prior=prior or {}
+    case.pop('user_note_instruction', None)
+    # Only the narrow user-input/acknowledgement operations own this inbox.
+    # Agent replacements (including stale copies) cannot clear or invent notes.
+    if 'user_notes' in prior:case['user_notes'] = prior['user_notes']
+    else:case.pop('user_notes', None)
+    if case.get('status') == 'closed' and case.get('user_notes'):
+        raise ValueError('Handle and acknowledge pending user notes before closing or merging this card')
     # Operational acknowledgements are written by run finalization, not card input.
     for key in ('last_quiet_revision','last_quiet_at'):
         if key in prior:case[key]=prior[key]
@@ -71,6 +78,9 @@ def prepare(h, case, prior, at):
 
 def show(h,cid):
     c=h.case(cid)
+    if c.get('user_notes'):
+        from .card_input import NOTE_INSTRUCTION
+        c['user_note_instruction'] = NOTE_INSTRUCTION
     c.pop('evidence_ids',None)
     marker=h.db.execute('SELECT revision FROM reported_cases WHERE case_id=?',(cid,)).fetchone()
     c['last_reported_revision']=marker[0] if marker else None

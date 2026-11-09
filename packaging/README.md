@@ -83,4 +83,5 @@ Commercial uses outside its permissions require agreement with the repository ow
 
 Optional visual viewer: install `requirements-ui.lock` using the project Python,
 then run `monitor.ps1 ui`. The local browser shows current cards and action dates;
-click for detail. It is read-only and does not scan Outlook. Ctrl+C stops it.
+click for detail, edit the name/recognition/goal or leave a note for the next agent
+pass. Notes stay pending until handled. It does not scan Outlook. Ctrl+C stops it.

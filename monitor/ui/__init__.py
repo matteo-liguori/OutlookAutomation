@@ -10,22 +10,27 @@ def create_app(database, token=None):
     from ..viewer import overview, detail
     database = Path(database).resolve()
     app = Flask(__name__)
-    app.config.update(TRUSTED_HOSTS=['127.0.0.1', 'localhost'], MAX_CONTENT_LENGTH=1024,
+    app.config.update(TRUSTED_HOSTS=['127.0.0.1', 'localhost'], MAX_CONTENT_LENGTH=16384,
                       VIEWER_TOKEN=token or secrets.token_urlsafe(32))
 
     @app.before_request
     def authenticate():
-        if request.method not in {'GET', 'HEAD'}:
+        if request.method not in {'GET', 'HEAD', 'POST'}:
             abort(405)
         if request.endpoint == 'static':
             return
         supplied = request.headers.get('X-Viewer-Token', '')
         if request.endpoint == 'index':
             return  # The shell contains no records; the token stays in the URL fragment.
-        if not secrets.compare_digest(supplied, app.config['VIEWER_TOKEN']):
+        if not secrets.compare_digest(supplied.encode(), app.config['VIEWER_TOKEN'].encode()):
             abort(401)
         if request.headers.get('Sec-Fetch-Site') not in {None, 'same-origin', 'none'}:
             abort(403)
+        if request.method == 'POST':
+            if request.headers.get('Origin') != request.host_url.rstrip('/'):
+                abort(403)
+            if not request.is_json:
+                abort(415)
 
     @app.after_request
     def private_response(response):
@@ -49,6 +54,20 @@ def create_app(database, token=None):
         except ValueError as error:
             return jsonify(error=str(error)), 404
 
+    @app.post('/api/card/<path:case_id>/edit')
+    def edit(case_id):
+        from ..core import Harness
+        from ..card_input import apply
+        payload = request.get_json()
+        if not isinstance(payload, dict) or payload.get('id') != case_id:
+            raise ValueError('Card ID must match the request')
+        h = Harness(database)
+        try:
+            result = apply(h, payload)
+        finally:
+            h.close()
+        return jsonify(result)
+
     @app.errorhandler(sqlite3.Error)
     def database_error(error):
         return jsonify(error='Records are temporarily unavailable. Retry or check the configured database.'), 503
@@ -70,7 +89,7 @@ def serve(database, port=0, open_browser=True):
         raise ValueError('Install the optional viewer with your project Python: -m pip install -r requirements-ui.lock') from None
     server = create_server(app, host='127.0.0.1', port=port, threads=4)
     url = f"http://127.0.0.1:{server.effective_port}/#token={app.config['VIEWER_TOKEN']}"
-    print('Current threads viewer (read-only): ' + url, flush=True)
+    print('Current threads workspace: ' + url, flush=True)
     print('Keep this process running while using the viewer; Ctrl+C stops it.', flush=True)
     if open_browser:
         webbrowser.open(url)

@@ -88,6 +88,7 @@ def overview(path, at=None):
                 card = dict(id=cid, title=case['title'], purpose=case.get('purpose') or case['title'],
                             position=case['position'], revision=case['revision'], colour=colour(cid),
                             updated_at=case['updated_at'], review_due_at=reviews.get(cid),
+                            pending_notes=len(case.get('user_notes', [])),
                             actions=[action_view(a, at) for a in actions])
                 cards.append(card)
                 for action in actions:
@@ -117,6 +118,7 @@ def detail(path, case_id):
             result = {k: case[k] for k in fields if case.get(k) is not None}
             at = stamp(now())
             result.update(colour=colour(case_id), actions=[action_view(a, at) for a in case['actions'] if a['status'] in OPEN],
+                          user_notes=case.get('user_notes', []),
                           decisions=[d.get('text', '') for d in case['decisions']],
                           evidence=[{k: e.get(k) for k in ('id', 'at', 'label')} for e in case.get('evidence_index', [])])
             return result

@@ -9,7 +9,7 @@
   <script src="/static/viewer.js" defer></script>
 </head>
 <body>
-  <header class="masthead"><div class="brand"><span class="mark" aria-hidden="true">O</span><div>Outlook Automation<span class="eyebrow">YOUR CURRENT WORK</span></div></div><span class="readonly">Read-only view</span></header>
+  <header class="masthead"><div class="brand"><span class="mark" aria-hidden="true">O</span><div>Outlook Automation<span class="eyebrow">YOUR CURRENT WORK</span></div></div><span class="readonly">Local workspace</span></header>
   <main>
     <div class="heading"><div><h1>Open threads</h1><p class="subtitle">Current conversations, next steps and the dates that matter.</p></div><button id="refresh" class="quiet">Refresh</button></div>
     <div class="toolbar">
@@ -20,7 +20,7 @@
     <div class="view-meta"><p id="count">Loading current records…</p><p id="freshness" role="status"></p></div>
     <p id="error" class="error" role="alert" hidden></p>
     <section id="content" aria-label="Current work"></section>
-    <footer>Current records, not a history. Opening a card does not mark it reviewed. <span>Dates shown in Europe/London.</span></footer>
+    <footer>Opening or editing labels does not mark a card reviewed. Notes stay pending until handled. <span>Dates shown in Europe/London.</span></footer>
   </main>
   <dialog id="detail" aria-labelledby="detail-title">
     <header class="detail-header"><div><p id="detail-id" class="eyebrow"></p><h2 id="detail-title">Thread details</h2></div><button id="close-detail" class="quiet" aria-label="Close thread details">Close ×</button></header>

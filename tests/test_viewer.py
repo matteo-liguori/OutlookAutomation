@@ -132,7 +132,7 @@ class ViewerTests(unittest.TestCase):
         self.assertEqual(client.get('/api/cards?token=fixture-token').status_code,401)
         self.assertEqual(client.get('/api/cards',headers=dict(headers,Host='malicious.invalid')).status_code,400)
         self.assertEqual(client.get('/api/cards',headers=dict(headers,**{'Sec-Fetch-Site':'cross-site'})).status_code,403)
-        self.assertEqual(client.post('/api/cards',headers=headers,json={}).status_code,405)
+        self.assertEqual(client.post('/api/cards',headers=dict(headers,Origin='http://localhost'),json={}).status_code,405)
         result=client.get('/api/cards',headers=headers)
         self.assertEqual(result.status_code,200)
         self.assertEqual(result.headers['Cache-Control'],'no-store')

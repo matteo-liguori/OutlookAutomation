@@ -14,7 +14,7 @@ def parser():
     p.add_argument("--cursor")
     p.add_argument("--limit", type=int, default=50)
     sub = p.add_subparsers(dest="command", required=True)
-    ui = sub.add_parser('ui', help='Open the local read-only card grid and action timeline')
+    ui = sub.add_parser('ui', help='Open the local card grid, action timeline and card editor')
     ui.add_argument('--port', type=int, default=0, help='Local port; default selects a free port')
     ui.add_argument('--no-browser', action='store_true')
     sub.add_parser("init")
@@ -83,6 +83,8 @@ def parser():
     search = case.add_parser("search")
     search.add_argument("query")
     case.add_parser("update").add_argument("--input", required=True)
+    for operation in ('edit', 'note-ack'):
+        case.add_parser(operation).add_argument('--input', required=True)
     for name in ["merge", "split"]:
         case.add_parser(name).add_argument("--input", required=True)
     action = sub.add_parser("action").add_subparsers(dest="operation", required=True)

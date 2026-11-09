@@ -607,3 +607,67 @@ dialog::backdrop {
     transition:none!important
   }
 }
+
+.editor-panel {
+  margin-top: 1.4rem;
+  padding: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--bg);
+}
+.editor-panel > summary {
+  cursor: pointer;
+  font-weight: 600;
+  font-size: .9rem;
+}
+.card-editor {
+  display: grid;
+  gap: .9rem;
+  padding-top: 1rem;
+}
+.editor-label {
+  display: grid;
+  gap: .4rem;
+  font-size: .85rem;
+  font-weight: 600;
+}
+.editor-label input, .editor-label textarea {
+  width: 100%;
+  padding: .7rem .8rem;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  font: inherit;
+  font-weight: 400;
+  color: var(--ink);
+  background: var(--panel);
+}
+.editor-label textarea {
+  resize: vertical;
+  min-height: 5rem;
+  line-height: 1.5;
+}
+.editor-controls {
+  display: flex;
+  gap: .6rem;
+  flex-wrap: wrap;
+}
+button.primary {
+  background: var(--selected);
+  color: var(--selected-ink);
+}
+button:disabled {
+  opacity: .5;
+  cursor: default;
+}
+.editor-status {
+  font-size: .83rem;
+  min-height: 1.4em;
+  overflow-wrap: anywhere;
+}
+.pending-note {
+  border-left: 3px solid var(--muted);
+  padding: .8rem 1rem;
+  background: var(--soft);
+  border-radius: 0 7px 7px 0;
+  margin-top: .6rem;
+}
