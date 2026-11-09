@@ -16,7 +16,8 @@ account/platform details with `help accounts` and `outlook status`. SQLite is cu
 
 Match reads to the configured user's verified account, especially on borrowed
 computers. Use `python -m monitor outlook <operation>` and `help outlook`. The private
-profile selects the native backend and its verified bindings.
+profile selects Outlook or Thunderbird independently for each source and records
+its verified bindings. See `outlook_platforms/thunderbird/README.md` for Thunderbird setup.
 Verify the account, source
 coverage and relevant full messages before reconciling tasks. State partial
 coverage clearly. Keep private records in the configured data directory and use thread caches for mail.

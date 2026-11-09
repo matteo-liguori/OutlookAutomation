@@ -4,10 +4,10 @@ import json
 import platform
 from datetime import datetime
 from pathlib import Path
-from monitor.profile import PROFILE, DEFAULT_PROVIDERS, platform_settings
+from monitor.profile import PROFILE, DEFAULT_PROVIDERS, platform_settings, source_backend
 
 OPERATIONS = ('status','probe','discover','accounts','stores','folders','recent','search',
-              'read','collect','calendar','calendars','refresh','freshness','session','contacts','duplicates','draft-save','draft-update','send','move')
+              'read','collect','calendar','calendars','calendar-read','calendar-create','calendar-update','calendar-delete','refresh','freshness','session','contacts','duplicates','draft-save','draft-update','send','move','move-reconcile','trash','trash-reconcile')
 MAC_FIELDS = {
     'probe':['check_permission','app_path'], 'discover':['source'], 'accounts':['source'],
     'folders':['source'],
@@ -24,7 +24,7 @@ MAC_FIELDS = {
 }
 
 
-def status(profile=PROFILE,details=False):
+def _outlook_status(profile=PROFILE,details=False):
     config=platform_settings(profile)
     host={'Windows':'windows','Darwin':'macos'}.get(platform.system(),platform.system().lower())
     from .windows.commands import JSON_HELPERS
@@ -63,6 +63,35 @@ def status(profile=PROFILE,details=False):
                 known_limits=({'move':'Native Gmail move failed its live verification; do not treat filing as working.',
                                'send':'Submission is not delivery; native automatic flushing remains unverified.'} if config['os']=='macos' else {}),
                 instruction='Use help outlook for payloads and capability limits. A listed operation does not grant permission.')
+
+
+def status(profile=PROFILE,details=False):
+    info=_outlook_status(profile,details=True)
+    config=platform_settings(profile)
+    if config['os']!='macos':return info if details else {k:info[k] for k in ('operations','payload_fields','sources','ready')}
+    from .thunderbird.commands import FIELDS
+    sources={op:[s for s in values if source_backend(profile,s)!='thunderbird'] for op,values in info['sources'].items()}
+    fields={op:keys for op,keys in info['payload_fields'].items() if sources.get(op)}
+    for op,keys in FIELDS.items():
+        candidates=profile['calendars'] if op.startswith('calendar') else profile['mail']
+        for source in candidates:
+            if not info['host_matches'] or source_backend(profile,source)!='thunderbird':continue
+            binding=config.get('bindings',{}).get(source,{})
+            required=['calendar_id'] if op.startswith('calendar') else [] if op=='discover' else ['account_id','selected_inbox_id']
+            if op in {'send','draft-save'}:required.append('sent_folder_id' if op=='send' else 'draft_folder_id')
+            if op in {'trash','trash-reconcile'}:required.append('trash_folder_id')
+            if all(binding.get(key) for key in required):
+                sources.setdefault(op,[]).append(source)
+                fields[op]=sorted(set(fields.get(op,[]))|set(keys))
+    operations=sorted(op for op,values in sources.items() if values)
+    info.update(operations=operations,sources={op:sources[op] for op in operations},payload_fields={op:fields[op] for op in operations},
+                backend_operations=sorted(set(info['backend_operations'])|set(FIELDS)),
+                source_backends={source:source_backend(profile,source) for source in [*profile['mail'],*profile['calendars']]})
+    if 'thunderbird' in info['source_backends'].values():
+        for key in ('move','send'):
+            if key in info['known_limits']:info['known_limits']['mac_outlook_'+key]=info['known_limits'].pop(key)
+        info['known_limits']['thunderbird']='Thunderbird must be running. Calendar needs the optional Experiment build. Client readback does not prove provider sync. Attachments and invitation responses are not yet implemented.'
+    return info if details else {k:info[k] for k in ('operations','payload_fields','sources','ready')}
 
 
 def available_operations(profile=PROFILE):
@@ -120,10 +149,10 @@ def invoke(operation,payload=None,h=None,profile=PROFILE):
         raise ValueError('Unsupported '+operation+' field: '+', '.join(sorted(set(payload)-set(info['payload_fields'][operation]))))
     config=platform_settings(profile)
     source=payload.pop('source',None)
-    if operation in {'calendar','calendars'}:
+    if operation.startswith('calendar'):
         source=source or profile.get('roles',{}).get('work_calendar','calendar:work')
         providers={**DEFAULT_PROVIDERS,**profile.get('calendar_providers',{})}
-        if source not in profile['calendars'] or providers.get(source)!='outlook':
+        if source not in profile['calendars'] or (providers.get(source)!='outlook' and source_backend(profile,source)!='thunderbird'):
             raise ValueError('Select an enabled Outlook calendar source')
         if info['platform']=='windows' and source!=profile.get('roles',{}).get('work_calendar','calendar:work'):
             raise ValueError('Windows calendar helper currently implements only the configured work calendar')
@@ -135,6 +164,10 @@ def invoke(operation,payload=None,h=None,profile=PROFILE):
     if mail_source not in profile['mail']:raise ValueError('Select a configured mailbox source')
     if (source or mail_source) not in info['sources'][operation]:raise ValueError('This source needs setup for the requested operation')
     store=profile['mail'][mail_source]
+    selected_backend=source_backend(profile,source or mail_source)
+    if selected_backend=='thunderbird':
+        from .thunderbird.commands import FIELDS
+        if set(payload)-set(FIELDS[operation]):raise ValueError('Unsupported Thunderbird field')
     # No arbitrary executable paths or account overrides arrive from request data.
     if operation in {'send','draft-save','draft-update'}:
         if h and payload.get('approval_id'):
@@ -151,6 +184,9 @@ def invoke(operation,payload=None,h=None,profile=PROFILE):
         if info['platform']=='windows':
             from .windows.commands import execute_json
             return execute_json(op,values,store,h)
+        if selected_backend=='thunderbird':
+            from .thunderbird.commands import execute_json
+            return execute_json(op,values,store,h,source or mail_source,profile=profile)
         if op in {'probe','discover'}:return mac_invoke(op,values,store)
         from .macos.commands import execute_json
         return execute_json(op,values,store,h,source or mail_source,profile=profile)

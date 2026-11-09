@@ -99,7 +99,8 @@ class PackagingTests(unittest.TestCase):
             with zipfile.ZipFile(target) as archive:
                 readme = archive.read("OutlookAutomation/README.md").decode()
                 agents = archive.read("OutlookAutomation/AGENTS.md").decode()
-                self.assertIn("macOS Apple-event adapters", readme)
+                self.assertIn("Mac Outlook Apple-event", readme)
+                self.assertIn("Thunderbird adapters", readme)
                 self.assertIn("python3 setup_outlook.py --smoke-test", readme)
                 self.assertIn("mac_outlook.py probe", readme)
                 self.assertIn("Mac pilot", agents)
@@ -110,7 +111,10 @@ class PackagingTests(unittest.TestCase):
                              'outlook_platforms/macos/calendar.py', 'outlook_platforms/macos/attachments.py',
                              'outlook_platforms/macos/freshness.py', 'tests/test_mac_operations.py',
                              'tests/test_mac_collector.py', 'tests/test_mac_calendar.py', 'tests/test_mac_freshness.py',
-                             'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py', 'tests/test_mac_test_actions.py', 'tests/test_platform_commands.py'):
+                             'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py', 'tests/test_mac_test_actions.py', 'tests/test_platform_commands.py',
+                             'outlook_platforms/thunderbird/commands.py', 'outlook_platforms/thunderbird/native_host.py',
+                             'outlook_platforms/thunderbird/addon/calendar-api.js', 'outlook_platforms/thunderbird/README.md',
+                             'tests/test_thunderbird.py', 'tests/Test-ThunderbirdBridge.js'):
                     self.assertIn('OutlookAutomation/' + name, archive.namelist())
 
     def test_optional_calendar_sources_define_coverage(self):

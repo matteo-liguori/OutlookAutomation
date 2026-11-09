@@ -94,6 +94,8 @@ def handle_briefing(h, args, payload, kind):
         items=relevant(h,args.task,args.case_ids,message)
         from .cards import upkeep_prompt
         selected={i['case'] for i in items if i.get('reason')=='task-relevant'}
+        from .card_input import pending
+        items=pending(h,selected)+items
         from .guidance import context_prompts
         items=context_prompts(items)+upkeep_prompt(items,getattr(h,'_query_at',None) or now(),selected,'related-evidence' if message else 'explicit-task')+items
         return h.page(kind,items,limit=args.limit)
@@ -131,6 +133,9 @@ def handle_activation(h, args, payload, kind):
 
 def handle_case(h, args, payload, kind):
     cmd, op = args.command, getattr(args, "operation", None)
+    if op in {'edit', 'note-ack'}:
+        from .card_input import apply
+        return apply(h, payload, acknowledge=op == 'note-ack')
     if op=='render':
         from .cards import render
         return render(h,args.id)

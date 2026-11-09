@@ -14,20 +14,32 @@ DEFAULT_PROVIDERS = {'calendar:work':'outlook', 'calendar:primary':'google', 'ca
 def platform_settings(value):
     default_os = 'macos' if host_platform.system() == 'Darwin' else 'windows'
     config = value.get('platform', {'os':default_os,'outlook_backend':'native' if default_os=='macos' else 'com'})
-    if not isinstance(config,dict) or (config.get('os'),config.get('outlook_backend')) not in {('windows','com'),('macos','native')}:
-        raise ValueError('Profile platform must select windows/com or macos/native')
+    if not isinstance(config,dict) or (config.get('os'),config.get('outlook_backend')) not in {('windows','com'),('macos','native'),('macos','thunderbird')}:
+        raise ValueError('Profile platform must select windows/com, macos/native or macos/thunderbird')
     bindings=config.get('bindings',{})
     if not isinstance(bindings,dict) or set(bindings)-set(value['mail'])-set(value['calendars']):
         raise ValueError('Platform bindings must name configured sources')
     for binding in bindings.values():
-        if not isinstance(binding,dict) or set(binding)-{'selected_inbox_id','calendar_id','draft_folder_id','mail_source'}:
+        if not isinstance(binding,dict) or set(binding)-{'backend','account_id','selected_inbox_id','calendar_id','draft_folder_id','sent_folder_id','trash_folder_id','mail_source'}:
             raise ValueError('Unknown platform binding field')
-        for key in ('selected_inbox_id','calendar_id','draft_folder_id'):
-            if key in binding and not re.fullmatch(r'[0-9]+',str(binding[key])):
+        selected=binding.get('backend',config['outlook_backend'])
+        if selected not in ({'native','thunderbird'} if config['os']=='macos' else {'com'}):
+            raise ValueError('Invalid source backend for this platform')
+        for key in ('selected_inbox_id','calendar_id','draft_folder_id','sent_folder_id','trash_folder_id','account_id'):
+            if key not in binding:continue
+            if selected=='thunderbird':
+                if not isinstance(binding[key],str) or not binding[key].strip() or any(c in binding[key] for c in '\r\n\x00'):
+                    raise ValueError('Thunderbird binding IDs must be nonempty strings')
+            elif key in {'account_id','sent_folder_id','trash_folder_id'} or not re.fullmatch(r'[0-9]+',str(binding[key])):
                 raise ValueError('Native binding IDs must be numeric')
         if 'mail_source' in binding and binding['mail_source'] not in value['mail']:
             raise ValueError('Calendar binding must use a configured mailbox')
     return config
+
+
+def source_backend(value,source):
+    config=platform_settings(value)
+    return config.get('bindings',{}).get(source,{}).get('backend',config['outlook_backend'])
 
 
 def native_bindings(value,mailbox,source=None):

@@ -14,7 +14,7 @@ try {
         foreach($key in @('Since','Until')){if($parameters.ContainsKey($key)){$parameters[$key]=[datetimeoffset]$parameters[$key]}}
     }
     if($request.helper -eq 'Read-OutlookMonitorCalendar.ps1'){
-        foreach($key in @('Start','End')){if($parameters.ContainsKey($key)){$parameters[$key]=[datetimeoffset]::Parse($parameters[$key]).LocalDateTime}}
+        foreach($key in @('Start','End')){if($parameters.ContainsKey($key)){$parameters[$key]=([datetimeoffset]$parameters[$key]).LocalDateTime}}
     }
     # Missing required arguments fail instead of opening an unattended prompt.
     $helper=Join-Path $root $request.helper

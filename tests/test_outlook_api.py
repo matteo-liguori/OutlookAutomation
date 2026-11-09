@@ -194,3 +194,7 @@ class OutlookApiTests(unittest.TestCase):
             (root/'Read-OutlookMail.ps1').write_text("param()\n'[]'",encoding='utf-8')
             out=subprocess.run(command,input=json.dumps(dict(helper='Read-OutlookMail.ps1',parameters={})),text=True,encoding='utf-8-sig',capture_output=True,timeout=15)
             self.assertEqual(json.loads(out.stdout),[])
+            (root/'Read-OutlookMonitorCalendar.ps1').write_text("param([datetime]$Start,[datetime]$End)\n@{start=$Start.ToUniversalTime().ToString('o');end=$End.ToUniversalTime().ToString('o')}|ConvertTo-Json",encoding='utf-8')
+            out=subprocess.run(command,input=json.dumps(dict(helper='Read-OutlookMonitorCalendar.ps1',parameters=dict(Start='2026-10-23T00:00:00+01:00',End='2026-10-31T00:00:00Z'))),text=True,encoding='utf-8-sig',capture_output=True,timeout=15)
+            self.assertEqual(out.returncode,0,out.stderr)
+            self.assertTrue(json.loads(out.stdout)['start'].startswith('2026-10-22T23:00:00'))

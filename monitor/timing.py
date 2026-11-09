@@ -1,6 +1,7 @@
 """Read-only London scheduling plans and recurrence readback verification."""
 
 from datetime import date, datetime, time, timedelta, timezone
+import re
 from .model import LONDON, now, stamp
 
 
@@ -24,27 +25,40 @@ def london_instant(day, clock, fold=None):
 
 
 def recurrence_instants(rrule, at):
-    text = rrule.removeprefix("RRULE:")
-    fields = dict(part.split("=", 1) for part in text.split(";"))
-    if set(fields) != {"FREQ", "COUNT", "BYHOUR", "BYMINUTE"} or fields["FREQ"] != "DAILY":
+    lines = rrule.strip().splitlines()
+    anchor = None
+    if len(lines) == 2 and re.fullmatch(r'DTSTART:\d{8}T\d{6}Z', lines[0]):
+        anchor = datetime.strptime(lines[0], 'DTSTART:%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc)
+        if not lines[1].startswith('RRULE:'):raise ValueError('Expected RRULE after UTC DTSTART')
+        text = lines[1][6:]
+    elif len(lines) == 1:
+        text = lines[0].removeprefix('RRULE:')
+    else:raise ValueError('Use a single bounded UTC DTSTART/RRULE pair')
+    parts = [part.split('=', 1) for part in text.split(';')]
+    if any(len(part) != 2 for part in parts) or len({p[0] for p in parts}) != len(parts):
+        raise ValueError('Invalid or duplicate recurrence fields')
+    fields = dict(parts)
+    allowed = {'FREQ', 'COUNT', 'BYHOUR', 'BYMINUTE'}
+    required = {'FREQ', 'COUNT'} if anchor else allowed
+    if not required <= fields.keys() or fields.keys() - allowed or fields['FREQ'] != 'DAILY':
         raise ValueError("Unsupported recurrence; provide exact one-shot daily rule")
     count = int(fields["COUNT"])
-    hours = sorted(set(map(int, fields["BYHOUR"].split(","))))
-    minutes = sorted(set(map(int, fields["BYMINUTE"].split(","))))
+    hours = sorted(set(map(int, fields.get('BYHOUR', str(anchor.hour) if anchor else '').split(','))))
+    minutes = sorted(set(map(int, fields.get('BYMINUTE', str(anchor.minute) if anchor else '').split(','))))
     if (
         not 1 <= count <= 8
         or any(not 0 <= h <= 23 for h in hours)
         or any(not 0 <= m <= 59 for m in minutes)
     ):
         raise ValueError("Invalid bounded recurrence")
-    current = datetime.fromisoformat(stamp(at))
+    current = anchor or datetime.fromisoformat(stamp(at))
     result = []
     for offset in range(9):
         day = current.date() + timedelta(days=offset)
         for h in hours:
             for m in minutes:
-                point = datetime.combine(day, time(h, m), timezone.utc)
-                if point > current:
+                point = datetime.combine(day, time(h, m, anchor.second if anchor else 0), timezone.utc)
+                if (anchor and point >= anchor) or (not anchor and point > current):
                     result.append(point)
         if len(result) >= count:
             return sorted(result)[:count]
@@ -71,6 +85,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
             eligible=[],
             expired=clocks,
             rrule=None,
+            one_shot_rules=[],
             reason="Continuation date is not today in London; no substitute created.",
         )
     if target < local_now.date():
@@ -87,7 +102,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
         intended = [datetime.fromisoformat(p["utc"]) for p in eligible]
         hours = ",".join(map(str, sorted({p.hour for p in intended})))
         minutes = ",".join(map(str, sorted({p.minute for p in intended})))
-        candidate = f"FREQ=DAILY;COUNT={len(intended)};BYHOUR={hours};BYMINUTE={minutes}"
+        candidate = intended[0].strftime('DTSTART:%Y%m%dT%H%M%SZ') + f"\nRRULE:FREQ=DAILY;COUNT={len(intended)};BYHOUR={hours};BYMINUTE={minutes}"
         if recurrence_instants(candidate, current.isoformat()) == intended:
             rule = candidate
     return dict(
@@ -97,10 +112,11 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
         eligible=eligible,
         expired=expired,
         rrule=rule,
+        one_shot_rules=[datetime.fromisoformat(p['utc']).strftime('DTSTART:%Y%m%dT%H%M%SZ')+'\nRRULE:FREQ=DAILY;COUNT=1' for p in eligible],
         reason=(
             "Validated future instants only; no automation was created."
             if rule or not eligible
-            else "Exact instants require explicit-date scheduling; a daily recurrence would fire on the wrong date or at extra times."
+            else "Use one_shot_rules for these individual instants; one combined rule would add unwanted times."
         ),
     )
 
@@ -124,8 +140,16 @@ def verify(payload):
         raise ValueError(
             "Schedule readback does not match the intended London instants; do not claim it is verified"
         )
-    return {
+    result = {
         "verified": True,
         "london_date": expected["london_date"],
         "utc_instants": [p.isoformat() for p in actual],
     }
+    if payload.get('triggered_at'):
+        trigger = datetime.fromisoformat(stamp(payload['triggered_at']))
+        intended = min(actual, key=lambda p: abs((trigger-p).total_seconds()))
+        delay = (trigger-intended).total_seconds()
+        if delay < 0:raise ValueError(f'Trigger fired {-delay:g} seconds before its intended instant')
+        result['trigger_check'] = dict(scheduled_for=intended.isoformat(), triggered_at=trigger.isoformat(),
+                                       delay_seconds=delay, status='on-time' if delay<=300 else 'late')
+    return result

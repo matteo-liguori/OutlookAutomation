@@ -5,8 +5,8 @@ Normal entry point: `python -m monitor outlook <operation>` in the project envir
 is used wherever a capability is enabled. `outlook status` and `help outlook` expose
 only usable commands. Missing/known-broken operations are absent from CLI choices.
 `collect` handles preparation, freshness and optional all-page run ingestion internally;
-the agent does not choose a refresh method or backend helper. Folder names `inbox`,
-`sent`, `drafts` and `trash` are logical names resolved by the adapters.
+the agent does not choose a refresh method or backend helper. Native Outlook resolves logical folder names. Thunderbird uses the exact folder
+IDs from its verified private bindings.
 
 Installation details are diagnostic-only: `outlook status --details`.
 
@@ -32,8 +32,11 @@ are added to the adapter registry. Coverage metadata is returned alongside data.
 The commands below are compatibility/backend contracts, not a second required
 interface for the agent.
 
-The SQLite harness in `monitor/` is shared. Platform-specific access lives in two
-parallel adapter paths:
+The SQLite harness in `monitor/` is shared. Platform-specific access has three paths: Windows Outlook COM, retained native
+Mac Outlook, and [Mac Thunderbird](thunderbird/README.md). The Thunderbird guide
+covers one-off setup, per-source client selection, exact mail/calendar write
+contracts and live validation. Its normal operations use the same harness entry
+point. The table below describes the retained native Mac Outlook modules:
 
 | Mac module | Role |
 | --- | --- |

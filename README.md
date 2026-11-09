@@ -64,6 +64,25 @@ macOS:
 
 These commands show which Outlook operations are available on your installation.
 
+### Visual view
+
+Install the optional viewer in the same project environment:
+
+```sh
+python -m pip install -r requirements-ui.lock
+python -m monitor ui
+```
+
+Use `.venv/bin/python` on Mac or `.venv\Scripts\python.exe` on Windows for
+`python` above; `monitor.ps1 ui` also launches it on Windows.
+The local browser view shows a card grid and a linked action timeline, with
+consistent card colours, search and filters. Click a card or action for details.
+It reads current SQLite records without scanning Outlook. Open a card to edit its
+name or recognition/goal, or leave a note for the agent. Notes appear in the next
+briefing and stay pending until handled. Label edits preserve task/review clocks;
+conflicting edits keep your text for review. Keep the process running while using it;
+Ctrl+C stops it. Private data stays in its configured location.
+
 You can also point your coding assistant to [AGENTS.md](AGENTS.md), which explains how to use the tools and maintain the local records.
 
 I’d recommend starting with a few simple read-only operations to check that everything is working before trying drafts, sending or other changes.

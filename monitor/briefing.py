@@ -13,7 +13,8 @@ def compact(h, at):
     raw = h.current_items(briefing=True, at=at)
     work_ids = {a['id'] for c in h.all_cases(open_only=True) for a in c['actions'] if active_due(a, at)}
     due = [i for i in raw if i.get('action') in work_ids]
-    attention = []
+    from .card_input import pending
+    attention = pending(h)
     for prompt in context_prompts(raw):
         attention.append(dict(type=prompt['type'], topic=prompt['topic'],
                               instruction='Use help '+prompt['topic']+'.'))

@@ -7,6 +7,18 @@ from .profile import PROFILE
 MAIL_STORES = PROFILE["mail"]
 
 
+def calendar_cancellations(payload):
+    """Separate authoritative cancellations; a title is never cancellation proof."""
+    result = dict(payload)
+    active, cancelled = [], list(payload.get('explicit_cancellations', []))
+    for event in payload.get('events', []):
+        if event.get('meeting_status') in (5, 7) or event.get('status') == 'cancelled':
+            cancelled.append(event)
+        else:active.append(event)
+    result.update(events=active, explicit_cancellations=cancelled)
+    return result
+
+
 def validate_mail(source, pages, started_at, freshness):
     expected = MAIL_STORES[source]
     first = pages[0]

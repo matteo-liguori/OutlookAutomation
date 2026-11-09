@@ -1,7 +1,12 @@
-# Native Outlook for Mac pilot
+# Mail and calendar clients on Mac
 
-The bundle has separate Windows COM and macOS Apple-event adapters and one shared
-SQLite harness. See `outlook_platforms/README.md` for platform command contracts,
+The bundle has Windows Outlook COM, retained Mac Outlook Apple-event, and Mac
+Thunderbird adapters with one shared SQLite harness. For the Thunderbird path,
+start with [its setup guide](outlook_platforms/thunderbird/README.md) and
+[live validation](outlook_platforms/thunderbird/STATUS.md). Mail and calendar
+sources can select different Mac clients.
+
+The sections below describe the retained native Mac Outlook pilot. See `outlook_platforms/README.md` for platform command contracts,
 matching helper names, result fields and remaining capability gaps.
 
 ## Setup
@@ -90,3 +95,9 @@ current limits.
 
 Licence: PolyForm Noncommercial 1.0.0; see the included LICENSE.md.
 Commercial uses outside its permissions require agreement with the repository owner.
+
+Optional visual viewer: `.venv/bin/python -m pip install -r requirements-ui.lock`,
+then `.venv/bin/python -m monitor ui`. The local browser shows current cards and
+action dates; click for detail, edit the name/recognition/goal or leave a note for
+the next agent pass. Notes stay pending until handled. It does not scan Outlook.
+Ctrl+C stops it.
