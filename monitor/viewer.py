@@ -79,6 +79,7 @@ def email_activity(store, cases):
     """Message dates, never cache/access times or general card-edit timestamps."""
     latest = {c['id']: None for c in cases}
     def accept(cid, metadata):
+        if not isinstance(metadata, dict):return
         for field in ('Received', 'received', 'received_at', 'SentOn', 'sent_at', 'sent'):
             value = metadata.get(field)
             if not isinstance(value, str):
@@ -98,7 +99,9 @@ def email_activity(store, cases):
         rows = store.db.execute("SELECT id,metadata,CASE WHEN json_extract(metadata,'$.kind')='mail-source-reference' THEN body END AS reference FROM evidence WHERE id IN (" + ','.join('?' for _ in batch) + ')', batch)
         for row in rows:
             metadata = json.loads(row['metadata'])
-            reference = json.loads(row['reference']).get('locator', {}) if row['reference'] else {}
+            try: reference = json.loads(row['reference']) if row['reference'] else {}
+            except ValueError: reference = {}
+            reference = reference.get('locator', {}) if isinstance(reference, dict) else {}
             for cid in owners[row['id']]:
                 accept(cid, metadata)
                 accept(cid, reference)

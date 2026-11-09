@@ -122,11 +122,16 @@ class ViewerTests(unittest.TestCase):
         self.create('beta')
         evidence=self.h.put_evidence(dict(kind='mail-source-reference',source='thread-cache',case_id='alpha',
             body=json.dumps(dict(locator=dict(Received='2026-11-09 09:00:00')))))['id']
+        old_reference=self.h.put_evidence(dict(kind='mail-source-reference',source='thread-cache',case_id='beta',
+            body=json.dumps(dict(locator=['old-store','old-entry']))))['id']
         c=self.h.case('alpha')
         with self.h.write():
             raw=json.loads(self.h.db.execute("SELECT details FROM cases WHERE id='alpha'").fetchone()[0])
             raw['evidence_index'].append(dict(id=evidence,label='Email',at='2026-11-09T15:00:00Z'))
             self.h.db.execute("UPDATE cases SET details=? WHERE id='alpha'",(json.dumps(raw),))
+            raw=json.loads(self.h.db.execute("SELECT details FROM cases WHERE id='beta'").fetchone()[0])
+            raw['evidence_index'].append(dict(id=old_reference,label='Legacy email reference',at='2026-11-09T16:00:00Z'))
+            self.h.db.execute("UPDATE cases SET details=? WHERE id='beta'",(json.dumps(raw),))
         result=overview(self.path,AT)
         self.assertEqual(result['cards'][0]['id'],'alpha')
         self.assertEqual(result['cards'][0]['latest_email_at'],'2026-11-09T09:00:00+00:00')
