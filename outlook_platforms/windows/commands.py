@@ -7,7 +7,7 @@ import subprocess
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPERS = {name:name + '.ps1' for name in (
-    'Inspect-Outlook', 'Read-OutlookMail', 'Get-OutlookMessage', 'Read-OutlookMonitorCalendar')}
+    'Inspect-Outlook', 'Read-OutlookMail', 'Get-OutlookMessage', 'Read-OutlookMonitorCalendar', 'Collect-OutlookMonitor','Test-OutlookMailboxFreshness','Save-OutlookStoreDraft','Update-OutlookStoreDraft','Send-OutlookStoreMail')}
 
 
 def command_line(command, arguments, powershell):

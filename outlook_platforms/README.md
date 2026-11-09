@@ -1,58 +1,101 @@
 # Platform adapters
 
-The SQLite harness in `monitor/` is shared. Platform-specific access lives in two
-parallel adapter paths:
+The SQLite harness in `monitor/` stays shared. `outlook.py` dispatches the same
+helper names to parallel `windows/` and `macos/` adapters. Windows delegates to the
+existing PowerShell/COM helpers; Mac uses Outlook Apple events without a remote
+mail API or browser backend.
 
-| Path | Role |
+| Mac module | Role |
 | --- | --- |
-| `windows/commands.py` | Routes to the existing root PowerShell/COM helpers without changing their arguments. |
-| `macos/native.py`, `macos/native_outlook.js` | Native Outlook Apple-event transport and account/folder binding. |
-| `macos/commands.py` | Maps native results to the corresponding Windows helper field names. |
-| `macos/test_actions.py`, `macos/test_actions.js` | Explicitly authorized, token-marked calendar and self-mail lifecycle tests. |
-| `../outlook.py` | Shared command-name dispatcher, selecting the current OS by default. |
+| `native.py`, `native_outlook.js` | Native account, folder, message and calendar transport. |
+| `commands.py` | Windows-style command arguments and JSON fields. |
+| `calendar.py` | Expand Outlook's native ICS exports, including exceptions and timezones. |
+| `collector.py`, `freshness.py` | Immutable collector pages, harness ingestion and stable Inbox watermarks. |
+| `attachments.py` | Private attachment export, byte counts and SHA-256. |
+| `operations.py`, `operations.js` | Exact approved drafts, sends, moves and durable attempt journals. |
+| `test_actions.py`, `test_actions.js` | Uniquely marked private calendar/self-mail test fixtures. |
 
 ## Command correspondence
 
-| Command | Windows | Mac pilot |
+| Command | Windows | Mac |
 | --- | --- | --- |
 | `Inspect-Outlook` | Existing helper | Verified-account summary. |
-| `Read-OutlookMail` | Existing helper | `Recent`, bounded Inbox reads, optional unread filtering/preview. |
-| `Get-OutlookMessage` | Existing helper | Exact native EntryId within a bounded Inbox window, body and attachment-name metadata. |
-| `Read-OutlookMonitorCalendar` | Existing helper | Bounded queries on the verified mailbox-named calendar. |
-| `List-OutlookCalendars` | Not yet exposed by this dispatcher | Native calendar metadata inventory. |
+| `Read-OutlookMail` | Existing helper | Accounts, Folders, Recent and bounded literal Search; unread filtering/preview. |
+| `Get-OutlookMessage` | Existing helper | Exact EntryId, body, recipients, Message-ID, attachment export and case caching. |
+| `Read-OutlookMonitorCalendar` | Existing helper | Bounded occurrences from the verified calendar, including recurrence/all-day/DST. |
+| `Collect-OutlookMonitor` | Existing helper | Immutable pages and optional shared-harness ingestion. |
+| `Test-OutlookMailboxFreshness` | Existing helper | Two stable recent Inbox watermarks; separate from sync completion. |
+| `Save-OutlookStoreDraft` | Existing helper | Exact approved message and hashed attachments; optional display. |
+| `Update-OutlookStoreDraft` | Existing helper | Exact approved draft identity and revised envelope. |
+| `Send-OutlookStoreMail` | Existing helper | One approved submission; durable duplicate/uncertain-attempt protection. |
+| `Move-OutlookMessage` | No existing helper | Implemented with verification, but live Gmail moves failed to take effect. Fails closed. |
+| `List-OutlookCalendars` | Not exposed | Calendar metadata inventory. |
 
-Mac arguments mirror Windows names where supported: `-Store`, `-Start`, `-End`,
-`-Limit`, `-EntryId`, `-UnreadOnly`, `-IncludePreview`, `-Output Json`. Mac reads
-also need an explicit native binding. Obtain its IDs with the read-only discovery
-command after verifying the intended mailbox and selecting its Inbox in Outlook:
+## Native bindings and reads
+
+Verify the intended mailbox in Outlook and leave its Inbox selected. Obtain IDs:
 
 ```sh
 .venv/bin/python mac_outlook_native.py discover --mailbox 'you@example.com'
-.venv/bin/python outlook.py Inspect-Outlook -Store 'you@example.com' --selected-inbox-id INBOX_ID
-.venv/bin/python outlook.py Read-OutlookMail -Store 'you@example.com' -Start '2026-11-08T00:00:00+00:00' -End '2026-11-09T00:00:00+00:00' --selected-inbox-id INBOX_ID
-.venv/bin/python outlook.py Read-OutlookMonitorCalendar -Store 'you@example.com' -Start '2026-11-08T00:00:00+00:00' -End '2026-11-15T00:00:00+00:00' --calendar-id CALENDAR_ID
 ```
 
-IDs are platform-specific Outlook IDs, not Windows MAPI identifiers. Timestamps
-must include offsets. Mac collection windows currently have a seven-day cap.
-The selected Gmail Inbox stays bound to its exact mailbox window, folder ID and
-message parent IDs. Other scriptable accounts cause the adapter to stop. Google
-account objects can be absent even when their folders and messages are scriptable.
-Mailbox-named calendar binding likewise checks the native calendar ID and name.
+Pass `--selected-inbox-id` for mail or `--calendar-id` for calendar. You may save
+verified IDs privately under `outlook_native` in the profile: `inbox_id`,
+`calendar_id`, `draft_folder_id`, `sent_folder_id` and `mail_root_id`. IDs are
+native Outlook identifiers, not MAPI identifiers.
 
-## Explicit capability gaps
+```sh
+.venv/bin/python outlook.py Read-OutlookMail -Store 'you@example.com' -Start '2026-11-08T00:00:00+00:00' -End '2026-11-09T00:00:00+00:00'
+.venv/bin/python outlook.py Read-OutlookMail -Store 'you@example.com' -Action Folders
+.venv/bin/python outlook.py Read-OutlookMail -Store 'you@example.com' -Action Search -Query 'literal text' -Start '2026-11-08T00:00:00Z' -End '2026-11-09T00:00:00Z'
+.venv/bin/python outlook.py Get-OutlookMessage -Store 'you@example.com' -EntryId NATIVE_ID -CaseId OPEN_CASE_ID
+.venv/bin/python outlook.py Test-OutlookMailboxFreshness -Store 'you@example.com'
+```
 
-Windows remains the existing COM implementation; its runtime was not retested on
-this Mac. The Mac pilot does not implement every Windows helper or action.
-`Search`/folder traversal, attachment downloads, MAPI message-class/Internet-ID
-parity, collection snapshot ingestion into monitor runs, general sending/filing,
-and recurrence expansion remain separate work. Unsupported actions fail before
-connecting. Calendar output uses the Windows event field names but reports
-`complete: false` until recurring-occurrence coverage has been verified.
+Mail windows are at most seven days; calendar windows at most 31 days. Start/End
+use an exclusive end, while collector Since/Until retain Windows' inclusive Until.
+Folder reads require ancestry under the verified mailbox root. Ambiguous names
+need `--folder-id` from the Folders inventory. Search scans bounded mail with
+`-MaxScan`; check native coverage receipts for limits. `--receipt` writes bounds,
+IDs and state without message bodies. Message reads preserve read flags.
 
-Read-only native operations compare message read flags before and after reading.
-The mutation test API is restricted to uniquely marked new appointments and
-self-addressed test mail. Callers must record the user's exact authorization in
-the harness, journal created IDs before further actions, and prevent repeated
-submission. The successful local pilot used one finite SQLite grant and a private
-step ledger. No mutation test runs as part of the smoke suite.
+Get supports `--download-attachments`, `-DownloadLargeAttachments`, `-CaseId` and
+`-ForceRefresh`. Case reads use the shared disposable thread cache; small
+attachments are cached, and downloads over 10 MiB require the large-file flag.
+Outlook's reported attachment size can be MIME-encoded; exported bytes and hashes
+are recorded separately. Native `MessageClass` values explicitly say
+`outlook-macos:message` or `outlook-macos:meeting-message`; they are not MAPI classes.
+
+## Collection and permissions
+
+Collect accepts Windows-style `-Since`, `-Until`, `-PageSize`, `-MaxScan`, `-Offset`
+and `-SnapshotId`. Continuations replay one SQLite snapshot without rereading live
+mail. `--ingest-run RUN_ID --source mail:work --freshness PROOF.json` imports it
+through the shared harness. Without a matching fresh proof, coverage remains
+unavailable even if the bounded scan is complete. Freshness currently probes Inbox
+only; Windows topic-folder diagnostics are not mirrored.
+
+Mac write commands require `--approval-id` naming an active exact one-off SQLite
+grant. Store, wording, recipients, attachments and any supplied arguments must
+match. Attachments must be private files approved by SHA-256; their decoded draft
+exports are checked again before submission. Optional `scope.actions` restricts
+save-draft, update-draft and send. Updates additionally bind `scope.draft_id` and
+`scope.draft_folder_id`. Move grants bind operation `move-message`, mailbox,
+source_folder_id, entry_id, destination_folder_id and internet_message_id.
+
+A completed send approval cannot submit again. Timeouts/uncertain writes require
+reconciliation before retry. `submitted` means queued by Outlook, not delivered.
+The live attachment send required Outlook's Send & Receive UI before delivery;
+automatic transport flushing is not established. Displayed composers can show
+stale bodies after native updates; close/reopen and verify before manual action.
+
+## Verified limits
+
+Legacy Outlook 16.111 on macOS 15.6.1 passed the native tests documented in the
+Mac guide. New Outlook with this adapter and Windows runtime behavior have not
+been retested. The primary Mac calendar must have the exact verified mailbox name;
+inventory alone grants no access to another calendar. Recurrence exports are
+bounded by scan/result caps; invalid exports and conflicting versions report
+incomplete coverage. General external-recipient sending, broad filing, contact
+lookup, meeting invitations, automatic refresh and other Windows helpers remain
+untested or unsupported. Portable tests do not establish full Mac compatibility.

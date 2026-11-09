@@ -106,6 +106,10 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn("OutlookAutomation/requirements-mac.lock", archive.namelist())
                 for name in ('mac_outlook_native.py', 'outlook.py', 'outlook_platforms/macos/native_outlook.js',
                              'outlook_platforms/macos/test_actions.js', 'outlook_platforms/windows/commands.py',
+                             'outlook_platforms/macos/operations.js', 'outlook_platforms/macos/collector.py',
+                             'outlook_platforms/macos/calendar.py', 'outlook_platforms/macos/attachments.py',
+                             'outlook_platforms/macos/freshness.py', 'tests/test_mac_operations.py',
+                             'tests/test_mac_collector.py', 'tests/test_mac_calendar.py', 'tests/test_mac_freshness.py',
                              'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py', 'tests/test_mac_test_actions.py', 'tests/test_platform_commands.py'):
                     self.assertIn('OutlookAutomation/' + name, archive.namelist())
 

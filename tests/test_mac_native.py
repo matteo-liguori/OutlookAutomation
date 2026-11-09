@@ -124,6 +124,25 @@ class NativeJavaScriptTests(unittest.TestCase):
         self.assertEqual(r['filter']['_and'][0]['_and'][0]['timeReceived'], {'_greaterThanEquals':'2026-11-08T00:00:00.000Z'})
         self.assertFalse(r['result']['writes_performed'])
 
+    def test_search_checks_body_and_preserves_read_state_for_nonmatches(self):
+        r=self.js("request.include_body=false;request.search_query='quoted';request.max_scan=20;return JSON.stringify(nativeCollect(request,app));")
+        self.assertEqual(len(r['items']),1)
+        self.assertNotIn('plain_text',r['items'][0])
+        r=self.js("request.search_query='no match';request.max_scan=20;message.plainTextContent=function(){flag=true;return 'different';};return JSON.stringify(nativeCollect(request,app));")
+        self.assertEqual(r['code'],'read-state-changed')
+
+    def test_folder_binding_rejects_foreign_ancestry_before_reading_names(self):
+        r=self.js("request.binding='selected-inbox';request.folder_id='131';request.target_folder_id='999';var names=0;var foreign={id:function(){return 999;},name:function(){names++;return 'Private';},container:function(){throw new Error('outside');}};app.mailFolders={byId:function(){return foreign;}};return JSON.stringify({result:nativeCollect(request,app),names:names,reads:reads});")
+        self.assertEqual(r['result']['status'],'blocked')
+        self.assertEqual(r['names'],0)
+        self.assertEqual(r['reads']['body'],0)
+
+    def test_capture_records_native_message_id_and_detects_membership_change(self):
+        r=self.js("request.capture=true;message.headers=function(){return 'Message-ID: <fixture@example.invalid>\\r\\n';};var calls=0;inbox.messages.whose=function(){calls++;return function(){return calls===1?[message]:[];};};return JSON.stringify(nativeCollect(request,app));")
+        self.assertFalse(r['capture_complete'])
+        self.assertEqual(r['items'][0]['internet_message_id'],'<fixture@example.invalid>')
+        self.assertIn('membership',r['errors'][0])
+
     def test_empty_results_and_repeated_reads(self):
         r = self.js('var first=nativeCollect(request,app);var second=nativeCollect(request,app);matches=[];return JSON.stringify([first,second,nativeCollect(request,app)]);')
         self.assertEqual(r[0], r[1])

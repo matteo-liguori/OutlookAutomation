@@ -2,7 +2,7 @@
 import argparse
 import platform
 
-COMMANDS = ['Inspect-Outlook', 'Read-OutlookMail', 'Get-OutlookMessage', 'Read-OutlookMonitorCalendar', 'List-OutlookCalendars']
+COMMANDS = ['Inspect-Outlook', 'Read-OutlookMail', 'Get-OutlookMessage', 'Read-OutlookMonitorCalendar', 'List-OutlookCalendars', 'Collect-OutlookMonitor','Test-OutlookMailboxFreshness','Save-OutlookStoreDraft','Update-OutlookStoreDraft','Send-OutlookStoreMail','Move-OutlookMessage']
 
 
 def main(argv=None):
