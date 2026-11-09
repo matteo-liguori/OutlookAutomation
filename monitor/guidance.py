@@ -58,6 +58,7 @@ completion_condition, reopening_condition, follow_up; optional deadline, promise
 explicit_review, snooze_until, reviewed_at/review_outcome. Dates use offsets; unknown
 historic dates remain unknown. Non-email tasks use user-instruction evidence.
 
+Use normal word spacing in all prose. Shorten wording rather than joining words.
 Limits: purpose 600 characters/three lines; context 6,000 ceiling; position 1,200;
 next_step 400; completion/reopening conditions 300. Condense context, not obligations.
 Resolution needs completion_reason/completion_evidence, including user dismissal.

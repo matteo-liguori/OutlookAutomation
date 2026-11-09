@@ -74,7 +74,7 @@
     const actions = card.actions.filter(matchesAction);
     for (const action of actions.slice(0,3)) {
       const line = el('span','action-line');
-      line.append(el('span','status-label',(labels[action.status] || action.status) + (action.snoozed ? ' · Snoozed' : '') + '  '),document.createTextNode(action.next_step));
+      line.append(el('span','status-label',(labels[action.status] || action.status) + (action.snoozed ? ' · Snoozed' : '') + ': '),document.createTextNode(action.next_step));
       preview.append(line);
     }
     if (!actions.length) preview.append(el('span','','No matching action. Open the card for context.'));
