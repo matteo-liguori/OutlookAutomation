@@ -47,7 +47,7 @@ Reusable fixes stay on `codex/mac-integration-test`; private receipts stay local
   IDs after synchronization. Reconcile by the exact test token and verify delayed
   absence; immediate ID disappearance is insufficient. Calendar writes remain
   absent from normal help.
-- Native Gmail filing remains hidden. A follow-up reproduced the failure on a
+- General Mac filing remains unresolved and hidden. A follow-up reproduced the failure on a
   newly delivered synthetic message: ordinary/global-ID/object-directed moves,
   alternate destination references, native copy, command-side selection and
   synchronize/move/synchronize failed independent source/destination readback.
@@ -58,9 +58,36 @@ Reusable fixes stay on `codex/mac-integration-test`; private receipts stay local
 - Microsoft [documents AppleScript automation of Google accounts synced through
   Microsoft Cloud as unsupported](https://support.microsoft.com/en-us/support/known-issues/known-issues-syncing-google-accounts-to-the-microsoft-cloud).
   This matches the observed account binding and move failures; it does not prove
-  every Outlook account type lacks command-driven filing. An isolated direct-IMAP
-  connection inside Outlook is the next proposed test, requiring user-authorized
-  account setup and sign-in. It has not been tested. Windows filing is unchanged.
+  every Outlook account type lacks command-driven filing. Windows filing is unchanged.
+- An authorized isolated Legacy Outlook profile using direct Gmail IMAP did
+  expose a real native account. An experimental account-ID/Inbox-ID binding
+  allowed commands without a selected window or folder. The common public move
+  command filed one server-backed incoming self-message, preserved unread state
+  and suppressed a repeated approval. Delayed source/destination readback confirmed
+  the move and a nonzero destination IMAP UID. Initial synchronization also exposed
+  UID-zero local outgoing placeholders; those are not proof of server filing.
+- That experiment does not meet the general Mac requirement. IMAP synchronizes
+  [mail only, without contacts, calendars, tasks or notes](https://support.microsoft.com/en-us/outlook/sync-basics-what-you-can-and-cannot-sync).
+  It is not a replacement account setup for Microsoft 365: Exchange Online has
+  [removed Basic authentication, and Outlook does not support OAuth for POP/IMAP](https://learn.microsoft.com/en-us/exchange/clients-and-mobile-in-exchange-online/deprecation-of-basic-authentication-exchange-online).
+  Microsoft also documents [Legacy Outlook's Exchange Online retirement starting
+  October 2026](https://support.microsoft.com/en-us/outlook/end-of-support-for-legacy-outlook-for-mac).
+  That Exchange retirement is distinct from the direct-IMAP test; neither establishes
+  a supported general solution for current Outlook or an institutional mailbox.
+- The experimental implementation and tests were preserved locally rather than
+  enabling filing in the normal harness. All new IMAP test copies were removed
+  recoverably; two delayed reconciliations found none in the tested active folders.
+  Its five finite test approvals were retired and the isolated database passed
+  doctor. The original Outlook profile was retained; the separate test profile
+  remains installed and was the last running/default profile. No primary harness
+  profile was migrated and no institutional account was added or tested.
+- Current Outlook web add-ins are a separate possible integration surface, not a
+  verified replacement. The [Office.js mailbox interface](https://learn.microsoft.com/en-us/javascript/api/outlook/office.mailbox)
+  does not establish the required general folder-filing command. Microsoft's
+  documented [Graph message move](https://learn.microsoft.com/en-us/graph/api/message-move)
+  requires mailbox-service authorization, while add-in EWS operations are documented
+  for [Exchange on-premises](https://learn.microsoft.com/en-us/office/dev/add-ins/outlook/web-services).
+  No UI automation or mailbox-service API was adopted as the filing backend.
 - Open-composer refresh, real interrupted
   transport/concurrent-edit recovery, live recurrence exceptions/cancellations,
   non-self sends, complex/large attachments, meeting invitations, secondary
