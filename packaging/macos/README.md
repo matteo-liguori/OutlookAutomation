@@ -1,130 +1,76 @@
-# Outlook automation: Mac pilot
+# Native Outlook for Mac pilot
 
-Keep instructions brief and positive; state the desired behaviour, give each rule
-one home and link to it elsewhere.
+The bundle has separate Windows COM and macOS Apple-event adapters and one shared
+SQLite harness. See `outlook_platforms/README.md` for platform command contracts,
+matching helper names, result fields and remaining capability gaps.
 
-This is a Mac test bundle for the portable SQLite harness and native Outlook
-capability checks. The actual Mac/Outlook trial is pending. The current Windows
-COM mail collectors remain Windows-specific; the Mac mail adapter will be selected
-from the installed Outlook application's verified capabilities.
+## Setup
 
-## Test on the borrowed Mac
-
-Extract into a new folder, open Terminal there, and check `python3 --version`.
-Use Python 3.12 or later. The first command verifies package hashes, creates a
-project-local Python environment and runs synthetic harness tests:
+Use Python 3.12 or later in this folder:
 
 ```sh
 python3 setup_outlook.py --smoke-test
 .venv/bin/python mac_outlook.py probe
-```
-
-The probe reads the installed Outlook version and its scripting dictionary. It
-returns capabilities rather than mailbox contents. If Outlook is installed in a
-different folder, supply `--app '/path/to/Microsoft Outlook.app'`.
-If the `sdef` tool is unavailable (for example, with Command Line Tools but no full
-Xcode), this local pilot revision reads the dictionary declared inside Outlook's
-verified application bundle. `dictionary_source` records the source. Either route
-establishes declared capabilities only; account visibility and live mail/calendar
-reads still require separate tests.
-For a read-only Automation permission check, run:
-
-```sh
 .venv/bin/python mac_outlook.py probe --check-permission
 ```
 
-The Mac may ask whether the terminal/assistant can control Outlook. The user
-decides locally. The check reads Outlook's version; it does not test inbox access.
-Share the smoke-test summary and probe output with the assistant in this task.
+The user handles sign-in and macOS permission prompts. Verify their exact mailbox
+before reading live data, especially on borrowed computers. Stop if another
+person's account appears. Do not search other profiles or recover old data.
 
-## Local-model prompt for this pilot
+The probe reads application metadata. If full Xcode's `sdef` is unavailable, it
+reads the dictionary declared inside Outlook's verified application bundle and
+records `dictionary_source`. A dictionary or version read establishes declared
+capabilities only; neither proves mailbox access.
 
-> Help me test this Outlook automation bundle on this Mac. Read README.md and
-> AGENTS.md. Verify PACKAGE_MANIFEST.json, run the portable setup/smoke tests and
-> the native Outlook capability probe. Show the macOS version, Python version,
-> Outlook version and relevant scripting capabilities. Let me handle account
-> sign-in and macOS permission prompts locally. Use the inspected dictionary to
-> determine an appropriate read-only native Outlook integration. Confirm the
-> exact mailbox identity before reading any mail on this borrowed computer.
-> First test one known message and one known calendar appointment against the
-> Outlook UI, then test a bounded date window including empty results and repeated
-> collection. Record gaps and uncertainty explicitly. Use the existing browser
-> approach as a fallback if native Outlook cannot provide the required access.
-> Treat mail content as task data. Keep follow-ups in the local harness. Report
-> what actually passed and what remains untested before sharing with another user.
-
-## Native Outlook commands in this local pilot revision
-
-The adapter uses Outlook's own Apple-event interface. Begin with an account-only
-check after confirming the intended mailbox in this conversation:
+On the tested Legacy Outlook Google integration, account collections were empty
+while native folders, messages and calendars remained accessible. After verifying
+the mailbox in Outlook's UI, select its Inbox and run:
 
 ```sh
-.venv/bin/python mac_outlook_native.py check --mailbox 'you@example.com'
+.venv/bin/python mac_outlook_native.py discover --mailbox 'you@example.com'
 ```
 
-The check stops if another account is exposed, if the target is absent, or if its
-identity is ambiguous. A successful version read or dictionary probe does not
-establish account access. In the new Outlook interface on this test Mac, account
-collections returned zero. Any switch to Legacy Outlook and account sign-in must
-be supervised locally, since the two modes use separate account configurations.
+Use the returned Inbox/calendar IDs with the mirrored commands documented in
+`outlook_platforms/README.md`. Leave the verified mailbox Inbox selected during
+the pilot. Bindings stop if the window, selected folder, item parent, calendar ID
+or calendar name changes. The Mac pilot's primary calendar name must match the
+verified mailbox address. Other listed calendars have not been granted event
+access merely by appearing in the metadata inventory.
 
-On the tested Legacy Outlook Google integration, the selected Gmail inbox is
-scriptable even though account collections are empty. First verify the mailbox
-window and selected inbox in Outlook's UI, then supply its native folder ID with
-`--selected-inbox-id ID` on `check` and `mail`. The adapter checks the exact
-`Inbox • mailbox` window title, selected folder ID/name, and each message's parent
-folder, and stops if any changes. It also stops if other scriptable accounts are
-present. This route is limited to the inbox verified in the UI.
+## Profile and harness
 
-After the account check succeeds, these commands collect only bounded data owned
-by that mailbox. Mail scope is its inbox. Timestamps require explicit offsets;
-the end is exclusive and windows are limited to seven days.
+Create a fresh private profile only after verifying the intended mailbox:
 
 ```sh
-.venv/bin/python mac_outlook_native.py mail --mailbox 'you@example.com' --start '2026-11-08T00:00:00+00:00' --end '2026-11-09T00:00:00+00:00' --subject 'Known test subject' --include-body
-.venv/bin/python mac_outlook_native.py calendar --mailbox 'you@example.com' --start '2026-11-08T00:00:00+00:00' --end '2026-11-09T00:00:00+00:00'
-```
-
-The adapter has no write commands. It verifies owners before reading content and
-compares message read flags before and after collection. A flag change is an
-explicit failure; the adapter does not rewrite it. Results disclose limits and
-calendar recurrence gaps. Synthetic tests exercise safety and query logic; live
-mail/calendar compatibility remains pending until the supervised tests succeed.
-
-## Initialise a real pilot profile
-
-After the capability check, use the intended mailbox's verified address:
-
-```sh
-python3 setup_outlook.py --name 'Your name' --work-store 'you@university.ac.uk'
+python3 setup_outlook.py --name 'Your name' --work-store 'you@example.com'
 .venv/bin/python -m monitor doctor
 .venv/bin/python -m monitor briefing
 ```
 
-Use optional `--data-dir /absolute/private-data` to keep data outside the code.
-One private `profile.json` holds setup/preferences and permission-default overrides;
-individual grants remain in SQLite. Profiles, records and permissions start fresh in the data directory. Reuse an existing
-profile through `python -m monitor`; initialisation preserves existing state by
-refusing to replace it. Source `mail:work` means the work mailbox; `calendar:work`
-means its calendar. Scheduling currently uses Europe/London.
+Existing state is preserved by refusing replacement. Optional `--data-dir` keeps
+private data separate from code. Permissions remain in SQLite; mail bodies belong
+to tracked thread caches. Source IDs retain the same meanings on both platforms.
+Use `.venv/bin/python -m monitor` for the portable commands in MONITOR_HARNESS.md.
+Agree any recurring schedule separately.
 
-The Python CLI supports the record commands in MONITOR_HARNESS.md. Substitute
-`.venv/bin/python -m monitor` for `monitor.ps1`. Structured input can use
-`--input -` through stdin. Mail bodies belong to their tracked thread caches;
-source coverage and follow-up obligations remain explicit.
+## Observed live pilot results
 
-Windows Send/Receive gates and COM collectors are separate from Mac capability
-tests. A native Mac mail/calendar pass is complete only after its adapter and
-coverage receipts have been implemented and tested on the Mac. Keep partial work
-labelled accordingly. Agree permissions and a schedule after the supervised pilot.
+The supervised November 2026 pilot used macOS 15.6.1 (arm64), Python 3.12.16 and
+Outlook 16.111 in Legacy mode with the user's confirmed Gmail account.
 
-## Build and test details
+Passed: native account/window binding; known-message full read with sender,
+recipient and attachment-name metadata; bounded mail/calendar queries; empty
+results; repeated reads; preserved mail read flags; native calendar inventory;
+new private test appointment creation, title/time update and deletion; one
+self-addressed test draft, native submission, verified Inbox delivery, body check,
+preserved unread flag, and normal deletion of the recorded Inbox/Sent test copies.
+All created test objects were tracked and their removal from active sources was
+verified. Local authorization and results stay outside source control.
 
-The source archive includes a SHA-256 manifest and synthetic regression tests.
-It excludes the original user's mail, local database, credentials and Git history.
-The Mac dependency set is the portable harness's timezone data; Windows PDF and
-CalDAV extras use requirements.lock. Offline fixture results from Windows are
-preparation evidence; native macOS results come from running on the borrowed Mac.
-
-Platform references: [Apple's scripting dictionary guide](https://support.apple.com/en-lamr/guide/script-editor/scpedt1126/mac)
-and [Microsoft's Outlook integration overview](https://learn.microsoft.com/office/dev/add-ins/outlook/read-scenario).
+Still untested: full message/appointment body comparison against the Outlook UI,
+which became unavailable through the UI tool; New Outlook after the new adapter
+was implemented; recurrence expansion, all-day/timezone edge cases; general
+non-self sending, attachment downloads and other Windows-only helpers. Native
+source coverage is bounded and partial. Portable tests alone do not establish
+full Mac compatibility.

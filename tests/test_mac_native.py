@@ -1,5 +1,6 @@
 """Exercise the native adapter with synthetic objects; never connect to Outlook."""
 import json
+import platform
 from pathlib import Path
 import subprocess
 import unittest
@@ -27,6 +28,7 @@ message.ccRecipients=function(){return [];};message.attachments=function(){retur
 var matches = [message], lastFilter = null;
 var inbox = {account:owned, messages:{whose:function(filter){lastFilter=filter;return function(){return matches;};}}};
 inbox.id=function(){return 131;};inbox.name=function(){return 'Inbox';};message.folder=function(){return inbox;};
+inbox.container=function(){return {id:function(){return 101;}};};
 account.inbox=function(){reads.inbox++;return inbox;};
 var app = {imapAccounts:function(){return [account];},exchangeAccounts:function(){return [];},popAccounts:function(){return [];}};
 app.mainWindows=[{name:function(){return 'Inbox • '+target;}}];app.selectedFolder=function(){return inbox;};
@@ -77,6 +79,7 @@ class NativeRequestTests(unittest.TestCase):
         self.assertEqual(execute({}, runner=runner, system='Darwin')['code'], 'native-command-timeout')
 
 
+@unittest.skipUnless(platform.system() == 'Darwin', 'macOS JavaScript for Automation required')
 class NativeJavaScriptTests(unittest.TestCase):
     def js(self, scenario):
         source = SCRIPT.read_text() + '\nfunction run() {\n' + FIXTURE + '\n' + scenario + '\n}'
@@ -91,6 +94,13 @@ class NativeJavaScriptTests(unittest.TestCase):
         self.assertEqual(r['result']['status'], 'ok')
         self.assertFalse(r['result']['content_read'])
         self.assertEqual(r['reads'], dict(body=0, inbox=0, subject=0))
+
+    def test_discovery_binds_only_the_verified_inbox_and_reads_no_content(self):
+        r=self.js("request.command='discover';return JSON.stringify({result:nativeCollect(request,app),reads:reads});")
+        self.assertEqual(r['result']['inbox_id'],'131')
+        self.assertEqual(r['result']['mail_root_id'],'101')
+        self.assertFalse(r['result']['content_read'])
+        self.assertEqual(r['reads']['body'],0)
 
     def test_missing_duplicate_and_other_accounts_block_before_content(self):
         setups = [

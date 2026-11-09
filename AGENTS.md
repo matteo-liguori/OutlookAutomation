@@ -4,16 +4,18 @@ Keep instructions brief and positive; state the desired behaviour, give each rul
 one home and link to it elsewhere.
 
 Keep the user's mail, calendars and follow-ups useful and current. Work in this
-project folder. Use `monitor.ps1 help accounts` for the private profile and account routing, then
-`monitor.ps1 briefing`. SQLite is current authority.
+project folder. Start with README.md and outlook_platforms/README.md for platform
+routing. Use `monitor.ps1` on Windows or `.venv/bin/python -m monitor` on Mac for
+account guidance and briefing. SQLite is current authority.
 
 | Task | Instructions |
 | --- | --- |
 | First setup | README.md |
+| Native platform commands and capability gaps | outlook_platforms/README.md |
 | Monitoring pass | TRIAGE_RULES.md, MONITOR_REPORT_TEMPLATE.md |
 | Records and permissions | MONITOR_HARNESS.md |
 | Card creation/upkeep | THREAD_CARD_UPKEEP.md |
-| Mail and send helpers | MAIL_HELPERS.md |
+| Mail and send helpers | packaging/MAIL_HELPERS.md |
 | Private iCloud calendar | ICLOUD_CALDAV.md |
 
 The profile's `work` role means the user's work mailbox/calendar; `shared` means
@@ -30,6 +32,9 @@ Maintain local records as needed. File routine mail under approved preferences,
 preserving read state. Ask the user to establish filing preferences on the first pass.
 Keep evidence and reminders in the harness. Retrieve essential decisions or facts
 from available sources before asking the user.
+
+Verify the intended account before live access on borrowed computers. Stop when
+another account appears. Keep read-only tests from changing message read state.
 
 Use supported helpers. Temporary executable work uses root `OneOff.ps1`, reset
 after use; Python can run through stdin. Keep private state in the configured data directory; share

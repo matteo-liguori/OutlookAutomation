@@ -11,8 +11,8 @@ SCRIPT = Path(__file__).with_name('native_outlook.js')
 
 
 def request_for(command, mailbox, start=None, end=None, limit=25, subject=None, include_body=False, selected_inbox_id=None, calendar_id=None, entry_id=None, unread_only=False):
-    if command not in {'check', 'mail', 'calendar', 'calendars'}:
-        raise ValueError('Supported commands: check, mail, calendar, calendars')
+    if command not in {'check', 'mail', 'calendar', 'calendars', 'discover'}:
+        raise ValueError('Supported commands: check, discover, mail, calendar, calendars')
     if not isinstance(mailbox, str) or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', mailbox):
         raise ValueError('Supply the exact confirmed mailbox email address')
     request = dict(command=command, mailbox=mailbox, limit=limit, include_body=include_body)
@@ -32,7 +32,7 @@ def request_for(command, mailbox, start=None, end=None, limit=25, subject=None, 
         if selected_inbox_id is not None or command == 'mail' or not re.fullmatch(r'[0-9]+', str(calendar_id)):
             raise ValueError('Use one numeric calendar ID with check/calendars/calendar')
         request.update(binding='named-calendar', calendar_id=str(calendar_id))
-    if command in {'check', 'calendars'}:
+    if command in {'check', 'calendars', 'discover'}:
         return request
     if not isinstance(limit, int) or isinstance(limit, bool) or not 1 <= limit <= 100:
         raise ValueError('Limit must be an integer from 1 to 100')
@@ -73,7 +73,7 @@ def execute(request, runner=subprocess.run, system=None):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('command', choices=['check', 'mail', 'calendar', 'calendars'])
+    parser.add_argument('command', choices=['check', 'discover', 'mail', 'calendar', 'calendars'])
     parser.add_argument('--mailbox', required=True)
     parser.add_argument('--start')
     parser.add_argument('--end')

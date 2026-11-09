@@ -99,12 +99,14 @@ class PackagingTests(unittest.TestCase):
             with zipfile.ZipFile(target) as archive:
                 readme = archive.read("OutlookAutomation/README.md").decode()
                 agents = archive.read("OutlookAutomation/AGENTS.md").decode()
-                self.assertIn("actual Mac/Outlook trial is pending", readme)
+                self.assertIn("macOS Apple-event adapters", readme)
                 self.assertIn("python3 setup_outlook.py --smoke-test", readme)
                 self.assertIn("mac_outlook.py probe", readme)
                 self.assertIn("Mac pilot", agents)
                 self.assertIn("OutlookAutomation/requirements-mac.lock", archive.namelist())
-                for name in ('mac_outlook_native.py', 'outlook_platforms/macos/native_outlook.js', 'outlook.py', 'outlook_platforms/macos/native.py', 'outlook_platforms/macos/commands.py', 'outlook_platforms/windows/commands.py', 'tests/test_platform_commands.py', 'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py'):
+                for name in ('mac_outlook_native.py', 'outlook.py', 'outlook_platforms/macos/native_outlook.js',
+                             'outlook_platforms/macos/test_actions.js', 'outlook_platforms/windows/commands.py',
+                             'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py', 'tests/test_mac_test_actions.py', 'tests/test_platform_commands.py'):
                     self.assertIn('OutlookAutomation/' + name, archive.namelist())
 
     def test_optional_calendar_sources_define_coverage(self):

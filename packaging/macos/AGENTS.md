@@ -15,8 +15,9 @@ checks. Once initialised, read `.local/monitor/profile.json` and
 | Report structure | MONITOR_REPORT_TEMPLATE.md |
 
 Match reads to the configured user's verified account, especially on borrowed
-computers. Use inspected native Outlook capabilities for the first integration;
-the user's existing browser workflow is a fallback. Verify the account, source
+computers. Use the native adapter and command contracts in
+`outlook_platforms/README.md`; keep the portable harness shared with Windows.
+Verify the account, source
 coverage and relevant full messages before reconciling tasks. State partial
 coverage clearly. Keep private records in `.local/` and use thread caches for mail.
 

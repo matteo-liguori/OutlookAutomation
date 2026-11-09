@@ -73,6 +73,12 @@ function calendarInventory(app, request) {
 function nativeCollect(request, app) {
     var phase = 'identity';
     try {
+        if (request.command === 'discover') {
+            if (app.mainWindows[0].name() !== 'Inbox • ' + request.mailbox || app.selectedFolder().name() !== 'Inbox') reject('select-verified-mailbox-inbox', 'identity');
+            request = JSON.parse(JSON.stringify(request));
+            request.binding = 'selected-inbox';
+            request.folder_id = String(app.selectedFolder().id());
+        }
         var selectedBinding = request.binding === 'selected-inbox';
         var calendarBinding = request.binding === 'named-calendar';
         var bound;
@@ -98,6 +104,14 @@ function nativeCollect(request, app) {
         if (calendarBinding) result.binding = {kind:'named-calendar', calendar_id:request.calendar_id, name:request.mailbox};
         if (request.command === 'check') {
             result.content_read = false;
+            return result;
+        }
+        if (request.command === 'discover') {
+            result.inbox_id = request.folder_id;
+            result.mail_root_id = String(selectedInbox(app, request).container().id());
+            result.calendars = calendarInventory(app, request);
+            result.content_read = false;
+            selectedInbox(app, request);
             return result;
         }
         if (request.command === 'calendars') {
