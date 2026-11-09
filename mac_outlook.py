@@ -39,12 +39,30 @@ def probe(check_permission=False, app_path=None, runner=subprocess.run, system=N
     if bundle != "com.microsoft.Outlook":
         raise ValueError("Selected application is not Microsoft Outlook")
     result = dict(native_macos=True, app=str(app), version=info.get("CFBundleShortVersionString"), bundle_id=bundle, mailbox_access_tested=False)
-    dictionary = runner(["/usr/bin/sdef", str(app)], capture_output=True, text=True, timeout=30)
-    if dictionary.returncode:
+    dictionary_xml = None
+    try:
+        dictionary = runner(["/usr/bin/sdef", str(app)], capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        dictionary = None
+    if dictionary is not None and dictionary.returncode == 0:
+        dictionary_xml = dictionary.stdout
+        result["dictionary_source"] = "sdef"
+    else:
+        # Command Line Tools alone may not provide sdef. Read only the dictionary
+        # declared by this verified application, never a path outside its bundle.
+        name = info.get("OSAScriptingDefinition")
+        resources = (app / "Contents/Resources").resolve()
+        if isinstance(name, str) and Path(name).name == name and name.endswith(".sdef"):
+            bundled = resources / name
+            if bundled.resolve().is_relative_to(app.resolve()) and not bundled.is_symlink() and bundled.is_file():
+                dictionary_xml = bundled.read_text(encoding="utf-8")
+                result["dictionary_source"] = "bundled-sdef"
+                result["dictionary_tool_warning"] = "sdef could not run; inspected Outlook's declared bundled dictionary instead. Runtime mail/calendar support remains untested."
+    if dictionary_xml is None:
         result.update(status="scripting-unavailable", reason="The installed Outlook did not expose a readable AppleScript dictionary; inspect its supported integrations on this Mac.")
     else:
         try:
-            summary = dictionary_summary(dictionary.stdout)
+            summary = dictionary_summary(dictionary_xml)
         except ET.ParseError:
             result.update(status="scripting-unavailable", reason="Outlook returned an unreadable scripting dictionary.")
         else:

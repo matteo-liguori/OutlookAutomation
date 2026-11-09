@@ -51,6 +51,7 @@
   "manage_data.py": "manage_data.py",
   "icloud_caldav.py": "icloud_caldav.py",
   "mac_outlook.py": "mac_outlook.py",
+  "mac_outlook_native.py": "mac_outlook_native.py",
   "monitor.ps1": "monitor.ps1",
   "monitor/__init__.py": "monitor/__init__.py",
   "monitor/__main__.py": "monitor/__main__.py",
@@ -114,6 +115,8 @@
   "tests/test_icloud_caldav.py": "tests/test_icloud_caldav.py",
   "tests/test_improvements.py": "tests/test_improvements.py",
   "tests/test_mac_support.py": "tests/test_mac_support.py",
+  "tests/test_mac_native.py": "tests/test_mac_native.py",
+  "tests/test_mac_probe_fallback.py": "tests/test_mac_probe_fallback.py",
   "tests/test_maintenance.py": "tests/test_maintenance.py",
   "tests/test_monitor.py": "tests/test_monitor.py",
   "tests/test_activation.py": "tests/test_activation.py",
@@ -128,5 +131,14 @@
   "tests/test_simplification.py": "tests/test_simplification.py",
   "tests/test_threadcache.py": "tests/test_threadcache.py",
   "tests/test_timing_google.py": "tests/test_timing_google.py",
-  "tooling.json": "tooling.json"
+  "tooling.json": "tooling.json",
+  "outlook.py": "outlook.py",
+  "tests/test_platform_commands.py": "tests/test_platform_commands.py",
+  "outlook_platforms/__init__.py": "outlook_platforms/__init__.py",
+  "outlook_platforms/macos/__init__.py": "outlook_platforms/macos/__init__.py",
+  "outlook_platforms/macos/native.py": "outlook_platforms/macos/native.py",
+  "outlook_platforms/macos/native_outlook.js": "outlook_platforms/macos/native_outlook.js",
+  "outlook_platforms/macos/commands.py": "outlook_platforms/macos/commands.py",
+  "outlook_platforms/windows/__init__.py": "outlook_platforms/windows/__init__.py",
+  "outlook_platforms/windows/commands.py": "outlook_platforms/windows/commands.py"
 }

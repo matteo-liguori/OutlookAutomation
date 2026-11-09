@@ -104,6 +104,8 @@ class PackagingTests(unittest.TestCase):
                 self.assertIn("mac_outlook.py probe", readme)
                 self.assertIn("Mac pilot", agents)
                 self.assertIn("OutlookAutomation/requirements-mac.lock", archive.namelist())
+                for name in ('mac_outlook_native.py', 'outlook_platforms/macos/native_outlook.js', 'outlook.py', 'outlook_platforms/macos/native.py', 'outlook_platforms/macos/commands.py', 'outlook_platforms/windows/commands.py', 'tests/test_platform_commands.py', 'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py'):
+                    self.assertIn('OutlookAutomation/' + name, archive.namelist())
 
     def test_optional_calendar_sources_define_coverage(self):
         with tempfile.TemporaryDirectory() as tmp:
