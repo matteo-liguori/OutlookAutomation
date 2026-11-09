@@ -1,6 +1,7 @@
 """Read-only projections of current cards. No startup maintenance or Outlook access."""
 from contextlib import contextmanager
 import hashlib
+import json
 from pathlib import Path
 import sqlite3
 
@@ -74,12 +75,43 @@ def action_dates(action, at):
     return [(date, list(dict.fromkeys(kinds))) for date, kinds in sorted(dates.items())]
 
 
+def email_activity(store, cases):
+    """Message dates, never cache/access times or general card-edit timestamps."""
+    latest = {c['id']: None for c in cases}
+    def accept(cid, metadata):
+        for field in ('Received', 'received', 'received_at', 'SentOn', 'sent_at', 'sent'):
+            value = metadata.get(field)
+            if not isinstance(value, str):
+                continue
+            try: value = stamp(value)
+            except (ValueError, TypeError): continue
+            if value and (latest[cid] is None or value > latest[cid]):latest[cid] = value
+    for row in store.db.execute('SELECT case_id,metadata FROM thread_messages'):
+        if row['case_id'] in latest:accept(row['case_id'], json.loads(row['metadata']))
+    owners = {}
+    for case in cases:
+        for evidence in case.get('evidence_index', []):
+            owners.setdefault(evidence['id'], []).append(case['id'])
+    ids = list(owners)
+    for offset in range(0, len(ids), 500):
+        batch = ids[offset:offset + 500]
+        rows = store.db.execute("SELECT id,metadata,CASE WHEN json_extract(metadata,'$.kind')='mail-source-reference' THEN body END AS reference FROM evidence WHERE id IN (" + ','.join('?' for _ in batch) + ')', batch)
+        for row in rows:
+            metadata = json.loads(row['metadata'])
+            reference = json.loads(row['reference']).get('locator', {}) if row['reference'] else {}
+            for cid in owners[row['id']]:
+                accept(cid, metadata)
+                accept(cid, reference)
+    return latest
+
+
 def overview(path, at=None):
     at = stamp(at or now())
     store = ReadStore(path)
     try:
         with store.read():
             cases = store.all_cases(open_only=True)
+            latest_email = email_activity(store, cases)
             reviews = {v['case']: v['due_at'] for v in reviews_due(store, at)}
             cards, events, unscheduled = [], [], []
             for case in cases:
@@ -88,6 +120,7 @@ def overview(path, at=None):
                 card = dict(id=cid, title=case['title'], purpose=case.get('purpose') or case['title'],
                             position=case['position'], revision=case['revision'], colour=colour(cid),
                             updated_at=case['updated_at'], review_due_at=reviews.get(cid),
+                            latest_email_at=latest_email[cid],
                             pending_notes=len(case.get('user_notes', [])),
                             actions=[action_view(a, at) for a in actions])
                 cards.append(card)
@@ -99,6 +132,7 @@ def overview(path, at=None):
                         unscheduled.append(common)
                     for date, kinds in dates:
                         events.append(dict(common, id=action['id'] + '@' + date, at=date, kinds=kinds))
+            cards.sort(key=lambda c: c['latest_email_at'] or '', reverse=True)
             events.sort(key=lambda e: (e['at'], e['case_id'], e['action']['id']))
             return dict(cards=cards, events=events, unscheduled=unscheduled,
                         as_of=at, timezone='Europe/London', read_only=True)

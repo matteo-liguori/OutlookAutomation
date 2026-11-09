@@ -104,6 +104,34 @@ class ViewerTests(unittest.TestCase):
                       follow_up=dict(mode='review',anchor_at='2026-09-01T09:00:00Z',interval_days=7))
         self.assertEqual(action_dates(action,AT), [('2026-11-16T09:00:00+00:00',['review'])])
 
+    def test_grid_sorts_by_message_dates_not_edits_or_cache_access(self):
+        from monitor.threadcache import put_message
+        from monitor.card_input import apply
+        self.create('beta');self.create('gamma')
+        for cid, received in [('alpha','2026-11-08T10:00:00Z'),('beta','2026-11-09T09:00:00Z')]:
+            put_message(self.h,dict(case_id=cid,message=dict(EntryId=cid,StoreId='fixture',Received=received,Body='Synthetic mail')))
+        apply(self.h,dict(id='alpha',expected_revision=self.h.case('alpha')['revision'],idempotency_key='rename-old',title='Recently renamed'))
+        # Re-reading the older email must not make it newer than beta.
+        put_message(self.h,dict(case_id='alpha',message=dict(EntryId='alpha',StoreId='fixture',Received='2026-11-08T10:00:00Z',Body='Synthetic mail')))
+        result=overview(self.path,AT)
+        self.assertEqual([c['id'] for c in result['cards']],['beta','alpha','gamma'])
+        self.assertEqual(result['cards'][0]['latest_email_at'],'2026-11-09T09:00:00+00:00')
+        self.assertIsNone(result['cards'][-1]['latest_email_at'])
+
+    def test_email_reference_fallback_ignores_review_and_note_timestamps(self):
+        self.create('beta')
+        evidence=self.h.put_evidence(dict(kind='mail-source-reference',source='thread-cache',case_id='alpha',
+            body=json.dumps(dict(locator=dict(Received='2026-11-09 09:00:00')))))['id']
+        c=self.h.case('alpha')
+        with self.h.write():
+            raw=json.loads(self.h.db.execute("SELECT details FROM cases WHERE id='alpha'").fetchone()[0])
+            raw['evidence_index'].append(dict(id=evidence,label='Email',at='2026-11-09T15:00:00Z'))
+            self.h.db.execute("UPDATE cases SET details=? WHERE id='alpha'",(json.dumps(raw),))
+        result=overview(self.path,AT)
+        self.assertEqual(result['cards'][0]['id'],'alpha')
+        self.assertEqual(result['cards'][0]['latest_email_at'],'2026-11-09T09:00:00+00:00')
+        self.assertIsNone(result['cards'][1]['latest_email_at'])
+
     def test_missing_or_wrong_schema_is_not_initialised(self):
         missing=Path(self.tmp.name)/'missing.db'
         with self.assertRaises(sqlite3.Error):overview(missing)

@@ -80,6 +80,7 @@
     if (!actions.length) preview.append(el('span','','No matching action. Open the card for context.'));
     if (actions.length > 3) preview.append(el('span','more','+' + (actions.length-3) + ' more · open card'));
     node.append(preview);
+    node.append(el('span','more',card.latest_email_at?'Latest email · '+formatDate(card.latest_email_at)+' '+formatTime(card.latest_email_at):'No email date recorded'));
     const event = data.events.find(e => e.case_id === card.id && matchesAction(e.action));
     const foot = el('span','card-date');
     if (event) {
@@ -128,7 +129,7 @@
   function render() {
     if (!data) return;
     const cards = visibleCards(), actions = cards.flatMap(c => c.actions).filter(matchesAction);
-    $('count').textContent = cards.length + ' open ' + (cards.length === 1 ? 'thread' : 'threads') + ' · ' + actions.length + ' matching ' + (actions.length === 1 ? 'action' : 'actions');
+    $('count').textContent = cards.length + ' open ' + (cards.length === 1 ? 'thread' : 'threads') + ' · ' + actions.length + ' matching ' + (actions.length === 1 ? 'action' : 'actions') + (mode==='grid'?' · newest email first':'');
     const content = $('content');content.replaceChildren();
     if (!cards.length) content.append(empty(data.cards.length ? 'No matching threads' : 'A clear view. Nothing open.',data.cards.length ? 'Try another search or filter.' : 'Open cards will appear here when they are recorded in the harness.'));
     else if (mode === 'grid') {const grid = el('div','grid');cards.forEach(c => grid.append(renderCard(c)));content.append(grid);}
