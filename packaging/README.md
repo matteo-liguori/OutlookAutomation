@@ -77,3 +77,6 @@ Build with `python build_share_package.py --output output/OutlookAutomation-star
 Use `--platform macos` for the optional Mac pilot from the same codebase; see
 [Mac guide](macos/README.md). The archive includes a SHA-256 manifest. Native Mac
 mail/calendar access still requires the supervised capability trial.
+
+Licence: PolyForm Noncommercial 1.0.0; see the included LICENSE.md.
+Commercial uses outside its permissions require agreement with the repository owner.

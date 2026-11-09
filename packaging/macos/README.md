@@ -87,3 +87,6 @@ conversion and conflicting exports have synthetic coverage. Calendar source and
 occurrence scan caps report partial results. Portable tests alone do not establish
 full Mac compatibility. See `outlook_platforms/README.md` for command contracts and
 current limits.
+
+Licence: PolyForm Noncommercial 1.0.0; see the included LICENSE.md.
+Commercial uses outside its permissions require agreement with the repository owner.

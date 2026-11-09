@@ -28,3 +28,11 @@ tested capabilities and synthetic reproduction steps. Keep mailbox contents,
 profiles, credentials and live receipts out of issues and patches. Begin with
 offline checks, then use your own account and explicitly authorised test fixtures.
 Report suspected security issues through GitHub's private vulnerability reporting.
+
+## Licence
+
+[PolyForm Noncommercial 1.0.0](LICENSE.md) permits noncommercial use, modification
+and sharing, including the educational and other organisations covered by its terms.
+Commercial uses outside those permissions require a separate agreement with
+[@matteo-liguori](https://github.com/matteo-liguori). This is source-available software.
+Contributions are accepted under the same licence; dependency licences remain separate.

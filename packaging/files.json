@@ -1,4 +1,5 @@
 {
+  "LICENSE.md": "LICENSE.md",
   ".gitattributes": ".gitattributes",
   ".gitignore": ".gitignore",
   "AGENTS.md": "packaging/AGENTS.md",
