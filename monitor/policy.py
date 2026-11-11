@@ -6,8 +6,8 @@ DEFAULTS = defaults()['permission_defaults']
 
 
 def effective(profile):
-    from .configuration import resolve
-    result=deepcopy(resolve(profile=profile).values['permission_defaults'])
+    from .configuration import resolve, _current
+    result=deepcopy((resolve() if _current.get() is not None else resolve(profile=profile)).values['permission_defaults'])
     overrides=profile.get('permission_defaults', {})
     if not isinstance(overrides,dict) or set(overrides)-set(DEFAULTS):
         raise ValueError('Unknown permission-default override')

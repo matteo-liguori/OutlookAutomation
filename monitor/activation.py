@@ -8,6 +8,9 @@ from .model import dumps, now
 from .timing import plan, verify
 
 
+def _observe(h, state, user_active=False):
+    from .extensions import event
+    event(h, 'activation', dict(state=state, user_active=user_active))
 
 
 def identity(at=None):
@@ -32,6 +35,7 @@ def arm(h, user_active=False):
             state.pop('deferred_until_user', None)
             h.db.execute('UPDATE meta SET value=? WHERE key=?', (dumps(state), key))
         state = json.loads(h.db.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()[0])
+        _observe(h, state, user_active)
 
 
 def reminder(h):
@@ -84,6 +88,7 @@ def defer(h, payload):
         state.update(deferred_until_user=True, failure_reason=payload['reason'],
                      failure_evidence_ids=payload['evidence_ids'])
         h.db.execute('UPDATE meta SET value=? WHERE key=?', (dumps(state), key))
+        _observe(h, state)
     return dict(deferred_until_user=True)
 
 
@@ -123,6 +128,7 @@ def reconcile(h):
         elif all(value is True for value in checks.values()):
             state['completed_at'] = now()
         h.db.execute('UPDATE meta SET value=? WHERE key=?', (dumps(state), key))
+        _observe(h, state)
 
 
 def complete(h, payload):
@@ -156,4 +162,5 @@ def complete(h, payload):
         state.update(completed_at=now(), title_readback=title,
                      evidence_ids=evidence_ids, followup=followup, decline_evidence_ids=decline_evidence)
         h.db.execute('UPDATE meta SET value=? WHERE key=?', (dumps(state), key))
+        _observe(h, state)
     return dict(completed=True, thread_id=thread, date=str(day))

@@ -140,9 +140,19 @@ def handle_briefing(h, args, payload, kind):
 
 def handle_action(h, args, payload, kind):
     cmd, op = args.command, getattr(args, "operation", None)
+    if op=='run':
+        from .extensions import run_action
+        return run_action(h,args.id,payload)
     from .scheduling import review
 
     return review(h, payload)
+
+
+def handle_extension(h,args,payload,kind):
+    from .extensions import available,approve,disable
+    if args.operation=='list':return dict(extensions=[{k:v for k,v in item.items() if k!='folder'} for item in available(h=h)])
+    if args.operation=='approve':return approve(h,payload)
+    return disable(h,args.id)
 
 
 def handle_review(h, args, payload, kind):
@@ -371,6 +381,7 @@ def handle_health(h,args,payload,kind):
 
 
 HANDLERS = {
+    "extension": handle_extension,
     "config": handle_config,
     "outlook": handle_outlook,
     "review": handle_review,
@@ -404,9 +415,18 @@ HANDLERS = {
 
 def execute(h,args):
     from .configuration import snapshot, resolve
-    case_id=getattr(args,"case_id",None)
-    with snapshot(resolve(card=h.case(case_id) if case_id and h else None)):
-        return _scoped_execute(h,args)
+    from .extensions import effective
+    payload=read_payload(args.input) if getattr(args,'input',None) else None
+    args._payload=payload
+    case_id=getattr(args,'case_id',None) or (getattr(args,'id',None) if args.command=='case' else None) or (payload or {}).get('case_id')
+    if args.command=='action' and h:
+        ident=getattr(args,'id',None) or (payload or {}).get('action_id')
+        row=h.db.execute('SELECT case_id FROM actions WHERE id=?',(ident,)).fetchone()
+        if row:case_id=row[0]
+    try:
+        with snapshot(effective(resolve(card=h.case(case_id) if case_id and h else None),h)):
+            return _scoped_execute(h,args)
+    finally:del args._payload
 
 
 def _scoped_execute(h,args):
@@ -429,7 +449,7 @@ def _scoped_execute(h,args):
 def _execute(h, args):
     cmd, op = args.command, getattr(args, "operation", None)
     payload = (
-        read_payload(args.input)
+        args._payload
         if getattr(args, "input", None)
         else None
     )
@@ -477,7 +497,9 @@ def _execute(h, args):
         if args.cursor.startswith('live:'):
             return HANDLERS[cmd](h,args,payload,kind)
         raise ValueError('Saved-page cursors are retired; restart the current query')
-    result = HANDLERS[cmd](h, args, payload, kind)
+    from .extensions import override
+    replacement=override(h,':'.join([cmd,op or '']),dict(payload=payload,arguments=vars(args))) if h else None
+    result = replacement if replacement is not None else HANDLERS[cmd](h, args, payload, kind)
     if h is not None and getattr(args, "input", None) not in (None, "-") and cmd != "maintenance":
         path = Path(args.input).resolve()
         if (

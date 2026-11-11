@@ -123,7 +123,12 @@ class Configuration:
 
 
 def resolve(root=None, profile=None, default_file=None, card=None):
-    if root is None and profile is None and default_file is None and card is None and _current.get() is not None:return _current.get()
+    if root is None and profile is None and default_file is None and _current.get() is not None:
+        current=_current.get()
+        if card and card.get('customisations'):
+            if set(card['customisations'])-{'instructions','reviews','templates','permission_defaults'}:raise ValueError('Invalid card customisation scope')
+            return current.overlay(card['customisations'],'card:'+card['id'])
+        return current
     base=defaults(default_file);values=deepcopy(base);origins={k:'default' for k,_ in leaves(base)}
     if profile is None:
         from .profile import PROFILE

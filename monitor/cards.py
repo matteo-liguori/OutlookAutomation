@@ -38,6 +38,8 @@ def evidence_index(h, ids, previous=()):
 def prepare(h, case, prior, at):
     """Maintain one current row, without creating a diary or scheduling new actions."""
     prior=prior or {}
+    if 'customisations' not in case and 'customisations' in prior:case['customisations']=prior['customisations']
+    if case.get('customisations'):resolve(card=case)
     case.pop('user_note_instruction', None)
     # Only the narrow user-input/acknowledgement operations own this inbox.
     # Agent replacements (including stale copies) cannot clear or invent notes.
@@ -87,7 +89,8 @@ def show(h,cid):
     c['last_reported_revision']=marker[0] if marker else None
     from .approvals import items as approval_items
     c['approvals']=[{'id':a['id'],'kind':a['kind'],'review_due':a['review_due']} for a in approval_items(h) if a['case_id']==cid]
-    return c
+    from .extensions import project
+    return project(h,c)
 
 
 def page(h,cid,cursor=None):

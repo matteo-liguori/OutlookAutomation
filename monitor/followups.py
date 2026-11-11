@@ -38,6 +38,10 @@ def reminder_due(action, at=None):
 
 
 def prepare(h, action, prior, evidence_ids, at=None):
+    if prior and 'custom_action' in prior and 'custom_action' not in action:action['custom_action']=dict(prior['custom_action'])
+    if action.get('custom_action'):
+        ref=action['custom_action']
+        if not isinstance(ref,dict) or set(ref)-{'bundle','action','parameters','approval_id'} or not all(isinstance(ref.get(k),str) and ref[k] for k in ('bundle','action')) or not isinstance(ref.get('parameters',{}),dict):raise ValueError('Invalid custom action reference')
     if not action.get("follow_up") and prior and prior.get("follow_up"):
         # A caller replacing case state must not silently discard a timer.
         action["follow_up"] = dict(prior["follow_up"])
