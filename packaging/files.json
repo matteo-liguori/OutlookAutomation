@@ -194,5 +194,7 @@
   "tests/test_configuration.py": "tests/test_configuration.py",
   "monitor/extensions.py": "monitor/extensions.py",
   "monitor/extension_worker.py": "monitor/extension_worker.py",
-  "tests/test_extensions.py": "tests/test_extensions.py"
+  "tests/test_extensions.py": "tests/test_extensions.py",
+  "monitor/migration.py": "monitor/migration.py",
+  "tests/test_migration.py": "tests/test_migration.py"
 }

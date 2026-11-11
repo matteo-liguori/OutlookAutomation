@@ -53,6 +53,27 @@ def include_profile(db, raw, at):
     db.commit()
 
 
+def capture_configuration(h):
+    root=h.path.parent.parent if h.path.parent.name=='monitor' else h.path.parent
+    candidates=[root/'customisations.yaml',root/'.state/defaults.json']
+    folder=root/'extensions'
+    if folder.exists():candidates.extend(p for p in folder.rglob('*') if '__pycache__' not in p.parts and p.is_file())
+    result={}
+    for path in candidates:
+        if not path.exists():continue
+        if any(p.is_symlink() for p in (path,*path.parents) if p!=root):raise ValueError('Configuration backup does not follow links')
+        if path.stat().st_size>2_000_000:raise ValueError('Configuration file exceeds backup limit')
+        result[path.relative_to(root).as_posix()]=path.read_bytes()
+    return result
+
+
+def include_configuration(db,files):
+    db.execute('CREATE TABLE IF NOT EXISTS backup_configuration(path TEXT PRIMARY KEY,content BLOB NOT NULL,sha256 TEXT NOT NULL)')
+    db.execute('DELETE FROM backup_configuration')
+    db.executemany('INSERT INTO backup_configuration VALUES(?,?,?)',[(p,raw,hashlib.sha256(raw).hexdigest()) for p,raw in files.items()])
+    db.commit()
+
+
 def plan(root):
     from .maintenance import safe_file, verified_backup, file_hash
 

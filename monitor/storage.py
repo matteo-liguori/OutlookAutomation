@@ -98,8 +98,9 @@ class Storage:
         self.db.close()
 
     def backup(self, label=None):
-        from .backups import capture_profile, embedded_profile, include_profile
+        from .backups import capture_profile, embedded_profile, include_profile, capture_configuration, include_configuration
         profile = capture_profile(self)
+        configuration=capture_configuration(self)
         folder = self.path.parent / "backups"
         folder.mkdir(exist_ok=True)
         if folder.is_symlink() or (hasattr(folder, 'is_junction') and folder.is_junction()):
@@ -138,6 +139,7 @@ class Storage:
 
                     sanitize_backup(out)
                     include_profile(out, profile, now())
+                    include_configuration(out, configuration)
                     if out.execute('PRAGMA quick_check').fetchone()[0]!='ok' or out.execute('PRAGMA foreign_key_check').fetchall():
                         raise ValueError('Replacement backup validation failed; existing slot preserved')
                 except BaseException:

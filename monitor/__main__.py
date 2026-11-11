@@ -36,6 +36,7 @@ def parser():
     config=sub.add_parser('config').add_subparsers(dest='operation',required=True)
     cs=config.add_parser('show');cs.add_argument('--explain',action='store_true');cs.add_argument('--case',dest='case_id')
     config.add_parser('validate')
+    config.add_parser('migrate').add_argument('--apply',action='store_true')
     cr=config.add_parser('review');cr.add_argument('--input')
     reset=config.add_parser('reset');reset.add_argument('--key',required=True)
     sub.add_parser('health')

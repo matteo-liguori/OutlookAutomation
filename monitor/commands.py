@@ -27,6 +27,9 @@ def handle_doctor(h, args, payload, kind):
 
 
 def handle_config(h,args,payload,kind):
+    if args.operation=='migrate':
+        from .migration import run
+        return run(apply=args.apply)
     from .configuration import resolve,review,location,lock,paths,read_yaml,assign,defaults,validate,plain,atomic,dump
     card=h.case(args.case_id) if getattr(args,'case_id',None) else None
     config=resolve(card=card)
