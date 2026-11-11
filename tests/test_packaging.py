@@ -114,7 +114,10 @@ class PackagingTests(unittest.TestCase):
                              'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py', 'tests/test_mac_test_actions.py', 'tests/test_platform_commands.py',
                              'outlook_platforms/thunderbird/commands.py', 'outlook_platforms/thunderbird/native_host.py',
                              'outlook_platforms/thunderbird/addon/calendar-api.js', 'outlook_platforms/thunderbird/README.md',
-                             'tests/test_thunderbird.py', 'tests/Test-ThunderbirdBridge.js'):
+                             'tests/test_thunderbird.py', 'tests/Test-ThunderbirdBridge.js',
+                             'outlook_platforms/thunderbird/mail.py','outlook_platforms/thunderbird/addon/mail.js',
+                             'outlook_platforms/thunderbird/addon/client-api.js','outlook_platforms/thunderbird/addon/client-schema.json',
+                             'tests/test_thunderbird_mail.py','tests/Test-ThunderbirdMail.js'):
                     self.assertIn('OutlookAutomation/' + name, archive.namelist())
 
     def test_optional_calendar_sources_define_coverage(self):

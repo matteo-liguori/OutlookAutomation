@@ -5,7 +5,8 @@ one home and link to it elsewhere.
 
 Use `monitor.ps1 outlook <operation>` (Mac: `python -m monitor outlook`).
 `outlook status` lists capabilities/fields; `help outlook` gives the workflow.
-The helpers below are backend/compatibility references. Scope: AGENTS.md.
+For Mac Thunderbird, use the [command correspondence and setup](../outlook_platforms/thunderbird/README.md).
+The helpers below are Windows backend/compatibility references. Scope: AGENTS.md.
 
 | Need | Helper |
 | --- | --- |

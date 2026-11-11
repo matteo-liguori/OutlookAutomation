@@ -1,6 +1,7 @@
 /* Run with Node: node tests/Test-ThunderbirdBridge.js. No client or live mail. */
 const vm=require('node:vm'),assert=require('node:assert/strict');
 const fs=require('node:fs'),path=require('node:path');
+const crypto=require('node:crypto').webcrypto,{File}=require('node:buffer');
 
 async function run(source) {
   function fixture() {
@@ -14,7 +15,7 @@ async function run(source) {
       runtime:{getBrowserInfo:async()=>({version:'159.0'}),connectNative:()=>({
         onMessage:{addListener:f=>{listener=f;}},onDisconnect:{addListener:()=>{}},postMessage:r=>replies.push(r)})},
       storage:{local:{get:async key=>({[key]:stored[key]}),set:async value=>Object.assign(stored,value)}},
-      accounts:{get:async()=>({identities:[{id:'id1',email:'fixture@example.invalid'}]})},
+      accounts:{list:async()=>[],get:async()=>({identities:[{id:'id1',email:'fixture@example.invalid'}],rootFolder:{id:'account1://',accountId:'account1',subFolders:[{id:'account1://Sent',accountId:'account1',specialUse:['sent']},{id:'account1://Drafts',accountId:'account1',specialUse:['drafts']}]}})},
       folders:{get:async id=>({id,accountId:'account1'})},
       messages:{get:async()=>structuredClone(h),getFull:async()=>{contentReads++;return {body:'Fixture'};},
         query:async q=>({messages:[...(h.folder.id===q.folderId ? [structuredClone(h)] : []),...(prior && prior.folder.id===q.folderId ? [structuredClone(prior)] : [])]}),
@@ -26,11 +27,13 @@ async function run(source) {
           if(moveMode==='merged')prior=null;
           if(moveMode==='lost-response')throw new Error('lost-response');
         }},
-      compose:{beginNew:async details=>{messenger.details=details;return {id:1};},
+      messengerUtilities:{decodeMimeHeader:async(name,value)=>value,parseMailboxString:async text=>[{email:text.includes('<') ? text.slice(text.lastIndexOf('<')+1,text.lastIndexOf('>')) : text}]},
+      harnessMail:{execute:async()=>({status:'ok'})},
+      compose:{listAttachments:async()=>[],beginNew:async details=>{messenger.details=details;return {id:1};},
         getComposeDetails:async()=>messenger.details,
         sendMessage:async()=>{sendCount++;throw new Error('submission-response-lost');}}
     };
-    const context=vm.createContext({messenger,console,structuredClone,setTimeout:(f,ms)=>setTimeout(f,ms===40000?20:ms),clearTimeout});
+    const context=vm.createContext({messenger,console,structuredClone,crypto,File,btoa,atob,setTimeout:(f,ms)=>setTimeout(f,ms===40000?20:ms),clearTimeout});
     new vm.Script(source).runInContext(context);
     return {context,stored,replies,request:r=>listener({id:String(replies.length),request:r}),
       stats:()=>({moveCount,sendCount,contentReads}),addSourceExisting:()=>{prior={...structuredClone(h),id:99};},addExisting:()=>{prior={...structuredClone(h),id:99,read:true,folder:{id:'account1://Trash',accountId:'account1'}};},setMode:value=>{moveMode=value;},release:()=>release()};
@@ -62,7 +65,7 @@ async function run(source) {
   await assert.rejects(f.context.dispatch(move),/reconciliation/);
   const reconciled=await f.context.dispatch({...move,action:'reconcile-move'});
   assert.equal(reconciled.reconciled,true);assert.equal(reconciled.move_command_reissued,false);assert.equal(f.stats().moveCount,1);
-  f=fixture();const send={...base,action:'send-message',approval_id:'send',to:['fixture@example.invalid'],cc:[],bcc:[],subject:'Fixture',body:'Synthetic'};
+  f=fixture();const send={...base,action:'send-message',approval_id:'send',to:['fixture@example.invalid'],cc:[],bcc:[],subject:'Fixture',body:'Synthetic',sent_folder_id:'account1://Sent',draft_folder_id:'account1://Drafts'};
   await assert.rejects(f.context.dispatch(send),/lost/);await assert.rejects(f.context.dispatch(send),/reconciliation/);assert.equal(f.stats().sendCount,1);
   f=fixture();f.setMode('pending');f.request(move);
   await new Promise(resolve=>setTimeout(resolve,40));
@@ -74,4 +77,4 @@ async function run(source) {
   return 'Passed account isolation, changed identity, unread restoration, canonical replay, uncertain-send suppression, read-only reconciliation and responsive reads during stalled writes.';
 }
 module.exports=run;
-if(require.main===module)run(fs.readFileSync(path.join(__dirname,'../outlook_platforms/thunderbird/addon/background.js'),'utf8')).then(console.log).catch(e=>{console.error(e);process.exitCode=1;});
+if(require.main===module)run(fs.readFileSync(path.join(__dirname,'../outlook_platforms/thunderbird/addon/mail.js'),'utf8')+'\n'+fs.readFileSync(path.join(__dirname,'../outlook_platforms/thunderbird/addon/background.js'),'utf8')).then(console.log).catch(e=>{console.error(e);process.exitCode=1;});

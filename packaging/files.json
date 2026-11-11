@@ -182,5 +182,11 @@
   "tests/test_viewer.py": "tests/test_viewer.py",
   "requirements-ui.lock": "requirements-ui.lock",
   "monitor/card_input.py": "monitor/card_input.py",
-  "tests/test_card_input.py": "tests/test_card_input.py"
+  "tests/test_card_input.py": "tests/test_card_input.py",
+  "outlook_platforms/thunderbird/mail.py": "outlook_platforms/thunderbird/mail.py",
+  "outlook_platforms/thunderbird/addon/mail.js": "outlook_platforms/thunderbird/addon/mail.js",
+  "outlook_platforms/thunderbird/addon/client-api.js": "outlook_platforms/thunderbird/addon/client-api.js",
+  "outlook_platforms/thunderbird/addon/client-schema.json": "outlook_platforms/thunderbird/addon/client-schema.json",
+  "tests/test_thunderbird_mail.py": "tests/test_thunderbird_mail.py",
+  "tests/Test-ThunderbirdMail.js": "tests/Test-ThunderbirdMail.js"
 }

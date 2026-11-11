@@ -9,13 +9,22 @@ import uuid
 from .native_host import request as transport
 
 FIELDS = {
-    'discover':['source'], 'accounts':['source'], 'folders':['source'],
-    'recent':['source','start','end','limit','subject','unread_only','folder_id'],
-    'search':['source','start','end','limit','query','subject','unread_only','folder_id'],
-    'read':['source','entry_id','folder_id','case_id'],
+    'discover':['source'], 'accounts':['source'], 'stores':['source'], 'folders':['source'], 'session':['source'],
+    'recent':['source','start','end','limit','subject','unread_only','folder_id','folder','include_preview','max_scan'],
+    'search':['source','start','end','limit','query','subject','unread_only','folder_id','folder','body_chars','max_scan'],
+    'read':['source','entry_id','folder_id','folder','store_id','case_id','force_refresh','download_attachments','download_large_attachments','content_hash'],
     'collect':['source','start','end','page_size','max_scan','offset','snapshot_id','run_id'],
     'freshness':['source','freshness_minutes','interval_seconds','max_wait_seconds'],
-    'send':['source','approval_id','to','cc','bcc','subject','body','attachments'],
+    'send':['source','approval_id','to','cc','bcc','subject','body','attachments','high_importance','reply_to_entry_id'],
+    'send-reconcile':['source','approval_id'],
+    'draft-save':['source','approval_id','to','cc','bcc','subject','body','attachments','high_importance','reply_to_entry_id','display_only'],
+    'draft-update':['source','approval_id','to','cc','bcc','subject','body','attachments','high_importance','reply_to_entry_id','entry_id'],
+    'draft-reconcile':['source','approval_id','draft_operation'],
+    'draft-inspect':['source','approval_id','draft_operation'],
+    'draft-discard':['source','approval_id','draft_operation','compose_hash'],
+    'duplicates':['source','subject','body','recipients','lookback_days','max_scan','limit'],
+    'contacts':['source','query','limit','max_items_per_folder','include_recipient_cache'],
+    'refresh':['source','wait_seconds'],
     'move':['source','approval_id','entry_id'],
     'move-reconcile':['source','approval_id'],
     'trash':['source','approval_id','entry_id'], 'trash-reconcile':['source','approval_id'],
@@ -24,7 +33,7 @@ FIELDS = {
     'calendar-create':['source','approval_id'], 'calendar-update':['source','approval_id'],
     'calendar-delete':['source','approval_id'],
 }
-WRITES={'send','move','trash','calendar-create','calendar-update','calendar-delete'}
+WRITES={'send','draft-save','draft-update','move','trash','calendar-create','calendar-update','calendar-delete'}
 
 
 def call(request, runner=transport):
@@ -90,6 +99,14 @@ def mime(full):
     return '\n'.join(plain),attachments
 
 
+def reconcile_move(request,base,runner):
+    # IMAP can finish moving before the destination's local header cache updates.
+    # Refresh only the two exact folders, then reconcile without another move.
+    call(dict(base,action='client-refresh',folder_ids=list(dict.fromkeys([request['source_folder_id'],request['destination_folder_id']])),timeout_ms=8000),runner)
+    fields=('approval_id','source_folder_id','destination_folder_id','internet_message_id')
+    return call(dict(base,action='reconcile-trash' if request['action'] in {'trash-message','reconcile-trash'} else 'reconcile-move',**{k:request[k] for k in fields}),runner)
+
+
 def write(h,operation,payload,base,binding,runner):
     from outlook_platforms.macos.operations import require_approval,allowed,journal
     from monitor.model import digest
@@ -98,19 +115,29 @@ def write(h,operation,payload,base,binding,runner):
     approval_id=payload.get('approval_id');grant=require_approval(h,approval_id)
     scope=grant.get('scope',{})
     request=dict(base,approval_id=approval_id)
-    if operation=='send':
-        allowed(grant,'send')
+    if operation in {'send','draft-save','draft-update'}:
+        from .mail import attachment_specs,transport_request
+        allowed(grant,{'send':'send','draft-save':'save-draft','draft-update':'update-draft'}[operation])
         check_send(h,payload,base['mailbox'])
         message=grant.get('message',{})
         if grant.get('message_hash')!=digest(message):raise ValueError('Approval message integrity mismatch')
-        if message.get('attachments'):raise ValueError('Thunderbird outgoing attachments are not implemented yet')
         for key in ('to','cc','bcc'):
             if not isinstance(message.get(key),list) or any(not isinstance(v,str) or not re.fullmatch(r'[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+',v) for v in message[key]):
                 raise ValueError('Use explicit SMTP recipient addresses')
         if not message.get('to') or not isinstance(message.get('body'),str) or not message.get('subject') or any(c in message['subject'] for c in '\r\n'):
             raise ValueError('Invalid approved message')
-        request.update(action='send-message',
+        request.update(action={'send':'send-message','draft-save':'draft-message','draft-update':'draft-update'}[operation],
+                       attachments=attachment_specs(message),high_importance=message.get('high_importance',False),
+                       allow_duplicate=scope.get('allow_duplicate') is True,draft_folder_id=binding.get('draft_folder_id'),
                        **{key:message[key] for key in ('to','cc','bcc','subject','body')})
+        request=transport_request(request,binding)
+        if operation=='draft-save':request['display_only']=payload.get('display_only',False)
+        if operation=='draft-update':
+            if scope.get('draft_folder_id')!=binding.get('draft_folder_id') or not scope.get('draft_id') or not scope.get('expected_raw_sha256'):
+                raise ValueError('Draft update needs verified folder, draft_id and expected_raw_sha256')
+            if payload.get('entry_id') is not None and payload['entry_id']!=scope['draft_id']:raise ValueError('Draft entry_id differs from approval')
+            request.update(draft_entry_id=scope['draft_id'],source_folder_id=scope['draft_folder_id'],expected_raw_sha256=scope['expected_raw_sha256'])
+        if message.get('reply_to_entry_id'):request['reply_entry_id']=message['reply_to_entry_id']
     elif operation in {'move','trash'}:
         needed={'mailbox','source_folder_id','entry_id','internet_message_id'}
         if operation=='move':needed.add('destination_folder_id')
@@ -131,6 +158,7 @@ def write(h,operation,payload,base,binding,runner):
         if any(not isinstance(scope.get(key),str) or not scope[key] for key in needed):raise ValueError('Exact event content/version required')
         request.update(action=operation,**{key:scope[key] for key in needed})
         if operation!='calendar-delete':validate_event(scope['icalendar'],scope['event_id'])
+    identity_request=json.loads(json.dumps(request))
     identity=digest(request);key='thunderbird:'+operation+':'+approval_id
     with h.write():
         state=journal(h,key)
@@ -138,16 +166,62 @@ def write(h,operation,payload,base,binding,runner):
             if state.get('fingerprint')!=identity:raise ValueError('Approval request changed')
             if state['stage']=='complete':return dict(state['result'],duplicate_prevented=True)
             if state['stage']!='not-attempted':raise ValueError('Prior Thunderbird write needs reconciliation; no command was reissued')
-        journal(h,key,dict(stage='attempting',fingerprint=identity))
+        journal(h,key,dict(stage='attempting',fingerprint=identity,request=identity_request))
     # A transport exception deliberately leaves the durable attempting state.
     if operation in {'move','trash'}:
         locator=resolve_entry(request.pop('entry_id'),base,runner,request['source_folder_id'])
         if locator.get('internet_message_id',request['internet_message_id'])!=request['internet_message_id']:raise ValueError('RFC Message-ID differs from approval')
         request.update(locator)
+    if operation in {'send','draft-save','draft-update'}:
+        from .mail import uploaded_attachments
+        request['attachments']=uploaded_attachments(grant['message'],base,call,runner)
+        if request.get('draft_entry_id'):
+            request.update(resolve_entry(request.pop('draft_entry_id'),base,runner,request['draft_folder_id']))
+        if request.get('reply_entry_id'):
+            reply=resolve_entry(request.pop('reply_entry_id'),base,runner)
+            header_result=call(dict(base,action='read',**reply),runner)
+            if header_result.get('status')!='ok':raise ValueError('Reply source cannot be verified')
+            reply_header=header_result['message']
+            request.update(reply_message_id=reply_header['id'],reply_folder_id=reply_header['folder']['id'],reply_internet_message_id=reply_header['internet_message_id'])
     result=call(request,runner)
-    not_attempted=result.get('code')=='client-write-in-progress' and result.get('mutation_may_have_occurred') is False
-    with h.write():journal(h,key,dict(stage='complete' if result.get('status')=='ok' else 'not-attempted' if not_attempted else 'uncertain',fingerprint=identity,result=result))
+    if result.get('status')=='ok' and result.get('draft'):
+        result['EntryId']=row(result['draft']['message'],base['mailbox'])['EntryId']
+        result['ContentHash']=result['draft']['raw_sha256']
+    not_attempted=result.get('mutation_may_have_occurred') is False and (result.get('code')=='client-write-in-progress' or result.get('not_attempted') is True)
+    with h.write():journal(h,key,dict(stage='complete' if result.get('status')=='ok' else 'not-attempted' if not_attempted else 'uncertain',fingerprint=identity,result=result,request=identity_request))
+    if operation in {'move','trash'} and result.get('code')=='move-not-verified':
+        try:
+            checked=reconcile_move(request,base,runner)
+            if checked.get('status')=='ok':
+                result=checked
+                with h.write():journal(h,key,dict(stage='complete',fingerprint=identity,result=result,request=identity_request))
+        except (OSError,ValueError):pass  # Original uncertain receipt remains durable.
+    if operation=='send' and result.get('status')=='ok':
+        try:
+            import time
+            for attempt in range(5):
+                verification=call(dict(identity_request,action='send-verify',**{k:v for k,v in request.items() if k.startswith('reply_') and k!='reply_entry_id'}),runner)
+                if verification.get('status')=='ok':result.update(verification)
+                else:result['verification_error']=verification.get('code','Send readback incomplete')
+                if result.get('sent_verified'):break
+                if attempt<4:time.sleep(1)
+        except (OSError,ValueError) as error:result['verification_error']=str(error)
+        with h.write():journal(h,key,dict(stage='complete',fingerprint=identity,result=result,request=identity_request))
     return result
+
+
+def folder_id(payload,binding,base,runner):
+    if payload.get('folder_id'):return payload['folder_id']
+    name=payload.get('folder','inbox')
+    logical={'inbox':'selected_inbox_id','sent':'sent_folder_id','sent items':'sent_folder_id','drafts':'draft_folder_id','trash':'trash_folder_id'}
+    if name.lower() in logical:
+        chosen=binding.get(logical[name.lower()])
+        if not chosen:raise ValueError('Configure the exact '+name+' folder first')
+        return chosen
+    inventory=call(dict(base,action='folders'),runner)
+    matches=[f for f in inventory.get('folders',[]) if f['name'].casefold()==name.casefold() or f['path'].casefold()==name.casefold()]
+    if len(matches)!=1:raise ValueError('Folder missing or ambiguous; use folder_id')
+    return matches[0]['id']
 
 
 def validate_event(text,event_id):
@@ -216,6 +290,8 @@ def execute_json(operation,payload,store,h,source,*,profile,runner=transport):
             calendar=call(dict(action='calendar-list'),runner)
             result['calendars']=calendar.get('calendars',[])
             result['calendar_available']=calendar.get('status')=='ok'
+            books=call(dict(action='address-books'),runner)
+            result['address_books']=books.get('address_books',[])
         return dict(data=result,status=result.get('status','blocked'))
     if operation.startswith('calendar'):
         base=dict(calendar_id=binding['calendar_id'])
@@ -223,6 +299,50 @@ def execute_json(operation,payload,store,h,source,*,profile,runner=transport):
     if operation in WRITES:
         result=write(h,operation,payload,base,binding,runner)
         return dict(data=result,status=result.get('status','blocked'))
+    if operation in {'draft-reconcile','draft-inspect','draft-discard'}:
+        from outlook_platforms.macos.operations import require_approval,journal,allowed
+        from monitor.model import digest
+        grant=require_approval(h,payload.get('approval_id'));message=grant.get('message',{})
+        operations=[payload['draft_operation']] if payload.get('draft_operation') else ['draft-save','draft-update']
+        candidates=[]
+        for name in operations:
+            if name not in {'draft-save','draft-update'}:raise ValueError('Invalid draft_operation')
+            key='thunderbird:'+name+':'+payload['approval_id'];state=journal(h,key)
+            if state:candidates.append((key,state,name))
+        if len(candidates)!=1:raise ValueError('Choose the exact original draft operation with a recorded attempt')
+        key,state,name=candidates[0];allowed(grant,'save-draft' if name=='draft-save' else 'update-draft')
+        expected=state.get('request',{})
+        if state.get('fingerprint')!=digest(expected) or expected.get('account_id')!=base['account_id'] or expected.get('mailbox')!=store:raise ValueError('Original draft request/binding changed')
+        if grant.get('message_hash')!=digest(message):raise ValueError('Original draft approval changed')
+        for field in ('to','cc','bcc','subject','body'):
+            if expected.get(field)!=message.get(field):raise ValueError('Draft reconciliation content differs from approval')
+        request=dict(expected,action=operation,original_action='draft-message' if name=='draft-save' else 'draft-update')
+        if operation=='draft-discard' and not re.fullmatch(r'[0-9a-f]{64}',payload.get('compose_hash','')):raise ValueError('Exact inspected composer hash required')
+        if operation=='draft-discard':request['compose_hash']=payload['compose_hash']
+        result=call(request,runner)
+        if operation=='draft-reconcile' and result.get('status')=='ok':
+            result.update(EntryId=row(result['draft']['message'],store)['EntryId'],ContentHash=result['draft']['raw_sha256'])
+            with h.write():journal(h,key,dict(state,stage='complete',result=result))
+        if operation=='draft-discard' and result.get('discarded'):
+            with h.write():journal(h,key,dict(state,stage='abandoned',result=result))
+        return dict(data=result,status=result.get('status','blocked'))
+    if operation=='send-reconcile':
+        from outlook_platforms.macos.operations import require_approval,journal,allowed
+        from monitor.model import digest
+        grant=require_approval(h,payload.get('approval_id'));allowed(grant,'send')
+        message=grant.get('message',{});key='thunderbird:send:'+payload['approval_id'];state=journal(h,key)
+        if not state or not state.get('request'):raise ValueError('Original send request journal required for reconciliation')
+        expected=state['request']
+        if state.get('fingerprint')!=digest(expected) or expected['account_id']!=base['account_id'] or expected['mailbox']!=store:raise ValueError('Original send identity/binding changed')
+        if grant.get('message_hash')!=digest(message) or message.get('sender')!=store:raise ValueError('Original send approval changed')
+        for key_name in ('to','cc','bcc','subject','body'):
+            if expected.get(key_name)!=message.get(key_name):raise ValueError('Reconciliation envelope differs from approval')
+        if [a['sha256'] for a in expected.get('attachments',[])]!=[a['sha256'] for a in message.get('attachments',[])]:raise ValueError('Reconciliation attachment approval differs')
+        result=call(dict(expected,action='send-verify',reconcile=True),runner)
+        if result.get('sent_verified') or result.get('delivery_verified'):
+            result.update(reconciled=True,send_command_reissued=False)
+            with h.write():journal(h,key,dict(state,stage='complete',result=result))
+        return dict(data=result,status='ok' if result.get('sent_verified') else 'partial')
     if operation in {'move-reconcile','trash-reconcile'}:
         from outlook_platforms.macos.operations import require_approval,journal
         from monitor.model import digest
@@ -241,29 +361,77 @@ def execute_json(operation,payload,store,h,source,*,profile,runner=transport):
             with h.write():journal(h,key,dict(state,stage='complete',result=result))
         return dict(data=result,status=result.get('status','blocked'))
     if operation=='collect':return dict(data=collect(h,base,payload,binding,runner))
-    if operation=='freshness':
-        return dict(data=dict(Store=store,Current=False,Status='unknown',
-            LatestStoreId='thunderbird:'+store.casefold(),CheckedAt=datetime.now(timezone.utc).isoformat(),
-            Reason='The standard Thunderbird API exposes local mail, not provider sync completion.'),status='partial')
-    if operation in {'accounts','folders'}:
+    if operation in {'freshness','refresh'}:
+        from .mail import freshness,refresh
+        result=(freshness if operation=='freshness' else refresh)(base,binding,payload,call,runner)
+        return dict(data=result,status='ok' if result.get('Current',result.get('success',False)) else 'partial')
+    if operation=='duplicates':
+        from .mail import duplicate_scan
+        result=duplicate_scan(base,binding,payload,call,runner)
+        return dict(data=result,status='ok' if result.get('Complete') else 'partial')
+    if operation=='contacts':
+        from .mail import transport_request
+        if not isinstance(payload.get('query'),str) or not payload['query'].strip():raise ValueError('Contact lookup requires a query')
+        result=call(transport_request(base,binding,action='contacts',address_book_ids=binding['address_book_ids'],**payload),runner)
+        rows=[dict(Store=store,Folder=p['book_id'],FullName=p['name'],Email1=(p['emails']+[''])[0],Email2=(p['emails']+['',''])[1]) for p in result.get('contacts',[])]
+        return dict(data=rows if result.get('status')=='ok' else result,coverage={k:v for k,v in result.items() if k in {'complete','scanned','coverage'}},status='ok' if result.get('status')=='ok' and result.get('complete') else 'partial')
+    if operation=='session':
+        result=call(dict(base,action='folders'),runner);status_result=call(dict(action='status'),runner)
+        return dict(data=dict(status_result,account_verified=result.get('status')=='ok',AccountId=base['account_id']),status='ok' if result.get('status')=='ok' else 'blocked')
+    if operation in {'accounts','stores','folders'}:
         # folders and read are checked inside the client before any mail content is read.
         result=call(dict(base,action='folders'),runner)
-        data=([dict(DisplayName=store,SmtpAddress=store,AccountId=binding['account_id'])] if operation=='accounts'
+        data=([dict(DisplayName=store,SmtpAddress=store,AccountId=binding['account_id'],StoreId='thunderbird:'+store.casefold())] if operation in {'accounts','stores'}
               else [dict(Store=store,Folder=f['name'],FolderPath=f['path'],FolderId=f['id'],SpecialUse=f.get('specialUse',[])) for f in result.get('folders',[])])
     elif operation in {'recent','search'}:
-        request=dict(base,action='query',**window(payload),folder_id=payload.get('folder_id',binding['selected_inbox_id']))
+        request=dict(base,action='query',**window(payload),folder_id=folder_id(payload,binding,base,runner),max_scan=payload.get('max_scan',5000))
         request.update({key:payload[key] for key in ('subject','query','unread_only') if key in payload})
         result=call(request,runner)
         data=[row(m,store) for m in sorted(result.get('messages',[]),key=lambda m:(m['date'],m['id']),reverse=True)[:payload.get('limit',10)]]
+        if operation=='search' or payload.get('include_preview'):
+            chars=payload.get('body_chars',2000 if operation=='search' else 240)
+            if type(chars) is not int or not 0<=chars<=20000:raise ValueError('body_chars must be 0..20000')
+            for item in data:
+                body=call(dict(base,action='read-extended',message_id=item['TransientId'],source_folder_id=item['FolderId'],internet_message_id=item['InternetMessageId']),runner)
+                if body.get('status')!='ok':return dict(data=body,status='blocked')
+                text,attachments=mime(body['full']);text=body.get('body',text);item.update(Subject=body.get('exact_subject',item['Subject']),To='; '.join(body['message'].get('recipients',[])),Cc='; '.join(body['message'].get('cc',[])),
+                    BodyPreview=re.sub(r'\s+',' ',text).strip()[:chars],AttachmentNames=[a['name'] for a in attachments])
+                if payload.get('include_preview'):item['Preview']=item['BodyPreview']
     elif operation=='read':
-        request=dict(base,action='read',**resolve_entry(payload.get('entry_id'),base,runner,payload.get('folder_id')))
+        if payload.get('store_id') and payload['store_id']!='thunderbird:'+store.casefold():raise ValueError('Message store_id differs from source')
+        if payload.get('case_id') and not any(payload.get(k) for k in ('force_refresh','download_attachments','download_large_attachments','content_hash')):
+            from monitor.threadcache import find_message
+            cached=find_message(h,dict(case_id=payload['case_id'],entry_id=payload['entry_id'],store_id='thunderbird:'+store.casefold()))
+            if cached.get('found'):return dict(data=cached['message'],coverage=dict(cache_hit=True,fresh_native_read=False),status='ok')
+        parent=folder_id(payload,binding,base,runner) if payload.get('folder') else payload.get('folder_id')
+        locator=resolve_entry(payload.get('entry_id'),base,runner,parent)
+        request=dict(base,action='read-extended',include_raw_hash=payload.get('content_hash',False),**locator)
         result=call(request,runner)
         if result.get('status')=='ok':
-            message=result['message'];body,attachments=mime(result['full'])
+            message=result['message'];body,attachments=mime(result['full']);body=result.get('body',body);attachments=result.get('attachments',attachments)
             data=dict(row(message,store),FolderPath=message['folder']['path'],ReadPath='thunderbird-native-messaging',
                       MessageClass='thunderbird:message',To='; '.join(message.get('recipients',[])),Cc='; '.join(message.get('cc',[])),Body=body,
                       Attachments=len(attachments),AttachmentNames=[a['name'] for a in attachments],AttachmentInfo=attachments,
                       UnreadUnchanged=result['read_state_preserved'])
+            headers=result['full'].get('headers',{})
+            data['Subject']=result.get('exact_subject',data['Subject'])
+            data['InReplyTo']=' '.join(headers.get('in-reply-to',[]))
+            data['References']=' '.join(headers.get('references',[]))
+            data['HighImportance']=message.get('priority') in {'high','highest'}
+            if result.get('raw_sha256'):data['ContentHash']=result['raw_sha256']
+            assets=[]
+            if any(payload.get(k) for k in ('download_attachments','download_large_attachments','case_id')):
+                from .mail import download_attachment
+                from monitor.threadcache import attachment_path,register_attachment
+                for part in attachments:
+                    if part.get('size',0)>10*1024*1024 and payload.get('case_id') and not payload.get('download_large_attachments'):continue
+                    target=attachment_path(h,payload['case_id'],part['name'],data['EntryId']+':'+part['part_name']) if payload.get('case_id') else None
+                    asset=download_attachment(base,locator,part,call,runner,allow_large=payload.get('download_large_attachments',False),target=target)
+                    if asset.get('status')!='ok':return dict(data=asset,status='blocked')
+                    if target:register_attachment(h,dict(case_id=payload['case_id'],path=asset['path'],name=part['name'],source=source))
+                    assets.append(asset)
+                data['DownloadedAttachments']=assets
+                if payload.get('case_id'):data['CachedAttachments']=assets
             if payload.get('case_id'):
                 from monitor.threadcache import put_message
                 data['CacheEvidenceId']=put_message(h,dict(case_id=payload['case_id'],message=data))['body_evidence_id']

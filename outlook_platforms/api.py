@@ -7,7 +7,7 @@ from pathlib import Path
 from monitor.profile import PROFILE, DEFAULT_PROVIDERS, platform_settings, source_backend
 
 OPERATIONS = ('status','probe','discover','accounts','stores','folders','recent','search',
-              'read','collect','calendar','calendars','calendar-read','calendar-create','calendar-update','calendar-delete','refresh','freshness','session','contacts','duplicates','draft-save','draft-update','send','move','move-reconcile','trash','trash-reconcile')
+              'read','collect','calendar','calendars','calendar-read','calendar-create','calendar-update','calendar-delete','refresh','freshness','session','contacts','duplicates','draft-save','draft-update','draft-reconcile','draft-inspect','draft-discard','send','send-reconcile','move','move-reconcile','trash','trash-reconcile')
 MAC_FIELDS = {
     'probe':['check_permission','app_path'], 'discover':['source'], 'accounts':['source'],
     'folders':['source'],
@@ -78,7 +78,8 @@ def status(profile=PROFILE,details=False):
             if not info['host_matches'] or source_backend(profile,source)!='thunderbird':continue
             binding=config.get('bindings',{}).get(source,{})
             required=['calendar_id'] if op.startswith('calendar') else [] if op=='discover' else ['account_id','selected_inbox_id']
-            if op in {'send','draft-save'}:required.append('sent_folder_id' if op=='send' else 'draft_folder_id')
+            if op in {'send','draft-save','draft-update'}:required.extend(['sent_folder_id','draft_folder_id'])
+            if op=='contacts':required.append('address_book_ids')
             if op in {'trash','trash-reconcile'}:required.append('trash_folder_id')
             if all(binding.get(key) for key in required):
                 sources.setdefault(op,[]).append(source)
@@ -90,7 +91,7 @@ def status(profile=PROFILE,details=False):
     if 'thunderbird' in info['source_backends'].values():
         for key in ('move','send'):
             if key in info['known_limits']:info['known_limits']['mac_outlook_'+key]=info['known_limits'].pop(key)
-        info['known_limits']['thunderbird']='Thunderbird must be running. Calendar needs the optional Experiment build. Client readback does not prove provider sync. Attachments and invitation responses are not yet implemented.'
+        info['known_limits']['thunderbird']='Thunderbird must be running. Draft reopening and sync need the privileged client module. Address books must be explicitly bound. Calendar invitation responses remain unsupported. Freshness requires a successful provider callback and recent stable Inbox samples.'
     return info if details else {k:info[k] for k in ('operations','payload_fields','sources','ready')}
 
 
@@ -115,7 +116,7 @@ def check_send(h, payload, sender):
         if expected.get(key)!=value:
             raise ValueError('Approved message mismatch: '+key)
     for key in ('high_importance','reply_to_entry_id'):
-        if payload.get(key) and expected.get(key)!=payload[key]:raise ValueError('Approved message mismatch: '+key)
+        if key in payload and payload[key]!=expected.get(key,False if key=='high_importance' else ''):raise ValueError('Approved message mismatch: '+key)
     attachments=payload.get('attachments',[])
     wanted=expected.get('attachments',[])
     if len(attachments)!=len(wanted):raise ValueError('Approved attachment count mismatch')
@@ -136,7 +137,7 @@ def invoke(operation,payload=None,h=None,profile=PROFILE):
             if point.utcoffset() is None:raise ValueError(key+' needs an explicit timezone offset')
     for key in ('limit','max_scan','page_size'):
         if key in payload and (type(payload[key]) is not int or not 1<=payload[key]<=5000):raise ValueError('Invalid '+key)
-    for key in ('unread_only','include_preview','force_refresh','download_large_attachments','download_attachments','display_only','check_permission','high_importance','include_recipient_cache'):
+    for key in ('unread_only','include_preview','force_refresh','download_large_attachments','download_attachments','display_only','check_permission','high_importance','include_recipient_cache','content_hash'):
         if key in payload and type(payload[key]) is not bool:raise ValueError(key+' must be a boolean')
     info=status(profile,details=True)
     if operation=='status':return status(profile)
@@ -173,7 +174,7 @@ def invoke(operation,payload=None,h=None,profile=PROFILE):
         if h and payload.get('approval_id'):
             from monitor.approvals import find
             approved=find(h,payload['approval_id'])[2].get('message',{})
-            for key in ('to','cc','bcc','subject','body'):
+            for key in ('to','cc','bcc','subject','body','high_importance','reply_to_entry_id'):
                 if key not in payload and key in approved:payload[key]=approved[key]
             if 'attachments' not in payload:
                 if any(not isinstance(item,dict) or 'path' not in item for item in approved.get('attachments',[])):
@@ -205,7 +206,7 @@ def invoke(operation,payload=None,h=None,profile=PROFILE):
         data=result['data']
         data.pop('NextStep',None)
         data.setdefault('Verified',data.get('delivery_verified') is True)
-        data.setdefault('NextStep','Verify the unique delivered/Sent message before recording completion.')
+        data.setdefault('NextStep','Record the verified self-delivery outcome.' if data.get('delivery_verified') else 'Sent copy verified; recipient delivery is not confirmed.' if data.get('sent_verified') else 'Verify the unique delivered/Sent message before recording completion.')
     result.setdefault('status','ok')
     return dict(operation=operation,source=source or mail_source,**result)
 
