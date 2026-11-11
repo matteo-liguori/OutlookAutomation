@@ -60,14 +60,28 @@ class ThunderbirdMailTests(unittest.TestCase):
                 download_attachment(BASE,dict(message_id=12),dict(name='file.bin',part_name='1.2'),call,Mock(side_effect=replies),target=target)
         self.assertFalse(target.exists());self.assertFalse(list(self.root.glob('*.partial')))
 
-    def test_attachment_symlink_escape_and_changed_bytes_are_rejected(self):
+    def test_attachment_changed_bytes_are_rejected(self):
         source=self.root/'file.bin';source.write_bytes(b'approved');message=self.message();message['attachments']=[dict(path=str(source),sha256=hashlib.sha256(b'approved').hexdigest())]
         with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
             attachment_specs(message);source.write_bytes(b'changed')
             with self.assertRaises(ValueError):attachment_specs(message)
-            source.unlink()
+
+    def test_attachment_paths_outside_private_data_are_rejected(self):
+        with tempfile.TemporaryDirectory() as outside:
+            source=Path(outside)/'external';source.write_bytes(b'approved')
+            message=self.message();message['attachments']=[dict(path=str(source),sha256=hashlib.sha256(b'approved').hexdigest())]
+            with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
+                with self.assertRaisesRegex(ValueError,'escaped'):attachment_specs(message)
+
+    def test_attachment_symlink_escape_is_rejected(self):
+        source=self.root/'file.bin';message=self.message();message['attachments']=[dict(path=str(source),sha256=hashlib.sha256(b'approved').hexdigest())]
+        with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
             with tempfile.TemporaryDirectory() as outside:
-                path=Path(outside)/'external';path.write_bytes(b'approved');source.symlink_to(path)
+                path=Path(outside)/'external';path.write_bytes(b'approved')
+                try:source.symlink_to(path)
+                except OSError as error:
+                    if getattr(error,'winerror',None)==1314:self.skipTest('Windows symlink privilege unavailable')
+                    raise
                 with self.assertRaisesRegex(ValueError,'escaped'):attachment_specs(message)
 
     def test_draft_save_is_cached_and_exposes_stable_locator_and_raw_hash(self):
