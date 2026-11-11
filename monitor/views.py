@@ -142,7 +142,7 @@ class Views:
                     ),
                     priority.get(i.get("urgency", "normal"), 2),
                     i.get("next_review") or "",
-                    i.get("case", ""),
+                    i.get("case") or "",
                 )
             )
         return items

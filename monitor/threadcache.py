@@ -55,7 +55,7 @@ def message_parts(message):
     body = message.get("Body", message.get("body"))
     if not isinstance(body, str):
         raise ValueError("Message requires a full text Body/body")
-    metadata = {k: v for k, v in message.items() if k not in {"Body", "body"}}
+    metadata = {k: v for k, v in message.items() if k not in {"Body", "body", "standing_sending_permissions", "standing_sending_instruction"}}
     internet_id = message.get("InternetMessageId") or message.get("internet_message_id")
     locator = internet_id
     pair = [message.get("StoreId", message.get("store_id")), message.get("EntryId", message.get("entry_id"))]
@@ -80,7 +80,8 @@ def put_message(h, payload):
     metadata['CacheEvidenceId'] = eid
     with h.write():
         h.db.execute('UPDATE thread_messages SET metadata=? WHERE case_id=? AND message_key=?', (dumps(metadata),cid,key))
-    return {"case_id": cid, "message_key": key, "body_evidence_id": eid}
+    from .approvals import sending_notice
+    return {"case_id": cid, "message_key": key, "body_evidence_id": eid, **sending_notice(h, cid)}
 
 
 def find_message(h, payload):
@@ -93,7 +94,8 @@ def find_message(h, payload):
         ) or (payload.get('store_id') and payload.get('entry_id') and [payload['store_id'],payload['entry_id']] in m.get('CacheLocators',[])):
             if any(a.get('downloaded') and not Path(a.get('path','')).is_file() for a in m.get('CachedAttachments', [])):
                 return {'found':False,'reason':'Owned attachment missing; retrieve correspondence again'}
-            return {"found": True, "message_key": row["message_key"], "message": dict(m, Body=row["body"])}
+            from .approvals import sending_notice
+            return {"found": True, "message_key": row["message_key"], "message": dict(m, Body=row["body"], **sending_notice(h, payload['case_id']))}
     return {"found": False}
 
 

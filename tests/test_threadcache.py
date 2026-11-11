@@ -32,6 +32,53 @@ class ThreadCacheTests(unittest.TestCase):
     def message(self,cid='task'):
         return put_message(self.h,dict(case_id=cid,message=dict(EntryId='mail',StoreId='store',InternetMessageId='<stable@example>',Subject='Relevant',Body='Full useful email')))
 
+    def test_sending_permissions_surface_on_log_and_cache_without_renewal(self):
+        from monitor.approvals import put, find, flag, review
+        self.case(); self.case('other')
+        def grant(aid, cid=None, operation='email-forward'):
+            return put(self.h, dict(id=aid, kind='standing', case_id=cid,
+                title='Limited forwarding', summary='Only the named patient and recipient.',
+                granted_at=now(), evidence_ids=['user'],
+                scope=dict(operation=operation, rules='Inspect full body and attachment identity; forward only matching care messages to person@example.invalid.')))
+        grant('bound', 'task'); grant('global'); grant('unrelated', 'other')
+        grant('calendar', operation='calendar-create')
+        before=find(self.h,'bound')[2]
+        result=self.message()
+        notices=result['standing_sending_permissions']
+        self.assertEqual({n['id'] for n in notices}, {'bound','global'})
+        self.assertEqual(next(n for n in notices if n['id']=='global')['binding'], 'global-scope-check')
+        self.assertIn('attachment identity', notices[0]['scope']['rules'])
+        self.assertIn('without asking again', result['standing_sending_instruction'])
+        self.assertEqual(find(self.h,'bound')[2], before)
+        flag(self.h, dict(id='bound', expected_revision=1, reason='Scope uncertain', evidence_ids=['user'], suspended=True))
+        cached=find_message(self.h,dict(case_id='task',entry_id='mail',store_id='store'))['message']
+        self.assertFalse(next(n for n in cached['standing_sending_permissions'] if n['id']=='bound')['available'])
+        # Notifications are calculated at read time, never stored with the email.
+        put_message(self.h,dict(case_id='task',message=cached))
+        metadata=json.loads(self.h.db.execute("SELECT metadata FROM thread_messages WHERE case_id='task'").fetchone()[0])
+        self.assertNotIn('standing_sending_permissions', metadata)
+        review(self.h,dict(id='global',expected_revision=1,decision='revoke',reason='User revokes',evidence_ids=['user']))
+        self.assertEqual([n['id'] for n in self.message()['standing_sending_permissions']], ['bound'])
+
+    def test_expired_send_notice_never_reports_available(self):
+        from monitor.approvals import put, sending_notice
+        self.case()
+        put(self.h,dict(id='send',kind='standing',case_id='task',title='Send',summary='Limited send',
+            granted_at='2026-01-01T09:00:00Z',expires_at='2027-01-01T09:00:00Z',
+            evidence_ids=['user'],scope=dict(operation='send-email',rules='Exact limits')))
+        notice=sending_notice(self.h,'task',at='2027-01-02T09:00:00Z')
+        self.assertFalse(notice['standing_sending_permissions'][0]['available'])
+
+    def test_outlook_read_preserves_permission_notice_for_adapter_results(self):
+        from monitor.approvals import put
+        self.case()
+        put(self.h,dict(id='reply',kind='standing',case_id='task',title='Reply',summary='Limited reply',
+            granted_at=now(),evidence_ids=['user'],scope=dict(operation='email-reply',rules='Exact limits')))
+        with patch('outlook_platforms.api.invoke',return_value=dict(status='ok',data=dict(Body='Full message'))):
+            with patch('monitor.commands.read_payload',return_value=dict(source='mail:personal',case_id='task')):
+                result=execute(self.h,parser().parse_args(['outlook','read','--input','-']))
+        self.assertEqual(result['standing_sending_permissions'][0]['id'],'reply')
+
     def asset(self,cid='task'):
         f=folder(self.h,cid)/'attachments'/'invoice.pdf';f.parent.mkdir(parents=True,exist_ok=True);f.write_bytes(b'PDF fixture')
         return register_attachment(self.h,dict(case_id=cid,path=str(f),source='mail'))

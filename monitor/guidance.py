@@ -8,6 +8,7 @@ RELEVANCE_REVIEW = (
 )
 
 GUIDES = {
+    'reporting': '# Reporting\n\nUse MONITOR_REPORT_TEMPLATE.md for report structure. Personal reporting preferences belong in private profile instructions.reporting; they do not change permissions or required coverage.',
     'card-input': '`case edit --input -`: id, expected_revision, idempotency_key, optional title (180 chars), purpose (600 chars/three lines) and note (2000 chars). Edits preserve action/review clocks. Pending notes appear in briefing and case show until handled. `case note-ack --input -`: id, expected_revision, idempotency_key, note_ids and outcome (600 chars). Handle notes and record resulting changes before acknowledging; leave blocked notes pending. Existing send/calendar permission boundaries still apply.',
     'ui': 'Optional current-work viewer: install requirements-ui.lock in the project environment, then run ui. Opens a local card grid and action timeline; click for details, label edits or a note for the next agent pass. Notes stay pending until explicitly handled; help card-input. Browsing and label edits preserve task/review clocks. No Outlook scans. Ctrl+C stops it; --no-browser prints the private local link.',
     'outlook': 'Outlook access: `outlook <operation> --input -` takes JSON. Enabled operations and fields are listed below.\nUse configured source IDs and ISO timestamps with offsets. The harness handles account binding and backend sequencing.\n`collect` prepares/checks the source and returns a bounded page; optional run_id imports all pages into that run.\n`send` and draft operations use approval_id; omitted message fields come from the exact SQLite approval.\nMaterialise applicable conversation/standing scope without asking again. Submission is not verified delivery.\nPreserve read state and inspect completeness/errors. Use help permissions/calendar-decisions for authority.\nWhere listed, trash uses an exact one-off scope: operation trash-message, mailbox, source_folder_id, entry_id, destination_folder_id (the configured Trash), internet_message_id. It is recoverable. move-reconcile/trash-reconcile take the original approval_id and check outcomes without repeating the mutation.\nCalendar writes use an exact scope: operation calendar-create/calendar-update/calendar-delete, calendar_id, event_id; create/update require icalendar; update/delete require expected_icalendar from a current full calendar-read. Invitation handling depends on adapter capability.\nInstallation internals are available only when diagnosing with `outlook status --details`.',
@@ -72,8 +73,12 @@ notes (`[]` clears, omission preserves). Scoped notes expire with their final ac
 For action timing use `monitor.ps1 help action-scheduling`.""",
     'permissions': r"""## Permissions
 
-Reusable scope lives in standing_approvals, one-offs in approvals. `approval put`:
-kind, id, optional case_id, actual granted_at, evidence_ids, exact message/task scope;
+Reusable scope lives in standing_approvals, one-offs in approvals.
+Logging or reading a thread message surfaces thread-bound and global candidate
+standing sending grants with their exact limits. Check the full message and
+attachments against the grant; carry out qualifying authorised sends without
+asking again. Repeated notices require duplicate checks, not repeated sends.
+`approval put`: kind, id, optional case_id, actual granted_at, evidence_ids, exact message/task scope;
 standing adds title/summary/triggers/boundaries. Keep permission scope in these rows.
 
 Resurface monthly on the original London grant anniversary, clamped for short months;

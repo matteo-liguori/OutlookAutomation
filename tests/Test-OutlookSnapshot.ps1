@@ -65,7 +65,25 @@ function Find-OutlookFolder {param($store,$folder);[pscustomobject]@{Items=$glob
     if (-not $empty.Complete -or $empty.Items.Count -ne 0) {
         throw 'Empty snapshots must return an empty array.'
     }
-    @{assertions = 5 } | ConvertTo-Json -Compress
+    $accessor = [pscustomobject]@{}
+    $accessor | Add-Member ScriptMethod GetProperty {param($key)
+        if($key -eq 'http://schemas.microsoft.com/mapi/proptag/0x0E060040'){return [datetime]'2026-10-13T11:15:00'}
+        return '<delivery-report@example.invalid>'
+    }
+    $report=[pscustomobject]@{EntryID='NDR';ReceivedTime=$null;MessageClass='REPORT.IPM.Note.NDR';Subject='Undeliverable: synthetic test';SenderEmailAddress='';ConversationID='report';PropertyAccessor=$accessor}
+    $unsupported=[pscustomobject]@{EntryID='other';ReceivedTime=$null;MessageClass='IPM.Contact';Subject='Not mail'}
+    $global:snapshotItems.Values=@($unsupported,$report,$values[0]);$global:snapshotItems.Count=3
+    $reportPage=& (Join-Path $fixture 'Collect-OutlookMonitor.ps1') @args | ConvertFrom-Json
+    if(-not $reportPage.Complete -or $reportPage.Errors.Count -or $reportPage.Items[0].EntryId -ne 'NDR' -or [datetimeoffset]$reportPage.Items[0].Received -ne [datetimeoffset]'2026-10-13T11:15:00Z' -or $reportPage.Items[0].ReceivedSource -ne 'PidTagMessageDeliveryTime'){
+        throw ('Delivery report timestamp fallback or unsupported-item handling failed. ' + ($reportPage | ConvertTo-Json -Depth 6 -Compress))
+    }
+    $report.PropertyAccessor=[pscustomobject]@{}
+    $report.PropertyAccessor | Add-Member ScriptMethod GetProperty {param($key);throw 'Missing delivery timestamp'}
+    $failed=& (Join-Path $fixture 'Collect-OutlookMonitor.ps1') @args | ConvertFrom-Json
+    if($failed.Complete -or $failed.Errors.Count -ne 1 -or $failed.Errors[0].EntryId -ne 'NDR' -or $failed.Errors[0].MessageClass -ne 'REPORT.IPM.Note.NDR'){
+        throw 'Real timestamp failure must stay partial and identify the item without a false membership warning.'
+    }
+    @{assertions = 7 } | ConvertTo-Json -Compress
 }
 finally {
     $resolved = [IO.Path]::GetFullPath($fixture)

@@ -40,18 +40,31 @@ else {
     # Capture bounded metadata once; later pages use the immutable copy.
     for ($i = 1; $i -le $items.Count -and $scanned -lt $MaxScan; $i++) {
         $scanned++
+        $membership.Add('')
+        $m = $null
         try {
             $m = $items.Item($i)
-            $received = ([datetime]$m.ReceivedTime).ToUniversalTime()
-            $membership.Add([string]$m.EntryID)
+            $membership[$i - 1] = [string]$m.EntryID
+            $messageClass = [string]$m.MessageClass
+            if ($messageClass -notlike 'IPM.Note*' -and $messageClass -notlike 'IPM.Schedule.Meeting.*' -and $messageClass -notlike 'REPORT.IPM.Note.*') {
+                continue
+            }
+            $receivedSource = 'ReceivedTime'
+            if ($null -ne $m.ReceivedTime) {
+                $received = ([datetime]$m.ReceivedTime).ToUniversalTime()
+            }
+            else {
+                # ReportItem lacks MailItem.ReceivedTime; the MAPI delivery time is UTC.
+                $delivery = $m.PropertyAccessor.GetProperty('http://schemas.microsoft.com/mapi/proptag/0x0E060040')
+                if ($null -eq $delivery) { throw 'No usable received or MAPI delivery timestamp.' }
+                $received = [datetime]::SpecifyKind([datetime]$delivery, [DateTimeKind]::Utc)
+                $receivedSource = 'PidTagMessageDeliveryTime'
+            }
             if ($received -lt $Since.UtcDateTime) {
                 $boundary = $true
                 break
             }
             if ($received -gt $Until.UtcDateTime) {
-                continue
-            }
-            if ($m.MessageClass -notlike 'IPM.Note*' -and $m.MessageClass -notlike 'IPM.Schedule.Meeting.*') {
                 continue
             }
             $internetId = ''
@@ -67,6 +80,7 @@ else {
                 ConversationId = [string]$m.ConversationID
                 MessageClass = [string]$m.MessageClass
                 Received = $received.ToString('o')
+                ReceivedSource = $receivedSource
                 Subject = [string]$m.Subject
                 SenderEmail = [string]$m.SenderEmailAddress
             }
@@ -74,6 +88,9 @@ else {
         catch {
             $errors += [pscustomobject]@{Index = $i
                 Error = $_.Exception.Message
+                EntryId = $membership[$i - 1]
+                MessageClass = if ($null -ne $m) { [string]$m.MessageClass } else { '' }
+                Subject = if ($null -ne $m) { [string]$m.Subject } else { '' }
             }
         }
     }
@@ -82,7 +99,7 @@ else {
     }
     else {
         for ($j = 0; $j -lt $membership.Count; $j++) {
-            if ([string]$items.Item($j + 1).EntryID -ne $membership[$j]) {
+            if ($membership[$j] -and [string]$items.Item($j + 1).EntryID -ne $membership[$j]) {
                 $errors += 'Inbox membership changed during capture; repeat the bounded snapshot.'
                 break
             }

@@ -58,6 +58,7 @@ Reminders live in the harness; a pass surfaces them when due.
 One private `<data-root>/monitor/profile.json` stores the user's name, accounts,
 calendar providers, routing and preferences. `instructions` overrides individual
 harness help topics; `permission_defaults` overrides generic permission boundaries.
+For report style, set `instructions.reporting`; the report template loads it via `help reporting`.
 Specific approvals and grants stay in that user's SQLite database.
 
 The default data area is `.local/`. For a separate directory, initialise with

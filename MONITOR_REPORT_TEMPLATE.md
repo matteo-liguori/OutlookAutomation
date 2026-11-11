@@ -4,6 +4,7 @@ Keep instructions brief and positive; state the desired behaviour, give each rul
 one home and link to it elsewhere.
 
 Use London date and paged report data. Order below; omit empty optional sections.
+Before composing, use `help reporting` for configured reporting preferences.
 
 **🟥 ACCESS PROBLEM — YOUR CHECK NEEDED**
 

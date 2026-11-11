@@ -23,6 +23,12 @@ class ReviewTests(unittest.TestCase):
         self.h.close()
         self.tmp.cleanup()
 
+    def test_briefing_sorts_unscoped_issue_alongside_run(self):
+        self.h.put_record('issue', dict(id='unscoped', text='Check collector', resolved=False))
+        self.h.start_run()
+        items = self.h.current_items(briefing=True)
+        self.assertTrue(any(i.get('issue') == 'unscoped' for i in items))
+
     def create(self, cid, action=None):
         p = dict(id=cid, expected_revision=0, idempotency_key='create-'+cid, evidence_ids=['e'],
                  case=dict(title=cid, purpose='Recognise '+cid, context='Full private context '+cid,

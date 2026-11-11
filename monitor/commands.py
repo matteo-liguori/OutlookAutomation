@@ -31,7 +31,11 @@ def handle_outlook(h,args,payload,kind):
         from outlook_platforms.api import status
         return status(details=True)
     from outlook_platforms.api import invoke
-    return invoke(args.operation,payload,h)
+    result = invoke(args.operation,payload,h)
+    if args.operation == 'read' and payload and payload.get('case_id') and isinstance(result, dict):
+        from .approvals import sending_notice
+        result = dict(result, **sending_notice(h, payload['case_id']))
+    return result
 
 
 def handle_backup(h, args, payload, kind):

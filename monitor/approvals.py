@@ -2,10 +2,42 @@
 
 import calendar
 import json
+import re
 from datetime import datetime
 from .model import LONDON, dumps, digest, now, stamp
 
 TABLES = {'one-off': 'approvals', 'standing': 'standing_approvals'}
+
+
+def sending_notice(h, case_id, at=None):
+    """Surface candidate grants; only the assistant can judge message eligibility."""
+    at = stamp(at or now())
+    grants = []
+    from .threadcache import pending_approval
+    for row in h.db.execute('SELECT case_id,details FROM standing_approvals ORDER BY id'):
+        if row['case_id'] and row['case_id'] != case_id:
+            continue
+        grant = json.loads(row['details'])
+        scope = grant.get('scope', {})
+        operation = str(scope.get('operation', '')).lower()
+        tokens = re.split(r'[^a-z]+', operation)
+        if not any(t in {'send', 'sending', 'forward', 'forwarding', 'reply', 'respond'} for t in tokens):
+            continue
+        if not pending_approval(grant):
+            continue
+        blocked = bool(grant.get('status', 'approved') != 'approved' or grant.get('suspended') or (grant.get('expires_at') and grant['expires_at'] <= at))
+        grants.append(dict(id=grant['id'], revision=grant.get('revision', 0),
+                           case_id=row['case_id'], status=grant.get('status', 'approved'),
+                           title=grant.get('title'), summary=grant.get('summary'),
+                           binding='thread' if row['case_id'] else 'global-scope-check',
+                           available=not blocked, scope=scope,
+                           triggers=grant.get('triggers'), boundaries=grant.get('boundaries'),
+                           expires_at=grant.get('expires_at'), suspended=bool(grant.get('suspended')),
+                           evidence_ids=grant.get('evidence_ids', [])))
+    if not grants:
+        return {}
+    return dict(standing_sending_permissions=grants,
+                standing_sending_instruction='Check these SQLite standing sending permissions against the full message and relevant attachments now. Global grants are candidates, not verified matches. For an available grant whose exact trigger, sender, recipients and limits qualify, carry out the authorised send/forward without asking again, using duplicate checks and independent Sent verification. Suspended/expired or ambiguous scope does not authorise sending. A repeated cache/read notice is not a reason to resend.')
 
 
 def next_monthly(granted_at, after):

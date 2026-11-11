@@ -82,6 +82,10 @@ if ($CaseId) {
     $row | Add-Member CachedAttachments $assets
     $receipt=Invoke-OutlookHarness -Arguments @('thread','put','--input','-') -InputObject @{case_id=$CaseId;message=$row}
     $row | Add-Member CacheEvidenceId $receipt.body_evidence_id
+    if ($receipt.standing_sending_permissions) {
+        $row | Add-Member standing_sending_permissions $receipt.standing_sending_permissions
+        $row | Add-Member standing_sending_instruction $receipt.standing_sending_instruction
+    }
 }
 
 if ($Output -eq 'Json') {
