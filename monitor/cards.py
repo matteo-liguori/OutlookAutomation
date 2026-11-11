@@ -1,3 +1,4 @@
+from .configuration import resolve
 """One replaceable thread card; actions remain canonical scheduled harness rows."""
 
 import json
@@ -49,7 +50,7 @@ def prepare(h, case, prior, at):
         if key in prior:case[key]=prior[key]
         else:case.pop(key,None)
     case.setdefault('status','open')
-    interval = case.get('review_interval_days', prior.get('review_interval_days', 7))
+    interval = case.get('review_interval_days', prior.get('review_interval_days', resolve().get('reviews.card_days')))
     if type(interval) is not int or not 1 <= interval <= 90:
         raise ValueError('Card review interval must be 1..90 days')
     case['review_interval_days'] = interval

@@ -1,3 +1,4 @@
+from .configuration import resolve
 """Disposable, independently owned case caches and their automatic lifecycle."""
 
 import json
@@ -143,7 +144,7 @@ def lifecycle(h, case, prior=None, at=None):
     if case.get("status", "open") == "closed":
         closed = (prior or {}).get("closed_at") or case.get("closed_at") or at
         case["closed_at"] = closed
-        case["expires_at"] = stamp((datetime.fromisoformat(closed) + timedelta(days=365)).isoformat())
+        case["expires_at"] = stamp((datetime.fromisoformat(closed) + timedelta(days=resolve().get('maintenance.closed_thread_days'))).isoformat())
         h.db.execute("INSERT OR IGNORE INTO thread_cleanup VALUES(?,?)", (case["id"], dumps({"queued_at": at})))
     else:
         case.pop("closed_at", None)
@@ -234,7 +235,7 @@ def sweep(h, at=None):
                 if not c.get("closed_at"):
                     # Older direct inserts and restored databases get a truthful starting point.
                     details = json.loads(h.db.execute("SELECT details FROM cases WHERE id=?", (c["id"],)).fetchone()[0])
-                    details.update(closed_at=at, expires_at=stamp((datetime.fromisoformat(at)+timedelta(days=365)).isoformat()))
+                    details.update(closed_at=at, expires_at=stamp((datetime.fromisoformat(at)+timedelta(days=resolve().get('maintenance.closed_thread_days'))).isoformat()))
                     h.db.execute("UPDATE cases SET details=? WHERE id=?", (dumps(details), c["id"]))
                     c.update(details)
                 changed = bool(h.db.execute('SELECT 1 FROM thread_messages WHERE case_id=? UNION SELECT 1 FROM thread_attachments WHERE case_id=? UNION SELECT 1 FROM thread_cleanup WHERE case_id=?',(c['id'],c['id'],c['id'])).fetchone())

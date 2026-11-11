@@ -1,3 +1,4 @@
+from .configuration import zone
 import argparse
 import json
 import sys
@@ -32,6 +33,11 @@ def parser():
     activation.add_parser('defer').add_argument('--input', required=True)
     activation.add_parser('detach').add_argument('--input', required=True)
     sub.add_parser("doctor")
+    config=sub.add_parser('config').add_subparsers(dest='operation',required=True)
+    cs=config.add_parser('show');cs.add_argument('--explain',action='store_true');cs.add_argument('--case',dest='case_id')
+    config.add_parser('validate')
+    cr=config.add_parser('review');cr.add_argument('--input')
+    reset=config.add_parser('reset');reset.add_argument('--key',required=True)
     sub.add_parser('health')
     sub.add_parser("backup")
     from outlook_platforms.api import available_operations
@@ -149,7 +155,7 @@ def main():
                 raise ValueError('Port must be between 0 and 65535')
             serve(args.db, args.port, not args.no_browser)
             return
-        pure = args.command in {"schedule", "guide", "help"} or (
+        pure = args.command in {"schedule", "guide", "help", "config"} and not getattr(args,'case_id',None) or (
             args.command == "calendar"
             and args.operation != "google-ingest"
             and not getattr(args, "run_id", None)
@@ -203,11 +209,10 @@ def markdown(result):
             lines.append(item['instruction'])
         elif item.get("type") == "filing_checkpoint":
             from datetime import datetime
-            from .core import LONDON
 
             def local(value):
                 return (
-                    datetime.fromisoformat(value).astimezone(LONDON).strftime("%d/%m/%Y %H:%M:%S")
+                    datetime.fromisoformat(value).astimezone(zone()).strftime("%d/%m/%Y %H:%M:%S")
                     if value
                     else "never verified"
                 )

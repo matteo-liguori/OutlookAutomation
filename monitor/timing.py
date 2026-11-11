@@ -1,8 +1,10 @@
+from .configuration import resolve
+from .configuration import zone
 """Read-only London scheduling plans and recurrence readback verification."""
 
 from datetime import date, datetime, time, timedelta, timezone
 import re
-from .model import LONDON, now, stamp
+from .model import now, stamp
 
 
 def london_instant(day, clock, fold=None):
@@ -11,9 +13,9 @@ def london_instant(day, clock, fold=None):
         raise ValueError("Use a local HH:MM time")
     options = {}
     for f in (0, 1):
-        local = naive.replace(tzinfo=LONDON, fold=f)
+        local = naive.replace(tzinfo=zone(), fold=f)
         utc = local.astimezone(timezone.utc)
-        if utc.astimezone(LONDON).replace(tzinfo=None) == naive:
+        if utc.astimezone(zone()).replace(tzinfo=None) == naive:
             options[f] = utc
     if not options:
         raise ValueError("London time does not exist at the spring clock change")
@@ -67,15 +69,17 @@ def recurrence_instants(rrule, at):
 
 def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
     current = datetime.fromisoformat(stamp(at or now()))
-    local_now = current.astimezone(LONDON)
+    local_now = current.astimezone(zone())
     day = day or local_now.date().isoformat()
     target = date.fromisoformat(day)
-    clocks = times or (["14:00", "19:00"] if purpose == "continuation" else [])
+    clocks = times or (resolve().get('schedule.continuations') if purpose == 'continuation' else [])
+    if not clocks and purpose == 'continuation':
+        return dict(purpose=purpose,london_date=day,as_of=current.isoformat(),eligible=[],expired=[],rrule=None,one_shot_rules=[],reason='Continuations disabled')
     if not clocks or len(clocks) > 8 or len(set(clocks)) != len(clocks):
         raise ValueError("Provide one to eight distinct times")
     if purpose not in {"continuation", "reminder"}:
         raise ValueError("Unknown scheduling purpose")
-    if purpose == "continuation" and set(clocks) - {"14:00", "19:00"}:
+    if purpose == "continuation" and set(clocks) - set(resolve().get('schedule.continuations')):
         raise ValueError("Mail continuations are only 14:00 and 19:00 London")
     if purpose == "continuation" and target != local_now.date():
         return dict(
@@ -92,7 +96,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
         raise ValueError("Requested date has expired")
     points = sorted((london_instant(day, clock, fold), clock) for clock in clocks)
     eligible = [
-        dict(london=point.astimezone(LONDON).isoformat(), utc=point.isoformat(), time=clock)
+        dict(london=point.astimezone(zone()).isoformat(), utc=point.isoformat(), time=clock)
         for point, clock in points
         if point > current
     ]
@@ -131,7 +135,7 @@ def verify(payload):
         [p["time"] for p in expected["eligible"]],
         expected["purpose"],
         expected["as_of"],
-        points[0].astimezone(LONDON).fold if points else None,
+        points[0].astimezone(zone()).fold if points else None,
     )
     if regenerated["eligible"] != expected["eligible"]:
         raise ValueError("Plan instants do not match their London date and wall times")

@@ -5,7 +5,11 @@ import hashlib
 import os
 from pathlib import Path
 
-LIMITS = {'daily': 2, 'weekly': 2, 'special': 1}
+from .configuration import resolve
+
+def limits():
+    c=resolve().values['maintenance']
+    return {k:c[k+'_backups'] for k in ('daily','weekly','special')}
 
 
 def capture_profile(h):
@@ -54,7 +58,7 @@ def plan(root):
 
     root = Path(root).resolve()
     folder = root / 'backups'
-    groups = {k: [] for k in LIMITS}
+    groups = {k: [] for k in limits()}
     failures = []
     for raw in folder.glob('*.db'):
         try:
@@ -65,14 +69,14 @@ def plan(root):
             failures.append({'path': str(raw), 'error': str(exc)})
     files = []
     for group, paths in groups.items():
-        if len(paths) <= LIMITS[group]:
+        if len(paths) <= limits()[group]:
             continue
         paths.sort(key=lambda p: (p.name if group != 'special' else p.stat().st_mtime_ns, p.name), reverse=True)
         kept = []
         for path in paths:
             if path.suffix == '.db' and verified_backup(path):
                 kept.append(path)
-                if len(kept) == LIMITS[group]:
+                if len(kept) == limits()[group]:
                     break
         if not kept:
             failures.append({'group': group, 'error': 'No verified replacement; excess backups retained until a usable snapshot exists'})

@@ -1,8 +1,10 @@
+from .configuration import resolve
+from .configuration import zone
 """Explicit action review policy; never completes work or authorizes external actions."""
 
 from datetime import datetime, timedelta, timezone
 import json
-from .model import LONDON, digest, now, stamp
+from .model import digest, now, stamp
 
 
 def validate(h, policy):
@@ -15,7 +17,7 @@ def validate(h, policy):
         raise ValueError("Review interval must be 1..90 days")
     if policy.get("basis") not in {"calendar", "working"}:
         raise ValueError("Review basis must be calendar or working")
-    if policy["urgency"] in {"immediate", "high"} and days > 3:
+    if policy["urgency"] in {"immediate", "high"} and days > resolve().get('reviews.urgent_max_days'):
         raise ValueError("Immediate/high urgency cannot have more than three days between reviews")
     h.limited(policy, "reason", 300)
     if not policy.get("evidence_ids"):
@@ -27,13 +29,13 @@ def cadence(action, at=None):
     policy = action["review_policy"]
     base = datetime.fromisoformat(
         stamp(action.get("reviewed_at") or action.get("first_recorded_at") or at or now())
-    ).astimezone(LONDON)
+    ).astimezone(zone())
     remaining = policy["interval_days"]
     while remaining:
         base += timedelta(days=1)
         if policy["basis"] == "calendar" or base.weekday() < 5:
             remaining -= 1
-    return stamp(base.replace(hour=9, minute=0, second=0, microsecond=0).isoformat())
+    return stamp(base.replace(hour=resolve().get('reviews.hour'), minute=0, second=0, microsecond=0).isoformat())
 
 
 def review(h, payload):
@@ -137,7 +139,7 @@ def _default_next_review(action, at=None):
     if action.get("promised_at") and (
         not action.get("reviewed_at") or stamp(action["reviewed_at"]) < stamp(action["promised_at"])
     ):
-        promised = datetime.fromisoformat(stamp(action["promised_at"])).astimezone(LONDON)
+        promised = datetime.fromisoformat(stamp(action["promised_at"])).astimezone(zone())
         for offset in range(3):
             day = promised + timedelta(days=offset)
             for hour in (9, 14, 19):
@@ -145,7 +147,7 @@ def _default_next_review(action, at=None):
                 if slot > promised:
                     return stamp(slot.isoformat()), "promised-date"
     if action.get("deadline"):
-        deadline = datetime.fromisoformat(stamp(action["deadline"])).astimezone(LONDON)
+        deadline = datetime.fromisoformat(stamp(action["deadline"])).astimezone(zone())
         reviewed = datetime.fromisoformat(stamp(action.get("reviewed_at") or "1970-01-01"))
         milestones = [deadline - timedelta(days=n) for n in (7, 2, 0)]
         # Preserve the first missed checkpoint until an actual review records it.
@@ -157,11 +159,11 @@ def _default_next_review(action, at=None):
         return stamp(due.isoformat()), "deadline"
     days = 7
     base = datetime.fromisoformat(stamp(action.get("reviewed_at") or action.get("first_recorded_at") or at or now())).astimezone(
-        LONDON
+        zone()
     )
     if action["status"] == "needs-user":
         return stamp(base.isoformat()), "each-handoff"
     while days:
         base += timedelta(days=1)
         days -= 1
-    return stamp(base.replace(hour=9, minute=0, second=0, microsecond=0).isoformat()), "weekly"
+    return stamp(base.replace(hour=resolve().get('reviews.hour'), minute=0, second=0, microsecond=0).isoformat()), "weekly"

@@ -1,8 +1,9 @@
+from .configuration import zone as configured_zone
 """Validate bounded connector exports; optionally record complete harness sources."""
 
 from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
-from .model import LONDON, CAL, dumps, now, stamp
+from .model import CAL, dumps, now, stamp
 from .profile import PROFILE, DEFAULT_PROVIDERS
 
 SOURCES = {s for s in CAL if {**DEFAULT_PROVIDERS, **PROFILE.get('calendar_providers', {})}.get(s) == 'google'}
@@ -32,21 +33,22 @@ def prepare(config, day=None, at=None):
     day = (
         date.fromisoformat(day)
         if day
-        else datetime.fromisoformat(stamp(at or now())).astimezone(LONDON).date()
+        else datetime.fromisoformat(stamp(at or now())).astimezone(configured_zone()).date()
     )
-    start = datetime.combine(day, time(), LONDON)
-    end = datetime.combine(day + timedelta(days=4), time(), LONDON)
+    start = datetime.combine(day, time(), configured_zone())
+    end = datetime.combine(day + timedelta(days=4), time(), configured_zone())
     return dict(
         start=start.isoformat(),
         end=end.isoformat(),
-        timezone="Europe/London",
+        timezone=configured_zone().key,
         days=[(day + timedelta(days=n)).isoformat() for n in range(4)],
         sources=[dict(source=s, calendar_id=config[s]) for s in sorted(SOURCES)],
         allowed_sources=sorted(SOURCES),
     )
 
 
-def event_time(value, default_zone="Europe/London"):
+def event_time(value, default_zone=None):
+    default_zone=default_zone or configured_zone().key
     # The connector exposes ISO strings; native Google exports use date objects.
     # Normalize here without rewriting the raw evidence saved by ingest.
     if isinstance(value, str):
@@ -127,9 +129,9 @@ def normalize(payload, config):
     check_config(config)
     start = datetime.fromisoformat(payload["start"])
     end = datetime.fromisoformat(payload["end"])
-    if start.tzinfo is None or end.tzinfo is None or payload.get("timezone") != "Europe/London":
+    if start.tzinfo is None or end.tzinfo is None or payload.get("timezone") != configured_zone().key:
         raise ValueError("Collection needs explicit London window offsets")
-    expected = prepare(config, start.astimezone(LONDON).date().isoformat())
+    expected = prepare(config, start.astimezone(configured_zone()).date().isoformat())
     if start != datetime.fromisoformat(expected["start"]) or end != datetime.fromisoformat(
         expected["end"]
     ):
@@ -225,7 +227,7 @@ def normalize(payload, config):
 def ingest(h, rid, payload, config):
     result = normalize(payload, config)
     run = h.run(rid)
-    day = datetime.fromisoformat(run["started_at"]).astimezone(LONDON).date().isoformat()
+    day = datetime.fromisoformat(run["started_at"]).astimezone(configured_zone()).date().isoformat()
     if prepare(config, day)["start"] != payload["start"]:
         raise ValueError("Google window does not match this run")
     if capture_time(payload["started_at"]) < capture_time(run["started_at"]):

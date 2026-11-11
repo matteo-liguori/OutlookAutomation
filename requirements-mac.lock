@@ -7,3 +7,5 @@ x-wr-timezone==2.0.1
 typing-extensions==4.16.0
 six==1.17.0
 click==8.5.1
+
+ruamel.yaml==0.19.1

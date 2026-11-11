@@ -1,3 +1,4 @@
+from .configuration import resolve
 """Periodic whole-card reviews, independent of action and reply clocks."""
 
 from datetime import datetime, timedelta
@@ -33,7 +34,7 @@ def due(h, at=None):
         actions = [a for a in c['actions'] if a['status'] in OPEN]
         if actions and all(a.get('snooze_until', '') > at and not a.get('snooze_override') for a in actions):
             continue
-        interval = c.get('review_interval_days', 7)
+        interval = c.get('review_interval_days', resolve(card=c).get('reviews.card_days'))
         base = c.get('card_reviewed_at') or c.get('created_at')
         next_at = stamp((datetime.fromisoformat(stamp(base)) + timedelta(days=interval)).isoformat()) if base else at
         if next_at <= at:
@@ -95,7 +96,7 @@ def complete(h, p, at=None):
         raise ValueError('Use case update to close a card; review complete keeps it open')
     case = {k:v for k,v in c.items() if k not in {'id','revision','updated_at','actions','decisions','evidence_ids'}}
     case['card_reviewed_at'] = at
-    case['review_interval_days'] = p.get('interval_days', c.get('review_interval_days', 7))
+    case['review_interval_days'] = p.get('interval_days', c.get('review_interval_days', resolve(card=c).get('reviews.card_days')))
     evidence = p.get('evidence_ids', [])
     if not evidence:
         raise ValueError('Review completion needs evidence and a keep reason')

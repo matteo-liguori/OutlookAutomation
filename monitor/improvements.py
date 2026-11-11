@@ -1,9 +1,11 @@
+from .configuration import resolve
+from .configuration import zone
 """Optional operational learning, excluded from current case briefings."""
 
 import json
 import re
 from datetime import datetime, timedelta
-from .model import LONDON, dumps, now
+from .model import dumps, now
 
 STATUSES = {"proposed", "accepted", "deferred", "implemented", "rejected"}
 REVIEW_KEY = "upgrades_review"
@@ -11,7 +13,7 @@ REVIEW_KEY = "upgrades_review"
 
 def review_prompt(h, at):
     """In afternoon briefings, check cadence without loading backlog contents."""
-    if datetime.fromisoformat(at).astimezone(LONDON).hour < 14:
+    if datetime.fromisoformat(at).astimezone(zone()).hour < resolve().get('reviews.upgrades_after_hour'):
         return []
     row = h.db.execute("SELECT value FROM meta WHERE key=?", (REVIEW_KEY,)).fetchone()
     state = json.loads(row[0]) if row else {}
@@ -27,7 +29,7 @@ def checkpoint(h, payload):
         raise ValueError("summary requires 1..600 characters describing the actual review")
     at = now()
     state = {"last_reviewed_at": at,
-             "next_due_at": (datetime.fromisoformat(at) + timedelta(days=5)).isoformat(timespec="seconds"),
+             "next_due_at": (datetime.fromisoformat(at) + timedelta(days=resolve().get('reviews.upgrades_days'))).isoformat(timespec="seconds"),
              "summary": summary, "evidence_ids": payload.get("evidence_ids", [])}
     with h.write():
         h.evidence_exists(state["evidence_ids"])

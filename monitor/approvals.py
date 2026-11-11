@@ -1,10 +1,11 @@
+from .configuration import zone
 """Current permissions and grant-anchored monthly user reviews; no review diary."""
 
 import calendar
 import json
 import re
 from datetime import datetime
-from .model import LONDON, dumps, digest, now, stamp
+from .model import dumps, digest, now, stamp
 
 TABLES = {'one-off': 'approvals', 'standing': 'standing_approvals'}
 
@@ -44,7 +45,7 @@ def next_monthly(granted_at, after):
     """London anniversary, clamped for short months; never drift from the grant."""
     if not granted_at:
         return None
-    origin = datetime.fromisoformat(stamp(granted_at)).astimezone(LONDON)
+    origin = datetime.fromisoformat(stamp(granted_at)).astimezone(zone())
     after = datetime.fromisoformat(stamp(after))
     months = max(1, (after.year-origin.year)*12+after.month-origin.month)
     while True:

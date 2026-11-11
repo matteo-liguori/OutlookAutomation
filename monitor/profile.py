@@ -70,8 +70,8 @@ def load(path=None):
         raise ValueError("Unsupported profile schema")
     if not isinstance(value.get("name"), str) or not value["name"].strip():
         raise ValueError("Profile needs your name")
-    if value.get("timezone") != "Europe/London":
-        raise ValueError("This release uses Europe/London scheduling")
+    from zoneinfo import ZoneInfo
+    ZoneInfo(value.get("timezone", "Europe/London"))
     mail = value.get("mail")
     if not isinstance(mail, dict) or not mail or any(not re.fullmatch(r'mail:[a-z][a-z0-9_-]*', k) for k in mail):
         raise ValueError("Configure at least one supported mail role")

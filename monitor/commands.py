@@ -26,6 +26,24 @@ def handle_doctor(h, args, payload, kind):
     return h.page(kind, [h.doctor()])
 
 
+def handle_config(h,args,payload,kind):
+    from .configuration import resolve,review,location,lock,paths,read_yaml,assign,defaults,validate,plain,atomic,dump
+    card=h.case(args.case_id) if getattr(args,'case_id',None) else None
+    config=resolve(card=card)
+    if args.operation=='show':return dict(values=config.values,**({'origins':config.origins} if args.explain else {}))
+    if args.operation=='validate':return dict(valid=True)
+    if args.operation=='review':return dict(reviews=review(ident=(payload or {}).get('id'),decision=(payload or {}).get('decision')))
+    folder=location()
+    if folder is None:raise ValueError('No private customisation file selected')
+    with lock(folder):
+        path,_=paths(folder);user=read_yaml(path)
+        from .configuration import leaves
+        values=dict(leaves(defaults()))
+        if args.key not in values:raise ValueError('Unknown setting: '+args.key)
+        assign(user,args.key,values[args.key]);validate(plain(user));atomic(path,dump(user))
+    return dict(reset=args.key)
+
+
 def handle_outlook(h,args,payload,kind):
     if args.operation=='status' and getattr(args,'details',False):
         from outlook_platforms.api import status
@@ -84,6 +102,10 @@ def handle_briefing(h, args, payload, kind):
     if getattr(args, 'user_active', False) or getattr(args, 'setup_chat', False):
         from .activation import arm
         arm(h, user_active=getattr(args, 'user_active', False))
+    if cmd == 'briefing' and not getattr(args,'cursor',None):
+        from .configuration import sync
+        from .profile import PROFILE
+        sync(profile=PROFILE)
     if cmd == 'briefing':
         from .activation import reconcile
         reconcile(h)
@@ -106,7 +128,8 @@ def handle_briefing(h, args, payload, kind):
     at=getattr(h,'_query_at',None) or now()
     if cmd=='briefing':
         from .briefing import compact
-        items=compact(h,at)
+        from .configuration import notices
+        items=notices()+compact(h,at)
     else:
         items=h.current_items(briefing=False,at=at)
     result = h.page(kind,items,limit=args.limit)
@@ -348,6 +371,7 @@ def handle_health(h,args,payload,kind):
 
 
 HANDLERS = {
+    "config": handle_config,
     "outlook": handle_outlook,
     "review": handle_review,
     "activation": handle_activation,
@@ -379,6 +403,13 @@ HANDLERS = {
 
 
 def execute(h,args):
+    from .configuration import snapshot, resolve
+    case_id=getattr(args,"case_id",None)
+    with snapshot(resolve(card=h.case(case_id) if case_id and h else None)):
+        return _scoped_execute(h,args)
+
+
+def _scoped_execute(h,args):
     prior={name:getattr(h,name) for name in ('_page_cursor','_query_at') if h is not None and hasattr(h,name)}
     try:
         result = _execute(h,args)

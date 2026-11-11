@@ -1,3 +1,4 @@
+from .configuration import zone
 """Conservative local retention. Unknown ownership or references always retain data."""
 
 import hashlib
@@ -8,10 +9,13 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from .model import LONDON, dumps, digest, now, stamp
-from .backups import LIMITS as BACKUP_LIMITS
+from .model import dumps, digest, now, stamp
+from .backups import limits
+from .configuration import resolve
 
-POLICY = dict(
+def policy():
+    BACKUP_LIMITS=limits()
+    return dict(
     cache_days=1,
     temporary_days=7,
     development_days=30,
@@ -19,7 +23,7 @@ POLICY = dict(
     daily_backups=BACKUP_LIMITS['daily'],
     weekly_backups=BACKUP_LIMITS['weekly'],
     named_backups=BACKUP_LIMITS['special'],
-    closed_thread_days=365,
+    closed_thread_days=resolve().get('maintenance.closed_thread_days'),
     small_attachment_bytes=10*1024*1024,
 )
 
@@ -287,7 +291,7 @@ def status(h):
     lifecycle = h.db.execute("SELECT value FROM meta WHERE key='thread_cache_maintenance'").fetchone()
     rotation = h.db.execute("SELECT value FROM meta WHERE key='backup_rotation'").fetchone()
     return dict(
-        policy=POLICY,
+        policy=policy(),
         last_result=json.loads(last[0]) if last else None,
         warning=json.loads(warning[0]) if warning else None,
         thread_cache=json.loads(lifecycle[0]) if lifecycle else None,
@@ -354,7 +358,7 @@ def clean(h, dry_run=False, at=None):
             "INSERT INTO meta VALUES('maintenance_result',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (dumps(result),),
         )
-        day = datetime.fromisoformat(at).astimezone(LONDON).date().isoformat()
+        day = datetime.fromisoformat(at).astimezone(zone()).date().isoformat()
         h.db.execute(
             "INSERT INTO meta VALUES('maintenance_day',?) ON CONFLICT(key) DO UPDATE SET value=max(value,excluded.value)",
             (day,),
@@ -386,7 +390,7 @@ def record_warning(h, exc):
 
 def daily(h):
     """Claim a London day before work; failures never change a pass's outcome."""
-    day = datetime.fromisoformat(now()).astimezone(LONDON).date().isoformat()
+    day = datetime.fromisoformat(now()).astimezone(zone()).date().isoformat()
     try:
         from .threadcache import sweep
 
@@ -402,3 +406,6 @@ def daily(h):
         clean(h)
     except (OSError, ValueError, sqlite3.Error) as exc:
         record_warning(h, exc)
+
+# Compatibility for callers displaying defaults; operational paths use policy().
+POLICY = policy()

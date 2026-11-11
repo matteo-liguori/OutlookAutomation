@@ -1,3 +1,4 @@
+from .configuration import zone
 import json
 import sqlite3
 import uuid
@@ -5,7 +6,7 @@ import os
 from pathlib import Path
 from datetime import datetime
 from contextlib import contextmanager
-from .model import DEFAULT_DB, LONDON, OPEN, CAL, dumps, digest, now
+from .model import DEFAULT_DB, OPEN, CAL, dumps, digest, now
 
 CURRENT_SCHEMA=9
 
@@ -103,7 +104,7 @@ class Storage:
         folder.mkdir(exist_ok=True)
         if folder.is_symlink() or (hasattr(folder, 'is_junction') and folder.is_junction()):
             raise ValueError('Backup directory cannot be a link/junction')
-        day = datetime.now(LONDON)
+        day = datetime.now(zone())
         names = [label] if label else [f"daily-{day:%Y-%m-%d}", f"weekly-{day:%G-%V}"]
         for name in names:
             if not name or any(

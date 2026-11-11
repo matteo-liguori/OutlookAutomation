@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 
 from .model import OPEN, now, stamp
+from .configuration import zone
 from .records import CaseRecords
 from .storage import CURRENT_SCHEMA
 from .followups import due_at
@@ -138,7 +139,7 @@ def overview(path, at=None):
             cards.sort(key=lambda c: c['latest_email_at'] or '', reverse=True)
             events.sort(key=lambda e: (e['at'], e['case_id'], e['action']['id']))
             return dict(cards=cards, events=events, unscheduled=unscheduled,
-                        as_of=at, timezone='Europe/London', read_only=True)
+                        as_of=at, timezone=zone().key, read_only=True)
     finally:
         store.close()
 

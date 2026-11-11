@@ -1,16 +1,20 @@
+from .configuration import resolve
+from .configuration import zone
 """One pending mail-chat activation checklist per thread and London day."""
 import json
 import os
 from datetime import datetime
-from .model import LONDON, dumps, now
+from .model import dumps, now
 from .timing import plan, verify
+
+
 
 
 def identity(at=None):
     thread = os.environ.get('CODEX_THREAD_ID', '')
     if not thread:
         raise ValueError('Chat activation requires CODEX_THREAD_ID')
-    day = datetime.fromisoformat(at or now()).astimezone(LONDON).date()
+    day = datetime.fromisoformat(at or now()).astimezone(zone()).date()
     return thread, day, 'mail-activation:' + thread
 
 
@@ -27,6 +31,7 @@ def arm(h, user_active=False):
             state = json.loads(row[0])
             state.pop('deferred_until_user', None)
             h.db.execute('UPDATE meta SET value=? WHERE key=?', (dumps(state), key))
+        state = json.loads(h.db.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()[0])
 
 
 def reminder(h):
@@ -60,8 +65,8 @@ def startup(h, at):
     with h.write():
         state['first_interaction_at'] = at
         h.db.execute('UPDATE meta SET value=? WHERE key=?', (dumps(state),key))
-    return dict(first_interaction_london=datetime.fromisoformat(at).astimezone(LONDON).isoformat(),
-                title=day.strftime('Mail check %d/%m/%Y'),
+    return dict(first_interaction_london=datetime.fromisoformat(at).astimezone(zone()).isoformat(),
+                title=resolve().get('schedule.title').format(date=day),
                 remaining_followups=[p['time'] for p in plan(at=at)['eligible']],
                 instruction='Use help activation to complete chat setup now; then TRIAGE_RULES.md and MONITOR_REPORT_TEMPLATE.md. Retrieve other instructions only for relevant operations.')
 
@@ -104,7 +109,7 @@ def reconcile(h):
     if state.get('detached') or state.get('date') != str(day):
         return
     from .app_state import inspect
-    observed = inspect(thread, day.strftime('Mail check %d/%m/%Y'))
+    observed = inspect(thread, resolve().get('schedule.title').format(date=day))
     checks = {'title':observed['title'], 'same-day follow-ups':observed['followups']}
     if state.get('followup',{}).get('status') == 'declined':
         checks['same-day follow-ups'] = True
@@ -122,7 +127,7 @@ def reconcile(h):
 
 def complete(h, payload):
     thread, day, key = identity()
-    title = day.strftime('Mail check %d/%m/%Y')
+    title = resolve().get('schedule.title').format(date=day)
     if payload.get('title_readback') != title:
         raise ValueError('Exact current London-date title readback required')
     evidence_ids = payload.get('evidence_ids', [])

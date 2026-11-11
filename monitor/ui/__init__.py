@@ -6,7 +6,7 @@ import webbrowser
 
 
 def create_app(database, token=None):
-    from flask import Flask, abort, jsonify, request
+    from flask import Flask, abort, jsonify, request, g
     from ..viewer import overview, detail
     database = Path(database).resolve()
     app = Flask(__name__)
@@ -15,6 +15,8 @@ def create_app(database, token=None):
 
     @app.before_request
     def authenticate():
+        from ..configuration import snapshot
+        g.behaviour=snapshot();g.behaviour.__enter__()
         if request.method not in {'GET', 'HEAD', 'POST'}:
             abort(405)
         if request.endpoint == 'static':
@@ -31,6 +33,11 @@ def create_app(database, token=None):
                 abort(403)
             if not request.is_json:
                 abort(415)
+
+    @app.teardown_request
+    def release_settings(error):
+        scope=g.pop('behaviour',None)
+        if scope:scope.__exit__(None,None,None)
 
     @app.after_request
     def private_response(response):

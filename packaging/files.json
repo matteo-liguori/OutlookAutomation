@@ -188,5 +188,8 @@
   "outlook_platforms/thunderbird/addon/client-api.js": "outlook_platforms/thunderbird/addon/client-api.js",
   "outlook_platforms/thunderbird/addon/client-schema.json": "outlook_platforms/thunderbird/addon/client-schema.json",
   "tests/test_thunderbird_mail.py": "tests/test_thunderbird_mail.py",
-  "tests/Test-ThunderbirdMail.js": "tests/Test-ThunderbirdMail.js"
+  "tests/Test-ThunderbirdMail.js": "tests/Test-ThunderbirdMail.js",
+  "defaults/behaviour.yaml": "defaults/behaviour.yaml",
+  "monitor/configuration.py": "monitor/configuration.py",
+  "tests/test_configuration.py": "tests/test_configuration.py"
 }

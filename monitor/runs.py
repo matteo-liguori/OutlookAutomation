@@ -1,13 +1,16 @@
+from .configuration import zone
 import json
 import uuid
 from datetime import datetime, timedelta
-from .model import LONDON, MAIL, CAL, now, stamp, dumps
+from .model import MAIL, CAL, now, stamp, dumps
 
 
 def roundup_eligible(started_at):
-    local = datetime.fromisoformat(stamp(started_at)).astimezone(LONDON)
+    local = datetime.fromisoformat(stamp(started_at)).astimezone(zone())
     # The scheduled 09:00 startup can begin a few minutes early or late.
-    return local.weekday() == 6 and 8 * 60 + 30 <= local.hour * 60 + local.minute < 10 * 60
+    from .configuration import resolve
+    slot=resolve().values['schedule']
+    return local.weekday()==slot['roundup_weekday'] and slot['roundup_start']<=local.strftime('%H:%M')<slot['roundup_end']
 
 
 class RunRecords:
@@ -233,7 +236,7 @@ class RunRecords:
                     for a in c["actions"]
                     if a["id"] in required or changed
                 )
-        start = datetime.fromisoformat(run["started_at"]).astimezone(LONDON).date()
+        start = datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
         days = [(start + timedelta(days=n)).isoformat() for n in range(4)]
         sources = {
             r[0]: json.loads(r[1])
@@ -347,9 +350,8 @@ class RunRecords:
                 ):
                     failures.append(window["source"] + ": filing incomplete/unverified")
         if d.get("activated"):
-            expected = "Mail check " + datetime.fromisoformat(run["started_at"]).astimezone(
-                LONDON
-            ).strftime("%d/%m/%Y")
+            from .configuration import resolve
+            expected = resolve().get('schedule.title').format(date=datetime.fromisoformat(run['started_at']).astimezone(zone()))
             if d.get("title", {}).get("value") != expected or not d.get("title", {}).get(
                 "evidence_ids"
             ):
@@ -395,7 +397,7 @@ class RunRecords:
                 ):
                     failures.append(s + ": scan preceded completed refresh")
             else:
-                start = datetime.fromisoformat(run["started_at"]).astimezone(LONDON).date()
+                start = datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
                 if source.get("days") != [
                     (start + timedelta(days=n)).isoformat() for n in range(4)
                 ]:
@@ -441,7 +443,7 @@ class RunRecords:
         events = {s + ":" + str(e["id"]) for s in CAL for e in sources.get(s, {}).get("events", [])}
         if not events.issubset(set(handoff.get("event_ids", []))):
             failures.append("Calendar events missing from report")
-        start = datetime.fromisoformat(run["started_at"]).astimezone(LONDON).date()
+        start = datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
         if handoff.get("days") != [(start + timedelta(days=n)).isoformat() for n in range(4)]:
             failures.append("Four-day calendar table missing")
         if not handoff.get("delivered"):
@@ -585,7 +587,7 @@ class RunRecords:
             handoff = run["details"].get("handoff", {})
             expected_days = [
                 (
-                    datetime.fromisoformat(run["started_at"]).astimezone(LONDON).date()
+                    datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
                     + timedelta(days=n)
                 ).isoformat()
                 for n in range(4)

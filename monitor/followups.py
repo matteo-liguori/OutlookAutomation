@@ -1,7 +1,9 @@
+from .configuration import resolve
+from .configuration import zone
 """Independent no-reply reminders. Review timestamps never restart this clock."""
 
 from datetime import datetime, timedelta
-from .model import LONDON, OPEN, now, stamp
+from .model import OPEN, now, stamp
 
 MODES = {"reminder", "review", "blocked", "quiet", "handoff"}
 
@@ -12,8 +14,8 @@ def due_at(action):
         return None
     if policy.get("due_at"):
         return stamp(policy["due_at"])
-    base = datetime.fromisoformat(stamp(policy["anchor_at"])).astimezone(LONDON)
-    remaining = policy.get("interval_days", 7)
+    base = datetime.fromisoformat(stamp(policy["anchor_at"])).astimezone(zone())
+    remaining = policy.get('interval_days', resolve().get('reviews.followup_days'))
     while remaining:
         base += timedelta(days=1)
         if policy.get("basis", "calendar") == "calendar" or base.weekday() < 5:
@@ -45,17 +47,17 @@ def prepare(h, action, prior, evidence_ids, at=None):
         mode = {"waiting": "reminder", "watch": "review", "needs-user": "handoff"}[action["status"]]
         action["follow_up"] = {
             "mode": mode,
-            "interval_days": 7,
+            'interval_days': resolve().get('reviews.followup_days'),
             "basis": "calendar",
             "anchor_at": stamp(action.get("first_recorded_at") or at or now()),
             "anchor_kind": "tracking-start; replace with verified communication time when known",
-            "reason": "Seven-day default; adjust for promises, urgency, dependencies and user decisions when recording substantive evidence.",
+            "reason": "Configured default; adjust for promises, urgency, dependencies and user decisions when recording substantive evidence.",
             "evidence_ids": evidence_ids,
         }
     policy = action["follow_up"]
     if not isinstance(policy, dict) or policy.get("mode") not in MODES:
         raise ValueError("follow_up requires reminder/review/blocked/quiet/handoff mode")
-    policy.setdefault("interval_days", 7)
+    policy.setdefault('interval_days', resolve().get('reviews.followup_days'))
     policy.setdefault("basis", "calendar")
     days = policy["interval_days"]
     if type(days) is not int or not 1 <= days <= 90:
