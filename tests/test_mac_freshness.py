@@ -1,7 +1,7 @@
 """Stable native freshness never substitutes version metadata for recent mail."""
 from datetime import datetime,timedelta,timezone
 import unittest
-from outlook_platforms.macos.freshness import probe
+from monitor.adapters.macos.freshness import probe
 
 class FreshnessTests(unittest.TestCase):
     def test_stable_recent_mail_and_preserved_state(self):

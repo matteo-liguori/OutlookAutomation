@@ -77,4 +77,4 @@ async function run(source) {
   return 'Passed byte-verified multi-frame attachment transfer, draft save/update/send, changed-version refusal, safe replies, contact lookup, duplicate preflight and independent Sent/self-Inbox verification.';
 }
 module.exports=run;
-if(require.main===module)run(['mail.js','background.js'].map(name=>fs.readFileSync(path.join(__dirname,'../outlook_platforms/thunderbird/addon',name),'utf8')).join('\n')).then(console.log).catch(e=>{console.error(e);process.exitCode=1;});
+if(require.main===module)run(['mail.js','background.js'].map(name=>fs.readFileSync(path.join(__dirname,'../monitor/adapters/thunderbird/addon',name),'utf8')).join('\n')).then(console.log).catch(e=>{console.error(e);process.exitCode=1;});

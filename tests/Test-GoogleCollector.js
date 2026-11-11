@@ -1,5 +1,5 @@
 const fs=require('fs'),assert=require('assert');
-const collect=new Function('tools','request',fs.readFileSync('Collect-GoogleMonitor.js','utf8'));
+const collect=new Function('tools','request',fs.readFileSync('monitor/integrations/collect_google.js','utf8'));
 const request={start:'2026-10-13T00:00:00+01:00',end:'2026-10-17T00:00:00+01:00',sources:[{source:'calendar:primary',calendar_id:'primary'},{source:'calendar:shared',calendar_id:'flat-510'}]};
 (async()=>{
   let calls=[];

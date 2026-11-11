@@ -127,6 +127,15 @@ class CaseRecords:
             raise ValueError(f"{field}: required text, maximum {cap} characters")
 
     def update(self, payload):
+        from .configuration import resolve,snapshot
+        from .extensions import effective
+        cid=payload['id']
+        prior=self.case(cid) if self.db.execute('SELECT 1 FROM cases WHERE id=?',(cid,)).fetchone() else {}
+        card=dict(prior,**payload.get('case',{}));card['id']=cid
+        with snapshot(effective(resolve(card=card),self,card)):
+            return self._update(payload)
+
+    def _update(self, payload):
         payload = json.loads(dumps(payload))
         key = payload["idempotency_key"]
         fingerprint = digest(payload)

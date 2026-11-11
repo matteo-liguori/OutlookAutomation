@@ -4,7 +4,7 @@ from unittest.mock import Mock
 
 from icalendar import Calendar
 
-import icloud_caldav
+from monitor.integrations import icloud as icloud_caldav
 
 
 class ICloudCalDavTests(unittest.TestCase):

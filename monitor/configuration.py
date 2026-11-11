@@ -8,19 +8,20 @@ import io
 from functools import lru_cache
 import json
 import os
+import uuid
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ruamel.yaml import YAML
 from ruamel.yaml.scalarstring import LiteralScalarString
-from automation_paths import ROOT, data_root
+from monitor.paths import ROOT, data_root
 
 DEFAULT_FILE = ROOT / 'defaults/behaviour.yaml'
 _current = ContextVar('behaviour', default=None)
 
 
 def yaml():
-    y = YAML(); y.preserve_quotes = True; y.width = 110
+    y = YAML(); y.preserve_quotes = True; y.width = 4096
     y.indent(mapping=2, sequence=4, offset=2)
     return y
 
@@ -78,6 +79,14 @@ def assign(value, path, item):
 
 def validate(value, base=None, partial=False):
     base=base or defaults(); known=dict(leaves(base))
+    def keys(mapping,reference,prefix=''):
+        for key,item in mapping.items():
+            path=prefix+'.'+key if prefix else key
+            if key not in reference:raise ValueError('Unknown customisation: '+path)
+            if isinstance(item,dict):
+                if not isinstance(reference[key],dict):raise ValueError('Wrong customisation type: '+path)
+                keys(item,reference[key],path)
+    keys(value,base)
     for key,v in leaves(value):
         if key not in known:raise ValueError('Unknown customisation: '+key)
         expected=known[key]
@@ -86,6 +95,9 @@ def validate(value, base=None, partial=False):
         if isinstance(v,str) and not v.strip():raise ValueError('Empty customisation: '+key)
         if isinstance(v,int) and not isinstance(v,bool) and v<0:raise ValueError('Negative customisation: '+key)
     if partial:return
+    if value['schema_version']!=1:raise ValueError('Unsupported behaviour schema; run migration preview')
+    import re
+    if not 1<=value['updates']['interval_hours']<=168 or not re.fullmatch(r'[A-Za-z0-9_][A-Za-z0-9_.-]*',value['updates']['remote']):raise ValueError('Invalid update interval or Git remote name')
     try:ZoneInfo(value['timezone'])
     except (ZoneInfoNotFoundError,ValueError):raise ValueError('Unknown timezone: '+value['timezone']) from None
     schedule=value['schedule']
@@ -112,6 +124,10 @@ class Configuration:
         text=self.values['instructions'][topic]
         for old,new in [('Europe/London',self.values['timezone']),('14:00/19:00','/'.join(self.values['schedule']['continuations'])),('09:00',self.values['schedule']['morning'])]:
             text=text.replace(old,new)
+        for key,value in leaves(self.values):
+            if not key.startswith('instructions.') and not key.startswith('templates.'):
+                text=text.replace('{{'+key+'}}',str(value))
+        if self.values['timezone']!='Europe/London':text=text.replace('London',self.values['timezone'])
         return text
 
     def overlay(self, patch, origin):
@@ -169,9 +185,11 @@ def zone():return ZoneInfo(resolve().values['timezone'])
 
 def atomic(path, text):
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    temporary=path.with_name(path.name+'.tmp')
-    with temporary.open('x',encoding='utf-8',newline='\n') as f:f.write(text)
-    os.replace(temporary,path)
+    temporary=path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    try:
+        with temporary.open('x',encoding='utf-8',newline='\n') as f:f.write(text)
+        os.replace(temporary,path)
+    finally:temporary.unlink(missing_ok=True)
 
 
 def dump(value):
@@ -182,10 +200,22 @@ def dump(value):
 def lock(root):
     folder=Path(root)/'.state';folder.mkdir(parents=True,exist_ok=True)
     path=folder/'configuration.lock'
-    try:fd=os.open(path,os.O_CREAT|os.O_EXCL|os.O_WRONLY,0o600)
-    except FileExistsError:raise ValueError('Configuration is being updated; retry after the current operation') from None
-    try:os.close(fd);yield
-    finally:path.unlink(missing_ok=True)
+    with path.open('a+b') as handle:
+        if path.stat().st_size==0:handle.write(b' ');handle.flush()
+        handle.seek(0)
+        try:
+            if os.name=='nt':
+                import msvcrt
+                msvcrt.locking(handle.fileno(),msvcrt.LK_NBLCK,1)
+            else:
+                import fcntl
+                fcntl.flock(handle,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        except OSError:raise ValueError('Configuration is being updated; retry after the current operation') from None
+        try:yield
+        finally:
+            handle.seek(0)
+            if os.name=='nt':msvcrt.locking(handle.fileno(),msvcrt.LK_UNLCK,1)
+            else:fcntl.flock(handle,fcntl.LOCK_UN)
 
 
 def sync(root=None, profile=None, default_file=None):
@@ -193,6 +223,7 @@ def sync(root=None, profile=None, default_file=None):
     if folder is None:return []
     with lock(folder):
         base=defaults(default_file);custom,state_path=paths(folder)
+        initial=custom.read_bytes() if custom.exists() else None
         state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
         user=read_yaml(custom) if custom.exists() else read_yaml(default_file or DEFAULT_FILE)
         old=dict(leaves(state.get('baseline',base)));new=dict(leaves(base));existing=dict(leaves(user));reviews=state.get('reviews',[])
@@ -207,9 +238,15 @@ def sync(root=None, profile=None, default_file=None):
                 ident=hashlib.sha256(json.dumps([key,v],sort_keys=True).encode()).hexdigest()[:16]
                 if not any(r['id']==ident for r in reviews):reviews.append(dict(id=ident,key=key,override=plain(existing[key]),new_default=plain(v),notified=False))
         validate(plain(user),base)
+        current=dict(leaves(user))
+        reviews=[dict(r,override=plain(current[r['key']])) for r in reviews if r['key'] in current and current[r['key']]!=r['new_default']]
         text=dump(user)
+        if (custom.read_bytes() if custom.exists() else None)!=initial:raise ValueError('Customisations changed during reconciliation; retry without overwriting the edit')
         if not custom.exists() or custom.read_text(encoding='utf-8')!=text:atomic(custom,text)
-        atomic(state_path,json.dumps(dict(baseline=base,reviews=reviews),indent=2)+'\n')
+        fingerprint=hashlib.sha256(json.dumps([user['timezone'],plain(user['schedule'])],sort_keys=True).encode()).hexdigest()
+        if state.get('schedule_fingerprint') and state['schedule_fingerprint']!=fingerprint:
+            state['schedule_notice']=dict(timezone=user['timezone'],schedule=plain(user['schedule']),notified=False)
+        atomic(state_path,json.dumps(dict(state,baseline=base,reviews=reviews,schedule_fingerprint=fingerprint),indent=2)+'\n')
         return reviews
 
 
@@ -236,5 +273,10 @@ def notices(root=None):
     with lock(folder):
         state=json.loads(path.read_text(encoding='utf-8'));pending=[r for r in state.get('reviews',[]) if not r['notified']]
         for item in pending:item['notified']=True
-        if pending:atomic(path,json.dumps(state,indent=2)+'\n')
-        return [dict(type='configuration_review',**{k:r[k] for k in ('id','key','override','new_default')},instruction='User override retained. Use config review to keep it or adopt the new default.') for r in pending]
+        schedule=state.get('schedule_notice',{})
+        changed=bool(schedule and not schedule['notified'])
+        if changed:schedule['notified']=True
+        if pending or changed:atomic(path,json.dumps(state,indent=2)+'\n')
+        results=[dict(type='configuration_review',**{k:r[k] for k in ('id','key','override','new_default')},instruction='User override retained. Use config review to keep it or adopt the new default.') for r in pending]
+        if changed:results.append(dict(type='schedule_reconciliation',timezone=schedule['timezone'],schedule=schedule['schedule'],instruction='Desired schedule changed. Reconcile the actual morning automation and same-day chat follow-ups through app tools, read back and verify; configuration alone did not update the app.'))
+        return results

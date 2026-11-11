@@ -15,8 +15,9 @@ def create_app(database, token=None):
 
     @app.before_request
     def authenticate():
-        from ..configuration import snapshot
-        g.behaviour=snapshot();g.behaviour.__enter__()
+        from ..configuration import snapshot,resolve
+        from ..extensions import effective
+        g.behaviour=snapshot(effective(resolve()));g.behaviour.__enter__()
         if request.method not in {'GET', 'HEAD', 'POST'}:
             abort(405)
         if request.endpoint == 'static':
@@ -93,7 +94,7 @@ def serve(database, port=0, open_browser=True):
         overview(database)  # Fail before opening a browser; never initialise/migrate data.
         app = create_app(database)
     except ImportError:
-        raise ValueError('Install the optional viewer with your project Python: -m pip install -r requirements-ui.lock') from None
+        raise ValueError('Install the optional viewer with your project Python: -m pip install -r packaging/requirements/requirements-ui.lock') from None
     server = create_server(app, host='127.0.0.1', port=port, threads=4)
     url = f"http://127.0.0.1:{server.effective_port}/#token={app.config['VIEWER_TOKEN']}"
     print('Current threads workspace: ' + url, flush=True)

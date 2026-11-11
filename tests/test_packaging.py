@@ -11,7 +11,7 @@ import tempfile
 import unittest
 import zipfile
 
-from build_share_package import ROOT, build
+from tools.build_share_package import ROOT, build
 
 
 class PackagingTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class PackagingTests(unittest.TestCase):
                 self.assertNotIn(".git", Path(name).parts)
                 self.assertNotIn(Path(name).suffix, {".db", ".msg", ".eml", ".pst", ".ost"})
             self.assertEqual(len(contents) + 1, result["files"])
-            self.assertIn("-WorkStore", contents["README.md"].decode())
+            self.assertIn("-WorkStore", contents["docs/setup/windows.md"].decode())
             with self.assertRaises(FileExistsError):
                 build(target)
 
@@ -58,7 +58,7 @@ class PackagingTests(unittest.TestCase):
             env = dict(os.environ)
             env.pop("OUTLOOK_AUTOMATION_PROFILE", None)
             ps = shutil.which("pwsh") or shutil.which("powershell")
-            command = [ps, "-NoProfile", "-NonInteractive", "-File", str(folder / "Initialize-OutlookAutomation.ps1"), "-Name", "New user", "-WorkStore", "new.user@example.com"]
+            command = [ps, "-NoProfile", "-NonInteractive", "-File", str(folder / "monitor/adapters/windows/Initialize-OutlookAutomation.ps1"), "-Name", "New user", "-WorkStore", "new.user@example.com"]
             result = subprocess.run(command, cwd=folder, env=env, capture_output=True, text=True, timeout=45)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             help_result = subprocess.run([sys.executable, '-m', 'monitor', '--format', 'json',
@@ -82,7 +82,7 @@ class PackagingTests(unittest.TestCase):
         from monitor.profile import load
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "profile.json"
-            sample = json.loads((ROOT / "profile.example.json").read_text())
+            sample = json.loads((ROOT / "tests/fixtures/profile.example.json").read_text())
             sample["mail"]["mail:personal"] = sample["mail"]["mail:work"]
             path.write_text(json.dumps(sample))
             with self.assertRaisesRegex(ValueError, "distinct"):
@@ -99,24 +99,21 @@ class PackagingTests(unittest.TestCase):
             with zipfile.ZipFile(target) as archive:
                 readme = archive.read("OutlookAutomation/README.md").decode()
                 agents = archive.read("OutlookAutomation/AGENTS.md").decode()
-                self.assertIn("Mac Outlook Apple-event", readme)
-                self.assertIn("Thunderbird adapters", readme)
-                self.assertIn("python3 setup_outlook.py --smoke-test", readme)
-                self.assertIn("mac_outlook.py probe", readme)
-                self.assertIn("Mac pilot", agents)
-                self.assertIn("OutlookAutomation/requirements-mac.lock", archive.namelist())
-                for name in ('mac_outlook_native.py', 'outlook.py', 'outlook_platforms/macos/native_outlook.js',
-                             'outlook_platforms/macos/test_actions.js', 'outlook_platforms/windows/commands.py',
-                             'outlook_platforms/macos/operations.js', 'outlook_platforms/macos/collector.py',
-                             'outlook_platforms/macos/calendar.py', 'outlook_platforms/macos/attachments.py',
-                             'outlook_platforms/macos/freshness.py', 'tests/test_mac_operations.py',
+                self.assertIn("docs/setup/macos.md", readme)
+                self.assertIn("monitor", agents)
+                self.assertIn("OutlookAutomation/packaging/requirements/requirements-mac.lock", archive.namelist())
+                for name in ('monitor/adapters/macos/legacy_native.py', 'monitor/adapters/legacy_cli.py', 'monitor/adapters/macos/native_outlook.js',
+                             'monitor/adapters/macos/test_actions.js', 'monitor/adapters/windows/commands.py',
+                             'monitor/adapters/macos/operations.js', 'monitor/adapters/macos/collector.py',
+                             'monitor/adapters/macos/calendar.py', 'monitor/adapters/macos/attachments.py',
+                             'monitor/adapters/macos/freshness.py', 'tests/test_mac_operations.py',
                              'tests/test_mac_collector.py', 'tests/test_mac_calendar.py', 'tests/test_mac_freshness.py',
                              'tests/test_mac_native.py', 'tests/test_mac_probe_fallback.py', 'tests/test_mac_test_actions.py', 'tests/test_platform_commands.py',
-                             'outlook_platforms/thunderbird/commands.py', 'outlook_platforms/thunderbird/native_host.py',
-                             'outlook_platforms/thunderbird/addon/calendar-api.js', 'outlook_platforms/thunderbird/README.md',
+                             'monitor/adapters/thunderbird/commands.py', 'monitor/adapters/thunderbird/native_host.py',
+                             'monitor/adapters/thunderbird/addon/calendar-api.js', 'monitor/adapters/thunderbird/README.md',
                              'tests/test_thunderbird.py', 'tests/Test-ThunderbirdBridge.js',
-                             'outlook_platforms/thunderbird/mail.py','outlook_platforms/thunderbird/addon/mail.js',
-                             'outlook_platforms/thunderbird/addon/client-api.js','outlook_platforms/thunderbird/addon/client-schema.json',
+                             'monitor/adapters/thunderbird/mail.py','monitor/adapters/thunderbird/addon/mail.js',
+                             'monitor/adapters/thunderbird/addon/client-api.js','monitor/adapters/thunderbird/addon/client-schema.json',
                              'tests/test_thunderbird_mail.py','tests/Test-ThunderbirdMail.js'):
                     self.assertIn('OutlookAutomation/' + name, archive.namelist())
 

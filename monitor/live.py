@@ -1,3 +1,4 @@
+from .configuration import resolve
 """Current source health and bounded pass working data, never an access-history log."""
 
 import json
@@ -54,7 +55,7 @@ def record(h,source,payload,at,verified=None):
 
 def items(h,at=None):
     states=[json.loads(r[0]) for r in h.db.execute('SELECT details FROM source_health ORDER BY source')]
-    cutoff=stamp((datetime.fromisoformat(at or now())-timedelta(days=1)).isoformat())
+    cutoff=stamp((datetime.fromisoformat(at or now())-timedelta(days=resolve().get('maintenance.cache_days'))).isoformat())
     for s in states:
         if s['status']=='current' and s.get('last_verified_at','')<cutoff:s.update(status='unverified',last_error='Last verified check is more than 24 hours old')
         if s.get('coverage_gap_from') and s['status']=='current':s.update(status='partial',last_error='Current access verified; older coverage gap still requires catch-up')
@@ -72,7 +73,7 @@ def _references(value):
 
 def _retire_evidence(h,ids,active,at=None):
     removed=0
-    cutoff=stamp((datetime.fromisoformat(at or now())-timedelta(days=1)).isoformat())
+    cutoff=stamp((datetime.fromisoformat(at or now())-timedelta(days=resolve().get('maintenance.cache_days'))).isoformat())
     activity={r[0]:r[1] for r in h.db.execute("SELECT id,at FROM retention_activity WHERE kind='evidence'")}
     for row in h.db.execute('SELECT id,metadata,body FROM evidence').fetchall():
         meta=json.loads(row['metadata'])
@@ -140,7 +141,7 @@ def prune(h,keep=None,at=None):
         row=h.db.execute('SELECT id FROM runs ORDER BY started_at DESC,id DESC LIMIT 1').fetchone()
         keep=row[0] if row else None
     at=at or now()
-    cutoff=stamp((datetime.fromisoformat(at)-timedelta(days=1)).isoformat())
+    cutoff=stamp((datetime.fromisoformat(at)-timedelta(days=resolve().get('maintenance.cache_days'))).isoformat())
     old=[r['id'] for r in h.db.execute('SELECT id,status,started_at FROM runs ORDER BY started_at,id') if r['id']!=keep and r['status']!='running']
     released=set()
     for rid in old:

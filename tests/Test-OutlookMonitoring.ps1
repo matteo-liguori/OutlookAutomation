@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '..\OutlookMonitoring.Common.ps1')
+. (Join-Path $PSScriptRoot '..\monitor\adapters\windows\OutlookMonitoring.Common.ps1')
 $count = 0
 function Assert-True($value, $message) {
     if (-not $value) {

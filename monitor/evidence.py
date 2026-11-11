@@ -1,3 +1,4 @@
+from .configuration import resolve
 """Independent thread evidence and short-lived unclaimed inputs; no shared owners."""
 
 import json
@@ -105,7 +106,7 @@ def has_card(value):
 def prune(h, at=None):
     """Retain current roots, independent case assets and at most 24h of new inputs."""
     at = stamp(at or now())
-    cutoff = stamp((datetime.fromisoformat(at) - timedelta(days=1)).isoformat())
+    cutoff = stamp((datetime.fromisoformat(at) - timedelta(days=resolve().get('maintenance.cache_days'))).isoformat())
     roots = set()
     for table, column in [('cases','details'),('actions','details'),('decisions','details'),
                           ('approvals','details'),('standing_approvals','details'),('context','details'),('issues','details'),

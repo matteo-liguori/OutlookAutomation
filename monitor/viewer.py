@@ -48,6 +48,7 @@ def action_view(action, at):
     fields = ('id', 'owner', 'status', 'next_step', 'deadline', 'promised_at',
               'next_review', 'snooze_until', 'completion_condition', 'reopening_condition')
     result = {k: action[k] for k in fields if action.get(k) is not None}
+    if action.get('custom_action_state'):result['custom_action_state']=action['custom_action_state']
     result['snoozed'] = bool(action.get('snooze_until') and stamp(action['snooze_until']) > at and not action.get('snooze_override'))
     result['due'] = active_due(action, at)
     if (action.get('follow_up') or {}).get('mode') == 'reminder':
@@ -119,6 +120,10 @@ def overview(path, at=None):
             reviews = {v['case']: v['due_at'] for v in reviews_due(store, at)}
             cards, events, unscheduled = [], [], []
             for case in cases:
+                from .extensions import action_status
+                for action in case['actions']:
+                    status=action_status(store,action)
+                    if status:action['custom_action_state']=status
                 cid = case['id']
                 actions = [a for a in case['actions'] if a['status'] in OPEN]
                 card = dict(id=cid, title=case['title'], purpose=case.get('purpose') or case['title'],

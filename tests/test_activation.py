@@ -16,7 +16,7 @@ class ActivationTests(unittest.TestCase):
     def test_first_plain_briefing_supplies_only_current_startup_context_once(self):
         result=self.call('briefing')
         session=result['session_start']
-        self.assertEqual(session['first_interaction_london'],'2026-11-08T17:00:00+00:00')
+        self.assertEqual(session['first_interaction_local'],'2026-11-08T17:00:00+00:00')
         self.assertEqual(session['title'],'Mail check 08/11/2026')
         self.assertEqual(session['remaining_followups'],['19:00'])
         self.assertIn('reminder',result)

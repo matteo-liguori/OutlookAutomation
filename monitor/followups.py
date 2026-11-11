@@ -38,6 +38,7 @@ def reminder_due(action, at=None):
 
 
 def prepare(h, action, prior, evidence_ids, at=None):
+    action.pop('custom_action_state',None)
     if prior and 'custom_action' in prior and 'custom_action' not in action:action['custom_action']=dict(prior['custom_action'])
     if action.get('custom_action'):
         ref=action['custom_action']

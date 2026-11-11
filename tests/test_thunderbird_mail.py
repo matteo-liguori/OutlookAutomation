@@ -11,8 +11,8 @@ from unittest.mock import Mock,patch
 from monitor.core import Harness
 from monitor.approvals import put
 from monitor.model import now
-from outlook_platforms.thunderbird.commands import execute_json
-from outlook_platforms.thunderbird.mail import uploaded_attachments,download_attachment,freshness,attachment_specs,CHUNK
+from monitor.adapters.thunderbird.commands import execute_json
+from monitor.adapters.thunderbird.mail import uploaded_attachments,download_attachment,freshness,attachment_specs,CHUNK
 
 MAILBOX='fixture@example.invalid'
 PROFILE=dict(mail={'mail:work':MAILBOX},calendars=[],platform=dict(os='macos',outlook_backend='thunderbird',bindings={
@@ -39,8 +39,8 @@ class ThunderbirdMailTests(unittest.TestCase):
         uploaded=bytearray();offsets=[]
         def upload(request):
             offsets.append(request['offset']);uploaded.extend(base64.b64decode(request['data']));return dict(result=dict(status='ok',received=len(uploaded)))
-        from outlook_platforms.thunderbird.commands import call
-        with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
+        from monitor.adapters.thunderbird.commands import call
+        with patch('monitor.adapters.thunderbird.mail.data_root',return_value=self.root):
             specs=uploaded_attachments(message,BASE,call,upload)
             self.assertEqual(bytes(uploaded),content);self.assertEqual(offsets,[0,CHUNK]);self.assertEqual(specs[0]['sha256'],digest)
             def retrieve(request):
@@ -52,17 +52,17 @@ class ThunderbirdMailTests(unittest.TestCase):
             self.assertEqual(asset['sha256'],digest);self.assertFalse(list(self.root.rglob('*.partial')))
 
     def test_corrupt_download_leaves_no_partial_or_final_asset(self):
-        from outlook_platforms.thunderbird.commands import call
+        from monitor.adapters.thunderbird.commands import call
         replies=[dict(result=dict(status='ok',size=3,sha256='0'*64,download_id='one')),dict(result=dict(status='ok',offset=0,data=base64.b64encode(b'bad').decode(),eof=True))]
         target=self.root/'file.bin'
-        with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
+        with patch('monitor.adapters.thunderbird.mail.data_root',return_value=self.root):
             with self.assertRaisesRegex(ValueError,'hash/size'):
                 download_attachment(BASE,dict(message_id=12),dict(name='file.bin',part_name='1.2'),call,Mock(side_effect=replies),target=target)
         self.assertFalse(target.exists());self.assertFalse(list(self.root.glob('*.partial')))
 
     def test_attachment_changed_bytes_are_rejected(self):
         source=self.root/'file.bin';source.write_bytes(b'approved');message=self.message();message['attachments']=[dict(path=str(source),sha256=hashlib.sha256(b'approved').hexdigest())]
-        with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
+        with patch('monitor.adapters.thunderbird.mail.data_root',return_value=self.root):
             attachment_specs(message);source.write_bytes(b'changed')
             with self.assertRaises(ValueError):attachment_specs(message)
 
@@ -70,12 +70,12 @@ class ThunderbirdMailTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as outside:
             source=Path(outside)/'external';source.write_bytes(b'approved')
             message=self.message();message['attachments']=[dict(path=str(source),sha256=hashlib.sha256(b'approved').hexdigest())]
-            with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
+            with patch('monitor.adapters.thunderbird.mail.data_root',return_value=self.root):
                 with self.assertRaisesRegex(ValueError,'escaped'):attachment_specs(message)
 
     def test_attachment_symlink_escape_is_rejected(self):
         source=self.root/'file.bin';message=self.message();message['attachments']=[dict(path=str(source),sha256=hashlib.sha256(b'approved').hexdigest())]
-        with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
+        with patch('monitor.adapters.thunderbird.mail.data_root',return_value=self.root):
             with tempfile.TemporaryDirectory() as outside:
                 path=Path(outside)/'external';path.write_bytes(b'approved')
                 try:source.symlink_to(path)
@@ -107,7 +107,7 @@ class ThunderbirdMailTests(unittest.TestCase):
         self.assertEqual(runner.call_args.args[0]['expected_raw_sha256'],'a'*64);self.assertEqual(runner.call_args.args[0]['message_id'],12)
 
     def test_freshness_requires_callback_and_two_recent_stable_samples(self):
-        from outlook_platforms.thunderbird.commands import call
+        from monitor.adapters.thunderbird.commands import call
         import datetime
         message=dict(id=1,internet_message_id='one',date=datetime.datetime.now(datetime.timezone.utc).isoformat())
         def runner(r):
@@ -124,7 +124,7 @@ class ThunderbirdMailTests(unittest.TestCase):
         def runner(r):
             if r['action']=='attachment-upload':return dict(result=dict(status='ok',received=len(b'bytes')))
             return dict(result=dict(status='blocked',code='client-operation-timeout',mutation_may_have_occurred=True))
-        with patch('outlook_platforms.thunderbird.mail.data_root',return_value=self.root):
+        with patch('monitor.adapters.thunderbird.mail.data_root',return_value=self.root):
             self.assertEqual(execute_json('send',payload,MAILBOX,self.h,'mail:work',profile=self.p,runner=runner)['status'],'blocked')
         path.unlink();reader=Mock(return_value=dict(result=dict(status='ok',sent_verified=True,delivery_verified=False)))
         result=execute_json('send-reconcile',dict(approval_id='send'),MAILBOX,self.h,'mail:work',profile=self.p,runner=reader)

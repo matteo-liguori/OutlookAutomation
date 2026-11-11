@@ -19,12 +19,20 @@
     'snooze-end':[['circle',{cx:12,cy:13,r:8}],['path',{d:'M12 9v4l3 2M3 5l3-3m12 0 3 3M6 20l-2 2m14-2 2 2'}]],
     unscheduled:[['path',{d:'M8 2v4m8-4v4M3 9h18M5 4h14a2 2 0 0 1 2 2v14H3V6a2 2 0 0 1 2-2m4 11h6'}]]
   };
-  const dateFormat = new Intl.DateTimeFormat('en-GB', {timeZone:'Europe/London', day:'numeric',month:'short',year:'numeric'});
-  const dayFormat = new Intl.DateTimeFormat('en-GB', {timeZone:'Europe/London', weekday:'long'});
-  const timeFormat = new Intl.DateTimeFormat('en-GB', {timeZone:'Europe/London',hour:'2-digit',minute:'2-digit'});
-  const dayKey = value => new Intl.DateTimeFormat('en-CA', {timeZone:'Europe/London',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
+  let displayZone = 'UTC';
+  let dateFormat = new Intl.DateTimeFormat('en-GB', {timeZone:displayZone, day:'numeric',month:'short',year:'numeric'});
+  let dayFormat = new Intl.DateTimeFormat('en-GB', {timeZone:displayZone, weekday:'long'});
+  let timeFormat = new Intl.DateTimeFormat('en-GB', {timeZone:displayZone,hour:'2-digit',minute:'2-digit'});
+  const dayKey = value => new Intl.DateTimeFormat('en-CA', {timeZone:displayZone,year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(value));
   const formatDate = value => dateFormat.format(new Date(value));
   const formatTime = value => timeFormat.format(new Date(value));
+  function setZone(zone) {
+    displayZone=zone;
+    dateFormat=new Intl.DateTimeFormat('en-GB',{timeZone:zone,day:'numeric',month:'short',year:'numeric'});
+    dayFormat=new Intl.DateTimeFormat('en-GB',{timeZone:zone,weekday:'long'});
+    timeFormat=new Intl.DateTimeFormat('en-GB',{timeZone:zone,hour:'2-digit',minute:'2-digit'});
+    $('display-zone').textContent='Dates shown in '+zone+'.';
+  }
   let data = null, mode = 'grid', selected = null, detailRequest = 0, loadRequest = 0, lastRendered = '';
   let dirty = false, saving = false, editAttempt = null;
 
@@ -244,8 +252,9 @@
     const sequence=++loadRequest;$('refresh').disabled=true;
     try {
       const next = await api('/api/cards');if(sequence!==loadRequest)return;
-      const changed = JSON.stringify([next.cards,next.events,next.unscheduled]) !== lastRendered;
-      lastRendered = JSON.stringify([next.cards,next.events,next.unscheduled]);data=next;
+      setZone(next.timezone);
+      const changed = JSON.stringify([next.cards,next.events,next.unscheduled,next.timezone]) !== lastRendered;
+      lastRendered = JSON.stringify([next.cards,next.events,next.unscheduled,next.timezone]);data=next;
       $('error').hidden=true;$('freshness').textContent='Updated '+formatTime(next.as_of)+' · live records';
       if(changed || !$('content').children.length)render();
       if(selected && $('detail').open && changed && !dirty && !saving) {

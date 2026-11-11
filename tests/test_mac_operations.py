@@ -12,9 +12,9 @@ from monitor.core import Harness
 from monitor.profile import PROFILE
 from monitor.approvals import put
 from monitor.model import now
-from outlook_platforms.macos.operations import send_approved,prepared_message,move_approved
-from outlook_platforms.macos.attachments import download_attachment
-from outlook_platforms.macos.operations import SCRIPT,OPERATIONS
+from monitor.adapters.macos.operations import send_approved,prepared_message,move_approved
+from monitor.adapters.macos.attachments import download_attachment
+from monitor.adapters.macos.operations import SCRIPT,OPERATIONS
 from test_mac_native import FIXTURE
 
 
@@ -71,7 +71,7 @@ class NativeOperationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'Large attachment'):download_attachment(self.email,'131','131','33',dict(index=1,name='big',size=11*1024*1024),private_root=self.root,runner=run)
 
     def test_encoded_attachment_size_does_not_replace_byte_hash(self):
-        from outlook_platforms.macos.operations import verify_attachment_bytes
+        from monitor.adapters.macos.operations import verify_attachment_bytes
         path=self.root/'fixture.txt';path.write_bytes(b'fixture')
         message=prepared_message(dict(self.message,attachments=[dict(path=str(path),sha256=hashlib.sha256(b'fixture').hexdigest())]),self.root)
         def run(request):Path(request['destination']).write_bytes(b'changed');return dict(status='ok',read_state_preserved=True)

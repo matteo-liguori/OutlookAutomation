@@ -69,10 +69,10 @@ def startup(h, at):
     with h.write():
         state['first_interaction_at'] = at
         h.db.execute('UPDATE meta SET value=? WHERE key=?', (dumps(state),key))
-    return dict(first_interaction_london=datetime.fromisoformat(at).astimezone(zone()).isoformat(),
+    return dict(timezone=zone().key, first_interaction_local=datetime.fromisoformat(at).astimezone(zone()).isoformat(),
                 title=resolve().get('schedule.title').format(date=day),
                 remaining_followups=[p['time'] for p in plan(at=at)['eligible']],
-                instruction='Use help activation to complete chat setup now; then TRIAGE_RULES.md and MONITOR_REPORT_TEMPLATE.md. Retrieve other instructions only for relevant operations.')
+                instruction='Use help activation to complete chat setup now; then help mail-pass and help reporting. Retrieve other instructions only for relevant operations.')
 
 
 def defer(h, payload):

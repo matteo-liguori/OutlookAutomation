@@ -6,7 +6,7 @@ from pathlib import Path
 import sqlite3
 import zipfile
 
-from automation_paths import data_root
+from monitor.paths import data_root
 from .configuration import defaults,read_yaml,dump,assign,leaves,validate,plain,atomic,lock,paths
 
 
@@ -15,17 +15,37 @@ def run(root=None,apply=False):
     profile=json.loads(profile_path.read_text(encoding='utf-8-sig'));custom,state_path=paths(root)
     marker=root/'.state/four-layer-migration.json'
     if marker.exists():return dict(status='already-migrated',**json.loads(marker.read_text(encoding='utf-8')))
+    dbpath=root/'monitor/monitor.db'
+    connection=sqlite3.connect(dbpath.resolve().as_uri()+'?mode=ro',uri=True)
+    try:
+        row=connection.execute("SELECT value FROM meta WHERE key='four-layer-migration'").fetchone()
+        if row:
+            receipt=json.loads(row[0])
+            if apply:atomic(marker,json.dumps(receipt,indent=2)+'\n')
+            return dict(status='already-migrated',**receipt)
+    finally:connection.close()
     legacy={k:profile[k] for k in ('timezone','instructions','permission_defaults') if k in profile}
+    backup=root/'.state/migrations/four-layer.zip'
+    if backup.exists():
+        with zipfile.ZipFile(backup) as archive:
+            hashes=json.loads(archive.read('SHA256.json'))
+            if any(hashlib.sha256(archive.read(n)).hexdigest()!=v for n,v in hashes.items()):raise ValueError('Migration backup integrity check failed')
+            original=json.loads(archive.read('before/monitor/profile.json').decode('utf-8-sig'))
+            # A crash between file writes must not lose preferences stripped from the profile.
+            legacy={k:profile.get(k,original.get(k)) for k in ('timezone','instructions','permission_defaults') if k in profile or k in original}
     plan=dict(status='preview',changes=list(legacy),customisations=str(custom),database=str(root/'monitor/monitor.db'),backup=str(root/'.state/migrations/four-layer.zip'))
     if not apply:return plan
     with lock(root):
         before={p:p.read_bytes() if p.exists() else None for p in (profile_path,custom,state_path,marker)}
+        host=root/'thunderbird/native-host'
+        host_mode=host.stat().st_mode if host.exists() else None
+        if host.exists():before[host]=host.read_bytes()
         base=defaults();settings=read_yaml(custom) if custom.exists() else read_yaml(__import__('monitor.configuration',fromlist=['DEFAULT_FILE']).DEFAULT_FILE)
         for key,value in leaves(legacy):
             current=dict(leaves(settings)).get(key);default=dict(leaves(base)).get(key)
             if not custom.exists() or current==default:assign(settings,key,value)
         validate(plain(settings));new_profile={k:v for k,v in profile.items() if k not in legacy}
-        dbpath=root/'monitor/monitor.db';db=sqlite3.connect(dbpath,timeout=10)
+        db=sqlite3.connect(dbpath,timeout=10);committed=False
         db.execute('BEGIN IMMEDIATE')
         at=datetime.now(timezone.utc).isoformat(timespec='seconds')
         try:
@@ -36,6 +56,7 @@ def run(root=None,apply=False):
             old_state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
             state=dict(baseline=base,reviews=old_state.get('reviews',[]))
             produced={profile_path:json.dumps(new_profile,ensure_ascii=False,indent=2)+'\n',custom:dump(settings),state_path:json.dumps(state,indent=2)+'\n'}
+            if host.exists():produced[host]=host.read_text(encoding='utf-8').replace('outlook_platforms.thunderbird.native_host','monitor.adapters.thunderbird.native_host')
             backup=Path(plan['backup']);backup.parent.mkdir(parents=True,exist_ok=True)
             contents={'before/monitor.db':database_bytes}
             for path,raw in before.items():
@@ -64,13 +85,17 @@ def run(root=None,apply=False):
                 metadata(db,'extension-approval:startup-observation',dict(hash=item['hash'],approved_at=at,evidence_ids=[eid],disabled=False))
                 metadata(db,'startup-observation',dict(moved_to='extension-observations:startup-observation'))
             for path,text in produced.items():atomic(path,text)
+            if host_mode is not None:host.chmod(host_mode)
             receipt=dict(at=at,backup=str(backup),migrated_sections=list(legacy))
-            atomic(marker,json.dumps(receipt,indent=2)+'\n');db.commit()
+            metadata(db,'four-layer-migration',receipt)
+            db.commit();committed=True
+            atomic(marker,json.dumps(receipt,indent=2)+'\n')
             return dict(status='migrated',**receipt)
         except BaseException:
-            db.rollback()
-            for path,raw in before.items():
-                if raw is None:path.unlink(missing_ok=True)
-                else:path.write_bytes(raw)
+            if not committed:
+                db.rollback()
+                for path,raw in before.items():
+                    if raw is None:path.unlink(missing_ok=True)
+                    else:path.write_bytes(raw)
             raise
         finally:db.close()

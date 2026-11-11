@@ -16,15 +16,15 @@ from .configuration import resolve
 def policy():
     BACKUP_LIMITS=limits()
     return dict(
-    cache_days=1,
-    temporary_days=7,
-    development_days=30,
-    collector_cache_hours=24,
+    cache_days=resolve().get('maintenance.cache_days'),
+    temporary_days=resolve().get('maintenance.temporary_days'),
+    development_days=resolve().get('maintenance.development_days'),
+    collector_cache_hours=resolve().get('maintenance.collector_cache_hours'),
     daily_backups=BACKUP_LIMITS['daily'],
     weekly_backups=BACKUP_LIMITS['weekly'],
     named_backups=BACKUP_LIMITS['special'],
     closed_thread_days=resolve().get('maintenance.closed_thread_days'),
-    small_attachment_bytes=10*1024*1024,
+    small_attachment_bytes=resolve().get('maintenance.small_attachment_bytes'),
 )
 
 
@@ -243,7 +243,7 @@ def file_plan(h, at):
                 ):
                     retained["recovery not verified"] += 1
                     return
-                if datetime.fromisoformat(details["validated_at"]) >= current - timedelta(days=30):
+                if datetime.fromisoformat(details["validated_at"]) >= current - timedelta(days=resolve().get('maintenance.development_days')):
                     retained["validation recovery period"] += 1
                     return
                 if role == "recovery" and file_hash(target) != file_hash(Path(backup)):
@@ -264,11 +264,11 @@ def file_plan(h, at):
         if folder.is_dir():
             for path in folder.iterdir():
                 if re.fullmatch(r"[a-f0-9]{32}", path.name):
-                    consider(path, 7, "temporary")
+                    consider(path, resolve().get('maintenance.temporary_days'), 'temporary')
     for path, details in registered:
         if not Path(path).exists():
             continue
-        days = 30 if details["kind"] in {"development", "recovery"} else 7
+        days = resolve().get('maintenance.development_days') if details['kind'] in {'development','recovery'} else resolve().get('maintenance.temporary_days')
         consider(Path(path), days, details["kind"], details)
     from .backups import plan as backup_plan
 

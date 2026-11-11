@@ -2,7 +2,7 @@
 [CmdletBinding(PositionalBinding = $false)]
 param([string]$Python = '', [Parameter(Position = 0, ValueFromRemainingArguments = $true)][string[]]$MonitorArgs)
 $ErrorActionPreference = 'Stop'
-. "$PSScriptRoot/AutomationEnvironment.Common.ps1"
+. "$PSScriptRoot/monitor/adapters/windows/AutomationEnvironment.Common.ps1"
 $Python = Get-AutomationPython -PythonOverride $Python
 Push-Location $PSScriptRoot
 try {

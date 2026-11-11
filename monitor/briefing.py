@@ -23,7 +23,7 @@ def compact(h, at):
                               instruction='Inspect due cards with case show; help card-upkeep for review instructions. Record the whole-card review with review complete or action review.'))
     for i in due:
         attention.append(dict(type='due_action', **{k:i.get(k) for k in
-                         ('case','action','status','owner','next_step','next_review','deadline')},
+                         ('case','action','status','owner','next_step','next_review','deadline','custom_action_state')},
                          due_at=i.get('follow_up_due_at') or i.get('next_review')))
     for i in raw:
         kind=i.get('type')

@@ -108,7 +108,9 @@ class GuidanceTests(unittest.TestCase):
         for topic, instruction in GUIDES.items():
             with self.subTest(topic=topic):
                 result=self.call('help', topic)
-                self.assertEqual({k:result[k] for k in ('topic','instruction')}, {'topic':topic,'instruction':instruction})
+                self.assertEqual(result['topic'],topic)
+                self.assertNotIn('{{',result['instruction'])
+                if '{{' not in instruction:self.assertEqual(result['instruction'],instruction)
         for command, topic in COMMAND_TOPICS.items():
             with self.subTest(command=command):
                 self.assertEqual(self.call('help', *command.split())['topic'], topic)

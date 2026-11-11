@@ -98,7 +98,7 @@ class Storage:
         self.db.close()
 
     def backup(self, label=None):
-        from .backups import capture_profile, embedded_profile, include_profile, capture_configuration, include_configuration
+        from .backups import capture_profile, embedded_profile, include_profile, capture_configuration, include_configuration, embedded_configuration
         profile = capture_profile(self)
         configuration=capture_configuration(self)
         folder = self.path.parent / "backups"
@@ -122,6 +122,8 @@ class Storage:
                     finally:check.close()
                     if current_format and profile is not None:
                         current_format = embedded_profile(target) is not None
+                    if current_format and configuration:
+                        current_format = set(configuration)<=set(embedded_configuration(target))
                 except (sqlite3.Error, ValueError):current_format=False
             if not current_format:
                 temporary = folder / f".{name}-{uuid.uuid4().hex}.tmp"

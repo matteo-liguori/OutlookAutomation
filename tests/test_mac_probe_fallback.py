@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 
-from mac_outlook import probe
+from monitor.adapters.macos.legacy_cli import probe
 
 
 class BundledDictionaryTests(unittest.TestCase):

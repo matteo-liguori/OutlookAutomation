@@ -262,7 +262,7 @@ def sweep(h, at=None):
                     failure = {"case_id": c["id"], "error": str(exc)[:400]}
                     result["failures"].append(failure)
                     h.db.execute("INSERT INTO thread_cleanup VALUES(?,?) ON CONFLICT(case_id) DO UPDATE SET details=excluded.details", (c["id"], dumps(failure)))
-            day_ago = stamp((datetime.fromisoformat(at)-timedelta(days=1)).isoformat())
+            day_ago = stamp((datetime.fromisoformat(at)-timedelta(hours=resolve().get('maintenance.collector_cache_hours'))).isoformat())
             h.db.execute("DELETE FROM mail_snapshots WHERE created_at<=?", (day_ago,))
             h.db.execute("INSERT INTO meta VALUES('thread_cache_maintenance',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (dumps(dict(result, at=at)),))
             h._thread_dirty = False
@@ -300,7 +300,7 @@ def snapshot(h, operation, payload=None, sid=None):
             h.db.execute("INSERT INTO mail_snapshots VALUES(?,?,?)", (payload["SnapshotId"], now(), dumps(payload)))
         return {"id": payload["SnapshotId"]}
     row = h.db.execute("SELECT details,created_at FROM mail_snapshots WHERE id=?", (sid,)).fetchone()
-    cutoff = stamp((datetime.fromisoformat(now())-timedelta(days=1)).isoformat())
+    cutoff = stamp((datetime.fromisoformat(now())-timedelta(hours=resolve().get('maintenance.collector_cache_hours'))).isoformat())
     if not row or row["created_at"] <= cutoff:
         raise ValueError("Mail snapshot expired or missing; capture a fresh bounded snapshot")
     return json.loads(row["details"])

@@ -9,7 +9,7 @@ import platform
 import subprocess
 import sys
 import venv
-from automation_paths import data_root, configure_data
+from monitor.paths import data_root, configure_data
 
 ROOT = Path(__file__).resolve().parent
 
@@ -48,10 +48,13 @@ def initialise(name, store, root=ROOT, data_dir=None):
     if data_dir:
         configure_data(data_dir, root)
     folder.mkdir(parents=True, exist_ok=True)
-    profile = dict(schema_version=1, name=name, timezone="Europe/London", platform=dict(os='macos',outlook_backend='native',bindings={}), mail={"mail:work": store}, calendars=["calendar:work"], access="outlook-macos-pilot")
+    system='windows' if platform.system()=='Windows' else 'macos'
+    profile = dict(schema_version=1, name=name, platform=dict(os=system,outlook_backend='com' if system=='windows' else 'native',bindings={}), mail={"mail:work": store}, calendars=["calendar:work"])
     with target.open("x", encoding="utf-8") as output:
         json.dump(profile, output, indent=2)
         output.write("\n")
+    from monitor.configuration import sync
+    sync(folder.parent,profile=profile)
     return profile
 
 
@@ -70,20 +73,20 @@ def main(argv=None):
     python = python_path()
     if not python.is_file():
         venv.EnvBuilder(with_pip=True).create(ROOT / ".venv")
-    subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(ROOT / "requirements-mac.lock")], check=True)
+    subprocess.run([str(python), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(ROOT / ('packaging/requirements/requirements.lock' if os.name=='nt' else 'packaging/requirements/requirements-mac.lock'))], check=True)
     if args.name:
         initialise(args.name, args.work_store, data_dir=args.data_dir)
         subprocess.run([str(python), "-X", "utf8", "-m", "monitor", "init"], cwd=ROOT, check=True)
         subprocess.run([str(python), "-X", "utf8", "-m", "monitor", "doctor"], cwd=ROOT, check=True)
     if args.smoke_test:
-        env = dict(os.environ, OUTLOOK_AUTOMATION_PROFILE=str(ROOT / "profile.example.json"))
+        env = dict(os.environ, OUTLOOK_AUTOMATION_PROFILE=str(ROOT / "tests/fixtures/profile.example.json"))
         # These tests exercise the portable harness with synthetic data; platform
         # specific PowerShell fixtures are a separate Windows check.
-        patterns = ['test_reliability.py', 'test_timing_google.py', 'test_monitor.py', 'test_cards.py', 'test_followups.py', 'test_approvals.py', 'test_threadcache.py', 'test_mac_support.py', 'test_mac_probe_fallback.py', 'test_mac_native.py', 'test_mac_test_actions.py', 'test_platform_commands.py', 'test_outlook_api.py', 'test_reviews.py', 'test_guidance.py', 'test_data_separation.py', 'test_profile_backups.py', 'test_mac_calendar.py', 'test_mac_collector.py', 'test_mac_freshness.py', 'test_mac_operations.py', 'test_maintenance.py', 'test_thunderbird.py', 'test_thunderbird_mail.py']
+        patterns = ['test_configuration.py', 'test_extensions.py', 'test_migration.py', 'test_updates.py', 'test_layout.py', 'test_reliability.py', 'test_timing_google.py', 'test_monitor.py', 'test_cards.py', 'test_followups.py', 'test_approvals.py', 'test_threadcache.py', 'test_mac_support.py', 'test_mac_probe_fallback.py', 'test_mac_native.py', 'test_mac_test_actions.py', 'test_platform_commands.py', 'test_outlook_api.py', 'test_reviews.py', 'test_guidance.py', 'test_data_separation.py', 'test_profile_backups.py', 'test_mac_calendar.py', 'test_mac_collector.py', 'test_mac_freshness.py', 'test_mac_operations.py', 'test_maintenance.py', 'test_thunderbird.py', 'test_thunderbird_mail.py']
         for pattern in patterns:
             subprocess.run([str(python), "-X", "utf8", "-m", "unittest", "discover", "-s", "tests", "-p", pattern], cwd=ROOT, env=env, check=True)
         print(json.dumps(dict(smoke_test="passed", system=platform.system(), machine=platform.machine(), python=platform.python_version(), native_macos=platform.system() == "Darwin", mailbox_access_tested=False)))
-    print("Harness ready. Native Outlook capability check: .venv/bin/python mac_outlook.py probe", flush=True)
+    print("Harness ready. Capability check: python -m monitor outlook status", flush=True)
     return 0
 
 

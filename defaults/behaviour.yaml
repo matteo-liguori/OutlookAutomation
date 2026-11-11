@@ -22,6 +22,11 @@ maintenance:
   daily_backups: 2
   weekly_backups: 2
   special_backups: 1
+  cache_days: 1
+  temporary_days: 7
+  development_days: 30
+  collector_cache_hours: 24
+  small_attachment_bytes: 10485760
 permission_defaults:
   local_records: true
   managed_maintenance: true
@@ -40,11 +45,11 @@ instructions:
   reporting: |-
     # Reporting
 
-    Use MONITOR_REPORT_TEMPLATE.md for report structure. Personal reporting preferences belong in private profile instructions.reporting; they do not change permissions or required coverage.
+    Use the supplied report template. Personal style belongs in private instructions.reporting; required coverage and actual authority still apply.
   card-input: |-
     `case edit --input -`: id, expected_revision, idempotency_key, optional title (180 chars), purpose (600 chars/three lines) and note (2000 chars). Edits preserve action/review clocks. Pending notes appear in briefing and case show until handled. `case note-ack --input -`: id, expected_revision, idempotency_key, note_ids and outcome (600 chars). Handle notes and record resulting changes before acknowledging; leave blocked notes pending. Existing send/calendar permission boundaries still apply.
   ui: |-
-    Optional current-work viewer: install requirements-ui.lock in the project environment, then run ui. Opens a local card grid and action timeline; click for details, label edits or a note for the next agent pass. Notes stay pending until explicitly handled; help card-input. Browsing and label edits preserve task/review clocks. No Outlook scans. Ctrl+C stops it; --no-browser prints the private local link.
+    Optional current-work viewer: install packaging/requirements/requirements-ui.lock in the project environment, then run ui. Opens a local card grid and action timeline; click for details, label edits or a note for the next agent pass. Notes stay pending until explicitly handled; help card-input. Browsing and label edits preserve task/review clocks. No Outlook scans. Ctrl+C stops it; --no-browser prints the private local link.
   outlook: |-
     Outlook access: `outlook <operation> --input -` takes JSON. Enabled operations and fields are listed below.
     Use configured source IDs and ISO timestamps with offsets. The harness handles account binding and backend sequencing.
@@ -87,7 +92,7 @@ instructions:
     Structured writes/collector results go directly through stdin:
 
     ```powershell
-    . .\OutlookHarness.Common.ps1
+    . .\monitor\adapters\windows\OutlookHarness.Common.ps1
     Invoke-OutlookHarness -Arguments @('evidence','put','--input','-') -InputObject $payload
     ```
 
@@ -165,7 +170,7 @@ instructions:
     reason and evidence_ids. These acknowledge review, not delivery; required work
     cannot be suppressed. Report data exposes quiet_allowed.
 
-    Weekly roundups appear only for Sunday runs starting 08:30-10:00 London (allowing
+    Weekly roundups appear only for Sunday runs starting {{schedule.roundup_start}}-{{schedule.roundup_end}} London (allowing
     early/late 09:00 startup); incomplete or ineligible handoffs preserve the queue.
 
     Events: stable id/title, offset-qualified start/end, location, all_day.
@@ -199,7 +204,7 @@ instructions:
 
     Startup/closure/finalization run cleanup and retry visible failures. Maintenance
     status/clean --dry-run/clean/threads expose it; unknown ownership needs reconciliation.
-    Keep two daily, two weekly, at most one version/schema backup. First write per London
+    Keep {{maintenance.daily_backups}} daily, {{maintenance.weekly_backups}} weekly and {{maintenance.special_backups}} version/schema backups. First write per London
     day/ISO week creates its slot; verify replacements before rotation. Keep backups
     within these slots. Backups exclude disposable caches/expired records,
     preserving obligations/approvals/checkpoints and the matching private profile JSON.
@@ -208,7 +213,7 @@ instructions:
     Restore current format to a new path
     with writers closed, doctor/compare before switching; never copy a live WAL alone.
 
-    For code changes run Test-Harness.ps1 and relevant offline fixtures;
+    For code changes run tools/test_harness.ps1 and relevant offline fixtures;
     live sends/calendar writes/restarts are not regression tests.
   mail-access: |-
     Check current profile and source health; follow any applicable delivery-test permission before escalating access uncertainty. Use the authorised account and route. Report remaining gaps promptly; the user handles credentials and sign-in.
@@ -300,14 +305,76 @@ instructions:
 
     Startup/closure/finalization run cleanup and retry visible failures. Maintenance
     status/clean --dry-run/clean/threads expose it; unknown ownership needs reconciliation.
-    Keep two daily, two weekly, at most one version/schema backup. First write per London
+    Keep {{maintenance.daily_backups}} daily, {{maintenance.weekly_backups}} weekly and {{maintenance.special_backups}} version/schema backups. First write per London
     day/ISO week creates its slot; verify replacements before rotation. Keep backups
     within these slots. Backups exclude disposable caches/expired records,
     preserving obligations/approvals/checkpoints. Restore current format to a new path
     with writers closed, doctor/compare before switching; never copy a live WAL alone.
 
-    For code changes run Test-Harness.ps1 and relevant offline fixtures;
+    For code changes run tools/test_harness.ps1 and relevant offline fixtures;
     live sends/calendar writes/restarts are not regression tests.
+  configuration: |-
+    # Configuration
+
+    User behaviour is in customisations.yaml in the private data root. config show --explain shows effective values and origins; --case ID includes card context. config validate checks it. config review lists pending changes; --input - takes id and decision keep/default. config reset --key path restores a shared default. config migrate previews the older profile migration; --apply backs up and applies it.
+  extensions: |-
+    # Private extensions
+
+    Private data-root extensions/ID/manifest.yaml declares actions, hooks, settings and optional card overlays. extension list shows hashes/status; extension approve --input - needs id, hash and user-authority evidence_ids. Approve each code version; extension disable ID stops it. Removing/expiry stops overlays on the next invocation. Bundles are trusted local code, not a sandbox. Keep actual permissions in SQLite.
+  custom-actions: |-
+    # Custom actions
+
+    Cards reference private bundle/action/parameters in custom_action. action run ID --input - needs idempotency_key and an applicable card-bound approval_id whose scope names operation custom-action, bundle and action. Code must be version-approved. Interrupted executions require reconciliation; never blindly replay. Returned Outlook requests still need ordinary approvals.
+  updates: |-
+    # Tagged updates
+
+    update check [--force] checks maintainer tags on main; update status reads cached results. A normal briefing checks at most daily without another model turn. Offer updates without pulling automatically. Preserve local changes, inspect the tag and migration preview, update the environment and run tests before continuing.
+  mail-pass: |-
+    # Mail and calendar pass
+
+    Start a run and follow its collection windows. Use outlook collect for each enabled mailbox, follow all pages, inspect freshness and read new candidates fully. Retrieve matching cards; reconcile actions, permissions and replies. File only within approved preferences, preserving read state. Read every enabled calendar for today plus three configured-local days, using outlook calendar or the configured Google/iCloud integration. Follow report data and the reporting template, record actual receipts/handoff, inspect run status and finalize. Disclose incomplete coverage; do not advance unverified checkpoints. Retrieve help for each relevant operation.
+  upgrades: |-
+    After this mail round, briefly review improvement list against concrete issues noticed during use. Add useful suggestions with improvement add --input -; reuse existing entries. Keep the backlog here and implement on development requests. Finish with improvement checkpoint --input - (summary) to defer this prompt {{reviews.upgrades_days}} days.
+  mail-helpers: |
+    # Mail helpers
+
+    Keep instructions brief and positive; state the desired behaviour, give each rule
+    one home and link to it elsewhere.
+
+    Use `monitor.ps1 outlook <operation>` (Mac: `python -m monitor outlook`).
+    Windows helper names below are relative to `monitor/adapters/windows/`.
+    `outlook status` lists capabilities/fields; `help outlook` gives the workflow.
+    For Mac Thunderbird, use the command correspondence in monitor/adapters/thunderbird/README.md.
+    The helpers below are Windows backend/compatibility references. Scope: AGENTS.md.
+
+    | Need | Helper |
+    | --- | --- |
+    | Accounts/stores | Inspect-Outlook.ps1 -Action Accounts/Stores |
+    | Folders/recent/search | Read-OutlookMail.ps1, explicit Store/Folder/Limit/MaxScan |
+    | Full tracked mail | Get-OutlookMessage.ps1 -EntryId -StoreId -CaseId -Output Json |
+    | Body/recipient search | Search-OutlookMailDetails.ps1 |
+    | Contacts | Search-OutlookContacts.ps1 |
+    | Bounded collection | Collect-OutlookMonitor.ps1; follow SnapshotId/NextOffset |
+
+    For approved sends, verify the sender account and reuse a successful refresh
+    within 15 minutes, otherwise refresh once. Preflight exact recipients, subject
+    and distinctive body with Test-OutlookSendDuplicate.ps1 across Sent/Outbox/Drafts.
+    Reconcile matches and incomplete scans before submission. Submit approved items
+    back-to-back through Send-OutlookStoreMailSafe.ps1 -BatchSubmitOnly with explicit
+    Store/To/Cc/Bcc/Body/Attachments. Refresh once, then independently verify unique
+    Sent copies, recipients, subject, normalised body and attachment count. Record
+    each item's sent, skipped, unsent or uncertain result in the harness.
+
+    Outbox disappearance alone leaves delivery uncertain. Keep sender, recipients,
+    body and attachments fixed during recovery and reconcile transport before retrying.
+    Meeting invitations need their calendar item and meeting-message classes checked
+    as well as ordinary mail. Verify calendar writes through independent readback.
+
+    For COM faults, Test-OutlookSession.ps1 -CheckCom identifies the session. A concrete
+    COM failure can use Restart-ClassicOutlook.ps1 in the current logged-in user session;
+    retry once after verified restart. Continue independent sources and report gaps.
+    Credential and account setup stays with the user. Recovery helpers inspect exact
+    items and retain their transport guards; obtain material scope changes explicitly.
 templates:
   report: |
     # Mail check DD/MM/YYYY
@@ -367,7 +434,10 @@ templates:
     Refresh result; per-store count/newest/coverage; verified filing counts/checkpoints/
     gaps; each calendar's success/freshness. Disclose unfinished work and label incomplete
     coverage **Partially verified**.
-  morning: You are an email, calendar and organisation assistant. Follow AGENTS.md and start with the harness 
-    briefing.
-  followup: Continue the mail and calendar pass for {date} in this chat. Stop if that date has passed in 
-    {timezone}. Follow AGENTS.md and start with the harness briefing.
+  morning: You are an email, calendar and organisation assistant. Follow AGENTS.md and start with the harness briefing.
+  followup: Continue the mail and calendar pass for {date} in this chat. Stop if that date has passed in {timezone}. Follow AGENTS.md and start with the harness briefing.
+updates:
+  enabled: true
+  interval_hours: 24
+  remote: origin
+  tag_prefix: harness-update/v

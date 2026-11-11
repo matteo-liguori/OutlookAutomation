@@ -1,4 +1,5 @@
 import json
+from .extensions import action_status
 from datetime import datetime, timedelta, timezone
 from .model import BUDGET, OPEN, now, stamp, dumps, digest
 
@@ -79,6 +80,7 @@ class Views:
                             "follow_up": a.get("follow_up"),
                             "follow_up_due_at": due_at(a),
                             "follow_up_due": reminder_due(a, at),
+                            "custom_action_state": action_status(self,a),
                         }
                     )
             reported = reported_cases.get(c["id"])

@@ -7,12 +7,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from .profile import PROFILE
-from automation_paths import data_root
+from monitor.paths import data_root
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = Path(os.environ['OUTLOOK_AUTOMATION_DATABASE']) if os.environ.get('OUTLOOK_AUTOMATION_DATABASE') else data_root() / 'monitor/monitor.db'
-from .configuration import zone
-LONDON = zone()
+from .configuration import zone,defaults
+# Compatibility export only; operational code resolves the invocation's timezone.
+LONDON = ZoneInfo(defaults()['timezone'])
 BUDGET = 12000
 OPEN = {"needs-user", "waiting", "watch"}
 MAIL = list(PROFILE["mail"])

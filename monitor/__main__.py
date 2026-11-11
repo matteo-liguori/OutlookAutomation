@@ -3,7 +3,7 @@ import argparse
 import json
 import sys
 import sqlite3
-from automation_paths import data_root
+from monitor.paths import data_root
 
 from .core import DEFAULT_DB, Harness
 
@@ -37,11 +37,14 @@ def parser():
     cs=config.add_parser('show');cs.add_argument('--explain',action='store_true');cs.add_argument('--case',dest='case_id')
     config.add_parser('validate')
     config.add_parser('migrate').add_argument('--apply',action='store_true')
+    updates=sub.add_parser('update').add_subparsers(dest='operation',required=True)
+    updates.add_parser('check').add_argument('--force',action='store_true')
+    updates.add_parser('status')
     cr=config.add_parser('review');cr.add_argument('--input')
     reset=config.add_parser('reset');reset.add_argument('--key',required=True)
     sub.add_parser('health')
     sub.add_parser("backup")
-    from outlook_platforms.api import available_operations
+    from monitor.adapters.api import available_operations
     outlook = sub.add_parser('outlook', help='Profile-selected Outlook access').add_subparsers(dest='operation', required=True)
     for operation in available_operations():
         command=outlook.add_parser(operation)
@@ -97,6 +100,7 @@ def parser():
     action = sub.add_parser("action").add_subparsers(dest="operation", required=True)
     action.add_parser("review").add_argument("--input", required=True)
     run=action.add_parser('run');run.add_argument('id');run.add_argument('--input',required=True)
+    reconcile=action.add_parser('reconcile');reconcile.add_argument('id');reconcile.add_argument('--input',required=True)
     extension=sub.add_parser('extension').add_subparsers(dest='operation',required=True)
     extension.add_parser('list')
     extension.add_parser('approve').add_argument('--input',required=True)
@@ -161,7 +165,7 @@ def main():
                 raise ValueError('Port must be between 0 and 65535')
             serve(args.db, args.port, not args.no_browser)
             return
-        pure = args.command in {"schedule", "guide", "help", "config"} and not getattr(args,'case_id',None) or (
+        pure = args.command in {"schedule", "guide", "help", "config", "update"} and not getattr(args,'case_id',None) or (
             args.command == "calendar"
             and args.operation != "google-ingest"
             and not getattr(args, "run_id", None)
@@ -224,7 +228,7 @@ def markdown(result):
                 )
 
             lines.append(
-                f"- **Filing — {item['source']}**: last successful {local(item['last_successful_at'])}; filed through {local(item['filed_through'])}. Review Inbox {local(item['since'])} to {local(item['until'])} Europe/London (maximum seven days). Latest attempt: {item['last_attempt_status'] or 'none'}."
+                f"- **Filing — {item['source']}**: last successful {local(item['last_successful_at'])}; filed through {local(item['filed_through'])}. Review Inbox {local(item['since'])} to {local(item['until'])} {zone().key} (maximum seven days). Latest attempt: {item['last_attempt_status'] or 'none'}."
                 + (
                     " Older gap is outside the seven-day scope."
                     if item["older_gap_outside_scope"]

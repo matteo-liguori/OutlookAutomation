@@ -89,7 +89,10 @@ def show(h,cid):
     c['last_reported_revision']=marker[0] if marker else None
     from .approvals import items as approval_items
     c['approvals']=[{'id':a['id'],'kind':a['kind'],'review_due':a['review_due']} for a in approval_items(h) if a['case_id']==cid]
-    from .extensions import project
+    from .extensions import project, action_status
+    for action in c['actions']:
+        status=action_status(h,action)
+        if status:action['custom_action_state']=status
     return project(h,c)
 
 

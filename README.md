@@ -4,7 +4,7 @@ A collection of tools that let AI coding assistants like Codex and Claude work w
 
 I originally built this for my own use, mainly to make managing emails and keeping track of ongoing conversations a bit less painful. I’ve since started sharing it with friends and expanding it to work across different platforms.
 
-It’s still very much a work in progress, but quite a lot of the functionality is already there.
+This is an **alpha**: features and architecture are still changing, and updates can require migration. Quite a lot of the functionality is already there.
 
 ## What it does
 
@@ -24,30 +24,23 @@ Most of the functionality is exposed through a shared command interface, so assi
 
 Windows is the original and more developed implementation. It uses Classic Outlook through COM.
 
-macOS support has been added more recently, using native Outlook integration rather than the Windows COM interface.
+macOS has native Outlook and Thunderbird adapters behind the same `monitor outlook` commands. The private connection profile selects the client per source.
 
-The Mac implementation has already been tested successfully for reading and searching emails, handling attachments, managing drafts and working with calendars.
-
-There are still a few limitations:
-
-* Moving emails between folders isn’t working reliably yet.
-* Automatic self-mail delivery passed the latest test; each send still needs independent delivery verification. See [Mac test status](outlook_platforms/macos/STATUS.md).
-* Calendar updates and removal can race with synchronization; calendar writes remain outside the normal interface.
-* Testing so far has mainly involved a Gmail account in Legacy Outlook. Microsoft 365, Exchange and New Outlook still need more testing.
-
-Both platforms share the same underlying database and assistant interface, although not every operation is available on both yet.
+Thunderbird has live Gmail/KCL mail checks for reads, attachments, drafts, sends, filing, recoverable Trash and freshness; Gmail CalDAV calendar writes and DST recurrence have also been tested. KCL calendar connectivity, invitation responses and recurrence exceptions remain limited. Native Mac Outlook has separate filing/synchronisation limitations. See [platform status](monitor/adapters/README.md) for exact coverage; a listed capability still needs applicable authority.
 
 ## Getting started
 
-You’ll need Python 3.12 or later, Outlook configured with your accounts, and a coding assistant capable of running local commands.
+You’ll need Python 3.12 or later, Outlook or Thunderbird configured with your accounts, and a coding assistant capable of running local commands.
 
 The setup guides are here:
 
-* [Windows setup](packaging/README.md)
-* [Mac setup](packaging/macos/README.md)
-* [Platform adapters and commands](outlook_platforms/README.md)
+* [Windows setup](docs/setup/windows.md)
+* [Mac setup](docs/setup/macos.md)
+* [Platform adapters and commands](monitor/adapters/README.md)
 * [Instructions for AI assistants](AGENTS.md)
-* [Daily automation and follow-up prompts](AUTOMATIONS.md)
+* [Daily automation and follow-up prompts](docs/automations.md)
+* [Customisation, private actions and experiments](docs/customisation.md)
+* [Tagged updates](docs/updating.md)
 
 Once everything is configured, the assistant can interact with the toolkit through:
 
@@ -70,7 +63,7 @@ These commands show which Outlook operations are available on your installation.
 Install the optional viewer in the same project environment:
 
 ```sh
-python -m pip install -r requirements-ui.lock
+python -m pip install -r packaging/requirements/requirements-ui.lock
 python -m monitor ui
 ```
 
@@ -103,7 +96,7 @@ A few things I’d like to improve or add:
 * Getting the Mac implementation working more reliably across Outlook versions and account types.
 * Fixing email filing and improving send verification.
 * Making installation and configuration easier.
-* Adding a simple graphical interface for tracked conversations, tasks and activity.
+* Improving the card grid and action timeline.
 * Improving testing and general reliability.
 
 No particular timeline for any of these. I’ll work on them as I get around to them.

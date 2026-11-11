@@ -2,7 +2,7 @@
 import unittest
 import platform
 try:
-    from outlook_platforms.macos.calendar import expand_result
+    from monitor.adapters.macos.calendar import expand_result
 except ImportError:
     if platform.system()=='Darwin':raise
     raise unittest.SkipTest('Optional Mac calendar dependencies are not installed')

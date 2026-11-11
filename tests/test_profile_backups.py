@@ -8,7 +8,7 @@ import unittest
 from unittest.mock import patch
 from monitor.core import Harness
 from monitor.backups import embedded_profile
-from manage_data import restore_profile
+from tools.manage_data import restore_profile
 
 
 class ProfileBackupTests(unittest.TestCase):

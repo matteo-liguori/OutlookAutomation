@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '../OutlookSession.Common.ps1')
-. (Join-Path $PSScriptRoot '../OutlookMessageLookup.ps1')
+. (Join-Path $PSScriptRoot '../monitor/adapters/windows/OutlookSession.Common.ps1')
+. (Join-Path $PSScriptRoot '../monitor/adapters/windows/OutlookMessageLookup.ps1')
 $script:count = 0
 function Assert($value, $why) {
     if (-not $value) {
@@ -82,7 +82,7 @@ $direct = [pscustomobject]@{Target = $target }
 $direct | Add-Member ScriptMethod GetItemFromID { param($id, $sid)
     $this.Target }
 Assert ((Resolve-OutlookExactMessage $direct 'EXACT' 'store-1').ReadPath -eq 'direct-id') 'Direct path retained'
-. (Join-Path $PSScriptRoot '../OutlookAutomation.Common.ps1')
+. (Join-Path $PSScriptRoot '../monitor/adapters/windows/OutlookAutomation.Common.ps1')
 function Get-OutlookSessionState {
     [pscustomobject]@{Status = 'disconnected'
         SessionId = 2

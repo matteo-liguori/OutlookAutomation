@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from monitor.core import Harness,MAIL
 from monitor.sources import MAIL_STORES
-from outlook_platforms.macos.collector import collect_page,ingest_snapshot
+from monitor.adapters.macos.collector import collect_page,ingest_snapshot
 
 
 class NativeCollectorTests(unittest.TestCase):

@@ -64,6 +64,23 @@ class ExtensionTests(unittest.TestCase):
             with patch('monitor.extensions.invoke',side_effect=ValueError('interrupted')):
                 with self.assertRaisesRegex(ValueError,'interrupted'):run_action(self.h,'task',{'idempotency_key':'two'})
             with self.assertRaisesRegex(ValueError,'uncertain'):run_action(self.h,'task',{'idempotency_key':'two'})
+            with self.assertRaisesRegex(ValueError,'uncertain'):run_action(self.h,'task',{'idempotency_key':'different'})
+            from monitor.extensions import reconcile_action
+            reconcile_action(self.h,'task',dict(idempotency_key='two',outcome='not-attempted',evidence_ids=['user']))
+            self.assertEqual(run_action(self.h,'task',{'idempotency_key':'two'})['answer'],6)
+
+    def test_card_customisation_survives_replacement_and_controls_new_defaults(self):
+        payload=dict(id='private',expected_revision=0,idempotency_key='create-private',evidence_ids=['user'],
+           case=dict(title='Private rule',position='Wait',context='Synthetic',customisations={'reviews':{'followup_days':4,'card_days':3}}),
+           actions=[dict(id='wait',owner='other',status='waiting',next_step='Await reply',completion_condition='Reply',reopening_condition='New request')])
+        with snapshot(self.config):
+            self.h.update(payload)
+            original=self.h.case('private')
+            self.assertEqual(original['actions'][0]['follow_up']['interval_days'],4)
+            self.assertEqual(original['review_interval_days'],3)
+            del payload['case']['customisations'];payload.update(expected_revision=1,idempotency_key='replace-private',actions=original['actions'])
+            self.h.update(payload)
+            self.assertEqual(self.h.case('private')['customisations'],original['customisations'])
 
 
 if __name__=='__main__':unittest.main()

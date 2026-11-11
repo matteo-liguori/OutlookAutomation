@@ -16,10 +16,10 @@ from monitor.core import Harness
 from monitor.approvals import put
 from monitor.model import now
 from monitor.profile import platform_settings
-from outlook_platforms.api import invoke,status
-from outlook_platforms.thunderbird.commands import execute_json,validate_event
-from outlook_platforms.thunderbird.native_host import read_frame,write_frame
-from outlook_platforms.thunderbird.setup import prepare
+from monitor.adapters.api import invoke,status
+from monitor.adapters.thunderbird.commands import execute_json,validate_event
+from monitor.adapters.thunderbird.native_host import read_frame,write_frame
+from monitor.adapters.thunderbird.setup import prepare
 
 PROFILE=dict(name='Fixture',mail={'mail:work':'fixture@example.invalid'},calendars=['calendar:work'],
     platform=dict(os='macos',outlook_backend='thunderbird',bindings={
@@ -45,7 +45,7 @@ class ThunderbirdTests(unittest.TestCase):
             self.assertIn('move',info['operations']);self.assertNotIn('calendar-create',info['operations'])
             self.assertIn('download_attachments',info['payload_fields']['read'])
             self.assertIn('include_preview',info['payload_fields']['recent'])
-            with patch('outlook_platforms.thunderbird.commands.execute_json',return_value={'data':[]}) as tb,patch('outlook_platforms.macos.commands.execute_json',return_value={'data':[]}) as native:
+            with patch('monitor.adapters.thunderbird.commands.execute_json',return_value={'data':[]}) as tb,patch('monitor.adapters.macos.commands.execute_json',return_value={'data':[]}) as native:
                 invoke('read',dict(entry_id='1'),self.h,self.p);tb.assert_called_once();native.assert_not_called()
                 invoke('calendar',dict(source='calendar:work'),self.h,self.p);native.assert_called_once()
         self.p['platform']['bindings']['calendar:work']=dict(backend='thunderbird',calendar_id='uuid')
@@ -160,7 +160,7 @@ class ThunderbirdTests(unittest.TestCase):
             self.assertFalse(validate_mail('mail:work',[first,second],first['StartedAt'],freshness['data']))
 
     def test_persisted_message_locator_resolves_new_session_integer(self):
-        from outlook_platforms.thunderbird.commands import row
+        from monitor.adapters.thunderbird.commands import row
         message=dict(id=12,internet_message_id='fixture@example.invalid',date='2026-11-09T12:00:00Z',read=False,author='fixture@example.invalid',subject='Fixture',folder=dict(id='account1://Filed',accountId='account1',path='/Filed'))
         locator=row(message,'fixture@example.invalid')['EntryId'];message['id']=999
         runner=Mock(side_effect=[dict(result=dict(status='ok',complete=True,messages=[message])),dict(result=dict(status='ok',message=message,full=dict(parts=[dict(contentType='text/plain',body='Synthetic')]),read_state_preserved=True))])
@@ -170,13 +170,13 @@ class ThunderbirdTests(unittest.TestCase):
 
     def test_registration_preserves_other_installation_and_calendar_is_optional(self):
         root=Path(self.tmp.name)
-        with patch('outlook_platforms.thunderbird.setup.data_root',return_value=root/'data'):
+        with patch('monitor.adapters.thunderbird.setup.data_root',return_value=root/'data'):
             first=prepare(manifest_dir=root/'hosts')
             import zipfile
             with zipfile.ZipFile(first['package']) as z:
                 self.assertEqual(set(json.loads(z.read('manifest.json'))['experiment_apis']),{'harnessMail'})
                 self.assertIn('client-api.js',z.namelist())
-            with patch('outlook_platforms.thunderbird.setup.data_root',return_value=root/'other'):
+            with patch('monitor.adapters.thunderbird.setup.data_root',return_value=root/'other'):
                 with self.assertRaises(ValueError):prepare(manifest_dir=root/'hosts')
             second=prepare(calendar=True,manifest_dir=root/'hosts')
             with zipfile.ZipFile(second['package']) as z:
@@ -195,7 +195,7 @@ class ThunderbirdTests(unittest.TestCase):
         for mode in ('eof','partial','oversize','broken-output','roundtrip','disconnect-during-request'):
             with self.subTest(mode=mode),tempfile.TemporaryDirectory() as tmp:
                 env=dict(os.environ,OUTLOOK_AUTOMATION_DATA=tmp)
-                p=subprocess.Popen([sys.executable,'-m','outlook_platforms.thunderbird.native_host'],
+                p=subprocess.Popen([sys.executable,'-m','monitor.adapters.thunderbird.native_host'],
                     stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env)
                 try:
                     receipt=Path(tmp)/'thunderbird/runtime.json'

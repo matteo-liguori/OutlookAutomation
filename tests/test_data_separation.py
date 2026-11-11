@@ -8,9 +8,9 @@ import sys
 import tempfile
 import unittest
 from unittest.mock import patch
-from automation_paths import data_root, configure_data, ROOT
-from manage_data import relocate
-from manage_data import replace_paths
+from monitor.paths import data_root, configure_data, ROOT
+from tools.manage_data import relocate
+from tools.manage_data import replace_paths
 from setup_outlook import initialise
 
 

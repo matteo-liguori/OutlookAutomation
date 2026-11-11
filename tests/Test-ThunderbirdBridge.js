@@ -77,4 +77,4 @@ async function run(source) {
   return 'Passed account isolation, changed identity, unread restoration, canonical replay, uncertain-send suppression, read-only reconciliation and responsive reads during stalled writes.';
 }
 module.exports=run;
-if(require.main===module)run(fs.readFileSync(path.join(__dirname,'../outlook_platforms/thunderbird/addon/mail.js'),'utf8')+'\n'+fs.readFileSync(path.join(__dirname,'../outlook_platforms/thunderbird/addon/background.js'),'utf8')).then(console.log).catch(e=>{console.error(e);process.exitCode=1;});
+if(require.main===module)run(fs.readFileSync(path.join(__dirname,'../monitor/adapters/thunderbird/addon/mail.js'),'utf8')+'\n'+fs.readFileSync(path.join(__dirname,'../monitor/adapters/thunderbird/addon/background.js'),'utf8')).then(console.log).catch(e=>{console.error(e);process.exitCode=1;});

@@ -32,7 +32,7 @@ def handle_config(h,args,payload,kind):
         return run(apply=args.apply)
     from .configuration import resolve,review,location,lock,paths,read_yaml,assign,defaults,validate,plain,atomic,dump
     card=h.case(args.case_id) if getattr(args,'case_id',None) else None
-    config=resolve(card=card)
+    config=resolve()
     if args.operation=='show':return dict(values=config.values,**({'origins':config.origins} if args.explain else {}))
     if args.operation=='validate':return dict(valid=True)
     if args.operation=='review':return dict(reviews=review(ident=(payload or {}).get('id'),decision=(payload or {}).get('decision')))
@@ -49,9 +49,9 @@ def handle_config(h,args,payload,kind):
 
 def handle_outlook(h,args,payload,kind):
     if args.operation=='status' and getattr(args,'details',False):
-        from outlook_platforms.api import status
+        from monitor.adapters.api import status
         return status(details=True)
-    from outlook_platforms.api import invoke
+    from monitor.adapters.api import invoke
     result = invoke(args.operation,payload,h)
     if args.operation == 'read' and payload and payload.get('case_id') and isinstance(result, dict):
         from .approvals import sending_notice
@@ -132,7 +132,8 @@ def handle_briefing(h, args, payload, kind):
     if cmd=='briefing':
         from .briefing import compact
         from .configuration import notices
-        items=notices()+compact(h,at)
+        from .updates import notice as update_notice
+        items=notices()+update_notice()+compact(h,at)
     else:
         items=h.current_items(briefing=False,at=at)
     result = h.page(kind,items,limit=args.limit)
@@ -146,6 +147,9 @@ def handle_action(h, args, payload, kind):
     if op=='run':
         from .extensions import run_action
         return run_action(h,args.id,payload)
+    if op=='reconcile':
+        from .extensions import reconcile_action
+        return reconcile_action(h,args.id,payload)
     from .scheduling import review
 
     return review(h, payload)
@@ -156,6 +160,14 @@ def handle_extension(h,args,payload,kind):
     if args.operation=='list':return dict(extensions=[{k:v for k,v in item.items() if k!='folder'} for item in available(h=h)])
     if args.operation=='approve':return approve(h,payload)
     return disable(h,args.id)
+
+
+def handle_updates(h,args,payload,kind):
+    from .updates import check
+    if args.operation=='check':return check(force=args.force)
+    from .configuration import location
+    root=location();path=root/'.state/update-check.json' if root else None
+    return json.loads(path.read_text(encoding='utf-8')) if path and path.exists() else dict(status='not-checked')
 
 
 def handle_review(h, args, payload, kind):
@@ -384,6 +396,7 @@ def handle_health(h,args,payload,kind):
 
 
 HANDLERS = {
+    "update": handle_updates,
     "extension": handle_extension,
     "config": handle_config,
     "outlook": handle_outlook,
@@ -421,13 +434,17 @@ def execute(h,args):
     from .extensions import effective
     payload=read_payload(args.input) if getattr(args,'input',None) else None
     args._payload=payload
+    if args.command=='config' and args.operation=='migrate':
+        try:return _scoped_execute(h,args)
+        finally:del args._payload
     case_id=getattr(args,'case_id',None) or (getattr(args,'id',None) if args.command=='case' else None) or (payload or {}).get('case_id')
     if args.command=='action' and h:
         ident=getattr(args,'id',None) or (payload or {}).get('action_id')
         row=h.db.execute('SELECT case_id FROM actions WHERE id=?',(ident,)).fetchone()
         if row:case_id=row[0]
     try:
-        with snapshot(effective(resolve(card=h.case(case_id) if case_id and h else None),h)):
+        card=h.case(case_id) if case_id and h else None
+        with snapshot(effective(resolve(card=card),h,card)):
             return _scoped_execute(h,args)
     finally:del args._payload
 

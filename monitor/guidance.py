@@ -1,14 +1,8 @@
 """Operation-specific instructions, loaded only by relevant actions or triggers."""
 
-RELEVANCE_REVIEW = (
-    'At review, judge ongoing relevance from the date, context and risk of error. '
-    'Close unless a concrete current reason warrants tracking; technical incompleteness alone does not. '
-    'Use judgment in clear cases. Ask if genuinely unsure or missing a material fact you cannot reasonably retrieve. '
-    'Record why; email evidence can be retrieved again.'
-)
-
 from .configuration import defaults, resolve
 GUIDES = defaults()['instructions']
+RELEVANCE_REVIEW = GUIDES['card-upkeep'].split('\n\n')[1]
 
 
 def guide(topic):
@@ -23,15 +17,17 @@ def guide(topic):
         result['permission_source'] = 'Individual grants and approval scope are in SQLite; profile overrides affect default boundaries only.'
     if topic == 'accounts':
         result['profile'] = {k:PROFILE[k] for k in ('name','timezone','mail','calendars','roles','calendar_providers','paths') if k in PROFILE}
-        from automation_paths import data_root
+        from monitor.paths import data_root
         result['data_root'] = str(data_root())
     if topic == 'outlook':
-        from outlook_platforms.api import status
+        from monitor.adapters.api import status
         result.update(status())
+    if topic=='reporting':result['template']=resolve().get('templates.report')
     return result
 
 
 COMMAND_TOPICS = {
+    'sending':'mail-helpers', 'config':'configuration', 'extension':'extensions', 'update':'updates', 'action run':'custom-actions',
     'case edit': 'card-input', 'case note-ack': 'card-input',
     'briefing': 'briefing',
     'case': 'card-upkeep', 'review': 'card-upkeep',
@@ -53,7 +49,7 @@ def help_for(words):
                            for k, v in sorted(GUIDES.items())],
                 'examples': ['help case update', 'help action review', 'help filing']}
     if words[0]=='outlook' and len(words)>1:
-        from outlook_platforms.api import available_operations
+        from monitor.adapters.api import available_operations
         if words[1] not in available_operations():raise ValueError('Unknown Outlook operation; use help outlook')
     target = ' '.join(words)
     topic = target if target in GUIDES else COMMAND_TOPICS.get(target)

@@ -266,7 +266,7 @@ class MaintenanceTests(unittest.TestCase):
         self.assertFalse(recovery.exists())
         self.assertTrue(backup.exists())
 
-    def test_daily_claim_uses_london_date_and_failure_does_not_change_run(self):
+    def test_daily_claim_uses_local_date_and_failure_does_not_change_run(self):
         rid = self.old_run()
         original = self.h.run(rid)
         with patch("monitor.maintenance.clean", side_effect=OSError("Disk unavailable")) as run:

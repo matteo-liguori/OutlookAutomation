@@ -10,6 +10,10 @@
 /userdata/
 
 # Per-user setup and credentials (the example profile remains shareable)
+customisations.yaml
+/extensions/
+/.state/
+/exports/
 profile.json
 profile.local.json
 runtime.json
@@ -27,10 +31,10 @@ credentials.json
 !/EMAIL_NOTES/README.md
 /EMAIL_EXCEPTIONS/*.md
 !/EMAIL_EXCEPTIONS/README.md
-/LUNA_ESCALATION_LOG.md
+/*_LOG.md
 /SELFTEST_RESULTS_*.md
 /diagnostics/
-/_juan_approval_only.docx
+/*.docx
 /__pycache__/
 __pycache__/
 *.py[cod]
@@ -54,9 +58,8 @@ __pycache__/
 /.env.*
 !/.env.example
 
-# Incident-specific send scripts containing personal message details
-/Send-Discovery602-Referencing-Movein-*.ps1
-/Send-Moveout-*.ps1
+# Ad-hoc executable work belongs in the private scratch directory.
+/Send-*.ps1
 
 # Common local/editor artifacts
 *.log

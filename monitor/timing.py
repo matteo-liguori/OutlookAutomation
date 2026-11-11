@@ -74,7 +74,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
     target = date.fromisoformat(day)
     clocks = times or (resolve().get('schedule.continuations') if purpose == 'continuation' else [])
     if not clocks and purpose == 'continuation':
-        return dict(purpose=purpose,london_date=day,as_of=current.isoformat(),eligible=[],expired=[],rrule=None,one_shot_rules=[],reason='Continuations disabled')
+        return dict(purpose=purpose,local_date=day, timezone=zone().key,as_of=current.isoformat(),eligible=[],expired=[],rrule=None,one_shot_rules=[],reason='Continuations disabled')
     if not clocks or len(clocks) > 8 or len(set(clocks)) != len(clocks):
         raise ValueError("Provide one to eight distinct times")
     if purpose not in {"continuation", "reminder"}:
@@ -84,7 +84,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
     if purpose == "continuation" and target != local_now.date():
         return dict(
             purpose=purpose,
-            london_date=day,
+            local_date=day, timezone=zone().key,
             as_of=current.isoformat(),
             eligible=[],
             expired=clocks,
@@ -111,7 +111,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
             rule = candidate
     return dict(
         purpose=purpose,
-        london_date=day,
+        local_date=day, timezone=zone().key,
         as_of=current.isoformat(),
         eligible=eligible,
         expired=expired,
@@ -131,7 +131,7 @@ def verify(payload):
     if any(p.tzinfo is None for p in points):
         raise ValueError("Schedule instants need explicit offsets")
     regenerated = plan(
-        expected["london_date"],
+        expected["local_date"],
         [p["time"] for p in expected["eligible"]],
         expected["purpose"],
         expected["as_of"],
@@ -146,7 +146,7 @@ def verify(payload):
         )
     result = {
         "verified": True,
-        "london_date": expected["london_date"],
+        "local_date": expected["local_date"], "timezone": zone().key,
         "utc_instants": [p.isoformat() for p in actual],
     }
     if payload.get('triggered_at'):

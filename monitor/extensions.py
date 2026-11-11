@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sqlite3
@@ -30,10 +31,19 @@ def bundle(root, ident):
     if set(manifest)-allowed or manifest.get('id')!=ident or manifest.get('kind') not in ('action','experiment'):raise ValueError('Invalid extension manifest')
     if type(manifest.get('enabled',False)) is not bool:raise ValueError('Extension enabled must be boolean')
     if manifest.get('expires_at'):
+        if not isinstance(manifest['expires_at'],str):raise ValueError('Quote the offset-qualified extension expires_at timestamp')
         when=datetime.fromisoformat(manifest['expires_at'].replace('Z','+00:00'))
         if when.utcoffset() is None:raise ValueError('Extension expiry needs an offset')
     timeout=manifest.get('timeout_seconds',30)
     if type(timeout) is not int or not 1<=timeout<=300:raise ValueError('Extension timeout must be 1..300 seconds')
+    for section in ('actions','hooks','commands','card_overlays','settings'):
+        if not isinstance(manifest.get(section,{}),dict):raise ValueError('Extension '+section+' must be a mapping')
+    validate(manifest.get('settings',{}),partial=True)
+    for patch in manifest.get('card_overlays',{}).values():validate(patch,partial=True)
+    for name,definition in manifest.get('actions',{}).items():
+        if not isinstance(definition,dict) or not isinstance(definition.get('entrypoint'),str) or not isinstance(definition.get('parameters',{}),dict):raise ValueError('Invalid custom action declaration: '+name)
+        for key,rule in definition.get('parameters',{}).items():
+            if not isinstance(rule,dict) or rule.get('type') not in {'string','integer','boolean','object','array'} or type(rule.get('required',False)) is not bool:raise ValueError('Invalid custom action parameter declaration: '+key)
     hashed=[]
     for path in sorted(folder.rglob('*')):
         if '__pycache__' in path.parts or '.state' in path.parts:continue
@@ -101,7 +111,9 @@ def invoke(item, entrypoint, context):
     path=item['folder']/entrypoint.split(':')[0]
     if not path.resolve().is_relative_to(item['folder'].resolve()) or path.is_symlink():raise ValueError('Extension entrypoint escaped its bundle')
     try:
+        from .paths import ROOT
         result=subprocess.run([sys.executable,'-m','monitor.extension_worker'],input=json.dumps(dict(folder=str(item['folder']),entrypoint=entrypoint,context=context)),
+                              cwd=ROOT,env=dict(os.environ,OUTLOOK_AUTOMATION_DATA=str(item['folder'].parent.parent)),
                               text=True,encoding='utf-8',capture_output=True,timeout=item['manifest'].get('timeout_seconds',30))
     except subprocess.TimeoutExpired:raise ValueError('Extension timed out; reconcile any possible external effects before retry') from None
     if result.returncode or len(result.stdout)>1_000_000:raise ValueError('Extension failed; reconcile before retry: '+result.stderr[-500:])
@@ -122,7 +134,7 @@ def event(h,name,context):
 
 
 def override(h,command,context):
-    for item in available(h=h):
+    for item in reversed(available(h=h)):
         entry=item['manifest'].get('commands',{}).get(command)
         if item['active'] and entry:return invoke(item,entry,context)
     return None
@@ -137,6 +149,38 @@ def project(h,card):
             if not isinstance(projected,dict) or projected.get('id')!=card['id']:raise ValueError('Card projection must preserve its identity')
             card=projected
     return card
+
+
+def action_status(h,action):
+    reference=action.get('custom_action')
+    if not reference:return None
+    item=next((i for i in available(h=h) if i['id']==reference['bundle']),None)
+    if not item:return 'blocked: private bundle missing'
+    if not item['active']:return 'blocked: '+item['reason']
+    if reference['action'] not in item['manifest'].get('actions',{}):return 'blocked: action implementation missing'
+    from .approvals import find
+    try:
+        grant=find(h,reference.get('approval_id'))[2]
+        if grant.get('status','approved')!='approved' or grant.get('suspended') or grant.get('expires_at','9999')<=clock():return 'blocked: execution permission inactive'
+        owner=h.db.execute('SELECT case_id FROM actions WHERE id=?',(action['id'],)).fetchone()
+        scope=grant.get('scope',{})
+        if not owner or grant.get('case_id')!=owner[0] or scope.get('operation')!='custom-action' or scope.get('bundle')!=item['id'] or scope.get('action')!=reference['action']:return 'blocked: execution permission scope differs'
+    except (ValueError,KeyError,TypeError):return 'blocked: execution permission missing'
+    if h.db.execute("SELECT 1 FROM meta WHERE key LIKE 'custom-action:%' AND json_extract(value,'$.action_id')=? AND json_extract(value,'$.stage')='attempting'",(action['id'],)).fetchone():return 'blocked: prior execution needs reconciliation'
+    return 'ready: action run with an idempotency key'
+
+
+def reconcile_action(h,ident,payload):
+    key='custom-action:'+payload['idempotency_key']
+    evidence=payload.get('evidence_ids',[])
+    if not evidence or payload.get('outcome') not in ('complete','not-attempted'):raise ValueError('Reconciliation needs evidence_ids and outcome complete/not-attempted')
+    h.evidence_exists(evidence)
+    with h.write():
+        state=metadata(h.db,key)
+        if state.get('action_id')!=ident or state.get('stage')!='attempting':raise ValueError('No matching uncertain execution')
+        state.update(stage=payload['outcome'],result=payload.get('result',{}),reconciled_at=clock(),reconciliation_evidence=evidence)
+        metadata(h.db,key,state)
+    return dict(action_id=ident,outcome=state['stage'])
 
 
 def run_action(h,ident,payload):
@@ -168,13 +212,14 @@ def run_action(h,ident,payload):
         if previous:
             if previous['fingerprint']!=fingerprint:raise ValueError('Idempotency key scope changed')
             if previous['stage']=='complete':return dict(previous['result'],duplicate_prevented=True)
-            raise ValueError('Prior execution is uncertain; reconcile before running again')
-        metadata(h.db,key,dict(stage='attempting',fingerprint=fingerprint))
+            if previous['stage']!='not-attempted':raise ValueError('Prior execution is uncertain; reconcile before running again')
+        if h.db.execute("SELECT 1 FROM meta WHERE key LIKE 'custom-action:%' AND json_extract(value,'$.action_id')=? AND json_extract(value,'$.stage')='attempting'",(ident,)).fetchone():raise ValueError('Prior execution is uncertain; reconcile before running again')
+        metadata(h.db,key,dict(previous,stage='attempting',fingerprint=fingerprint,action_id=ident))
     with snapshot(effective(config,h,card)):
         result=invoke(item,definition['entrypoint'],dict(parameters=args,card=card,action=action,settings=config.values))
         receipts=[]
-        from outlook_platforms.api import invoke as outlook
+        from monitor.adapters.api import invoke as outlook
         for request in result.pop('requests',[]):receipts.append(outlook(request['operation'],request.get('payload',{}),h))
         result['receipts']=receipts
-    with h.write():metadata(h.db,key,dict(stage='complete',fingerprint=fingerprint,result=result))
+    with h.write():metadata(h.db,key,dict(stage='complete',fingerprint=fingerprint,result=result,action_id=ident))
     return result

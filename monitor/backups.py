@@ -74,6 +74,20 @@ def include_configuration(db,files):
     db.commit()
 
 
+def embedded_configuration(path):
+    """Extract only checksum-verified private files; callers choose the restore location."""
+    db=sqlite3.connect(Path(path).resolve().as_uri()+'?mode=ro&immutable=1',uri=True)
+    try:
+        if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='backup_configuration'").fetchone():return {}
+        result={}
+        for name,raw,wanted in db.execute('SELECT path,content,sha256 FROM backup_configuration'):
+            relative=Path(name)
+            if relative.is_absolute() or '..' in relative.parts or hashlib.sha256(bytes(raw)).hexdigest()!=wanted:raise ValueError('Invalid backup configuration path/checksum')
+            result[name]=bytes(raw)
+        return result
+    finally:db.close()
+
+
 def plan(root):
     from .maintenance import safe_file, verified_backup, file_hash
 

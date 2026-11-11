@@ -11,8 +11,8 @@ import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
-from outlook_platforms.api import invoke,check_send
-from outlook_platforms.windows.commands import execute_json
+from monitor.adapters.api import invoke,check_send
+from monitor.adapters.windows.commands import execute_json
 from monitor.profile import platform_settings
 from monitor.core import Harness
 
@@ -42,7 +42,7 @@ class OutlookApiTests(unittest.TestCase):
         def backend(operation,*args):
             calls.append(operation)
             return dict(data=dict(success=True) if operation=='refresh' else dict(Status='submitted',NextStep='old helper instruction'))
-        with patch('platform.system',return_value='Windows'),patch('outlook_platforms.api.check_send'),patch('outlook_platforms.windows.commands.execute_json',side_effect=backend):
+        with patch('platform.system',return_value='Windows'),patch('monitor.adapters.api.check_send'),patch('monitor.adapters.windows.commands.execute_json',side_effect=backend):
             result=invoke('send',{'approval_id':'fixture'},profile=PROFILE)
         self.assertEqual(calls,['refresh','send','refresh'])
         self.assertFalse(result['data']['Verified'])
@@ -51,8 +51,8 @@ class OutlookApiTests(unittest.TestCase):
     def test_normal_help_and_parser_show_only_working_commands_without_platform_details(self):
         from monitor.__main__ import parser
         from monitor.commands import execute
-        from outlook_platforms.api import status
-        with patch.dict('outlook_platforms.api.PROFILE',self.mac_profile(),clear=True),patch('platform.system',return_value='Darwin'):
+        from monitor.adapters.api import status
+        with patch.dict('monitor.adapters.api.PROFILE',self.mac_profile(),clear=True),patch('platform.system',return_value='Darwin'):
             public=status()
             self.assertNotIn('platform',public);self.assertNotIn('bindings',public)
             self.assertNotIn('move',public['operations']);self.assertNotIn('refresh',public['operations'])
@@ -69,7 +69,7 @@ class OutlookApiTests(unittest.TestCase):
                 with self.assertRaises(ValueError):execute(None,parser().parse_args(['help','outlook',command]))
 
     def test_collection_runs_preparation_internally_and_returns_same_contract(self):
-        from outlook_platforms.api import collect_workflow
+        from monitor.adapters.api import collect_workflow
         page=dict(Store='fixture@example.invalid',Complete=True,Count=0,Items=[],NextOffset=None)
         outputs=[]
         for selected in ['windows','macos']:
@@ -86,7 +86,7 @@ class OutlookApiTests(unittest.TestCase):
         self.assertEqual(outputs[0],outputs[1])
 
     def test_mac_profile_bindings_replace_legacy_setting_and_keep_grant_body_out_of_argv(self):
-        from outlook_platforms.macos.commands import execute_json as native_json
+        from monitor.adapters.macos.commands import execute_json as native_json
         from monitor.profile import native_bindings
         p=self.mac_profile();p['platform']['bindings']['mail:work']['draft_folder_id']='127'
         self.assertEqual(native_bindings(p,PROFILE['mail']['mail:work'])['draft_folder_id'],'127')
@@ -100,9 +100,9 @@ class OutlookApiTests(unittest.TestCase):
     def test_profile_dispatch_and_windows_json_preserve_literal_payload(self):
         literal='literal $(not code) `not code`; café\nsecond line'
         completed=subprocess.CompletedProcess([],0,json.dumps({'Rows':[]}), '')
-        with patch('platform.system',return_value='Windows'),patch('shutil.which',return_value='powershell'),patch('outlook_platforms.windows.commands.subprocess.run',return_value=completed) as run:
+        with patch('platform.system',return_value='Windows'),patch('shutil.which',return_value='powershell'),patch('monitor.adapters.windows.commands.subprocess.run',return_value=completed) as run:
             # Explicit runner is patched below because backend function defaults bind at import.
-            with patch('outlook_platforms.windows.commands.execute_json',return_value={'data':[]} ) as execute:
+            with patch('monitor.adapters.windows.commands.execute_json',return_value={'data':[]} ) as execute:
                 result=invoke('search',{'source':'mail:work','query':literal},profile=PROFILE)
             self.assertEqual(result['operation'],'search')
             self.assertNotIn('platform',result)
@@ -142,7 +142,7 @@ class OutlookApiTests(unittest.TestCase):
 
     def test_unsupported_mismatched_or_unbound_requests_do_not_connect(self):
         p=self.mac_profile()
-        with patch('outlook_platforms.macos.native.execute') as native:
+        with patch('monitor.adapters.macos.native.execute') as native:
             with patch('platform.system',return_value='Windows'):
                 with self.assertRaises(ValueError):invoke('recent',{},profile=p)
             with patch('platform.system',return_value='Darwin'):
@@ -152,7 +152,7 @@ class OutlookApiTests(unittest.TestCase):
             native.assert_not_called()
 
     def test_invalid_source_timestamp_or_backend_cannot_redirect_access(self):
-        with patch('platform.system',return_value='Windows'),patch('outlook_platforms.windows.commands.execute_json') as native:
+        with patch('platform.system',return_value='Windows'),patch('monitor.adapters.windows.commands.execute_json') as native:
             for payload in [{'source':'stranger@example.invalid','query':'x'},{'start':'2026-11-08T09:00:00'},{'unread_only':'false'},{'store':'stranger@example.invalid','query':'x'}]:
                 with self.assertRaises(ValueError):invoke('search',payload,profile=PROFILE)
             native.assert_not_called()
@@ -182,19 +182,19 @@ class OutlookApiTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which('pwsh') or shutil.which('powershell'),'PowerShell required')
     def test_real_json_bridge_preserves_unicode_arrays_and_empty_results(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root=Path(tmp);folder=root/'outlook_platforms/windows';folder.mkdir(parents=True)
-            source=Path(__file__).resolve().parents[1]/'outlook_platforms/windows/invoke.ps1'
+            root=Path(tmp);folder=root/'monitor/adapters/windows';folder.mkdir(parents=True)
+            source=Path(__file__).resolve().parents[1]/'monitor/adapters/windows/invoke.ps1'
             shutil.copyfile(source,folder/'invoke.ps1')
-            (root/'Read-OutlookMail.ps1').write_text("param($Query,[string[]]$Values,[switch]$UnreadOnly)\n@{query=$Query;values=$Values;flag=[bool]$UnreadOnly}|ConvertTo-Json",encoding='utf-8')
+            (root/'monitor/adapters/windows/Read-OutlookMail.ps1').write_text("param($Query,[string[]]$Values,[switch]$UnreadOnly)\n@{query=$Query;values=$Values;flag=[bool]$UnreadOnly}|ConvertTo-Json",encoding='utf-8')
             payload=dict(helper='Read-OutlookMail.ps1',parameters=dict(Query='café $(literal)',Values=['one','two'],UnreadOnly=False))
             command=[shutil.which('pwsh') or shutil.which('powershell'),'-NoProfile','-NonInteractive','-File',str(folder/'invoke.ps1')]
             out=subprocess.run(command,input=json.dumps(payload),text=True,encoding='utf-8-sig',capture_output=True,timeout=15)
             self.assertEqual(out.returncode,0,out.stderr)
             self.assertEqual(json.loads(out.stdout),dict(query='café $(literal)',values=['one','two'],flag=False))
-            (root/'Read-OutlookMail.ps1').write_text("param()\n'[]'",encoding='utf-8')
+            (root/'monitor/adapters/windows/Read-OutlookMail.ps1').write_text("param()\n'[]'",encoding='utf-8')
             out=subprocess.run(command,input=json.dumps(dict(helper='Read-OutlookMail.ps1',parameters={})),text=True,encoding='utf-8-sig',capture_output=True,timeout=15)
             self.assertEqual(json.loads(out.stdout),[])
-            (root/'Read-OutlookMonitorCalendar.ps1').write_text("param([datetime]$Start,[datetime]$End)\n@{start=$Start.ToUniversalTime().ToString('o');end=$End.ToUniversalTime().ToString('o')}|ConvertTo-Json",encoding='utf-8')
+            (root/'monitor/adapters/windows/Read-OutlookMonitorCalendar.ps1').write_text("param([datetime]$Start,[datetime]$End)\n@{start=$Start.ToUniversalTime().ToString('o');end=$End.ToUniversalTime().ToString('o')}|ConvertTo-Json",encoding='utf-8')
             out=subprocess.run(command,input=json.dumps(dict(helper='Read-OutlookMonitorCalendar.ps1',parameters=dict(Start='2026-10-23T00:00:00+01:00',End='2026-10-31T00:00:00Z'))),text=True,encoding='utf-8-sig',capture_output=True,timeout=15)
             self.assertEqual(out.returncode,0,out.stderr)
             self.assertTrue(json.loads(out.stdout)['start'].startswith('2026-10-22T23:00:00'))

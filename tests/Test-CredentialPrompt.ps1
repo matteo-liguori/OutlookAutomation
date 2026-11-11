@@ -11,7 +11,7 @@ function Set-Acl {
 } # Never change ACLs in a regression test.
 try {
     $path = Join-Path $fixture 'credential.json'
-    & (Join-Path $root 'Set-iCloudCalDavCredential.ps1') -AppleAccount 'fixture@example.invalid' -CredentialPath $path -Confirm:$false | Out-Null
+    & (Join-Path $root 'monitor/adapters/windows/Set-iCloudCalDavCredential.ps1') -AppleAccount 'fixture@example.invalid' -CredentialPath $path -Confirm:$false | Out-Null
     $record = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     $bytes = [Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String($record.encryptedPassword), [Text.Encoding]::UTF8.GetBytes('OutlookAutomation-iCloud-CalDAV-v2'), [Security.Cryptography.DataProtectionScope]::LocalMachine)
     try {

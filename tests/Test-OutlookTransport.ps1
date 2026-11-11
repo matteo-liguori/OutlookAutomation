@@ -1,5 +1,5 @@
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot '../OutlookAutomation.Common.ps1')
+. (Join-Path $PSScriptRoot '../monitor/adapters/windows/OutlookAutomation.Common.ps1')
 $script:count = 0
 function Assert($value, $reason) {
     if (-not $value) {

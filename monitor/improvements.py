@@ -20,7 +20,8 @@ def review_prompt(h, at):
     if state.get("next_due_at") and at < state["next_due_at"]:
         return []
     return [{"type": "upgrades_review_due", "last_reviewed_at": state.get("last_reviewed_at"),
-             "instruction": "After this mail round, spend about a minute reviewing improvement list against concrete issues noticed during use. Add useful suggestions with improvement add --input - (items: id/observation/proposal/validation/references; evidence_ids); reuse existing entries. Keep the backlog solely here and implement on development requests. Finish with improvement checkpoint --input - (summary) to defer this prompt five days."}]
+             "instruction": resolve().instruction('upgrades')}]
+
 
 
 def checkpoint(h, payload):

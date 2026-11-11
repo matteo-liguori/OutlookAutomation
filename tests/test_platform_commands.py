@@ -6,8 +6,8 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from outlook_platforms.macos.commands import main, normalize
-from outlook_platforms.windows.commands import command_line
+from monitor.adapters.macos.commands import main, normalize
+from monitor.adapters.windows.commands import command_line
 
 
 MAILBOX = 'pilot@example.invalid'
@@ -34,7 +34,7 @@ class PlatformCommandTests(unittest.TestCase):
     def test_windows_style_flags_reach_mac_native_request(self):
         args = ['-Store',MAILBOX,'-Start','2026-11-08T00:00:00Z','-End','2026-11-09T00:00:00Z',
                 '-Limit','10','-UnreadOnly','--selected-inbox-id','131','-Output','Json']
-        with patch('outlook_platforms.macos.commands.execute', return_value=MAIL) as run, contextlib.redirect_stdout(io.StringIO()) as output:
+        with patch('monitor.adapters.macos.commands.execute', return_value=MAIL) as run, contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main('Read-OutlookMail', args), 0)
         request = run.call_args.args[0]
         self.assertEqual(request['limit'], 10)
@@ -44,7 +44,7 @@ class PlatformCommandTests(unittest.TestCase):
 
     def test_exact_message_and_account_contracts(self):
         args = ['-Store',MAILBOX,'-Start','2026-11-08T00:00:00Z','-End','2026-11-09T00:00:00Z','-EntryId','33','--selected-inbox-id','131']
-        with patch('outlook_platforms.macos.commands.execute', return_value=MAIL) as run, contextlib.redirect_stdout(io.StringIO()) as output:
+        with patch('monitor.adapters.macos.commands.execute', return_value=MAIL) as run, contextlib.redirect_stdout(io.StringIO()) as output:
             self.assertEqual(main('Get-OutlookMessage', args), 0)
         self.assertEqual(run.call_args.args[0]['entry_id'], '33')
         self.assertTrue(run.call_args.args[0]['include_body'])
@@ -60,7 +60,7 @@ class PlatformCommandTests(unittest.TestCase):
         args=['-Store',MAILBOX,'-Folder','drafts','--selected-inbox-id','131',
               '-Start','2026-11-08T00:00:00Z','-End','2026-11-09T00:00:00Z']
         with patch('monitor.profile.native_bindings',return_value={'draft_folder_id':'127'}), \
-             patch('outlook_platforms.macos.commands.execute',side_effect=[inventory,MAIL]) as run, \
+             patch('monitor.adapters.macos.commands.execute',side_effect=[inventory,MAIL]) as run, \
              contextlib.redirect_stdout(io.StringIO()):
             self.assertEqual(main('Read-OutlookMail',args),0)
         self.assertEqual(run.call_args.args[0]['target_folder_id'],'127')
@@ -70,7 +70,7 @@ class PlatformCommandTests(unittest.TestCase):
         args=['-Store',MAILBOX,'-Folder','drafts','--selected-inbox-id','131',
               '-Start','2026-11-08T00:00:00Z','-End','2026-11-09T00:00:00Z']
         with patch('monitor.profile.native_bindings',return_value={'draft_folder_id':'127'}), \
-             patch('outlook_platforms.macos.commands.execute',return_value=inventory) as run, \
+             patch('monitor.adapters.macos.commands.execute',return_value=inventory) as run, \
              contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):main('Read-OutlookMail',args)
         self.assertEqual(run.call_count,1)
@@ -85,7 +85,7 @@ class PlatformCommandTests(unittest.TestCase):
         self.assertIn('recurrence', value['errors'][0])
 
     def test_unsupported_actions_are_explicit_and_do_not_connect(self):
-        with patch('outlook_platforms.macos.commands.execute') as run, contextlib.redirect_stderr(io.StringIO()):
+        with patch('monitor.adapters.macos.commands.execute') as run, contextlib.redirect_stderr(io.StringIO()):
             with self.assertRaises(SystemExit):
                 main('Read-OutlookMail', ['-Store',MAILBOX,'-Action','Search'])
         run.assert_not_called()

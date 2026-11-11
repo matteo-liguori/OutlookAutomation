@@ -3,7 +3,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $fixture = Join-Path $env:TEMP ([guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $fixture | Out-Null
 try {
-    Copy-Item -LiteralPath (Join-Path $root 'Collect-OutlookMonitor.ps1') -Destination $fixture
+    Copy-Item -LiteralPath (Join-Path $root 'monitor/adapters/windows/Collect-OutlookMonitor.ps1') -Destination $fixture
     @'
 function Invoke-OutlookHarness {
  param($Arguments,$InputObject)

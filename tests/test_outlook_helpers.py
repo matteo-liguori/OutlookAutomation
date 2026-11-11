@@ -14,9 +14,9 @@ class OutlookHelperTests(unittest.TestCase):
             h.put_evidence(dict(id='u',source='user',body='Track task'))
             h.update(dict(id='case',expected_revision=0,idempotency_key='create',evidence_ids=['u'],case=dict(title='Task',position='Open',status='open'),actions=[dict(id='a',owner='Example user',status='needs-user',next_step='Review',completion_condition='Done',reopening_condition='New work')]))
             h.close()
-            shutil.copyfile(ROOT/'Get-OutlookMessage.ps1',folder/'Get-OutlookMessage.ps1')
+            shutil.copyfile(ROOT/'monitor/adapters/windows/Get-OutlookMessage.ps1',folder/'Get-OutlookMessage.ps1')
             (folder/'OutlookAutomation.Common.ps1').write_text("function Get-OutlookAutomationNamespace { if(Test-Path (Join-Path $PSScriptRoot 'no-com')){throw 'Cache must avoid COM'}; return @{} }\nfunction Convert-OutlookComDate($value){return $value}",encoding='utf-8')
-            (folder/'OutlookHarness.Common.ps1').write_text(". '"+str(ROOT/'OutlookHarness.Common.ps1')+"'\nSet-Item Function:Invoke-FixtureHarness ${function:Invoke-OutlookHarness}\nfunction Invoke-OutlookHarness {param($Arguments,$InputObject) Invoke-FixtureHarness -Arguments $Arguments -InputObject $InputObject -Database '"+str(folder/'monitor.db')+"'}",encoding='utf-8')
+            (folder/'OutlookHarness.Common.ps1').write_text(". '"+str(ROOT/'monitor/adapters/windows/OutlookHarness.Common.ps1')+"'\nSet-Item Function:Invoke-FixtureHarness ${function:Invoke-OutlookHarness}\nfunction Invoke-OutlookHarness {param($Arguments,$InputObject) Invoke-FixtureHarness -Arguments $Arguments -InputObject $InputObject -Database '"+str(folder/'monitor.db')+"'}",encoding='utf-8')
             (folder/'OutlookMessageLookup.ps1').write_text(r'''
 function Resolve-OutlookExactMessage {
     $small=[pscustomobject]@{FileName='small.pdf';Size=30}
@@ -62,11 +62,11 @@ function Resolve-OutlookExactMessage {
 
     def fixture(self, tmp, script, common):
         folder = Path(tmp)
-        shutil.copyfile(ROOT / script, folder / script)
+        shutil.copyfile(ROOT / 'monitor/adapters/windows' / script, folder / script)
         shutil.copyfile(
-            ROOT / "OutlookMonitoring.Common.ps1", folder / "OutlookMonitoring.Common.ps1"
+            ROOT/'monitor/adapters/windows/OutlookMonitoring.Common.ps1', folder / "OutlookMonitoring.Common.ps1"
         )
-        shutil.copyfile(ROOT / "AutomationEnvironment.Common.ps1", folder / "AutomationEnvironment.Common.ps1")
+        shutil.copyfile(ROOT/'monitor/adapters/windows/AutomationEnvironment.Common.ps1', folder / "AutomationEnvironment.Common.ps1")
         (folder / "OutlookAutomation.Common.ps1").write_text(common, encoding="utf-8")
         return folder / script
 
@@ -238,7 +238,7 @@ function Get-Date { [datetime]::Parse('2026-10-13T12:00:00').AddSeconds($global:
         self.assertEqual(p.returncode, 0, p.stdout + p.stderr)
 
     def test_diagnostic_never_stops_unowned_outlook(self):
-        source = (ROOT / "Test-OutlookAutomationEnvironment.ps1").read_text(encoding="utf-8")
+        source = (ROOT/'monitor/adapters/windows/Test-OutlookAutomationEnvironment.ps1').read_text(encoding="utf-8")
         self.assertNotIn("Stop-Process -Id $outlookProcess.Id", source)
 
     def test_secure_prompt_encryption_with_synthetic_credentials(self):

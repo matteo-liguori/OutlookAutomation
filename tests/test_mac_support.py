@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from mac_outlook import dictionary_summary, probe
+from monitor.adapters.macos.legacy_cli import dictionary_summary, probe
 from setup_outlook import initialise, verify_package
 
 
@@ -55,7 +55,8 @@ class MacSupportTests(unittest.TestCase):
             os.environ.pop("OUTLOOK_AUTOMATION_PROFILE", None)
             root = Path(tmp)
             value = initialise("Mac pilot", "pilot@example.com", root)
-            self.assertEqual(value["access"], "outlook-macos-pilot")
+            self.assertIn(value['platform']['os'],{'windows','macos'})
+            self.assertTrue((root/'.local/customisations.yaml').exists())
             before = (root / ".local/monitor/profile.json").read_bytes()
             with self.assertRaisesRegex(ValueError, "preserved"):
                 initialise("Other", "other@example.com", root)

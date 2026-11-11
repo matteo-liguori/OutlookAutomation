@@ -5,8 +5,8 @@ import subprocess
 import unittest
 from unittest.mock import Mock
 
-from outlook_platforms.macos.native import SCRIPT
-from outlook_platforms.macos.test_actions import ACTIONS, execute_action, audit_result
+from monitor.adapters.macos.native import SCRIPT
+from monitor.adapters.macos.test_actions import ACTIONS, execute_action, audit_result
 from test_mac_native import FIXTURE
 
 

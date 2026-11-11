@@ -5,7 +5,7 @@ import os
 import re
 import platform as host_platform
 from pathlib import Path
-from automation_paths import data_root
+from monitor.paths import data_root
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROVIDERS = {'calendar:work':'outlook', 'calendar:primary':'google', 'calendar:shared':'google', 'calendar:icloud':'icloud'}
@@ -71,7 +71,8 @@ def load(path=None):
     if not isinstance(value.get("name"), str) or not value["name"].strip():
         raise ValueError("Profile needs your name")
     from zoneinfo import ZoneInfo
-    ZoneInfo(value.get("timezone", "Europe/London"))
+    from .configuration import defaults
+    ZoneInfo(value.get('timezone', defaults()['timezone']))
     mail = value.get("mail")
     if not isinstance(mail, dict) or not mail or any(not re.fullmatch(r'mail:[a-z][a-z0-9_-]*', k) for k in mail):
         raise ValueError("Configure at least one supported mail role")
@@ -97,8 +98,8 @@ def load(path=None):
         raise ValueError('Each calendar source needs a provider')
     if any(not isinstance(v,str) for v in value.get('instructions',{}).values()):
         raise ValueError('Profile instructions must contain text')
-    from .policy import effective
-    effective(value)
+    from .configuration import validate
+    if 'permission_defaults' in value:validate({'permission_defaults':value['permission_defaults']},partial=True)
     platform_settings(value)
     return value
 

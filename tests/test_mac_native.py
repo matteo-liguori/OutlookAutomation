@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock
 
-from mac_outlook_native import SCRIPT, execute, request_for
+from monitor.adapters.macos.legacy_native import SCRIPT, execute, request_for
 
 
 FIXTURE = r'''

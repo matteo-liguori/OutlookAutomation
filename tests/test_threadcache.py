@@ -74,7 +74,7 @@ class ThreadCacheTests(unittest.TestCase):
         self.case()
         put(self.h,dict(id='reply',kind='standing',case_id='task',title='Reply',summary='Limited reply',
             granted_at=now(),evidence_ids=['user'],scope=dict(operation='email-reply',rules='Exact limits')))
-        with patch('outlook_platforms.api.invoke',return_value=dict(status='ok',data=dict(Body='Full message'))):
+        with patch('monitor.adapters.api.invoke',return_value=dict(status='ok',data=dict(Body='Full message'))):
             with patch('monitor.commands.read_payload',return_value=dict(source='mail:personal',case_id='task')):
                 result=execute(self.h,parser().parse_args(['outlook','read','--input','-']))
         self.assertEqual(result['standing_sending_permissions'][0]['id'],'reply')
