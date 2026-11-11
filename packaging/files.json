@@ -1,5 +1,6 @@
 {
   "LICENSE.md": "LICENSE.md",
+  "AUTOMATIONS.md": "AUTOMATIONS.md",
   ".gitattributes": ".gitattributes",
   ".gitignore": ".gitignore",
   "AGENTS.md": "packaging/AGENTS.md",

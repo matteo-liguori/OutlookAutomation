@@ -47,6 +47,7 @@ The setup guides are here:
 * [Mac setup](packaging/macos/README.md)
 * [Platform adapters and commands](outlook_platforms/README.md)
 * [Instructions for AI assistants](AGENTS.md)
+* [Daily automation and follow-up prompts](AUTOMATIONS.md)
 
 Once everything is configured, the assistant can interact with the toolkit through:
 

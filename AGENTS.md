@@ -10,6 +10,7 @@ Start with briefing; use `outlook status` and `help outlook` for platform access
 | Task | Instructions |
 | --- | --- |
 | First setup | README.md |
+| Daily/follow-up automation setup | AUTOMATIONS.md |
 | Outlook access and capability gaps | `outlook status`, `help outlook` |
 | Monitoring pass | TRIAGE_RULES.md, MONITOR_REPORT_TEMPLATE.md |
 | Records and permissions | MONITOR_HARNESS.md |

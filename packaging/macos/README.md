@@ -59,7 +59,9 @@ Existing state is preserved by refusing replacement. Optional `--data-dir` keeps
 private data separate from code. Permissions remain in SQLite; mail bodies belong
 to tracked thread caches. Source IDs retain the same meanings on both platforms.
 Use `.venv/bin/python -m monitor` for the portable commands in MONITOR_HARNESS.md.
-Agree any recurring schedule separately.
+Once the supervised pass works, agree the schedule using
+[daily automation and follow-up setup](https://github.com/matteo-liguori/OutlookAutomation/blob/main/AUTOMATIONS.md), including its standard
+prompts and same-chat checks. The local guide is `AUTOMATIONS.md` at the installation root.
 
 ## Observed live pilot results
 

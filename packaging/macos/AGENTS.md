@@ -10,6 +10,7 @@ account/platform details with `help accounts` and `outlook status`. SQLite is cu
 | Task | Instructions |
 | --- | --- |
 | Native Mac setup, mailbox access and pilot | README.md |
+| Daily/follow-up automation setup | AUTOMATIONS.md |
 | Current records and permissions | MONITOR_HARNESS.md |
 | Card creation/upkeep | THREAD_CARD_UPKEEP.md |
 | Report structure | MONITOR_REPORT_TEMPLATE.md |

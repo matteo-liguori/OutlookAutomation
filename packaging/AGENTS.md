@@ -10,6 +10,7 @@ project folder. Use `monitor.ps1 help accounts` for the private profile and acco
 | Task | Instructions |
 | --- | --- |
 | First setup | README.md |
+| Daily/follow-up automation setup | AUTOMATIONS.md |
 | Monitoring pass | TRIAGE_RULES.md, MONITOR_REPORT_TEMPLATE.md |
 | Records and permissions | MONITOR_HARNESS.md |
 | Card creation/upkeep | THREAD_CARD_UPKEEP.md |

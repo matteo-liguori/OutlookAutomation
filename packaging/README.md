@@ -27,7 +27,9 @@ Use your exact Classic Outlook account/store address for `-WorkStore`.
 
 Open this folder in your assistant and ask it to follow AGENTS.md for a supervised
 mail/calendar pass. Establish your account choices, filing preferences and send
-permissions there. Agree a daily schedule once that pass works. The toolkit uses
+permissions there. Then use [daily automation and follow-up setup](https://github.com/matteo-liguori/OutlookAutomation/blob/main/AUTOMATIONS.md)
+for the standard prompts, morning schedule and same-chat checks (also included as
+`AUTOMATIONS.md` at the installation root). The toolkit uses
 the assistant's local shell; Google calendars additionally need its connected
 Google Calendar tools. Mailbox access is through the signed-in Windows user.
 
