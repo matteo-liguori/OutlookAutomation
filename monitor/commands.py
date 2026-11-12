@@ -42,6 +42,11 @@ def handle_config(h,args,payload,kind):
         path,_=paths(folder);user=read_yaml(path)
         from .configuration import leaves
         values=dict(leaves(defaults()))
+        if args.operation=='set':
+            key=payload['key']
+            if key not in values:raise ValueError('Select a known configuration key')
+            assign(user,key,payload['value']);validate(plain(user));atomic(path,dump(user))
+            return dict(updated=key)
         if args.key not in values:raise ValueError('Unknown setting: '+args.key)
         assign(user,args.key,values[args.key]);validate(plain(user));atomic(path,dump(user))
     return dict(reset=args.key)
@@ -355,19 +360,23 @@ def handle_maintenance(h, args, payload, kind):
 
 
 def handle_thread(h, args, payload, kind):
-    from .threadcache import put_message, find_message, folder, require_open, register_attachment, snapshot, attachment_path, bind_assets
+    from .threadcache import put_message, find_message, folder, require_open, register_attachment, snapshot, attachment_path, bind_assets, discard_file
 
     op = args.operation
     if op == "put":
         return put_message(h, payload)
     if op == 'bind':
         return bind_assets(h, payload)
+    if op == 'discard-file':
+        return discard_file(h,payload)
     if op == "find":
         return find_message(h, payload)
     if op == "attachment":
         return register_attachment(h, payload)
+    if op == 'file':
+        return register_attachment(h,payload,case_file=True)
     if op == "attachment-path":
-        return {"path": str(attachment_path(h, payload["case_id"], payload["name"], payload["attachment_id"]))}
+        return {"path": str(attachment_path(h, payload["case_id"], payload["name"], payload["attachment_id"], payload.get('action_ids')))}
     if op == "path":
         require_open(h, args.id)
         return {"path": str(folder(h, args.id))}
@@ -456,10 +465,17 @@ def _scoped_execute(h,args):
     try:
         result = _execute(h,args)
         if h is not None and isinstance(result, dict):
-            from .activation import reminder
-            note = reminder(h)
-            if note:
-                result = dict(result, reminder=note)
+            if args.command == 'case' and getattr(args, 'operation', None) == 'update':
+                from .guidance import retention_reminder, once
+                instruction=once(h, 'completion-retention', retention_reminder())
+                if instruction:result = dict(result, retention_instruction=instruction)
+            if args.command in {'briefing','activation','schedule'} or (args.command=='run' and getattr(args,'operation',None)=='start'):
+                from .activation import reminder
+                from .guidance import once
+                note=reminder(h)
+                if note:
+                    note=once(h,'mail-activation',note)
+                    if note:result=dict(result,reminder=note)
         return result
     finally:
         if h is not None:

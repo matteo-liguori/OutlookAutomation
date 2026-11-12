@@ -36,6 +36,7 @@ def parser():
     config=sub.add_parser('config').add_subparsers(dest='operation',required=True)
     cs=config.add_parser('show');cs.add_argument('--explain',action='store_true');cs.add_argument('--case',dest='case_id')
     config.add_parser('validate')
+    config.add_parser('set').add_argument('--input',required=True)
     config.add_parser('migrate').add_argument('--apply',action='store_true')
     updates=sub.add_parser('update').add_subparsers(dest='operation',required=True)
     updates.add_parser('check').add_argument('--force',action='store_true')
@@ -56,7 +57,7 @@ def parser():
     maintenance.add_parser("register").add_argument("--input", required=True)
     maintenance.add_parser("threads")
     thread = sub.add_parser("thread").add_subparsers(dest="operation", required=True)
-    for operation in ("put", "find", "attachment", "attachment-path", "snapshot-put", "bind"):
+    for operation in ("put", "find", "attachment", "attachment-path", "snapshot-put", "bind", "file", "discard-file"):
         thread.add_parser(operation).add_argument("--input", required=True)
     for operation in ("messages", "path", "snapshot-get"):
         thread.add_parser(operation).add_argument("id")
@@ -177,7 +178,10 @@ def main():
             rendered = markdown(result)
         print(rendered)
     except (ValueError, KeyError, OSError, sqlite3.Error) as exc:
-        print(json.dumps({"error": str(exc)}, ensure_ascii=False), file=sys.stderr)
+        error={"error": str(exc)}
+        if args.command=='briefing':
+            error.update(operation='briefing',status='failed',instruction='Tell the user the briefing is unavailable and identify which checks remain verified.')
+        print(json.dumps(error, ensure_ascii=False), file=sys.stderr)
         raise SystemExit(2)
     finally:
         if h:

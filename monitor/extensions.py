@@ -130,7 +130,12 @@ def event(h,name,context):
         key='extension-observations:'+item['id']
         value=invoke(item,entry,dict(context,observations=metadata(h.db,key),now=clock()))
         if 'observations' in value:
-            with h.write():metadata(h.db,key,value['observations'])
+            if h.db.in_transaction:
+                # Activation hooks run within the caller's atomic write.
+                # Their observations must commit or roll back with that write.
+                metadata(h.db,key,value['observations'])
+            else:
+                with h.write():metadata(h.db,key,value['observations'])
 
 
 def override(h,command,context):

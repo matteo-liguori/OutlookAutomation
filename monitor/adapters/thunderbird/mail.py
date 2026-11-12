@@ -49,14 +49,12 @@ def attachment_specs(message):
 
 
 def download_attachment(base,locator,part,call,runner,*,allow_large=False,target=None):
+    if target is None:
+        raise ValueError('Provide a harness-allocated action-owned target')
     r=call(dict(base,**locator,action='attachment-open',part_name=part['part_name'],allow_large=allow_large),runner)
     if r.get('status')!='ok':return r
-    name=part['name'];safe=re.sub(r'[^\w. -]','_',name.replace('\\','/').rsplit('/',1)[-1]).strip(' .')[:160] or 'attachment.bin'
-    folder=data_root()/'thunderbird/downloads'/uuid.uuid4().hex
-    if target is None:
-        folder.mkdir(parents=True,mode=0o700);target=folder/safe
-    else:
-        target=Path(target);target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
+    name=part['name']
+    target=Path(target);target.parent.mkdir(parents=True,exist_ok=True,mode=0o700)
     if not target.resolve().is_relative_to(data_root().resolve()) or any(p.is_symlink() for p in (target,*target.parents) if p!=data_root().resolve()):raise ValueError('Attachment target escaped private storage')
     temporary=target.with_name(target.name+'.'+uuid.uuid4().hex+'.partial')
     digest=hashlib.sha256();offset=0

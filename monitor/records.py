@@ -276,6 +276,12 @@ class CaseRecords:
             approvals = [(r["id"], json.loads(r["details"])) for r in self.db.execute(
                 "SELECT id,details FROM approvals WHERE case_id=?", (cid,))]
             from .threadcache import pending_approval
+            if resolved and any(pending_approval(a) for _,a in approvals):
+                for table,column,owner_key in [('thread_messages','metadata','CacheActionIds'),('thread_attachments','details','action_ids')]:
+                    for row in self.db.execute(f'SELECT {column} FROM {table} WHERE case_id=?',(cid,)):
+                        owners=set(json.loads(row[0]).get(owner_key,[]))
+                        if owners and owners.issubset(resolved):
+                            raise ValueError('Reconcile pending send approvals before completing the final cache-owning action')
             spent_approvals = [(aid, a) for aid, a in approvals if not pending_approval(a)]
             if resolved or spent_approvals:
                 self.limited(case, "context", 6000)

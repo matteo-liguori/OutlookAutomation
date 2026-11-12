@@ -48,8 +48,8 @@ def reminder(h):
         return None
     missing = state.get('missing')
     if missing:
-        return 'Pending: '+', '.join(missing)+'. See help activation.'
-    return 'Pending: verify chat title and same-day mail follow-ups; then activation complete --input -. See help activation.'
+        return 'Verify '+', '.join(missing)+'; use help activation.'
+    return 'Verify chat title and same-day mail follow-ups; use help activation.'
 
 
 def startup(h, at):

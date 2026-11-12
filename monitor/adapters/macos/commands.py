@@ -55,7 +55,7 @@ def execute_json(operation,payload,store,h,source,runner=None,profile=None):
     flags={'start':'-Start','end':'-End','limit':'-Limit','subject':'--subject','entry_id':'-EntryId',
            'unread_only':'-UnreadOnly','include_preview':'-IncludePreview','folder':'-Folder','folder_id':'--folder-id',
            'query':'-Query','max_scan':'-MaxScan','page_size':'-PageSize','offset':'-Offset','snapshot_id':'-SnapshotId',
-           'ingest_run':'--ingest-run','freshness':'--freshness-json','case_id':'-CaseId','force_refresh':'-ForceRefresh',
+           'ingest_run':'--ingest-run','freshness':'--freshness-json','case_id':'-CaseId','action_ids':'--action-ids-json','force_refresh':'-ForceRefresh',
            'download_large_attachments':'-DownloadLargeAttachments','download_attachments':'--download-attachments',
            'freshness_minutes':'-FreshnessMinutes','interval_seconds':'-ProbeIntervalSeconds','max_wait_seconds':'-MaxWaitSeconds',
            'display_only':'-DisplayOnly'}
@@ -64,7 +64,7 @@ def execute_json(operation,payload,store,h,source,runner=None,profile=None):
         if key not in flags:raise ValueError('Unsupported native helper field: '+key)
         if isinstance(value,bool):
             if value:arguments.append(flags[key])
-        else:arguments.extend([flags[key],json.dumps(value) if key=='freshness' else str(value)])
+        else:arguments.extend([flags[key],json.dumps(value) if key in {'freshness','action_ids'} else str(value)])
     env=dict(os.environ,OUTLOOK_AUTOMATION_DATABASE=str(h.path.resolve() if h else DEFAULT_DB))
     try:
         result=runner([sys.executable,'-m','monitor.adapters.legacy_cli','--platform','macos',command,*arguments],
@@ -161,10 +161,20 @@ def main(command, arguments):
     parser.add_argument('-ProbeIntervalSeconds',type=int,default=15)
     parser.add_argument('-MaxWaitSeconds',type=int,default=30)
     parser.add_argument('-CaseId','--case-id')
+    parser.add_argument('--action-ids-json')
     parser.add_argument('-ForceRefresh','--force-refresh',action='store_true')
     parser.add_argument('-DownloadLargeAttachments','--download-large-attachments',action='store_true')
     parser.add_argument('--download-attachments',action='store_true')
     args = parser.parse_args(arguments)
+    args.action_ids = json.loads(args.action_ids_json) if args.action_ids_json else None
+    if args.case_id:
+        from monitor.core import Harness
+        from monitor.threadcache import retained_owners
+        h=Harness()
+        try:retained_owners(h,args.case_id,args.action_ids)
+        finally:h.close()
+    elif args.download_attachments or args.download_large_attachments:
+        parser.error('Attachment saves require CaseId and explicit action IDs')
     try:
         from monitor.profile import PROFILE,native_bindings
         bindings=native_bindings(PROFILE,args.store,args.source)
@@ -217,6 +227,10 @@ def main(command, arguments):
         try:cached=find_message(h,dict(case_id=args.case_id,entry_id=args.entry_id,store_id='outlook-macos:'+args.store.casefold()))
         finally:h.close()
         if cached.get('found'):
+            from monitor.threadcache import put_message
+            h=Harness()
+            try:put_message(h,dict(case_id=args.case_id,action_ids=args.action_ids,message=cached['message']))
+            finally:h.close()
             output=dict(data=cached['message'],coverage=dict(cache_hit=True,fresh_native_read=False)) if args.include_coverage else cached['message']
             print(json.dumps(output,indent=2));return 0
     operation = {'Inspect-Outlook':'check', 'Read-OutlookMail':'mail', 'Get-OutlookMessage':'mail',
@@ -266,25 +280,28 @@ def main(command, arguments):
             for attachment in result['items'][0].get('attachment_info',[]):
                 if attachment.get('size') and attachment['size']>resolve().get('maintenance.small_attachment_bytes') and not args.download_large_attachments and args.case_id:
                     continue
-                asset=download_attachment(args.store,args.selected_inbox_id,result['items'][0]['folder_id'],args.entry_id,attachment,private_root=data_root(),allow_large=args.download_large_attachments)
+                from monitor.core import Harness
+                from monitor.threadcache import attachment_path
+                h=Harness()
+                try:target=attachment_path(h,args.case_id,attachment['name'],args.entry_id+':'+str(attachment['index']),args.action_ids)
+                finally:h.close()
+                asset=download_attachment(args.store,args.selected_inbox_id,result['items'][0]['folder_id'],args.entry_id,attachment,private_root=data_root(),target=target,allow_large=args.download_large_attachments)
                 if asset.get('status')!='ok':print(json.dumps(asset));return 2
                 assets.append(asset)
             output['DownloadedAttachments']=assets
         if args.case_id:
             from monitor.core import Harness
             from monitor.threadcache import put_message,attachment_path,register_attachment
-            import shutil
             h=Harness()
             try:
                 cached_assets=[]
                 for asset in assets:
-                    target=attachment_path(h,args.case_id,asset['name'],args.entry_id+':'+str(asset['index']));target.parent.mkdir(parents=True,exist_ok=True)
-                    shutil.copyfile(asset['path'],target)
+                    target=Path(asset['path'])
                     mail_source=next(key for key,address in PROFILE['mail'].items() if address.casefold()==args.store.casefold())
-                    registered=register_attachment(h,dict(case_id=args.case_id,path=str(target),name=asset['name'],source=mail_source))
+                    registered=register_attachment(h,dict(case_id=args.case_id,action_ids=args.action_ids,path=str(target),name=asset['name'],source=mail_source))
                     cached_assets.append(dict(asset,path=registered['path'],downloaded=True))
                 output['CachedAttachments']=cached_assets
-                cache=put_message(h,dict(case_id=args.case_id,message=output));output['CacheEvidenceId']=cache['body_evidence_id']
+                cache=put_message(h,dict(case_id=args.case_id,action_ids=args.action_ids,message=output));output['CacheEvidenceId']=cache['body_evidence_id']
             finally:h.close()
     rendered=dict(data=output,coverage={k:v for k,v in result.items() if k not in {'items','folders','calendars'}}) if args.include_coverage else output
     print(json.dumps(rendered, indent=2))

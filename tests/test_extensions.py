@@ -50,6 +50,20 @@ class ExtensionTests(unittest.TestCase):
         with snapshot(self.config):event(self.h,'activation',{'state':{'date':'2026-11-12'}})
         self.assertEqual(metadata(self.h.db,'extension-observations:sample')['seen'],'2026-11-11')
 
+    def test_activation_hook_observations_share_outer_transaction(self):
+        import os
+        from monitor.activation import arm
+        self.install(); self.grant_code()
+        with snapshot(self.config), patch.dict(os.environ, CODEX_THREAD_ID='synthetic-mail-chat'):
+            arm(self.h)
+            observed = metadata(self.h.db, 'extension-observations:sample')
+            self.assertIn('seen', observed)
+            with self.assertRaisesRegex(ValueError, 'rollback'):
+                with self.h.write():
+                    event(self.h, 'activation', {'state': {'date': '2099-01-01'}})
+                    raise ValueError('rollback')
+            self.assertEqual(metadata(self.h.db, 'extension-observations:sample'), observed)
+
     def test_custom_action_requires_scope_and_deduplicates(self):
         self.install('action');self.grant_code()
         self.h.update(dict(id='card',expected_revision=0,idempotency_key='create',evidence_ids=['user'],

@@ -19,7 +19,7 @@ JSON_HELPERS = {
     'folders':('Read-OutlookMail.ps1',{},dict(Action='Folders',Output='Json')),
     'recent':('Read-OutlookMail.ps1',dict(folder='Folder',limit='Limit',max_scan='MaxScan',unread_only='UnreadOnly',include_preview='IncludePreview'),dict(Action='Recent',Output='Json')),
     'search':('Search-OutlookMailDetails.ps1',dict(query='Query',folder='Folder',limit='Limit',body_chars='BodyChars',max_scan='MaxScan'),{}),
-    'read':('Get-OutlookMessage.ps1',dict(entry_id='EntryId',store_id='StoreId',folder='Folder',case_id='CaseId',force_refresh='ForceRefresh',download_large_attachments='DownloadLargeAttachments',max_scan='MaxScan',max_folders='MaxFolders'),dict(Output='Json')),
+    'read':('Get-OutlookMessage.ps1',dict(entry_id='EntryId',store_id='StoreId',folder='Folder',case_id='CaseId',action_ids='ActionIds',force_refresh='ForceRefresh',download_large_attachments='DownloadLargeAttachments',max_scan='MaxScan',max_folders='MaxFolders'),dict(Output='Json')),
     'collect':('Collect-OutlookMonitor.ps1',dict(start='Since',end='Until',page_size='PageSize',max_scan='MaxScan',offset='Offset',snapshot_id='SnapshotId'),{}),
     'calendar':('Read-OutlookMonitorCalendar.ps1',dict(start='Start',end='End',limit='Limit'),{}),
     'refresh':('Start-OutlookSendReceive.ps1',dict(wait_seconds='WaitSeconds'),{}),

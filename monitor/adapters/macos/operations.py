@@ -75,17 +75,17 @@ def prepared_message(message,attachment_root):
 def verify_attachment_bytes(message,inbox_id,draft_folder_id,draft_id,root,runner):
     """Outlook reports encoded sizes; compare decoded bytes, then discard exports."""
     from .attachments import download_attachment
+    from tempfile import TemporaryDirectory
+    scratch=Path(root)/'monitor'/'scratch'
+    scratch.mkdir(parents=True,exist_ok=True)
     for index,attachment in enumerate(message['attachments'],1):
-        asset=download_attachment(message['sender'],inbox_id,draft_folder_id,draft_id,
-            dict(index=index,name=attachment['name'],size=attachment['size']),
-            private_root=root,allow_large=True,runner=runner)
-        if asset.get('status')!='ok':raise ValueError('Draft attachment export failed: '+asset.get('code','unknown'))
-        path=Path(asset['path'])
-        try:
+        with TemporaryDirectory(prefix='verify-',dir=scratch) as temporary:
+            asset=download_attachment(message['sender'],inbox_id,draft_folder_id,draft_id,
+                dict(index=index,name=attachment['name'],size=attachment['size']),
+                private_root=root,target=Path(temporary)/'attachment',allow_large=True,runner=runner)
+            if asset.get('status')!='ok':raise ValueError('Draft attachment export failed: '+asset.get('code','unknown'))
             if asset['bytes']!=attachment['size'] or asset['sha256']!=attachment['sha256']:
                 raise ValueError('Approved draft attachment bytes changed')
-        finally:
-            path.unlink();path.parent.rmdir()
 
 
 def send_approved(h,approval_id,inbox_id,draft_folder_id,*,save_only=False,display=False,runner=native_operation,attachment_root=None):

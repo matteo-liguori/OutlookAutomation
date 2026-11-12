@@ -46,10 +46,11 @@ class ActionCacheTests(unittest.TestCase):
     def test_pending_send_protects_assets_until_reconciled(self):
         path, _, _ = self.assets(['A-approval'])
         self.approval('send', 'approved')
-        p = self.replacement(); self.complete(p); self.h.update(p)
+        p = self.replacement(); self.complete(p)
+        with self.assertRaisesRegex(ValueError, 'Reconcile pending send approvals'): self.h.update(p)
         self.assertTrue(path.exists())
         self.approval('send', 'verified-sent')
-        self.h.update(self.replacement(key='reconcile-send'))
+        self.h.update(p)
         self.assertFalse(path.exists())
 
     def test_locked_file_is_visible_and_retried_after_completion(self):
@@ -104,3 +105,52 @@ class ActionCacheTests(unittest.TestCase):
         self.assertTrue(path.exists())
         self.h.close(); self.h = Harness(Path(self.tmp.name) / 'monitor.db')
         self.assertFalse(path.exists())
+
+    def test_retained_mail_requires_explicit_owners_even_with_one_action(self):
+        with self.assertRaisesRegex(ValueError, 'explicit unfinished action_ids'):
+            put_message(self.h, dict(case_id='A', message=dict(EntryId='unowned',StoreId='store',Body='Transient text')))
+        self.assertEqual(self.h.db.execute('SELECT count(*) FROM thread_messages').fetchone()[0], 0)
+
+    def test_unowned_file_registration_preserves_the_unregistered_file(self):
+        path=folder(self.h,'A')/'attachments'/'unregistered.pdf'
+        path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'fixture')
+        with self.assertRaisesRegex(ValueError, 'explicit unfinished action_ids'):
+            register_attachment(self.h,dict(case_id='A',path=str(path)))
+        self.assertTrue(path.exists())
+        self.assertEqual(self.h.db.execute('SELECT count(*) FROM thread_attachments').fetchone()[0],0)
+
+    def test_new_explicit_reader_holds_cached_attachments_until_completion(self):
+        path,asset,msg=self.assets(['A-approval'])
+        put_message(self.h,dict(case_id='A',action_ids=['A-payment'],message=dict(EntryId='mail',StoreId='store',Body='Cached full email',CachedAttachments=[dict(sha256=asset['sha256'],path=str(path))])))
+        p=self.replacement();self.complete(p);self.h.update(p)
+        self.assertTrue(path.exists())
+        owners=json.loads(self.h.db.execute('SELECT details FROM thread_attachments').fetchone()[0])['action_ids']
+        self.assertEqual(owners,['A-payment'])
+
+    def test_registered_working_file_expires_with_its_action(self):
+        path=folder(self.h,'A')/'working'/'request.json'
+        path.parent.mkdir(parents=True,exist_ok=True);path.write_text('{"fixture":true}')
+        register_attachment(self.h,dict(case_id='A',path=str(path),action_ids=['A-approval']),case_file=True)
+        p=self.replacement();self.complete(p);self.h.update(p)
+        self.assertFalse(path.exists())
+
+    def test_discard_requires_exact_owned_unregistered_file(self):
+        from monitor.threadcache import discard_file
+        import hashlib
+        path=folder(self.h,'A')/'obsolete.json'
+        path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'fixture')
+        p=dict(case_id='A',path=str(path),sha256='changed',reason='Completed preparation',evidence_ids=['request'])
+        with self.assertRaises(ValueError):discard_file(self.h,p)
+        self.assertTrue(path.exists())
+        p['sha256']=hashlib.sha256(path.read_bytes()).hexdigest()
+        self.assertTrue(discard_file(self.h,p)['deleted'])
+        outside=Path(self.tmp.name)/'keep.json';outside.write_bytes(b'fixture')
+        with self.assertRaises(ValueError):discard_file(self.h,dict(p,path=str(outside)))
+        self.assertTrue(outside.exists())
+        file,_,_=self.assets(['A-approval'])
+        with self.assertRaisesRegex(ValueError,'thread bind'):
+            discard_file(self.h,dict(p,path=str(file),sha256=hashlib.sha256(file.read_bytes()).hexdigest()))
+        self.assertTrue(file.exists())
+        with self.assertRaises(ValueError):
+            discard_file(self.h,dict(p,path=str(file).replace('threads','ThReAdS'),sha256=hashlib.sha256(file.read_bytes()).hexdigest()))
+        self.assertTrue(file.exists())

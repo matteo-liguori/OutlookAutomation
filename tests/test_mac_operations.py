@@ -65,10 +65,10 @@ class NativeOperationTests(unittest.TestCase):
 
     def test_attachment_export_sanitizes_name_and_verifies_bytes(self):
         def run(request):Path(request['destination']).write_bytes(b'fixture');return dict(status='ok',saved=True,read_state_preserved=True)
-        value=download_attachment(self.email,'131','131','33',dict(index=1,name='../../fixture.txt',size=12),private_root=self.root,runner=run)
+        value=download_attachment(self.email,'131','131','33',dict(index=1,name='../../fixture.txt',size=12),private_root=self.root,target=self.root/'threads/A/attachments/fixture.txt',runner=run)
         self.assertTrue(Path(value['path']).is_relative_to(self.root));self.assertEqual(Path(value['path']).name,'fixture.txt')
         self.assertEqual(value['sha256'],hashlib.sha256(b'fixture').hexdigest())
-        with self.assertRaisesRegex(ValueError,'Large attachment'):download_attachment(self.email,'131','131','33',dict(index=1,name='big',size=11*1024*1024),private_root=self.root,runner=run)
+        with self.assertRaisesRegex(ValueError,'Large attachment'):download_attachment(self.email,'131','131','33',dict(index=1,name='big',size=11*1024*1024),private_root=self.root,target=self.root/'threads/A/attachments/big',runner=run)
 
     def test_encoded_attachment_size_does_not_replace_byte_hash(self):
         from monitor.adapters.macos.operations import verify_attachment_bytes
@@ -77,6 +77,13 @@ class NativeOperationTests(unittest.TestCase):
         def run(request):Path(request['destination']).write_bytes(b'changed');return dict(status='ok',read_state_preserved=True)
         with self.assertRaisesRegex(ValueError,'bytes changed'):verify_attachment_bytes(message,'131','127','33',self.root,run)
         self.assertEqual(list((self.root/'downloads').glob('*/*')),[])
+        self.assertEqual(list((self.root/'monitor/scratch').glob('verify-*')),[])
+
+    def test_download_requires_owned_target_before_native_access(self):
+        runner=Mock()
+        with self.assertRaisesRegex(ValueError,'action-owned target'):
+            download_attachment(self.email,'131','131','33',dict(index=1,name='file.txt',size=12),private_root=self.root,runner=runner)
+        runner.assert_not_called()
 
 
 @unittest.skipUnless(platform.system()=='Darwin','macOS JXA required')

@@ -182,33 +182,9 @@ instructions:
     the assistant interprets mail and the harness validates records.
   storage: |-
     ## Automatic storage policy
-
-    Relevant mail is in thread_messages; attachments in
-    `<data-root>/monitor/threads/<case-id>/attachments/` (safe path from `thread path`).
-    Each thread owns its copies, deduplicated by message ID/hash within that thread.
-    `Get-OutlookMessage.ps1 -CaseId` reuses/downloads mail and attachments up to 10 MiB;
-    -ForceRefresh reads live, -DownloadLargeAttachments fetches needed larger files.
-    `thread messages/find` retrieves metadata/bodies; attachment-path/attachment allocates/registers.
-    Routine unrelated mail is not persistently cached; portal outcomes need date/reference.
-
-    Closure deletes bodies/assets, keeping compact outcome/source IDs for 365 days,
-    then expires thread-specific records/evidence. Preserve expiry dates on reads and
-    start fresh on reopening. Retain useful open caches and unresolved approvals;
-    standing preferences remain until changed.
-
-    Health/checkpoints/calendar baselines remain current in place, without access logs
-    or expiry. Preserve gaps until verified recovery. Transfer/verify unresolved pass
-    work into pending_work before retiring superseded finalized runs. Inactive finalized
-    payloads/collector snapshots expire after 24 hours; preserve current receipt/running
-    work. Deduplication keeps the seven-day filing window plus active/pending references;
-    owned temporary files last seven days.
-
-    Startup/closure/finalization run cleanup and retry visible failures. Maintenance
-    status/clean --dry-run/clean/threads expose it; unknown ownership needs reconciliation.
-    Keep {{maintenance.daily_backups}} daily, {{maintenance.weekly_backups}} weekly and {{maintenance.special_backups}} version/schema backups. First write per London
-    day/ISO week creates its slot; verify replacements before rotation. Keep backups
-    within these slots. Backups exclude disposable caches/expired records,
-    preserving obligations/approvals/checkpoints and the matching private profile JSON.
+    Use help thread-cache for correspondence and action ownership, and help retention
+    for completion cleanup, expiry, temporary files and backups. These are the
+    canonical procedures; standing rules do not belong in individual task notes.
     Recover the profile with `python manage_data.py --restore-profile-from <backup.db>
     --profile-output <new-profile.json>`; existing files are preserved.
     Restore current format to a new path
@@ -284,8 +260,9 @@ instructions:
 
     `thread put --input -` takes case_id, action_ids and message (the full email with metadata/body).
     Anchor cached messages and attachments to the unfinished actions that need them.
-    `thread attachment` also accepts action_ids. If omitted, existing helpers bind
-    to the card's current unfinished actions; narrow that scope after reading.
+    Supply explicit unfinished action_ids for thread attachment, attachment-path
+    and persistent outlook read (Windows -ActionIds). Use an in-memory read by
+    omitting case_id. Allocate downloads to an owned target.
     `thread bind --input -` takes case_id, exact message_keys/attachment_sha256,
     action_ids, reason and evidence_ids. Use it to reconcile ownership; [] releases
     selected copies. It cannot change server mail. Shared copies survive until their
@@ -299,17 +276,19 @@ instructions:
     `thread messages/find` retrieves metadata/bodies; attachment-path/attachment allocates/registers.
     Routine unrelated mail is not persistently cached; portal outcomes need date/reference.
   retention: |-
-    All cards keep only current, relevant work and standing rules. At each action
-    completion, remove spent preparation, obsolete context and duplicate history in
-    the same card replacement. Do not retain a diary of completed work.
-    Put temporary working notes in decisions with action_ids so their final action
-    automatically removes them. Keep enduring preferences and still-relevant facts
-    in context; trim obsolete free text during the completion replacement.
-    Local cached emails, rendered thread cards and attachments belong to actions,
-    not the lifetime of an open card. Completion/dismissal automatically deletes
-    copies with no unfinished owner. Keep only brief source identifiers needed to
-    retrieve the originals from the email server. Reconcile older caches with
-    thread bind; preserve another unfinished action's copies and pending sends.
+    Save user data in harness SQLite records or registered action-owned files.
+    Obtain explicit user approval for any other destination. Keep inspection in memory.
+    Give each retained email/file explicit unfinished action_ids; allocate files
+    with thread attachment-path and register them with thread attachment.
+    Register existing files inside their owning card directory with thread file.
+    Release obsolete unregistered card files with thread discard-file using the
+    exact path, SHA256, reason and authority evidence_ids.
+
+    Keep cards limited to current facts and standing rules. Trim completed work in
+    the same card replacement. Put temporary notes in decisions with action_ids.
+    Completion releases scoped notes and local copies when their final action ends;
+    material needed by another unfinished action or pending send stays available.
+    Use thread bind to reconcile existing ownership. Keep brief server locators for retrieval.
 
     Closure deletes bodies/assets, keeping compact outcome/source IDs for 365 days,
     then expires thread-specific records/evidence. Preserve expiry dates on reads and
@@ -336,7 +315,7 @@ instructions:
   configuration: |-
     # Configuration
 
-    User behaviour is in customisations.yaml in the private data root. config show --explain shows effective values and origins; --case ID includes card context. config validate checks it. config review lists pending changes; --input - takes id and decision keep/default. config reset --key path restores a shared default. config migrate previews the older profile migration; --apply backs up and applies it.
+    User behaviour is in customisations.yaml in the private data root. config show --explain shows effective values and origins; --case ID includes card context. config set --input - takes key/value to update a managed setting. config validate checks it. config review lists pending changes; --input - takes id and decision keep/default. config reset --key path restores a shared default. config migrate previews the older profile migration; --apply backs up and applies it.
   extensions: |-
     # Private extensions
 

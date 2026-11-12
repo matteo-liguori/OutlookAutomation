@@ -55,7 +55,7 @@ class CardRetirementTests(unittest.TestCase):
         self.h.put_record('approval', item)
 
     def test_completion_deletes_canonical_row_keeps_sibling_cache_and_proof(self):
-        put_message(self.h, dict(case_id='A', message=dict(EntryId='mail', StoreId='store', Body='Useful email')))
+        put_message(self.h, dict(case_id='A', action_ids=['A-approval','A-payment'], message=dict(EntryId='mail', StoreId='store', Body='Useful email')))
         p=self.replacement();sibling=copy.deepcopy(p['actions'][1]);self.complete(p)
         result=self.h.update(p)
         self.assertEqual(self.h.update(p),result)

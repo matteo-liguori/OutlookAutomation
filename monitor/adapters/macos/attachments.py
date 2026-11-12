@@ -2,23 +2,20 @@ from monitor.configuration import resolve
 """Export verified message attachments into the configured private data folder."""
 import hashlib
 from pathlib import Path
-import re
-import uuid
 
 from .operations import native_operation
 
 
-def download_attachment(mailbox,inbox_id,source_folder_id,entry_id,attachment,*,private_root,allow_large=False,runner=native_operation):
+def download_attachment(mailbox,inbox_id,source_folder_id,entry_id,attachment,*,private_root,target=None,allow_large=False,runner=native_operation):
     root=Path(private_root).resolve()
-    name=re.sub(r'[^A-Za-z0-9._ -]','_',Path(attachment['name'].replace('\\','/')).name).strip(' .')[:120] or 'attachment'
+    if target is None:
+        raise ValueError('Provide a harness-allocated action-owned target')
     size=attachment.get('size')
     if size is not None and size>resolve().get('maintenance.small_attachment_bytes') and not allow_large:
         raise ValueError('Large attachment requires explicit DownloadLargeAttachments')
-    folder=root/'downloads'/uuid.uuid4().hex
-    if any(node.is_symlink() for node in (root/'downloads',root)):
-        raise ValueError('Attachment destination may not be a link')
-    folder.mkdir(parents=True,exist_ok=False)
-    target=folder/name
+    from monitor.threadcache import checked_path
+    target=checked_path(root,target)
+    target.parent.mkdir(parents=True,exist_ok=True)
     result=runner(dict(action='attachment-save',authorized=True,mailbox=mailbox,folder_id=str(inbox_id),source_folder_id=str(source_folder_id),object_id=str(entry_id),attachment_index=attachment['index'],attachment_name=attachment['name'],destination=str(target)))
     if result.get('status')!='ok':return result
     if target.is_symlink() or not target.is_file() or not target.resolve().is_relative_to(root):

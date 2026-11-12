@@ -195,5 +195,29 @@ class CardTests(unittest.TestCase):
         self.assertEqual(self.h.case('A')['actions'],before)
         self.assertFalse(hasattr(self.h,'_query_at'))
 
+    def test_card_write_returns_harness_retention_instruction(self):
+        import io
+        from monitor.__main__ import parser, execute
+        args=parser().parse_args(['case', 'update', '--input', '-'])
+        with patch('sys.stdin', io.StringIO(dumps(self.payload()))):
+            result=execute(self.h, args)
+        self.assertIn('trim completed work', result['retention_instruction'])
+        self.assertNotIn('retention_instruction', self.h.case('A'))
+        with patch('sys.stdin', io.StringIO(dumps(self.payload()))):
+            repeated=execute(self.h, args)
+        self.assertNotIn('retention_instruction', repeated)
+
+    def test_relevant_guidance_is_once_per_chat_across_connections(self):
+        import os
+        from monitor.guidance import once
+        from monitor.core import Harness
+        with patch.dict(os.environ,CODEX_THREAD_ID='synthetic-guidance-session'):
+            self.assertEqual(once(self.h,'storage','Use owned storage.'),'Use owned storage.')
+            other=Harness(self.h.path)
+            try:
+                self.assertIsNone(once(other,'storage','Use owned storage.'))
+                self.assertEqual(once(other,'storage','Use registered owned storage.'),'Use registered owned storage.')
+            finally:other.close()
+
 
 if __name__=='__main__':unittest.main()

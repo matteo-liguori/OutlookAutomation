@@ -59,6 +59,12 @@ def action_owners(h, cid, requested=None):
     return sorted(set(requested))
 
 
+def retained_owners(h, cid, requested):
+    if not requested:
+        raise ValueError('Provide one or more explicit unfinished action_ids for retained mail/files')
+    return action_owners(h, cid, requested)
+
+
 def message_parts(message):
     if not isinstance(message, dict):
         raise ValueError("Message must be an object")
@@ -81,7 +87,8 @@ def put_message(h, payload):
     with h.write():
         require_open(h, cid)
         old=h.db.execute('SELECT metadata FROM thread_messages WHERE case_id=? AND message_key=?',(cid,key)).fetchone()
-        owners = action_owners(h, cid, payload.get('action_ids', metadata.pop('CacheActionIds', None)))
+        metadata.pop('CacheActionIds', None)
+        owners = retained_owners(h, cid, payload.get('action_ids'))
         previous = json.loads(old[0]).get('CacheActionIds', []) if old else []
         active = set(action_owners(h, cid))
         metadata['CacheActionIds'] = sorted(set(owners) | (set(previous) & active))
@@ -90,6 +97,12 @@ def put_message(h, payload):
         if all(locator) and locator not in locators:locators.append(locator)
         metadata['CacheLocators']=locators
         h.db.execute("INSERT INTO thread_messages VALUES(?,?,?,?,?) ON CONFLICT(case_id,message_key) DO UPDATE SET metadata=excluded.metadata,body=excluded.body", (cid, key, dumps(metadata), body, now()))
+        for asset in metadata.get('CachedAttachments', []):
+            for row in h.db.execute('SELECT sha256,path,details FROM thread_attachments WHERE case_id=?', (cid,)).fetchall():
+                if asset.get('sha256') == row['sha256'] or asset.get('path') == row['path']:
+                    details=json.loads(row['details'])
+                    details['action_ids']=sorted((set(details.get('action_ids', [])) & active) | set(owners))
+                    h.db.execute('UPDATE thread_attachments SET details=? WHERE case_id=? AND sha256=?', (dumps(details),cid,row['sha256']))
     eid = h.put_evidence({"kind": "mail-source-reference", "source": metadata.get("source", "thread-cache"), "case_id": cid, "body": dumps({"case_id": cid, "message_key": key, "body_sha256": digest(body), "locator": {k: v for k, v in metadata.items() if k in LOCATOR_KEYS}})})["id"]
     metadata['CacheEvidenceId'] = eid
     with h.write():
@@ -115,29 +128,30 @@ def find_message(h, payload):
     return {"found": False}
 
 
-def attachment_path(h, cid, name, attachment_id):
-    require_open(h, cid)
+def attachment_path(h, cid, name, attachment_id, action_ids=None):
+    retained_owners(h, cid, action_ids)
     name = re.sub(r"[^A-Za-z0-9._ -]", "_", Path(name.replace("\\", "/")).name)[:120].strip(" .") or "attachment"
     return folder(h, cid) / "attachments" / (digest(attachment_id)[:20] + "-" + name)
 
 
-def register_attachment(h, payload):
+def register_attachment(h, payload, *, case_file=False):
     from .maintenance import file_hash
     cid = payload["case_id"]
     with h.write():
         require_open(h, cid)
-        owners = action_owners(h, cid, payload.get('action_ids'))
+        owners = retained_owners(h, cid, payload.get('action_ids'))
         path = Path(payload["path"]).absolute()
-        base = folder(h, cid) / "attachments"
+        base = folder(h, cid) if case_file else folder(h, cid) / "attachments"
         checked_path(h.path.parent, path)
         if not path.resolve().is_relative_to(base) or not path.is_file():
-            raise ValueError("Attachment must be in its owning thread's attachment folder")
+            raise ValueError("Use a file inside its owning thread's allocated folder")
         sha = file_hash(path)
         old = h.db.execute("SELECT path,details FROM thread_attachments WHERE case_id=? AND sha256=?", (cid, sha)).fetchone()
         if old and Path(old[0]).is_file() and Path(old[0]).resolve() != path.resolve():
             path.unlink()
             path = Path(old[0])
         details = {k: v for k, v in payload.items() if k not in {"case_id", "path"}}
+        details['asset_kind']='file' if case_file else 'attachment'
         previous = json.loads(old[1]).get('action_ids', []) if old else []
         details['action_ids'] = sorted(set(owners) | (set(previous) & set(action_owners(h, cid))))
         details.update(bytes=path.stat().st_size)
@@ -152,6 +166,8 @@ def bind_assets(h, payload):
     cid = payload['case_id']
     with h.write():
         owners = action_owners(h, cid, payload['action_ids'])
+        if not owners and any(pending_approval(json.loads(r[0])) for r in h.db.execute('SELECT details FROM approvals WHERE case_id=?',(cid,))):
+            raise ValueError('Reconcile pending send approvals before releasing their cached material')
         h.limited(payload, 'reason', 600)
         if not payload.get('evidence_ids'):
             raise ValueError('Cache binding requires evidence_ids')
@@ -180,6 +196,27 @@ def queue_action_cleanup(h, cid):
     h._thread_dirty = True
 
 
+def discard_file(h,payload):
+    """Remove an exact obsolete unregistered file inside its owning card."""
+    from .maintenance import file_hash
+    cid=payload['case_id']
+    with h.write():
+        require_open(h,cid)
+        h.limited(payload,'reason',600)
+        if not payload.get('evidence_ids'):raise ValueError('Provide cleanup authority evidence_ids')
+        h.evidence_exists(payload['evidence_ids'])
+        path=checked_path(folder(h,cid),payload['path'])
+        if any(Path(r[0]).resolve()==path.resolve() for r in h.db.execute('SELECT path FROM thread_attachments')):
+            raise ValueError('Release registered file ownership with thread bind')
+        if any(pending_approval(json.loads(r[0])) for r in h.db.execute('SELECT details FROM approvals WHERE case_id=?',(cid,))):
+            raise ValueError('Reconcile pending send approvals before cleanup')
+        if not path.is_file() or file_hash(path)!=payload.get('sha256'):
+            raise ValueError('Provide the current file SHA256 for cleanup')
+        size=path.stat().st_size
+        path.unlink()
+    return dict(case_id=cid,deleted=True,bytes=size,name=path.name)
+
+
 def prune_action_cache(h, case):
     """Only disposable local copies; preserve shared live owners and pending sends."""
     cid = case['id']
@@ -190,7 +227,9 @@ def prune_action_cache(h, case):
     keep_paths, keep_hashes = set(), set()
     for row in h.db.execute('SELECT message_key,metadata FROM thread_messages WHERE case_id=?', (cid,)).fetchall():
         meta = json.loads(row['metadata'])
-        owners = sorted(set(meta.get('CacheActionIds', active)) & active)
+        if 'CacheActionIds' not in meta:
+            raise ValueError('Assign explicit action_ids to this card\'s cached messages with thread bind')
+        owners = sorted(set(meta['CacheActionIds']) & active)
         if not owners:
             h.db.execute('DELETE FROM thread_messages WHERE case_id=? AND message_key=?', (cid, row['message_key']))
             result['messages_deleted'] += 1
@@ -202,12 +241,15 @@ def prune_action_cache(h, case):
             if asset.get('sha256'): keep_hashes.add(asset['sha256'])
     for row in h.db.execute('SELECT * FROM thread_attachments WHERE case_id=?', (cid,)).fetchall():
         details = json.loads(row['details'])
-        owners = sorted(set(details.get('action_ids', active)) & active)
+        if 'action_ids' not in details:
+            raise ValueError('Assign explicit action_ids to this card\'s cached files with thread bind')
+        owners = sorted(set(details['action_ids']) & active)
         if owners or row['sha256'] in keep_hashes or str(Path(row['path']).absolute()) in keep_paths:
             details['action_ids'] = owners
             h.db.execute('UPDATE thread_attachments SET details=? WHERE case_id=? AND sha256=?', (dumps(details), cid, row['sha256']))
             continue
-        path = checked_path(folder(h, cid) / 'attachments', row['path'])
+        base=folder(h,cid) if details.get('asset_kind')=='file' else folder(h,cid)/'attachments'
+        path = checked_path(base, row['path'])
         if path.exists():
             from .maintenance import file_hash
             if not path.is_file() or file_hash(path) != row['sha256']:

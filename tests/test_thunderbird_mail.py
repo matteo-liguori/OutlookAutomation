@@ -47,7 +47,7 @@ class ThunderbirdMailTests(unittest.TestCase):
                 if request['action']=='attachment-open':return dict(result=dict(status='ok',size=len(content),sha256=digest,download_id='one'))
                 offset=request['offset'];part=content[offset:offset+CHUNK]
                 return dict(result=dict(status='ok',offset=offset,data=base64.b64encode(part).decode(),eof=offset+len(part)==len(content)))
-            asset=download_attachment(BASE,dict(message_id=12),dict(name='../../café.bin',part_name='1.2'),call,retrieve)
+            asset=download_attachment(BASE,dict(message_id=12),dict(name='../../café.bin',part_name='1.2'),call,retrieve,target=self.root/'threads/A/attachments/cafe.bin')
             self.assertTrue(Path(asset['path']).is_relative_to(self.root));self.assertEqual(Path(asset['path']).read_bytes(),content)
             self.assertEqual(asset['sha256'],digest);self.assertFalse(list(self.root.rglob('*.partial')))
 
@@ -59,6 +59,12 @@ class ThunderbirdMailTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'hash/size'):
                 download_attachment(BASE,dict(message_id=12),dict(name='file.bin',part_name='1.2'),call,Mock(side_effect=replies),target=target)
         self.assertFalse(target.exists());self.assertFalse(list(self.root.glob('*.partial')))
+
+    def test_download_requires_owned_target_before_native_access(self):
+        runner=Mock()
+        with self.assertRaisesRegex(ValueError,'action-owned target'):
+            download_attachment(BASE,dict(message_id=12),dict(name='file.bin',part_name='1.2'),Mock(),runner)
+        runner.assert_not_called()
 
     def test_attachment_changed_bytes_are_rejected(self):
         source=self.root/'file.bin';source.write_bytes(b'approved');message=self.message();message['attachments']=[dict(path=str(source),sha256=hashlib.sha256(b'approved').hexdigest())]

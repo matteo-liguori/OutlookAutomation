@@ -27,7 +27,7 @@ function Resolve-OutlookExactMessage {
     $message=[pscustomobject]@{EntryID='message';UnRead=$true;Attachments=$attachments;MessageClass='IPM.Note';Subject='Relevant';SenderName='Sender';SenderEmailAddress='sender@example.invalid';To='me@example.invalid';CC='';ReceivedTime='2026-10-26T09:00:00Z';Body='Useful café correspondence'}
     return [pscustomobject]@{Message=$message;ActualStoreId='store';FolderPath='Inbox';ReadPath='fixture';Scanned=1;FoldersScanned=1;DirectFailure=''}
 }''',encoding='utf-8')
-            args=['-File',folder/'Get-OutlookMessage.ps1','-EntryId','message','-StoreId','store','-CaseId','case','-Output','Json']
+            args=['-File',folder/'Get-OutlookMessage.ps1','-EntryId','message','-StoreId','store','-CaseId','case','-ActionIds','a','-Output','Json']
             first=self.run_ps(*args);self.assertEqual(first.returncode,0,first.stderr)
             data=json.loads(first.stdout);self.assertEqual(data['Body'],'Useful café correspondence')
             self.assertTrue(data['CachedAttachments'][0]['downloaded']);self.assertFalse(data['CachedAttachments'][1]['downloaded']);self.assertTrue(data['UnreadUnchanged'])

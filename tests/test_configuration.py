@@ -27,6 +27,19 @@ class ConfigurationTests(unittest.TestCase):
         settings=read_yaml(path);settings['reviews']['card_days']=2;atomic(path,dump(settings))
         self.assertEqual(resolve(other,profile={},default_file=self.public).get('reviews.card_days'),7)
 
+    def test_config_set_updates_only_known_managed_settings(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        from monitor.commands import handle_config
+        self.init();path,_=paths(self.user)
+        before=read_yaml(path)['instructions']['accounts']
+        with patch('monitor.configuration.location',return_value=self.user):
+            handle_config(None,SimpleNamespace(operation='set'),dict(key='reviews.card_days',value=3),'config')
+            self.assertEqual(read_yaml(path)['reviews']['card_days'],3)
+            self.assertEqual(read_yaml(path)['instructions']['accounts'],before)
+            with self.assertRaises(ValueError):
+                handle_config(None,SimpleNamespace(operation='set'),dict(key='arbitrary.path',value='/elsewhere'),'config')
+
     def test_three_way_update_preserves_comments_and_multiline_edits(self):
         self.init();path,_=paths(self.user)
         user=read_yaml(path);user['reviews']['card_days']=2

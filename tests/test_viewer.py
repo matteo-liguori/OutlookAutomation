@@ -109,10 +109,10 @@ class ViewerTests(unittest.TestCase):
         from monitor.card_input import apply
         self.create('beta');self.create('gamma')
         for cid, received in [('alpha','2026-11-08T10:00:00Z'),('beta','2026-11-09T09:00:00Z')]:
-            put_message(self.h,dict(case_id=cid,message=dict(EntryId=cid,StoreId='fixture',Received=received,Body='Synthetic mail')))
+            put_message(self.h,dict(case_id=cid,action_ids=[cid+'-action'],message=dict(EntryId=cid,StoreId='fixture',Received=received,Body='Synthetic mail')))
         apply(self.h,dict(id='alpha',expected_revision=self.h.case('alpha')['revision'],idempotency_key='rename-old',title='Recently renamed'))
         # Re-reading the older email must not make it newer than beta.
-        put_message(self.h,dict(case_id='alpha',message=dict(EntryId='alpha',StoreId='fixture',Received='2026-11-08T10:00:00Z',Body='Synthetic mail')))
+        put_message(self.h,dict(case_id='alpha',action_ids=['alpha-action'],message=dict(EntryId='alpha',StoreId='fixture',Received='2026-11-08T10:00:00Z',Body='Synthetic mail')))
         result=overview(self.path,AT)
         self.assertEqual([c['id'] for c in result['cards']],['beta','alpha','gamma'])
         self.assertEqual(result['cards'][0]['latest_email_at'],'2026-11-09T09:00:00+00:00')

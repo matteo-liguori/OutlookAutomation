@@ -121,7 +121,7 @@ class CurrentFormatTests(unittest.TestCase):
 
     def test_current_backup_preserves_obligations_but_excludes_cached_mail(self):
         self.create_case()
-        put_message(self.h,dict(case_id='A',message=dict(EntryId='mail',StoreId='store',Body='Relevant cached email')))
+        put_message(self.h,dict(case_id='A',action_ids=['approval'],message=dict(EntryId='mail',StoreId='store',Body='Relevant cached email')))
         before=copy.deepcopy(self.h.case('A')['actions'])
         backup=Path(self.h.backup('current-format')[0]);self.assertTrue(verified_backup(backup))
         restored=Harness(backup)

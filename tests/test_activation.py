@@ -20,7 +20,9 @@ class ActivationTests(unittest.TestCase):
         self.assertEqual(session['title'],'Mail check 08/11/2026')
         self.assertEqual(session['remaining_followups'],['19:00'])
         self.assertIn('reminder',result)
-        self.assertNotIn('session_start',self.call('briefing'))
+        repeated=self.call('briefing')
+        self.assertNotIn('session_start',repeated)
+        self.assertNotIn('reminder',repeated)
 
     def test_scoped_and_detached_briefings_do_not_start_mail_setup(self):
         self.assertNotIn('session_start',self.call('briefing','--task','no-match'))
@@ -62,8 +64,8 @@ class ActivationTests(unittest.TestCase):
         result=self.call('briefing','--task','no-match','--user-active')
         self.assertIn('reminder', result)
         self.assertIn(result['reminder'],markdown(result))
-        self.assertIn('reminder',self.call('doctor'))
-        self.assertIn('reminder',self.call('case','search','no-match'))
+        self.assertNotIn('reminder',self.call('doctor'))
+        self.assertNotIn('reminder',self.call('case','search','no-match'))
         arm(self.h)
         self.assertIsNotNone(reminder(self.h))
 
@@ -136,7 +138,8 @@ class ActivationTests(unittest.TestCase):
         defer(self.h,{'reason':'Actual startup tool unavailable','evidence_ids':['e']})
         self.assertIsNone(reminder(self.h))
         self.assertNotIn('reminder',self.call('briefing','--task','no-match','--setup-chat'))
-        self.assertIn('reminder',self.call('briefing','--task','no-match','--user-active'))
+        self.assertNotIn('reminder',self.call('briefing','--task','no-match','--user-active'))
+        self.assertIsNotNone(reminder(self.h))
         self.assertTrue(complete(self.h,self.payload)['completed'])
         with patch('monitor.app_state.inspect',return_value=dict(title=True,followups=True)):
             self.assertNotIn('reminder',self.call('briefing','--task','no-match','--user-active'))

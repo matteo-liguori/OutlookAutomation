@@ -5,6 +5,31 @@ GUIDES = defaults()['instructions']
 RELEVANCE_REVIEW = GUIDES['card-upkeep'].split('\n\n')[1]
 
 
+def retention_reminder():
+    return ('Keep current facts and standing rules; trim completed work in the same card replacement. '
+            'Give retained mail, files and temporary notes explicit action_ids. '
+            'Use harness storage; obtain user approval for other destinations. See help retention.')
+
+
+def once(h, topic, instruction):
+    """Deliver relevant guidance once per chat and instruction version."""
+    import os
+    from .model import digest
+    version=digest(instruction)
+    session=os.environ.get('CODEX_THREAD_ID')
+    if not session:
+        seen=getattr(h,'_guidance_seen',{})
+        if seen.get(topic)==version:return None
+        seen[topic]=version;h._guidance_seen=seen
+        return instruction
+    key='guidance-seen:'+digest([session,topic])
+    with h.write():
+        row=h.db.execute('SELECT value FROM meta WHERE key=?',(key,)).fetchone()
+        if row and row[0]==version:return None
+        h.db.execute('INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value',(key,version))
+    return instruction
+
+
 def guide(topic):
     if topic not in GUIDES:
         raise ValueError("Unknown guidance topic")

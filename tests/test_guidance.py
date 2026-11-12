@@ -16,6 +16,20 @@ from monitor.model import now
 
 
 class GuidanceTests(unittest.TestCase):
+    def test_failed_briefing_gives_brief_user_notification_instruction(self):
+        import io
+        import sqlite3
+        from unittest.mock import Mock
+        from monitor.__main__ import main
+        error=io.StringIO();h=Mock()
+        with patch.object(sys,'argv',['monitor','briefing']),patch('monitor.__main__.Harness',return_value=h),patch('monitor.__main__.execute',side_effect=sqlite3.OperationalError('transaction fault')),patch.object(sys,'stderr',error),patch.object(sys,'stdout',io.StringIO()):
+            with self.assertRaises(SystemExit) as result:main()
+        self.assertEqual(result.exception.code,2)
+        output=json.loads(error.getvalue())
+        self.assertEqual(output['status'],'failed')
+        self.assertIn('Tell the user',output['instruction'])
+        h.close.assert_called_once()
+
     def test_quiet_thread_review_requires_relevance_judgment_even_without_new_mail(self):
         from monitor.guidance import RELEVANCE_REVIEW
         payload=dict(id='Q',expected_revision=0,idempotency_key='quiet-review',evidence_ids=['e'],

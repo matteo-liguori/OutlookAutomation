@@ -30,7 +30,7 @@ class ThreadCacheTests(unittest.TestCase):
         self.h.update(dict(id=cid,expected_revision=c['revision'],idempotency_key='close-'+cid,evidence_ids=['user'],case=dict(title='Task',position='Complete',context='User confirmed completion.',status='closed'),actions=c['actions']))
 
     def message(self,cid='task'):
-        return put_message(self.h,dict(case_id=cid,message=dict(EntryId='mail',StoreId='store',InternetMessageId='<stable@example>',Subject='Relevant',Body='Full useful email')))
+        return put_message(self.h,dict(case_id=cid,action_ids=[cid+'-action'],message=dict(EntryId='mail',StoreId='store',InternetMessageId='<stable@example>',Subject='Relevant',Body='Full useful email')))
 
     def test_sending_permissions_surface_on_log_and_cache_without_renewal(self):
         from monitor.approvals import put, find, flag, review
@@ -54,7 +54,7 @@ class ThreadCacheTests(unittest.TestCase):
         cached=find_message(self.h,dict(case_id='task',entry_id='mail',store_id='store'))['message']
         self.assertFalse(next(n for n in cached['standing_sending_permissions'] if n['id']=='bound')['available'])
         # Notifications are calculated at read time, never stored with the email.
-        put_message(self.h,dict(case_id='task',message=cached))
+        put_message(self.h,dict(case_id='task',action_ids=['task-action'],message=cached))
         metadata=json.loads(self.h.db.execute("SELECT metadata FROM thread_messages WHERE case_id='task'").fetchone()[0])
         self.assertNotIn('standing_sending_permissions', metadata)
         review(self.h,dict(id='global',expected_revision=1,decision='revoke',reason='User revokes',evidence_ids=['user']))
@@ -81,13 +81,13 @@ class ThreadCacheTests(unittest.TestCase):
 
     def asset(self,cid='task'):
         f=folder(self.h,cid)/'attachments'/'invoice.pdf';f.parent.mkdir(parents=True,exist_ok=True);f.write_bytes(b'PDF fixture')
-        return register_attachment(self.h,dict(case_id=cid,path=str(f),source='mail'))
+        return register_attachment(self.h,dict(case_id=cid,action_ids=[cid+'-action'],path=str(f),source='mail'))
 
     def test_independent_copies_deduplicate_only_inside_thread_and_close(self):
         for cid in ['A','B']:
             self.case(cid);self.message(cid);self.asset(cid)
         self.message('A')
-        put_message(self.h,dict(case_id='A',message=dict(EntryId='copy',StoreId='other-store',InternetMessageId='<stable@example>',Subject='Relevant',Body='Full useful email')))
+        put_message(self.h,dict(case_id='A',action_ids=['A-action'],message=dict(EntryId='copy',StoreId='other-store',InternetMessageId='<stable@example>',Subject='Relevant',Body='Full useful email')))
         self.assertEqual(self.h.db.execute('SELECT count(*) FROM thread_messages').fetchone()[0],2)
         self.assertTrue(find_message(self.h,dict(case_id='A',entry_id='mail',store_id='store'))['found'])
         self.close_case('A')
@@ -136,7 +136,7 @@ class ThreadCacheTests(unittest.TestCase):
     def test_pending_send_survives_cleanup(self):
         self.case();self.message()
         self.h.put_record('approval',dict(id='send',case_id='task',status='approved',evidence_ids=['user'],message=dict(sender='me@example.invalid',to=['you@example.invalid'],cc=[],bcc=[],subject='Approved',body='Exact pending wording',attachments=[])))
-        self.close_case()
+        with self.assertRaisesRegex(ValueError, 'Reconcile pending send approvals'):self.close_case()
         self.assertTrue(self.h.db.execute('SELECT 1 FROM thread_messages').fetchone())
         self.assertIn('Exact pending wording',self.h.db.execute("SELECT details FROM approvals WHERE id='send'").fetchone()[0])
 
@@ -169,16 +169,16 @@ class ThreadCacheTests(unittest.TestCase):
         self.case()
         with self.assertRaises(ValueError):self.h.put_evidence(dict(kind='message-body',body='orphan'))
         path=Path(self.tmp.name)/'elsewhere.pdf';path.write_bytes(b'x')
-        with self.assertRaises(ValueError):register_attachment(self.h,dict(case_id='task',path=str(path)))
+        with self.assertRaisesRegex(ValueError, 'owning thread'):register_attachment(self.h,dict(case_id='task',action_ids=['task-action'],path=str(path)))
         self.assertTrue(path.exists())
 
 
     def test_attachment_hash_dedup_and_missing_attachment_refresh(self):
         self.case();first=self.asset()
         duplicate=folder(self.h,'task')/'attachments'/'duplicate.pdf';duplicate.write_bytes(b'PDF fixture')
-        second=register_attachment(self.h,dict(case_id='task',path=str(duplicate)))
+        second=register_attachment(self.h,dict(case_id='task',action_ids=['task-action'],path=str(duplicate)))
         self.assertEqual(first['path'],second['path']);self.assertFalse(duplicate.exists())
-        receipt=put_message(self.h,dict(case_id='task',message=dict(EntryId='mail',StoreId='store',Body='full',CachedAttachments=[dict(downloaded=True,path=first['path'])])))
+        receipt=put_message(self.h,dict(case_id='task',action_ids=['task-action'],message=dict(EntryId='mail',StoreId='store',Body='full',CachedAttachments=[dict(downloaded=True,path=first['path'])])))
         found=find_message(self.h,dict(case_id='task',entry_id='mail',store_id='store'))
         self.assertEqual(found['message']['CacheEvidenceId'],receipt['body_evidence_id'])
         Path(first['path']).unlink()

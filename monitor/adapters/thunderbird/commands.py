@@ -13,7 +13,7 @@ FIELDS = {
     'discover':['source'], 'accounts':['source'], 'stores':['source'], 'folders':['source'], 'session':['source'],
     'recent':['source','start','end','limit','subject','unread_only','folder_id','folder','include_preview','max_scan'],
     'search':['source','start','end','limit','query','subject','unread_only','folder_id','folder','body_chars','max_scan'],
-    'read':['source','entry_id','folder_id','folder','store_id','case_id','force_refresh','download_attachments','download_large_attachments','content_hash'],
+    'read':['source','entry_id','folder_id','folder','store_id','case_id','action_ids','force_refresh','download_attachments','download_large_attachments','content_hash'],
     'collect':['source','start','end','page_size','max_scan','offset','snapshot_id','run_id'],
     'freshness':['source','freshness_minutes','interval_seconds','max_wait_seconds'],
     'send':['source','approval_id','to','cc','bcc','subject','body','attachments','high_importance','reply_to_entry_id'],
@@ -399,11 +399,19 @@ def execute_json(operation,payload,store,h,source,*,profile,runner=transport):
                     BodyPreview=re.sub(r'\s+',' ',text).strip()[:chars],AttachmentNames=[a['name'] for a in attachments])
                 if payload.get('include_preview'):item['Preview']=item['BodyPreview']
     elif operation=='read':
+        if payload.get('case_id'):
+            from monitor.threadcache import retained_owners
+            retained_owners(h, payload['case_id'], payload.get('action_ids'))
+        elif payload.get('download_attachments') or payload.get('download_large_attachments'):
+            raise ValueError('Attachment saves require a case and explicit action_ids')
         if payload.get('store_id') and payload['store_id']!='thunderbird:'+store.casefold():raise ValueError('Message store_id differs from source')
         if payload.get('case_id') and not any(payload.get(k) for k in ('force_refresh','download_attachments','download_large_attachments','content_hash')):
             from monitor.threadcache import find_message
             cached=find_message(h,dict(case_id=payload['case_id'],entry_id=payload['entry_id'],store_id='thunderbird:'+store.casefold()))
-            if cached.get('found'):return dict(data=cached['message'],coverage=dict(cache_hit=True,fresh_native_read=False),status='ok')
+            if cached.get('found'):
+                from monitor.threadcache import put_message
+                put_message(h,dict(case_id=payload['case_id'],action_ids=payload['action_ids'],message=cached['message']))
+                return dict(data=cached['message'],coverage=dict(cache_hit=True,fresh_native_read=False),status='ok')
         parent=folder_id(payload,binding,base,runner) if payload.get('folder') else payload.get('folder_id')
         locator=resolve_entry(payload.get('entry_id'),base,runner,parent)
         request=dict(base,action='read-extended',include_raw_hash=payload.get('content_hash',False),**locator)
@@ -426,16 +434,16 @@ def execute_json(operation,payload,store,h,source,*,profile,runner=transport):
                 from monitor.threadcache import attachment_path,register_attachment
                 for part in attachments:
                     if part.get('size',0)>resolve().get('maintenance.small_attachment_bytes') and payload.get('case_id') and not payload.get('download_large_attachments'):continue
-                    target=attachment_path(h,payload['case_id'],part['name'],data['EntryId']+':'+part['part_name']) if payload.get('case_id') else None
+                    target=attachment_path(h,payload['case_id'],part['name'],data['EntryId']+':'+part['part_name'],payload.get('action_ids'))
                     asset=download_attachment(base,locator,part,call,runner,allow_large=payload.get('download_large_attachments',False),target=target)
                     if asset.get('status')!='ok':return dict(data=asset,status='blocked')
-                    if target:register_attachment(h,dict(case_id=payload['case_id'],path=asset['path'],name=part['name'],source=source))
+                    if target:register_attachment(h,dict(case_id=payload['case_id'],action_ids=payload['action_ids'],path=asset['path'],name=part['name'],source=source))
                     assets.append(asset)
                 data['DownloadedAttachments']=assets
                 if payload.get('case_id'):data['CachedAttachments']=assets
             if payload.get('case_id'):
                 from monitor.threadcache import put_message
-                data['CacheEvidenceId']=put_message(h,dict(case_id=payload['case_id'],message=data))['body_evidence_id']
+                data['CacheEvidenceId']=put_message(h,dict(case_id=payload['case_id'],action_ids=payload['action_ids'],message=data))['body_evidence_id']
         else:data=result
     elif operation=='calendars':
         result=call(dict(action='calendar-list'),runner)

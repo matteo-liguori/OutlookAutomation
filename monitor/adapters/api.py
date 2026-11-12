@@ -13,7 +13,7 @@ MAC_FIELDS = {
     'folders':['source'],
     'recent':['source','start','end','limit','subject','unread_only','include_preview','folder','folder_id'],
     'search':['source','start','end','limit','query','unread_only','include_preview','folder','folder_id','max_scan'],
-    'read':['source','start','end','limit','entry_id','subject','unread_only','folder','folder_id','case_id','force_refresh','download_large_attachments','download_attachments'],
+    'read':['source','start','end','limit','entry_id','subject','unread_only','folder','folder_id','case_id','action_ids','force_refresh','download_large_attachments','download_attachments'],
     'collect':['source','start','end','page_size','max_scan','offset','snapshot_id','ingest_run','freshness'],
     'freshness':['source','freshness_minutes','interval_seconds','max_wait_seconds'],
     'draft-save':['source','approval_id','to','cc','bcc','subject','body','attachments','display_only'],
@@ -148,6 +148,13 @@ def invoke(operation,payload=None,h=None,profile=PROFILE):
                     instruction='This adapter does not implement this operation yet; no fallback or access was attempted.')
     if set(payload)-set(info['payload_fields'][operation]):
         raise ValueError('Unsupported '+operation+' field: '+', '.join(sorted(set(payload)-set(info['payload_fields'][operation]))))
+    if operation == 'read':
+        if payload.get('case_id'):
+            from monitor.threadcache import retained_owners
+            if h is None: raise ValueError('Provide the harness database for persistent reads')
+            retained_owners(h, payload['case_id'], payload.get('action_ids'))
+        elif payload.get('action_ids') or payload.get('download_attachments') or payload.get('download_large_attachments'):
+            raise ValueError('Provide case_id and explicit action_ids for attachment saves')
     config=platform_settings(profile)
     source=payload.pop('source',None)
     if operation.startswith('calendar'):
