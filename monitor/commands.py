@@ -355,11 +355,13 @@ def handle_maintenance(h, args, payload, kind):
 
 
 def handle_thread(h, args, payload, kind):
-    from .threadcache import put_message, find_message, folder, require_open, register_attachment, snapshot, attachment_path
+    from .threadcache import put_message, find_message, folder, require_open, register_attachment, snapshot, attachment_path, bind_assets
 
     op = args.operation
     if op == "put":
         return put_message(h, payload)
+    if op == 'bind':
+        return bind_assets(h, payload)
     if op == "find":
         return find_message(h, payload)
     if op == "attachment":

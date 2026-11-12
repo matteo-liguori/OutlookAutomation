@@ -328,6 +328,8 @@ class CaseRecords:
                 self.db.execute("INSERT INTO decisions VALUES(?,?,?)", (d["id"], cid, dumps(d)))
             for aid, _ in spent_approvals:
                 self.db.execute("DELETE FROM approvals WHERE id=?", (aid,))
+            from .threadcache import queue_action_cleanup
+            queue_action_cleanup(self, cid)
             # Reviewing/rescheduling unchanged work must not manufacture a new
             # user-facing case change. Never clear an older unreported change.
             after = self.case(cid)

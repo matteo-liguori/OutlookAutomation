@@ -56,7 +56,7 @@ def parser():
     maintenance.add_parser("register").add_argument("--input", required=True)
     maintenance.add_parser("threads")
     thread = sub.add_parser("thread").add_subparsers(dest="operation", required=True)
-    for operation in ("put", "find", "attachment", "attachment-path", "snapshot-put"):
+    for operation in ("put", "find", "attachment", "attachment-path", "snapshot-put", "bind"):
         thread.add_parser(operation).add_argument("--input", required=True)
     for operation in ("messages", "path", "snapshot-get"):
         thread.add_parser(operation).add_argument("id")

@@ -30,7 +30,7 @@ def startup(h):
         previous = json.loads(row[0])
         overdue = h.db.execute("SELECT 1 FROM cases WHERE status='closed' AND json_extract(details,'$.expires_at')<=? LIMIT 1", (now(),)).fetchone()
         queued = h.db.execute('SELECT 1 FROM thread_cleanup LIMIT 1').fetchone()
-        if previous.get("at", "")[:10] == now()[:10] and not previous.get("failures") and not overdue and not queued:
+        if previous.get('action_cache_version') == 1 and previous.get("at", "")[:10] == now()[:10] and not previous.get("failures") and not overdue and not queued:
             return
     sweep(h)
 
@@ -48,6 +48,15 @@ def require_open(h, cid):
     if c["status"] != "open":
         raise ValueError("Cannot cache assets for a closed thread")
     return c
+
+
+def action_owners(h, cid, requested=None):
+    active = {a['id'] for a in require_open(h, cid)['actions'] if a['status'] in OPEN}
+    if requested is None:
+        return sorted(active)
+    if not isinstance(requested, list) or any(not isinstance(a, str) or a not in active for a in requested):
+        raise ValueError('Cache action_ids must name unfinished actions in this card')
+    return sorted(set(requested))
 
 
 def message_parts(message):
@@ -72,6 +81,10 @@ def put_message(h, payload):
     with h.write():
         require_open(h, cid)
         old=h.db.execute('SELECT metadata FROM thread_messages WHERE case_id=? AND message_key=?',(cid,key)).fetchone()
+        owners = action_owners(h, cid, payload.get('action_ids', metadata.pop('CacheActionIds', None)))
+        previous = json.loads(old[0]).get('CacheActionIds', []) if old else []
+        active = set(action_owners(h, cid))
+        metadata['CacheActionIds'] = sorted(set(owners) | (set(previous) & active))
         locators=json.loads(old[0]).get('CacheLocators',[]) if old else []
         locator=[metadata.get('StoreId',metadata.get('store_id')),metadata.get('EntryId',metadata.get('entry_id'))]
         if all(locator) and locator not in locators:locators.append(locator)
@@ -81,6 +94,8 @@ def put_message(h, payload):
     metadata['CacheEvidenceId'] = eid
     with h.write():
         h.db.execute('UPDATE thread_messages SET metadata=? WHERE case_id=? AND message_key=?', (dumps(metadata),cid,key))
+        if not metadata['CacheActionIds']:
+            queue_action_cleanup(h, cid)
     from .approvals import sending_notice
     return {"case_id": cid, "message_key": key, "body_evidence_id": eid, **sending_notice(h, cid)}
 
@@ -111,20 +126,100 @@ def register_attachment(h, payload):
     cid = payload["case_id"]
     with h.write():
         require_open(h, cid)
+        owners = action_owners(h, cid, payload.get('action_ids'))
         path = Path(payload["path"]).absolute()
         base = folder(h, cid) / "attachments"
         checked_path(h.path.parent, path)
         if not path.resolve().is_relative_to(base) or not path.is_file():
             raise ValueError("Attachment must be in its owning thread's attachment folder")
         sha = file_hash(path)
-        old = h.db.execute("SELECT path FROM thread_attachments WHERE case_id=? AND sha256=?", (cid, sha)).fetchone()
+        old = h.db.execute("SELECT path,details FROM thread_attachments WHERE case_id=? AND sha256=?", (cid, sha)).fetchone()
         if old and Path(old[0]).is_file() and Path(old[0]).resolve() != path.resolve():
             path.unlink()
             path = Path(old[0])
         details = {k: v for k, v in payload.items() if k not in {"case_id", "path"}}
+        previous = json.loads(old[1]).get('action_ids', []) if old else []
+        details['action_ids'] = sorted(set(owners) | (set(previous) & set(action_owners(h, cid))))
         details.update(bytes=path.stat().st_size)
         h.db.execute("INSERT INTO thread_attachments VALUES(?,?,?,?) ON CONFLICT(case_id,sha256) DO UPDATE SET path=excluded.path,details=excluded.details", (cid, sha, str(path), dumps(details)))
+        if not details['action_ids']:
+            queue_action_cleanup(h, cid)
     return {"case_id": cid, "sha256": sha, "path": str(path)}
+
+
+def bind_assets(h, payload):
+    """Reconcile exact existing assets; an empty owner list releases their cache."""
+    cid = payload['case_id']
+    with h.write():
+        owners = action_owners(h, cid, payload['action_ids'])
+        h.limited(payload, 'reason', 600)
+        if not payload.get('evidence_ids'):
+            raise ValueError('Cache binding requires evidence_ids')
+        h.evidence_exists(payload['evidence_ids'])
+        selections = [('thread_messages', 'message_key', 'metadata', 'CacheActionIds', payload.get('message_keys', [])),
+                      ('thread_attachments', 'sha256', 'details', 'action_ids', payload.get('attachment_sha256', []))]
+        count = 0
+        for table, key, column, owner_key, selected in selections:
+            if not isinstance(selected, list) or any(not isinstance(s, str) or not s for s in selected):
+                raise ValueError('Select exact cache identifiers')
+            for identifier in set(selected):
+                row = h.db.execute(f'SELECT {column} FROM {table} WHERE case_id=? AND {key}=?', (cid, identifier)).fetchone()
+                if not row:
+                    raise ValueError('Unknown cache asset in this card: ' + identifier)
+                details = json.loads(row[0]); details[owner_key] = owners
+                h.db.execute(f'UPDATE {table} SET {column}=? WHERE case_id=? AND {key}=?', (dumps(details), cid, identifier))
+                count += 1
+        if not count:
+            raise ValueError('Select at least one cached message or attachment')
+        queue_action_cleanup(h, cid)
+    return dict(case_id=cid, assets_bound=count, action_ids=owners)
+
+
+def queue_action_cleanup(h, cid):
+    h.db.execute("INSERT OR IGNORE INTO thread_cleanup VALUES(?,?)", (cid, dumps({'reason': 'action-cache-reconciliation'})))
+    h._thread_dirty = True
+
+
+def prune_action_cache(h, case):
+    """Only disposable local copies; preserve shared live owners and pending sends."""
+    cid = case['id']
+    if any(pending_approval(json.loads(r[0])) for r in h.db.execute('SELECT details FROM approvals WHERE case_id=?', (cid,))):
+        return dict(messages_deleted=0, attachments_deleted=0, pending_approval=True)
+    active = {a['id'] for a in case['actions'] if a['status'] in OPEN}
+    result = dict(messages_deleted=0, attachments_deleted=0)
+    keep_paths, keep_hashes = set(), set()
+    for row in h.db.execute('SELECT message_key,metadata FROM thread_messages WHERE case_id=?', (cid,)).fetchall():
+        meta = json.loads(row['metadata'])
+        owners = sorted(set(meta.get('CacheActionIds', active)) & active)
+        if not owners:
+            h.db.execute('DELETE FROM thread_messages WHERE case_id=? AND message_key=?', (cid, row['message_key']))
+            result['messages_deleted'] += 1
+            continue
+        meta['CacheActionIds'] = owners
+        h.db.execute('UPDATE thread_messages SET metadata=? WHERE case_id=? AND message_key=?', (dumps(meta), cid, row['message_key']))
+        for asset in meta.get('CachedAttachments', []):
+            if asset.get('path'): keep_paths.add(str(Path(asset['path']).absolute()))
+            if asset.get('sha256'): keep_hashes.add(asset['sha256'])
+    for row in h.db.execute('SELECT * FROM thread_attachments WHERE case_id=?', (cid,)).fetchall():
+        details = json.loads(row['details'])
+        owners = sorted(set(details.get('action_ids', active)) & active)
+        if owners or row['sha256'] in keep_hashes or str(Path(row['path']).absolute()) in keep_paths:
+            details['action_ids'] = owners
+            h.db.execute('UPDATE thread_attachments SET details=? WHERE case_id=? AND sha256=?', (dumps(details), cid, row['sha256']))
+            continue
+        path = checked_path(folder(h, cid) / 'attachments', row['path'])
+        if path.exists():
+            from .maintenance import file_hash
+            if not path.is_file() or file_hash(path) != row['sha256']:
+                raise ValueError('Cached attachment changed; reconcile before deletion: ' + path.name)
+            path.unlink()
+        h.db.execute('DELETE FROM thread_attachments WHERE case_id=? AND sha256=?', (cid, row['sha256']))
+        result['attachments_deleted'] += 1
+    # Rendered cards are also disposable, and may contain the retired action.
+    rendered = checked_path(folder(h, cid), folder(h, cid) / 'thread-card.html')
+    rendered.unlink(missing_ok=True)
+    h.db.execute('DELETE FROM thread_cleanup WHERE case_id=?', (cid,))
+    return result
 
 
 def checked_path(root, path):
@@ -221,12 +316,20 @@ def expire_case(db, cid):
 def sweep(h, at=None):
     if getattr(h,"_thread_sweeping",False):return {'already_running':True}
     at = stamp(at or now())
-    result = {"closed_caches_deleted": 0, "expired_threads": 0, "failures": []}
+    result = {"closed_caches_deleted": 0, "expired_threads": 0, "action_messages_deleted": 0, "action_attachments_deleted": 0, "action_cache_version": 1, "failures": []}
     h._thread_sweeping = True
     try:
         with h.write():
             for c in h.all_cases():
                 if c["status"] != "closed":
+                    try:
+                        pruned = prune_action_cache(h, c)
+                        result['action_messages_deleted'] += pruned['messages_deleted']
+                        result['action_attachments_deleted'] += pruned['attachments_deleted']
+                    except (OSError, ValueError) as exc:
+                        failure = dict(case_id=c['id'], error=str(exc)[:400])
+                        result['failures'].append(failure)
+                        h.db.execute('INSERT INTO thread_cleanup VALUES(?,?) ON CONFLICT(case_id) DO UPDATE SET details=excluded.details', (c['id'], dumps(failure)))
                     continue
                 pending = [json.loads(r[0]) for r in h.db.execute("SELECT details FROM approvals WHERE case_id=?", (c["id"],))]
                 if any(pending_approval(a) for a in pending):

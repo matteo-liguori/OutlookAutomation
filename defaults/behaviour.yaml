@@ -103,6 +103,7 @@ instructions:
     One current card contains context, position, review/report markers and evidence
     index; its displayed actions are canonical harness rows. Apply upkeep on due work,
     related evidence or explicit requests. Recognition entries are not review triggers.
+    Follow help retention when retiring work; scope working notes to action_ids.
 
     Commands below take `--input -`:
 
@@ -281,7 +282,14 @@ instructions:
   thread-cache: |-
     ## Thread cache
 
-    `thread put --input -` takes case_id and message (the full email with metadata/body).
+    `thread put --input -` takes case_id, action_ids and message (the full email with metadata/body).
+    Anchor cached messages and attachments to the unfinished actions that need them.
+    `thread attachment` also accepts action_ids. If omitted, existing helpers bind
+    to the card's current unfinished actions; narrow that scope after reading.
+    `thread bind --input -` takes case_id, exact message_keys/attachment_sha256,
+    action_ids, reason and evidence_ids. Use it to reconcile ownership; [] releases
+    selected copies. It cannot change server mail. Shared copies survive until their
+    final unfinished owner ends; pending send approvals protect required material.
 
     Relevant mail is in thread_messages; attachments in
     `<data-root>/monitor/threads/<case-id>/attachments/` (safe path from `thread path`).
@@ -291,6 +299,18 @@ instructions:
     `thread messages/find` retrieves metadata/bodies; attachment-path/attachment allocates/registers.
     Routine unrelated mail is not persistently cached; portal outcomes need date/reference.
   retention: |-
+    All cards keep only current, relevant work and standing rules. At each action
+    completion, remove spent preparation, obsolete context and duplicate history in
+    the same card replacement. Do not retain a diary of completed work.
+    Put temporary working notes in decisions with action_ids so their final action
+    automatically removes them. Keep enduring preferences and still-relevant facts
+    in context; trim obsolete free text during the completion replacement.
+    Local cached emails, rendered thread cards and attachments belong to actions,
+    not the lifetime of an open card. Completion/dismissal automatically deletes
+    copies with no unfinished owner. Keep only brief source identifiers needed to
+    retrieve the originals from the email server. Reconcile older caches with
+    thread bind; preserve another unfinished action's copies and pending sends.
+
     Closure deletes bodies/assets, keeping compact outcome/source IDs for 365 days,
     then expires thread-specific records/evidence. Preserve expiry dates on reads and
     start fresh on reopening. Retain useful open caches and unresolved approvals;
