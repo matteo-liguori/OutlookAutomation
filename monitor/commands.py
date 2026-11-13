@@ -10,8 +10,8 @@ def read_payload(path):
 
 
 def handle_guard(h, args, payload, kind):
-    from .scheduled_guard import check
-    return check()
+    from .scheduled_guard import notice
+    return notice()
 
 
 def handle_init(h, args, payload, kind):
@@ -457,8 +457,8 @@ HANDLERS = {
 def execute(h,args):
     if args.command == 'guard':
         return HANDLERS['guard'](None, args, None, 'guard')
-    from .scheduled_guard import enforce
-    enforce()
+    from .scheduled_guard import emit_warning
+    emit_warning()
     from .configuration import snapshot, resolve
     from .extensions import effective
     payload=read_payload(args.input) if getattr(args,'input',None) else None

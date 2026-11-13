@@ -12,7 +12,7 @@ import unittest
 from unittest.mock import patch
 from zoneinfo import ZoneInfo
 
-from monitor.scheduled_guard import check, StaleAutomation
+from monitor.scheduled_guard import check, notice
 
 
 class ScheduledGuardTests(unittest.TestCase):
@@ -25,7 +25,8 @@ class ScheduledGuardTests(unittest.TestCase):
             db.execute('CREATE TABLE threads(id TEXT, name TEXT, rollout_path TEXT)')
             db.execute('INSERT INTO threads VALUES(?,?,?)',
                        ('test-chat', 'Mail check 11/11/2026', str(self.rollout)))
-        self.env = patch.dict(os.environ, CODEX_THREAD_ID='test-chat', CODEX_HOME=str(self.home))
+        self.env = patch.dict(os.environ, CODEX_THREAD_ID='test-chat', CODEX_HOME=str(self.home),
+                              OUTLOOK_AUTOMATION_DATA=str(self.home/'private'))
         self.env.start()
         self.addCleanup(self.env.stop)
         self.zone = patch('monitor.scheduled_guard.zone', return_value=ZoneInfo('Europe/London'))
@@ -52,17 +53,19 @@ class ScheduledGuardTests(unittest.TestCase):
         with contextlib.closing(sqlite3.connect(self.home/'state_5.sqlite')) as db, db:
             db.execute('UPDATE threads SET name=?', (value,))
 
-    def test_old_scheduled_chat_stops_with_exact_cleanup_instruction(self):
+    def test_old_scheduled_chat_gets_advice_without_stop_or_cancellation(self):
         result = check()
-        self.assertEqual(result['status'], 'blocked')
+        self.assertEqual(result['status'], 'warning')
         self.assertEqual(result['automation_id'], 'test-wake')
-        self.assertEqual(result['instruction'], 'Wrong day: stale automation. Stop and cancel this automation.')
+        self.assertIn('Continue if', result['instruction'])
+        self.assertNotIn('stop', result)
+        self.assertNotIn('cleanup', result)
         self.assertEqual(result['chat_date'], '2026-11-11')
 
-    def test_latest_user_turn_is_exempt_despite_old_heartbeat_and_old_title(self):
+    def test_live_user_turn_also_gets_soft_warning_with_correct_attribution(self):
         for trigger in ('composer', 'queue'):
             self.turn(trigger, append=True)
-            self.assertEqual(check()['status'], 'allowed')
+            self.assertEqual(check()['status'], 'warning')
             self.assertFalse(check()['scheduled'])
 
     def test_today_scheduled_chat_allowed(self):
@@ -80,65 +83,101 @@ class ScheduledGuardTests(unittest.TestCase):
         self.title('Mail check 14/06/2026')
         self.assertEqual(check(at='2026-06-13T23:30:00+00:00')['status'], 'allowed')
 
-    def test_known_scheduled_turn_without_parseable_title_stops(self):
+    def test_undated_chats_do_not_warn(self):
         self.title('Unknown date')
-        self.assertEqual(check()['status'], 'blocked')
+        self.assertEqual(check()['status'], 'allowed')
         self.assertIsNone(check()['chat_date'])
 
     def test_malformed_records_do_not_crash_or_override_valid_attribution(self):
         with self.rollout.open('a') as stream:
             stream.write('\n'.join(['{', 'null', '[]', '{"payload":null}',
                                    '{"type":"response_item","payload":{"role":"user","content":null}}']))
-        self.assertEqual(check()['status'], 'blocked')
+        self.assertEqual(check()['status'], 'warning')
 
     def test_unavailable_metadata_is_read_only_and_cannot_classify_turn(self):
         (self.home/'state_5.sqlite').unlink()
         self.assertFalse(check()['scheduled'])
         self.assertFalse((self.home/'state_5.sqlite').exists())
 
-    def test_cli_blocks_before_database_constructor(self):
+    def test_cli_warning_does_not_block_command_and_is_not_duplicated(self):
         from monitor.__main__ import main
-        with patch('sys.argv', ['monitor', 'briefing']), patch('monitor.__main__.Harness') as harness:
-            with contextlib.redirect_stderr(io.StringIO()) as output, self.assertRaises(SystemExit) as stopped:
+        with patch('sys.argv', ['monitor', 'help', 'guard']):
+            with contextlib.redirect_stderr(io.StringIO()) as output, contextlib.redirect_stdout(io.StringIO()) as response:
                 main()
-            self.assertEqual(stopped.exception.code, 3)
-            self.assertIn('Wrong day: stale automation', output.getvalue())
-            harness.assert_not_called()
+            self.assertEqual(output.getvalue().count('chat_date_warning'), 1)
+            self.assertIn('scheduled-guard', response.getvalue())
 
-    def test_programmatic_dispatch_is_also_guarded(self):
+    def test_programmatic_dispatch_continues_after_warning(self):
         from monitor.commands import execute
         from monitor.__main__ import parser
-        with patch('monitor.commands.read_payload') as payload:
-            with self.assertRaises(StaleAutomation):
-                execute(None, parser().parse_args(['briefing']))
-            payload.assert_not_called()
+        with contextlib.redirect_stderr(io.StringIO()) as output:
+            result = execute(None, parser().parse_args(['help', 'guard']))
+        self.assertIn('scheduled-guard', json.dumps(result))
+        self.assertIn('This chat might be stale', output.getvalue())
 
     def test_core_guard_command_returns_decision_without_database(self):
         from monitor.commands import execute, HANDLERS
         from monitor.__main__ import parser
         self.assertIn('guard', HANDLERS)
-        self.assertEqual(execute(None, parser().parse_args(['guard']))['status'], 'blocked')
+        self.assertEqual(execute(None, parser().parse_args(['guard']))['status'], 'warning')
         self.turn('composer')
         self.assertEqual(execute(None, parser().parse_args(['guard']))['status'], 'allowed')
 
-    def test_core_help_documents_stop_and_cancellation(self):
+    def test_core_help_documents_advisory_and_cooldown(self):
         from monitor.guidance import help_for
         result = help_for(['guard'])
-        self.assertIn('Stop and cancel this automation', json.dumps(result))
+        self.assertIn('30 minutes', json.dumps(result))
+
+    def test_cooldown_is_per_chat_and_expires_at_half_hour(self):
+        self.assertEqual(notice()['status'], 'warning')
+        with patch('monitor.scheduled_guard.now', return_value='2026-11-13T09:29:59+00:00'):
+            self.assertTrue(notice()['warning_suppressed'])
+        with patch('monitor.scheduled_guard.now', return_value='2026-11-13T09:30:00+00:00'):
+            self.assertEqual(notice()['status'], 'warning')
+        with patch.dict(os.environ, CODEX_THREAD_ID='other-chat'), patch('monitor.scheduled_guard._metadata',
+                return_value=('Mail check 11/11/2026', None, None)):
+            self.assertEqual(notice()['status'], 'warning')
+
+    def test_date_warning_survives_missing_trigger_metadata(self):
+        self.rollout.unlink()
+        self.assertEqual(check()['status'], 'warning')
+
+    def test_cooldown_failure_is_advisory(self):
+        with patch('monitor.scheduled_guard.sqlite3.connect', side_effect=sqlite3.OperationalError('fixture')):
+            with patch('monitor.scheduled_guard.check', return_value=dict(status='warning')):
+                self.assertTrue(notice()['cooldown_unavailable'])
+
+    def test_expired_records_are_pruned_without_retaining_chat_names(self):
+        notice()
+        with patch('monitor.scheduled_guard.now', return_value='2026-11-13T10:00:00+00:00'):
+            notice()
+        with contextlib.closing(sqlite3.connect(self.home/'private/monitor/chat-warning.sqlite')) as db:
+            rows = db.execute('SELECT chat,expires FROM cooldown').fetchall()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(len(rows[0][0]), 64)
+
+    def test_concurrent_commands_claim_only_one_warning(self):
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            results = list(pool.map(lambda _: notice()['status'], range(8)))
+        self.assertEqual(results.count('warning'), 1)
 
     @unittest.skipUnless(os.name == 'nt', 'Windows helper preflight')
-    def test_windows_namespace_stops_before_com(self):
+    def test_windows_warning_is_advisory_and_cooldown_survives_subprocesses(self):
         self.title('Mail check 01/01/1900')
         root = Path(__file__).resolve().parents[1]
         helper = str(root/'monitor/adapters/windows/OutlookAutomation.Common.ps1').replace("'", "''")
-        # Override COM entry so a regression cannot touch the real user's Outlook.
+        # Stop at session preflight, so the real COM entry can never be reached.
         script = f". '{helper}'; function Get-OutlookSessionState {{ throw 'REACHED_COM' }}; "
         script += "try { Get-OutlookAutomationNamespace; exit 9 } catch { Write-Output $_; exit 3 }"
         result = subprocess.run([shutil.which('pwsh') or 'powershell', '-NoProfile', '-Command', script],
                                 capture_output=True, text=True, timeout=30, cwd=root)
         self.assertEqual(result.returncode, 3, result.stdout+result.stderr)
-        self.assertIn('Wrong day: stale automation', result.stdout)
-        self.assertNotIn('REACHED_COM', result.stdout+result.stderr)
+        self.assertIn('This chat might be stale', result.stdout)
+        self.assertIn('REACHED_COM', result.stdout+result.stderr)
+        from monitor.model import now as current_time
+        with patch('monitor.scheduled_guard.now', return_value=current_time()):
+            self.assertTrue(notice()['warning_suppressed'])
 
 
 if __name__ == '__main__':

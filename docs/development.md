@@ -1,8 +1,8 @@
 # Development
 
-The shared core enforces the scheduled chat-date guard before database or live
-access. `guard` is the read-only preflight command; `help guard` owns its procedure
-and limitations. It uses each installation's configured chat-title format and timezone.
+The shared core emits an advisory for mismatched chat dates, at most once per chat
+every 30 minutes across processes. `guard` exposes it; `help guard` owns the
+procedure, private cooldown storage and limitations. Commands continue normally.
 
 This is an alpha. Keep the common `monitor` interface stable across adapters;
 internal helper paths may change. Use a development branch and preserve private data.

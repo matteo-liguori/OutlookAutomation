@@ -9,7 +9,10 @@ function Assert-OutlookScheduledChatDate {
     Push-Location $script:ProjectRoot
     try {
         $result = & $guardPython -X utf8 -m monitor --format json guard
-        if ($LASTEXITCODE -ne 0) { throw ($result -join "`n") }
+        if ($LASTEXITCODE -eq 0) {
+            $notice = ($result -join "`n") | ConvertFrom-Json
+            if ($notice.status -eq 'warning') { Write-Warning $notice.instruction }
+        }
     }
     finally { Pop-Location }
 }
