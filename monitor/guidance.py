@@ -52,6 +52,7 @@ def guide(topic):
 
 
 COMMAND_TOPICS = {
+    'guard':'scheduled-guard',
     'sending':'mail-helpers', 'config':'configuration', 'extension':'extensions', 'update':'updates', 'action run':'custom-actions',
     'case edit': 'card-input', 'case note-ack': 'card-input',
     'briefing': 'briefing',

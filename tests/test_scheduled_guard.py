@@ -113,6 +113,19 @@ class ScheduledGuardTests(unittest.TestCase):
                 execute(None, parser().parse_args(['briefing']))
             payload.assert_not_called()
 
+    def test_core_guard_command_returns_decision_without_database(self):
+        from monitor.commands import execute, HANDLERS
+        from monitor.__main__ import parser
+        self.assertIn('guard', HANDLERS)
+        self.assertEqual(execute(None, parser().parse_args(['guard']))['status'], 'blocked')
+        self.turn('composer')
+        self.assertEqual(execute(None, parser().parse_args(['guard']))['status'], 'allowed')
+
+    def test_core_help_documents_stop_and_cancellation(self):
+        from monitor.guidance import help_for
+        result = help_for(['guard'])
+        self.assertIn('Stop and cancel this automation', json.dumps(result))
+
     @unittest.skipUnless(os.name == 'nt', 'Windows helper preflight')
     def test_windows_namespace_stops_before_com(self):
         self.title('Mail check 01/01/1900')

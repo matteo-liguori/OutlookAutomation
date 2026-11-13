@@ -1,5 +1,10 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.2` adds the shared core scheduled chat-date guard and
+its `guard` / `help guard` commands, plus the action-owned cache and retention
+enforcement already on main. The guard needs no dependency or database migration;
+existing installation-specific title formats, timezone and private data are preserved.
+
 Normal briefings check for tagged updates at most once per day, using a local
 cache. `update check --force` checks now; `update status` shows cached results.
 Only `harness-update/vMAJOR.MINOR.PATCH` tags (optionally `-alpha.N`, `-beta.N`,
