@@ -23,6 +23,10 @@ migration requires the combined private backup, not just an older Git checkout.
 Your edited customisations remain in effect. When a changed default overlaps an
 override, the harness shows the old override and new default for a decision.
 
+Use a separate worktree for release preparation; keep the automation checkout on
+its installed branch. Follow the required real-installation validation in
+[Development](development.md) after tests and before declaring the update usable.
+
 To publish a noteworthy update, finish and test its commit on `main`, create an
 annotated `harness-update/v...` tag there with a short change/migration summary,
 and push that tag explicitly. Ordinary development commits do not trigger notices.

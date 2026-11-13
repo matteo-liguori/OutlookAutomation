@@ -64,6 +64,68 @@ class ConfigurationTests(unittest.TestCase):
         settings['timezone']='Europe/London';settings['invented']=True;atomic(path,dump(settings))
         with self.assertRaisesRegex(ValueError,'Unknown|unknown'):resolve(self.user,profile={},default_file=self.public)
 
+    def test_older_defaults_accept_only_recorded_unedited_removed_setting(self):
+        full=read_yaml(self.public)
+        full['instructions']['future_feature']='Feature-specific default guidance'
+        atomic(self.public,dump(full));self.init()
+        path,state=paths(self.user)
+        reduced=read_yaml(self.public);del reduced['instructions']['future_feature']
+        atomic(self.public,dump(reduced))
+        before=(path.read_bytes(),state.read_bytes())
+        current=resolve(self.user,profile={},default_file=self.public)
+        self.assertNotIn('future_feature',current.values['instructions'])
+        self.assertEqual((path.read_bytes(),state.read_bytes()),before)
+        # An edited preference must not be silently ignored or deleted.
+        user=read_yaml(path);user['instructions']['future_feature']='My explicit instruction'
+        atomic(path,dump(user));edited=(path.read_bytes(),state.read_bytes())
+        with self.assertRaisesRegex(ValueError,'future_feature'):
+            resolve(self.user,profile={},default_file=self.public)
+        with self.assertRaisesRegex(ValueError,'future_feature'):
+            sync(self.user,profile={},default_file=self.public)
+        self.assertEqual((path.read_bytes(),state.read_bytes()),edited)
+        # Reconciliation can remove the unchanged prefill, then restore it on upgrade.
+        user['instructions']['future_feature']=full['instructions']['future_feature']
+        user['reviews']['card_days']=3;atomic(path,dump(user))
+        sync(self.user,profile={},default_file=self.public)
+        self.assertNotIn('future_feature',read_yaml(path)['instructions'])
+        self.assertEqual(read_yaml(path)['reviews']['card_days'],3)
+        atomic(self.public,dump(full));sync(self.user,profile={},default_file=self.public)
+        self.assertEqual(read_yaml(path)['instructions']['future_feature'],full['instructions']['future_feature'])
+
+    def test_unknown_setting_without_baseline_proof_still_fails(self):
+        self.init();path,state=paths(self.user)
+        user=read_yaml(path);user['instructions']['unknown_feature']='Unrecognised value'
+        atomic(path,dump(user))
+        with self.assertRaisesRegex(ValueError,'unknown_feature'):
+            resolve(self.user,profile={},default_file=self.public)
+        state.unlink()
+        with self.assertRaisesRegex(ValueError,'unknown_feature'):
+            resolve(self.user,profile={},default_file=self.public)
+
+    def test_real_cli_opens_existing_installation_after_default_removed(self):
+        import os
+        import subprocess
+        import sys
+        full=read_yaml(self.public);full['updates']['enabled']=False
+        full['instructions']['future_feature']='Feature-specific default guidance'
+        atomic(self.public,dump(full));self.init()
+        env=dict(os.environ,OUTLOOK_AUTOMATION_CUSTOMISATIONS=str(paths(self.user)[0]))
+        env.pop('CODEX_THREAD_ID',None)
+        def cli(*args):
+            code=('from pathlib import Path; import monitor.configuration as c; '
+                  f'c.DEFAULT_FILE=Path({str(self.public)!r}); '
+                  'from monitor.__main__ import main; main()')
+            return subprocess.run([sys.executable,'-X','utf8','-c',code,'--db',
+                                   str(self.root/'installed.db'),'--format','json',*args],
+                                  env=env,capture_output=True,text=True,timeout=30)
+        initialized=cli('init')
+        self.assertEqual(initialized.returncode,0,initialized.stderr)
+        del full['instructions']['future_feature'];atomic(self.public,dump(full))
+        for args in [('config','validate'),('briefing','--task','validation'),('doctor',)]:
+            result=cli(*args)
+            self.assertEqual(result.returncode,0,result.stderr)
+            self.assertNotIn('"error"',result.stdout)
+
     def test_card_override_and_dynamic_timezone_schedule(self):
         from monitor.timing import plan,verify
         config=resolve(self.root/'empty',profile={},default_file=self.public)

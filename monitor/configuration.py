@@ -160,7 +160,11 @@ def resolve(root=None, profile=None, default_file=None, card=None):
             user=read_yaml(custom);state=json.loads(state_path.read_text(encoding='utf-8')) if state_path.exists() else {}
             old=dict(leaves(state.get('baseline',base)));new=dict(leaves(base))
             for key,v in leaves(user):
-                if key not in new:raise ValueError('Removed/unknown setting needs migration: '+key)
+                if key not in new:
+                    # A fuller/newer checkout may have prefilled this setting.
+                    # Only a recorded, unedited default is safe to leave dormant.
+                    if key in old and v==old[key]:continue
+                    raise ValueError('Removed/unknown setting needs migration: '+key)
                 if key in old and v==old[key]:continue
                 assign(values,key,v);origins[key]='user'
             reviews=state.get('reviews',[])
@@ -232,6 +236,12 @@ def sync(root=None, profile=None, default_file=None):
                 if section in profile:
                     for key,v in leaves({section:profile[section]}):assign(user,key,v)
             existing=dict(leaves(user))
+        for key,v in existing.items():
+            if key not in new and key in old and v==old[key]:
+                parent=user
+                parts=key.split('.')
+                for part in parts[:-1]:parent=parent[part]
+                del parent[parts[-1]]
         for key,v in new.items():
             if key not in existing or existing[key]==old.get(key):assign(user,key,v)
             elif old.get(key)!=v and existing[key]!=v:

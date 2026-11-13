@@ -2,6 +2,7 @@
   ".gitattributes": ".gitattributes",
   ".gitignore": ".gitignore",
   "AGENTS.md": "AGENTS.md",
+  "tools/smoke_harness.py": "tools/smoke_harness.py",
   "LICENSE.md": "LICENSE.md",
   "README.md": "README.md",
   "defaults/behaviour.yaml": "defaults/behaviour.yaml",

@@ -14,3 +14,6 @@ outcomes. Preserve read state and disclose incomplete coverage.
 Setup: README.md. Development/layout: docs/development.md. Keep rules brief and in
 one home. Keep temporary executable work in memory or an action-owned harness file.
 Commit reusable code, defaults and tests; keep experiments in private bundles.
+
+After harness changes, pass the automated tests and the real-installation validation
+in docs/development.md before reporting success or publishing.

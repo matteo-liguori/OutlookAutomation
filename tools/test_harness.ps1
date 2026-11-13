@@ -1,4 +1,4 @@
-# Offline tests only. No Outlook instance, mailbox or calendar is mutated.
+# Offline tests, then an installed-configuration smoke check. No mail/calendar calls.
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot/../monitor/adapters/windows/AutomationEnvironment.Common.ps1"
 $python = Get-AutomationPython -RequiredModules @('caldav', 'icalendar')
@@ -16,6 +16,11 @@ try {
     & $python -X utf8 -m unittest discover -s tests @args
     if ($LASTEXITCODE -ne 0) {
         throw 'Harness regression tests failed.'
+    }
+    $env:OUTLOOK_AUTOMATION_PROFILE = $oldProfile
+    & $python -X utf8 tools/smoke_harness.py
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Installed harness smoke check failed; do not report success or publish.'
     }
 }
 finally {
