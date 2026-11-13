@@ -17,6 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\OutlookAutomation.Common.ps1"
 . "$PSScriptRoot\OutlookMonitoring.Common.ps1"
+Assert-OutlookScheduledChatDate
 [void](Assert-OutlookRestartSession)
 
 function Get-ClassicOutlookPath {

@@ -449,6 +449,8 @@ HANDLERS = {
 
 
 def execute(h,args):
+    from .scheduled_guard import enforce
+    enforce()
     from .configuration import snapshot, resolve
     from .extensions import effective
     payload=read_payload(args.input) if getattr(args,'input',None) else None
