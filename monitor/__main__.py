@@ -15,6 +15,7 @@ def parser():
     p.add_argument("--cursor")
     p.add_argument("--limit", type=int, default=50)
     sub = p.add_subparsers(dest="command", required=True)
+    sub.add_parser('guard', help='Read-only scheduled mail-chat date preflight')
     ui = sub.add_parser('ui', help='Open the local card grid, action timeline and card editor')
     ui.add_argument('--port', type=int, default=0, help='Local port; default selects a free port')
     ui.add_argument('--no-browser', action='store_true')
@@ -160,6 +161,12 @@ def main():
         raise SystemExit("--limit must be 1..100")
     h = None
     try:
+        from .scheduled_guard import check, enforce, StaleAutomation
+        if args.command == 'guard':
+            result = check()
+            print(json.dumps(result, ensure_ascii=False))
+            raise SystemExit(3 if result['status'] == 'blocked' else 0)
+        enforce()  # Before SQLite, activation, extensions or live access.
         if args.command == 'ui':
             from .ui import serve
             if not 0 <= args.port <= 65535:
@@ -177,6 +184,9 @@ def main():
         if args.format == "markdown":
             rendered = markdown(result)
         print(rendered)
+    except StaleAutomation as exc:
+        print(json.dumps(exc.result, ensure_ascii=False), file=sys.stderr)
+        raise SystemExit(3)
     except (ValueError, KeyError, OSError, sqlite3.Error) as exc:
         error={"error": str(exc)}
         if args.command=='briefing':

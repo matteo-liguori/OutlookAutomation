@@ -205,6 +205,7 @@ function Get-OutlookStoreByName($ns,$storeName){
             common = r"""
 $global:fakeTimer=[pscustomobject]@{Elapsed=[pscustomobject]@{TotalSeconds=0.0}}
 $global:startCount=0
+function Assert-OutlookScheduledChatDate {}
 function Get-OutlookAutomationNamespace { [pscustomobject]@{Stores=@('fixture')} }
 function Assert-OutlookRestartSession { [pscustomobject]@{RestartEligible=$true;Status='active'} }
 function Get-ItemProperty {param($Path,$ErrorAction);[pscustomobject]@{'(default)'=(Join-Path $PSScriptRoot 'OUTLOOK.EXE')}}
@@ -274,7 +275,7 @@ function Find-OutlookFolder {param($store,$folder)
 
     def test_restart_refuses_missing_session_before_process_actions(self):
         with tempfile.TemporaryDirectory() as tmp:
-            common = "function Assert-OutlookRestartSession {throw 'desktop-session-unavailable fixture'}; function Get-Process {throw 'must not inspect processes'}; function Start-Process {throw 'must not launch'}"
+            common = "function Assert-OutlookScheduledChatDate {}; function Assert-OutlookRestartSession {throw 'desktop-session-unavailable fixture'}; function Get-Process {throw 'must not inspect processes'}; function Start-Process {throw 'must not launch'}"
             script = self.fixture(tmp, "Restart-ClassicOutlook.ps1", common)
             p = self.run_ps("-File", script)
             self.assertNotEqual(p.returncode, 0)

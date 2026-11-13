@@ -2,8 +2,21 @@ $script:OutlookFolderCache = @{}
 . "$PSScriptRoot\OutlookSession.Common.ps1"
 . "$PSScriptRoot\OutlookTransport.Common.ps1"
 
+function Assert-OutlookScheduledChatDate {
+    if (-not $env:CODEX_THREAD_ID) { return }
+    . "$PSScriptRoot\AutomationEnvironment.Common.ps1"
+    $guardPython = Get-AutomationPython
+    Push-Location $script:ProjectRoot
+    try {
+        $result = & $guardPython -X utf8 -m monitor --format json guard
+        if ($LASTEXITCODE -ne 0) { throw ($result -join "`n") }
+    }
+    finally { Pop-Location }
+}
+
 function Get-OutlookAutomationNamespace {
     param([ValidateRange(1, 3)][int]$Attempts = 3)
+    Assert-OutlookScheduledChatDate
     $sessionState = Get-OutlookSessionState
     for ($attempt = 1; $attempt -le $Attempts; $attempt++) {
         try {
