@@ -1,5 +1,9 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.3` replaces the blocking chat-date guard with an
+advisory for any mismatched dated chat. Commands continue normally, and a private
+SQLite cooldown limits warnings to once per chat every 30 minutes.
+
 `harness-update/v0.1.0-alpha.2` adds the shared core scheduled chat-date guard and
 its `guard` / `help guard` commands, plus the action-owned cache and retention
 enforcement already on main. The guard needs no dependency or database migration;

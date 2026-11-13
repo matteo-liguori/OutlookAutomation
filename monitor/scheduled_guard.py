@@ -1,7 +1,9 @@
-"""Stop scheduled work in old dated mail chats; direct replies remain usable."""
+"""Advisory chat-date checks with a persistent half-hour notification cooldown."""
+import hashlib
 import json
 import os
 import sqlite3
+import sys
 from contextlib import closing
 from datetime import datetime
 from pathlib import Path
@@ -9,12 +11,7 @@ from string import Formatter
 
 from .configuration import resolve, zone
 from .model import now
-
-
-class StaleAutomation(ValueError):
-    def __init__(self, result):
-        self.result = result
-        super().__init__(result['instruction'])
+from .paths import data_root
 
 
 def _metadata(thread, home):
@@ -24,6 +21,9 @@ def _metadata(thread, home):
                                     uri=True, timeout=1)) as db:
             title, path = db.execute('SELECT name, rollout_path FROM threads WHERE id=?',
                                      (thread,)).fetchone()
+    except (OSError, sqlite3.Error, TypeError, ValueError):
+        return None, None, None
+    try:
         with Path(path).open('rb') as stream:
             stream.seek(0, 2)
             stream.seek(max(0, stream.tell()-2*1024*1024))
@@ -57,7 +57,7 @@ def _metadata(thread, home):
                         pass
         return title, trigger, automation_id
     except (OSError, sqlite3.Error, TypeError, ValueError):
-        return None, None, None
+        return title, None, None
 
 
 def check(*, home=None, at=None):
@@ -66,8 +66,7 @@ def check(*, home=None, at=None):
         return dict(status='allowed', scheduled=False)
     home = Path(home or os.environ.get('CODEX_HOME', Path.home()/'.codex'))
     title, trigger, automation_id = _metadata(thread, home)
-    if not isinstance(trigger, str) or not trigger.startswith('automation_'):
-        return dict(status='allowed', scheduled=False, trigger=trigger)
+    scheduled = isinstance(trigger, str) and trigger.startswith('automation_')
     today = datetime.fromisoformat(at or now()).astimezone(zone()).date()
     chat_day = None
     try:
@@ -76,18 +75,43 @@ def check(*, home=None, at=None):
         chat_day = datetime.strptime(title, pattern).date()
     except (TypeError, ValueError):
         pass
-    if chat_day == today:
-        return dict(status='allowed', scheduled=True, chat_date=str(chat_day), date=str(today))
-    return dict(status='blocked', stop=True, scheduled=True, automation_id=automation_id,
-                chat_date=str(chat_day) if chat_day else None, date=str(today),
-                instruction='Wrong day: stale automation. Stop and cancel this automation.'
-                if chat_day else 'Cannot verify the mail chat date. Stop and cancel this automation.',
-                cleanup='Delete only the triggering automation through the app tool. Do not run mail checks, '
-                        'restart Outlook, send, write calendars, or create a replacement wake-up. '
-                        'Direct user replies in this chat may continue normally.')
+    if chat_day is None or chat_day == today:
+        return dict(status='allowed', scheduled=scheduled, chat_date=str(chat_day) if chat_day else None,
+                    date=str(today))
+    return dict(status='warning', scheduled=scheduled, automation_id=automation_id,
+                chat_date=str(chat_day), date=str(today),
+                instruction="This chat might be stale. Continue if you're interacting live with the user; "
+                            'otherwise check whether this is a stale automation.')
 
 
-def enforce():
+def notice():
+    """Claim one notification per chat per 30 minutes, across processes/adapters.
+
+    Retain only hashed chat identifiers and expiry timestamps in private SQLite.
+    Expired entries are pruned on the next warning; no timer or model wake is used.
+    """
     result = check()
-    if result['status'] == 'blocked':
-        raise StaleAutomation(result)
+    if result['status'] != 'warning':
+        return result
+    stamp = datetime.fromisoformat(now()).timestamp()
+    key = hashlib.sha256(os.environ['CODEX_THREAD_ID'].encode()).hexdigest()
+    path = data_root()/'monitor/chat-warning.sqlite'
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with closing(sqlite3.connect(path, timeout=2)) as db, db:
+            db.execute('CREATE TABLE IF NOT EXISTS cooldown (chat TEXT PRIMARY KEY, expires REAL NOT NULL)')
+            db.execute('BEGIN IMMEDIATE')
+            # Also recover from a workstation clock correction.
+            db.execute('DELETE FROM cooldown WHERE expires<=? OR expires>?', (stamp, stamp+1800))
+            if db.execute('SELECT 1 FROM cooldown WHERE chat=?', (key,)).fetchone():
+                return dict(status='allowed', warning_suppressed=True)
+            db.execute('INSERT INTO cooldown VALUES (?,?)', (key, stamp+1800))
+    except (OSError, sqlite3.Error):
+        result['cooldown_unavailable'] = True
+    return result
+
+
+def emit_warning():
+    result = notice()
+    if result['status'] == 'warning':
+        print(json.dumps(dict(chat_date_warning=result), ensure_ascii=False), file=sys.stderr)
