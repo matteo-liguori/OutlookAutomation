@@ -18,7 +18,7 @@ def validate(h, policy):
     if policy.get("basis") not in {"calendar", "working"}:
         raise ValueError("Review basis must be calendar or working")
     if policy["urgency"] in {"immediate", "high"} and days > resolve().get('reviews.urgent_max_days'):
-        raise ValueError("Immediate/high urgency cannot have more than three days between reviews")
+        raise ValueError('Immediate/high urgency cannot exceed reviews.urgent_max_days='+str(resolve().get('reviews.urgent_max_days')))
     h.limited(policy, "reason", 300)
     if not policy.get("evidence_ids"):
         raise ValueError("Review policy needs evidence")

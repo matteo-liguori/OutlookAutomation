@@ -39,8 +39,11 @@ if (@($mail.Values | ForEach-Object {$_.ToLowerInvariant()} | Select-Object -Uni
 }
 if (-not $Name.Trim()) { throw 'Supply your name.' }
 $python = Get-AutomationPython
-& $python -c "from zoneinfo import ZoneInfo; ZoneInfo('Europe/London')"
-if ($LASTEXITCODE -ne 0) { throw 'Install the locked dependencies with Setup-OutlookAutomation.ps1 first.' }
+Push-Location $script:ProjectRoot
+try {
+    & $python -c "from monitor.configuration import defaults; from zoneinfo import ZoneInfo; ZoneInfo(defaults()['timezone'])"
+    if ($LASTEXITCODE -ne 0) { throw 'Install the locked dependencies with Setup-OutlookAutomation.ps1 first.' }
+} finally { Pop-Location }
 $calendars = @('calendar:work')
 $google = [ordered]@{}
 if ($GooglePrimary) { $calendars += 'calendar:primary'; $google['calendar:primary']='primary' }
@@ -54,7 +57,7 @@ if ($DataDirectory) {
     New-Item -ItemType Directory -Path (Join-Path $script:ProjectRoot '.local') -Force | Out-Null
     $DataDirectory | Set-Content -LiteralPath (Join-Path $script:ProjectRoot '.local/data-root.txt') -Encoding utf8
 }
-@{schema_version=1;name=$Name;timezone='Europe/London';platform=@{os='windows';outlook_backend='com';bindings=@{}};mail=$mail;calendars=$calendars} |
+@{schema_version=1;name=$Name;platform=@{os='windows';outlook_backend='com';bindings=@{}};mail=$mail;calendars=$calendars} |
     ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $path -Encoding utf8
 if ($google.Count) {
     $google | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'google-calendar-config.json') -Encoding utf8

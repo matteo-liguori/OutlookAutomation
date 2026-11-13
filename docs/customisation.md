@@ -16,6 +16,18 @@ permission defaults. Use normal `case update` revision/evidence controls; omitte
 customisations and executable action references survive routine card updates.
 Actual send/calendar/execution grants remain in SQLite and require user authority.
 
+Scheduling uses the same effective YAML as planning, runtime prompts and readback
+verification. Register existing mail automation IDs in `schedule.automations`; see
+`help scheduling`. Config writes return exact `automation_sync` operations when
+needed; the agent applies these with the shared app-tool executor and reruns
+`schedule sync` to verify actual definitions. A one-time notice is not completion.
+Direct file edits are detected on the next harness call; no unattended file watcher
+or recurring model polling is installed. The app tool is agent-only, so a standalone
+Python command cannot silently apply an app mutation while no agent is running.
+
+The [configuration wiring audit](configuration-wiring.md) lists the consumers and
+the distinction between defaults, execution limits and actual permission grants.
+
 ## Executable actions and experiments
 
 Private `extensions/ID/manifest.yaml` declares `id`, `kind` (`action` or `experiment`),

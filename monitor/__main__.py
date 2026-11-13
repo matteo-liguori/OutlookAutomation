@@ -73,6 +73,7 @@ def parser():
     sp.add_argument("--at")
     sp.add_argument("--fold", type=int, choices=[0, 1])
     schedule.add_parser("verify").add_argument("--input", required=True)
+    schedule.add_parser('sync').add_argument('--input', help='Exact fresh plan for preflight validation')
     google = sub.add_parser("calendar").add_subparsers(dest="operation", required=True)
     gp = google.add_parser("google-prepare")
     gp.add_argument("--date")

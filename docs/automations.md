@@ -13,6 +13,10 @@ For follow-ups, fill the template's `{date}` and `{timezone}` from the harness a
 target that morning chat. `schedule plan` supplies only still-future same-date
 instants. Create the bounded app schedule with supported tools, read it back and
 use `schedule verify`. Do not duplicate schedules or substitute another day.
+Bind the existing morning ID and each day's follow-up ID in schedule.automations.
+When the YAML changes, apply the mandatory core `schedule sync` operations through
+the shared executor, then verify app readback. See `help scheduling` for the exact
+procedure. The current configuration supersedes stale hours in older app prompts.
 On a user reply, `briefing --user-active` retries any pending setup. Follow
 `help mail-pass` and `help reporting` for each round; disclose incomplete coverage.
 

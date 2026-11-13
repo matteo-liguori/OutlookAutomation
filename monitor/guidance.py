@@ -47,7 +47,7 @@ def guide(topic):
     if topic == 'outlook':
         from monitor.adapters.api import status
         result.update(status())
-    if topic=='reporting':result['template']=resolve().get('templates.report')
+    if topic=='reporting':result['template']=resolve().render(resolve().get('templates.report'))
     return result
 
 

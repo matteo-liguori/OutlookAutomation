@@ -148,13 +148,13 @@ class ConfigurationTests(unittest.TestCase):
             with self.assertRaises(ValueError):london_instant('2026-11-01','01:30')
             self.assertEqual((london_instant('2026-11-01','01:30',1)-london_instant('2026-11-01','01:30',0)).total_seconds(),3600)
 
-    def test_schedule_edits_prompt_app_reconciliation_once(self):
+    def test_schedule_edits_remain_pending_until_actual_app_verification(self):
         self.init();path,_=paths(self.user);user=read_yaml(path)
         user['schedule']['morning']='10:00';atomic(path,dump(user))
         sync(self.user,profile={},default_file=self.public)
         pending=notices(self.user)
         self.assertEqual([n['type'] for n in pending],['schedule_reconciliation'])
-        self.assertEqual(notices(self.user),[])
+        self.assertEqual([n['type'] for n in notices(self.user)],['schedule_reconciliation'])
 
 
 if __name__=='__main__':unittest.main()

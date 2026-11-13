@@ -28,6 +28,13 @@ def london_instant(day, clock, fold=None):
 
 def recurrence_instants(rrule, at):
     lines = rrule.strip().splitlines()
+    if len(lines)==3 and lines[2].startswith('RDATE:'):
+        first=recurrence_instants('\n'.join(lines[:2]),at)
+        if len(first)!=1:raise ValueError('RDATE export requires a single anchored first occurrence')
+        extra=[datetime.strptime(v,'%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc) for v in lines[2][6:].split(',')]
+        result=sorted(set(first+extra))
+        if len(result)>8:raise ValueError('Too many bounded recurrence dates')
+        return result
     anchor = None
     if len(lines) == 2 and re.fullmatch(r'DTSTART:\d{8}T\d{6}Z', lines[0]):
         anchor = datetime.strptime(lines[0], 'DTSTART:%Y%m%dT%H%M%SZ').replace(tzinfo=timezone.utc)
@@ -72,7 +79,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
     local_now = current.astimezone(zone())
     day = day or local_now.date().isoformat()
     target = date.fromisoformat(day)
-    clocks = times or (resolve().get('schedule.continuations') if purpose == 'continuation' else [])
+    clocks = times if times is not None else (resolve().get('schedule.continuations') if purpose == 'continuation' else [])
     if not clocks and purpose == 'continuation':
         return dict(purpose=purpose,local_date=day, timezone=zone().key,as_of=current.isoformat(),eligible=[],expired=[],rrule=None,one_shot_rules=[],reason='Continuations disabled')
     if not clocks or len(clocks) > 8 or len(set(clocks)) != len(clocks):
@@ -80,7 +87,7 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
     if purpose not in {"continuation", "reminder"}:
         raise ValueError("Unknown scheduling purpose")
     if purpose == "continuation" and set(clocks) - set(resolve().get('schedule.continuations')):
-        raise ValueError("Mail continuations are only 14:00 and 19:00 London")
+        raise ValueError('Mail continuations must use configured schedule.continuations in '+zone().key)
     if purpose == "continuation" and target != local_now.date():
         return dict(
             purpose=purpose,

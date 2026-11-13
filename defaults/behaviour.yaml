@@ -10,6 +10,7 @@ schedule:
   roundup_weekday: 6
   roundup_start: 08:30
   roundup_end: 10:00
+  automations: []
 reviews:
   card_days: 7
   followup_days: 7
@@ -63,7 +64,9 @@ instructions:
   case-organisation: |-
     `case merge/split --input -` requires expected_revisions, idempotency_key, reason and evidence_ids. Merge: target_id and source_ids. Split: source_id, new target_id, action_ids and target title/position. Preserve action IDs, dependencies, clocks and permissions; reconcile context after organisation. This does not complete obligations.
   scheduling: |-
-    `schedule plan` supplies future London/UTC instants; create the applicable app schedule and read it back, then use schedule verify. Use its bounded UTC DTSTART/RRULE or individual one_shot_rules; optional triggered_at checks a recorded firing time. Same-date continuations target the current mail chat. Schedule only authorised future work and stop it when no useful work remains.
+    YAML is the source of truth: startup {{schedule.morning}}, follow-ups {{schedule.continuations}}, timezone {{timezone}}, chat title {{schedule.title}}. `schedule plan` supplies future local/UTC instants; use schedule verify for readback. Bind existing app IDs in schedule.automations: {id, role: morning} for the daily cron, or {id, role: continuations, date: YYYY-MM-DD, thread_id} for same-day heartbeats. These explicit bindings authorise schedule synchronisation; never adopt unrelated reminders by name. Paused automations remain paused and deleted work is not recreated.
+
+    `schedule sync` reads effective YAML and actual app definitions and returns exact pending operations. On config set/reset, or when any harness command reports automation_sync, finish these updates now before claiming the change complete: obtain a fresh sync plan, pass that exact JSON to schedule sync --input - for preflight, then run monitor/integrations/sync_automations.js in functions.exec with request and preflight. The shared executor calls the supported app tool. Re-run schedule sync until actual readback says synced; failures and unbound schedules remain unresolved. Direct YAML edits are detected on the next harness invocation; no background model polling is installed. The Python harness cannot itself call the app's agent-only tool. Re-plan on concurrent edits; never edit app TOML or substitute another scheduler.
   accounts: |-
     Account identities, source roles and personal routing come from the private profile. Respect explicit account choices and applicable permissions.
   briefing: |-
@@ -77,7 +80,7 @@ instructions:
   context: |-
     `context put --input -` takes id, entity, text and evidence_ids (plus relevant provenance). Keep one current canonical record for the subject; update it rather than making parallel notes. Retrieve only matching records with context get <term>. Use the structured stdin bridge shown by help records.
   action-review: |-
-    `action review --input -` takes action_id, parent expected_revision, idempotency_key, review_kind (records/mail/source-check), outcome, evidence_ids and review_policy. Policy requires urgency immediate/high/normal/low, interval_days1–90 (maximum3 for immediate/high), basis calendar/working, reason and evidence_ids. Describe the actual review scope. A review does not complete work, authorise external action or reset existing follow-up anchors.
+    `action review --input -` takes action_id, parent expected_revision, idempotency_key, review_kind (records/mail/source-check), outcome, evidence_ids and review_policy. Policy requires urgency immediate/high/normal/low, interval_days1–90 (maximum {{reviews.urgent_max_days}} for immediate/high), basis calendar/working, reason and evidence_ids. Describe the actual review scope. A review does not complete work, authorise external action or reset existing follow-up anchors.
 
     At review, judge ongoing relevance from the date, context and risk of error. Close unless a concrete current reason warrants tracking; technical incompleteness alone does not. Use judgment in clear cases. Ask if genuinely unsure or missing a material fact you cannot reasonably retrieve. Record why; email evidence can be retrieved again.
   evidence: |-
@@ -149,7 +152,7 @@ instructions:
     `approval put`: kind, id, optional case_id, actual granted_at, evidence_ids, exact message/task scope;
     standing adds title/summary/triggers/boundaries. Keep permission scope in these rows.
 
-    Resurface monthly on the original London grant anniversary, clamped for short months;
+    Resurface monthly on the original {{timezone}} grant anniversary, clamped for short months;
     unknown dates need review now. Only explicit user confirmation renews review;
     reading/use/silence does not renew or revoke unchanged authority. `approval review`:
     id, expected_revision, decision keep/revoke/spent, reason/evidence_ids. Unknown dates
@@ -177,8 +180,8 @@ instructions:
     reason and evidence_ids. These acknowledge review, not delivery; required work
     cannot be suppressed. Report data exposes quiet_allowed.
 
-    Weekly roundups appear only for Sunday runs starting {{schedule.roundup_start}}-{{schedule.roundup_end}} London (allowing
-    early/late 09:00 startup); incomplete or ineligible handoffs preserve the queue.
+    Weekly roundups appear only for {{schedule.roundup_day}} runs starting {{schedule.roundup_start}}-{{schedule.roundup_end}} {{timezone}};
+    incomplete or ineligible handoffs preserve the queue.
 
     Events: stable id/title, offset-qualified start/end, location, all_day.
     Use explicit_cancellations for authoritative cancelled records; preserve active replacements. Mail receipts
@@ -239,12 +242,13 @@ instructions:
     Database-backed calls repeat a short reminder until `activation complete --input -`:
     title_readback, evidence_ids, followup {status ACTIVE, target_thread_id, rrule}.
     If no same-day times remain use followup {status none-needed}. Record actual app
-    readbacks; the helper verifies the London date, chat target and remaining instants.
+    readbacks; the helper verifies the {{timezone}} date, chat target and remaining instants.
     If the user declines follow-ups, record status declined and decline_evidence_ids.
 
-    09:00 Europe/London daily. Read London time, set/read back exactly
-    `Mail check DD/MM/YYYY`; plan/create/verify one heartbeat for still-future same-date
-    14:00/19:00 only. Read back rules and replan after delays; no next-day substitutes.
+    {{schedule.morning}} {{timezone}} daily. Read local time, set/read back the title
+    supplied by briefing (format {{schedule.title}}); plan/create/verify a heartbeat for still-future same-date
+    {{schedule.continuations}} only. Bind its ID/date/chat in schedule.automations, then run schedule sync.
+    Read back rules and replan after delays; no next-day substitutes.
     Late activation requires catch-up from the completed watermark even if continuations
     are declined.
   card-upkeep: |
@@ -303,7 +307,7 @@ instructions:
     material needed by another unfinished action or pending send stays available.
     Use thread bind to reconcile existing ownership. Keep brief server locators for retrieval.
 
-    Closure deletes bodies/assets, keeping compact outcome/source IDs for 365 days,
+    Closure deletes bodies/assets, keeping compact outcome/source IDs for {{maintenance.closed_thread_days}} days,
     then expires thread-specific records/evidence. Preserve expiry dates on reads and
     start fresh on reopening. Retain useful open caches and unresolved approvals;
     standing preferences remain until changed.
@@ -311,13 +315,13 @@ instructions:
     Health/checkpoints/calendar baselines remain current in place, without access logs
     or expiry. Preserve gaps until verified recovery. Transfer/verify unresolved pass
     work into pending_work before retiring superseded finalized runs. Inactive finalized
-    payloads/collector snapshots expire after 24 hours; preserve current receipt/running
+    payloads/collector snapshots expire after {{maintenance.collector_cache_hours}} hours; preserve current receipt/running
     work. Deduplication keeps the seven-day filing window plus active/pending references;
-    owned temporary files last seven days.
+    owned temporary files last {{maintenance.temporary_days}} days.
 
     Startup/closure/finalization run cleanup and retry visible failures. Maintenance
     status/clean --dry-run/clean/threads expose it; unknown ownership needs reconciliation.
-    Keep {{maintenance.daily_backups}} daily, {{maintenance.weekly_backups}} weekly and {{maintenance.special_backups}} version/schema backups. First write per London
+    Keep {{maintenance.daily_backups}} daily, {{maintenance.weekly_backups}} weekly and {{maintenance.special_backups}} version/schema backups. First write per {{timezone}}
     day/ISO week creates its slot; verify replacements before rotation. Keep backups
     within these slots. Backups exclude disposable caches/expired records,
     preserving obligations/approvals/checkpoints. Restore current format to a new path
@@ -394,7 +398,7 @@ templates:
     Keep instructions brief and positive; state the desired behaviour, give each rule
     one home and link to it elsewhere.
 
-    Use London date and paged report data. Order below; omit empty optional sections.
+    Use {{timezone}} date and paged report data. Order below; omit empty optional sections.
 
     **🟥 ACCESS PROBLEM — YOUR CHECK NEEDED**
 
@@ -403,7 +407,7 @@ templates:
 
     **🟧 IMPORTANT APPOINTMENT — ACKNOWLEDGEMENT REQUIRED**
 
-    Title; London date/start/arrival; place/link; preparation; countdown/milestone;
+    Title; {{timezone}} date/start/arrival; place/link; preparation; countdown/milestone;
     request acknowledgement. Keep explicit labels alongside red/orange styling.
 
     ## Email and tasks
@@ -419,7 +423,7 @@ templates:
     understand or act. Keep unchanged required reminders brief.
 
     Propose supported reply text when useful.
-    Include the Sunday 09:00 sign-in roundup when due.
+    Include the {{schedule.roundup_day}} sign-in roundup in its configured {{schedule.roundup_start}}–{{schedule.roundup_end}} {{timezone}} window when due.
     Label reminders for work already in hand as reminders; say explicitly when no new
     decision is needed. Omit dismissed/completed items unless a new material development
     reopens them; acknowledge a dismissal in its immediate conversation only.
@@ -428,7 +432,7 @@ templates:
 
     Identify due scopes; ask keep/change/revoke. Include IDs in handoff approval_ids.
 
-    ## Calendar — today plus three London days
+    ## Calendar — today plus three {{timezone}} days
 
     List cancellations/removals separately, then every current event and explicit
     empty-day rows, unchanged events included.

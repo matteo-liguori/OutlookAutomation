@@ -77,6 +77,9 @@ def handle_backup(h, args, payload, kind):
 def handle_schedule(h, args, payload, kind):
     cmd, op = args.command, getattr(args, "operation", None)
     from .timing import plan, verify
+    if op=='sync':
+        from .automation_sync import reconcile, preflight
+        return preflight(payload) if payload else reconcile()
 
     return (
         verify(payload)
@@ -482,6 +485,13 @@ def _scoped_execute(h,args):
     prior={name:getattr(h,name) for name in ('_page_cursor','_query_at') if h is not None and hasattr(h,name)}
     try:
         result = _execute(h,args)
+        if isinstance(result,dict) and args.command not in {'guard','schedule'}:
+            from .automation_sync import reconcile
+            pending=reconcile()
+            changed_schedule=(args.command=='config' and getattr(args,'operation',None) in {'set','reset'}
+                              and ((getattr(args,'_payload',None) or {}).get('key',getattr(args,'key','')).startswith('schedule.')
+                                   or (getattr(args,'_payload',None) or {}).get('key',getattr(args,'key',''))=='timezone'))
+            if pending['status']=='pending' or changed_schedule:result=dict(result,automation_sync=pending)
         if h is not None and isinstance(result, dict):
             if args.command in {'outlook', 'calendar', 'run', 'report', 'briefing', 'cases', 'case'}:
                 from .watches import cues

@@ -105,6 +105,18 @@ def validate(value, base=None, partial=False):
         if not isinstance(v,str) or len(v)!=5 or time.fromisoformat(v).tzinfo:raise ValueError('Schedule times need local HH:MM values')
     if len(schedule['continuations'])>8 or len(set(schedule['continuations']))!=len(schedule['continuations']):raise ValueError('Use up to eight distinct continuation times')
     if not 0<=schedule['roundup_weekday']<=6 or schedule['roundup_start']>=schedule['roundup_end']:raise ValueError('Invalid roundup slot')
+    bindings=schedule['automations']
+    if any(not isinstance(b,dict) or b.get('role') not in {'morning','continuations'} or
+           not re.fullmatch(r'[A-Za-z0-9_-]+',str(b.get('id',''))) for b in bindings):
+        raise ValueError('schedule.automations requires existing app IDs and morning/continuations roles')
+    if len({b['id'] for b in bindings})!=len(bindings) or sum(b['role']=='morning' for b in bindings)>1:
+        raise ValueError('Use unique automation bindings and at most one morning automation')
+    for b in bindings:
+        if b['role']=='continuations':
+            from datetime import date
+            if not isinstance(b.get('date'),str):raise ValueError('Continuation binding needs a local date')
+            date.fromisoformat(b.get('date',''))
+            if not isinstance(b.get('thread_id'),str) or not b['thread_id']:raise ValueError('Continuation binding needs its chat ID')
     if not 0<=value['reviews']['hour']<=23 or not 0<=value['reviews']['upgrades_after_hour']<=23:raise ValueError('Invalid review hour')
     for k in ('card_days','followup_days','urgent_max_days','upgrades_days'):
         if not 1<=value['reviews'][k]<=90:raise ValueError('Review interval must be 1..90: '+k)
@@ -121,13 +133,14 @@ class Configuration:
     def get(self,key):return dict(leaves(self.values))[key]
 
     def instruction(self, topic):
-        text=self.values['instructions'][topic]
-        for old,new in [('Europe/London',self.values['timezone']),('14:00/19:00','/'.join(self.values['schedule']['continuations'])),('09:00',self.values['schedule']['morning'])]:
-            text=text.replace(old,new)
+        return self.render(self.values['instructions'][topic])
+
+    def render(self, text):
         for key,value in leaves(self.values):
             if not key.startswith('instructions.') and not key.startswith('templates.'):
-                text=text.replace('{{'+key+'}}',str(value))
-        if self.values['timezone']!='Europe/London':text=text.replace('London',self.values['timezone'])
+                text=text.replace('{{'+key+'}}',', '.join(map(str,value)) if isinstance(value,list) else str(value))
+        import calendar
+        text=text.replace('{{schedule.roundup_day}}',calendar.day_name[self.get('schedule.roundup_weekday')])
         return text
 
     def overlay(self, patch, origin):
@@ -284,9 +297,8 @@ def notices(root=None):
         state=json.loads(path.read_text(encoding='utf-8'));pending=[r for r in state.get('reviews',[]) if not r['notified']]
         for item in pending:item['notified']=True
         schedule=state.get('schedule_notice',{})
-        changed=bool(schedule and not schedule['notified'])
-        if changed:schedule['notified']=True
+        changed=bool(schedule and not schedule.get('verified'))
         if pending or changed:atomic(path,json.dumps(state,indent=2)+'\n')
         results=[dict(type='configuration_review',**{k:r[k] for k in ('id','key','override','new_default')},instruction='User override retained. Use config review to keep it or adopt the new default.') for r in pending]
-        if changed:results.append(dict(type='schedule_reconciliation',timezone=schedule['timezone'],schedule=schedule['schedule'],instruction='Desired schedule changed. Reconcile the actual morning automation and same-day chat follow-ups through app tools, read back and verify; configuration alone did not update the app.'))
+        if changed:results.append(dict(type='schedule_reconciliation',timezone=schedule['timezone'],schedule=schedule['schedule'],instruction='Run schedule sync and apply its exact operations through the supported app tool now, then verify readback. Keep pending until actual automations match YAML.'))
         return results

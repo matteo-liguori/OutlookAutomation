@@ -1,5 +1,12 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.6` adds explicit YAML-owned automation bindings,
+durable app schedule reconciliation with supported-tool updates/readback, dynamic
+instruction/report templates and configured calendar-collector timezones. Bind each
+installation's existing morning/current-day follow-up IDs in schedule.automations;
+shared defaults intentionally contain no user IDs. Apply app updates through the
+agent's tool bridge on the next harness interaction, not through a background watcher.
+
 `harness-update/v0.1.0-alpha.5` makes the advisory explicit that stopping a stale
 or obsolete run without finishing its original task is a valid outcome. Live user
 work still continues normally and the per-chat 30-minute cooldown is unchanged.
