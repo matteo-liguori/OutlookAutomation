@@ -1,5 +1,9 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.4` consolidates the local and published work on main:
+keyword watches, unchanged-default compatibility, and mandatory installed smoke
+validation after automated tests. It retains the advisory date warning from alpha.3.
+
 `harness-update/v0.1.0-alpha.3` replaces the blocking chat-date guard with an
 advisory for any mismatched dated chat. Commands continue normally, and a private
 SQLite cooldown limits warnings to once per chat every 30 minutes.
@@ -14,6 +18,10 @@ cache. `update check --force` checks now; `update status` shows cached results.
 Only `harness-update/vMAJOR.MINOR.PATCH` tags (optionally `-alpha.N`, `-beta.N`,
 or `-rc.N`) whose commit is on GitHub `main` qualify. Offline checks preserve work
 and report their status. The checker never pulls, switches branches or runs code.
+Commit messages do not mark releases. A tag without a prerelease suffix (for
+example `harness-update/v1.0.0`) represents a stable version; alpha, beta and release
+candidate tags are also eligible for update notices. The notice appears once per
+new eligible tag, and no notice is needed when that tag is already in local history.
 
 When an update is offered, inspect local Git changes and preserve unfinished work.
 Review the tagged changes, update from `main`, install the platform dependency lock,

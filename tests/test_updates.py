@@ -2,10 +2,42 @@ from pathlib import Path
 import tempfile
 import unittest
 from monitor.configuration import resolve,snapshot
-from monitor.updates import check
+from monitor.updates import check, notice, version
+from unittest.mock import patch
 
 
 class UpdateTests(unittest.TestCase):
+    def test_release_versions_use_tags_not_commit_wording(self):
+        prefix='harness-update/v'
+        self.assertIsNone(version('stable release update',prefix))
+        self.assertIsNone(version('v1.0.0',prefix))
+        self.assertGreater(version(prefix+'1.0.0',prefix),version(prefix+'1.0.0-rc.9',prefix))
+        self.assertGreater(version(prefix+'1.0.0-rc.1',prefix),version(prefix+'1.0.0-beta.9',prefix))
+        self.assertGreater(version(prefix+'1.0.0-beta.1',prefix),version(prefix+'1.0.0-alpha.9',prefix))
+
+    def test_notice_once_per_release_then_new_release_surfaces(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            result=dict(status='available',tag='harness-update/v0.1.0-alpha.3',url='https://example.test/release')
+            with patch('monitor.updates.check',return_value=result):
+                self.assertEqual(notice(root)[0]['type'],'harness_update')
+                self.assertEqual(notice(root),[])
+                result['tag']='harness-update/v0.1.0-alpha.4'
+                self.assertEqual(notice(root)[0]['tag'],result['tag'])
+            cached=__import__('json').loads((root/'.state/update-check.json').read_text())
+            self.assertEqual(cached['notified'],result['tag'])
+
+    def test_ordinary_main_commit_without_release_tag_does_not_notify(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            def git(*args):
+                if args[0]=='rev-parse':return 'installed'
+                if args[0]=='remote':return 'https://github.com/example/project.git'
+                if args[0]=='ls-remote':return 'new-main refs/heads/main\nother refs/tags/stable-release'
+                self.fail('Unexpected operation')
+            with snapshot(resolve(root,profile={})):
+                self.assertEqual(check(root=root,runner=git)['status'],'current')
+
     def test_tagged_main_update_cached_without_pull(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp);calls=[]
