@@ -162,6 +162,11 @@ class ScheduledGuardTests(unittest.TestCase):
             results = list(pool.map(lambda _: notice()['status'], range(8)))
         self.assertEqual(results.count('warning'), 1)
 
+    def test_earlier_contender_timestamp_does_not_clear_another_commands_cooldown(self):
+        notice()
+        with patch('monitor.scheduled_guard.now', return_value='2026-11-13T08:59:59+00:00'):
+            self.assertTrue(notice()['warning_suppressed'])
+
     @unittest.skipUnless(os.name == 'nt', 'Windows helper preflight')
     def test_windows_warning_is_advisory_and_cooldown_survives_subprocesses(self):
         self.title('Mail check 01/01/1900')

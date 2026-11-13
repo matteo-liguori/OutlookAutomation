@@ -101,8 +101,7 @@ def notice():
         with closing(sqlite3.connect(path, timeout=2)) as db, db:
             db.execute('CREATE TABLE IF NOT EXISTS cooldown (chat TEXT PRIMARY KEY, expires REAL NOT NULL)')
             db.execute('BEGIN IMMEDIATE')
-            # Also recover from a workstation clock correction.
-            db.execute('DELETE FROM cooldown WHERE expires<=? OR expires>?', (stamp, stamp+1800))
+            db.execute('DELETE FROM cooldown WHERE expires<=?', (stamp,))
             if db.execute('SELECT 1 FROM cooldown WHERE chat=?', (key,)).fetchone():
                 return dict(status='allowed', warning_suppressed=True)
             db.execute('INSERT INTO cooldown VALUES (?,?)', (key, stamp+1800))
