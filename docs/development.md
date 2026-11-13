@@ -1,13 +1,8 @@
 # Development
 
-Scheduled mail work checks the dated chat name against the configured local date
-before opening the harness database or accessing Outlook. Direct user turns are
-exempt. `monitor.ps1 guard` exposes the read-only decision (exit 3 means stop).
-On a stale scheduled turn, cancel only its triggering app automation; do not retry
-or create another wake-up. Detection uses local Codex turn attribution and thread
-metadata; unavailable trigger metadata cannot classify a turn. The guard cannot
-prevent the scheduler's initial model wake-up or directly delete app automations.
-Windows helper access and restart also run this preflight.
+The shared core enforces the scheduled chat-date guard before database or live
+access. `guard` is the read-only preflight command; `help guard` owns its procedure
+and limitations. It uses each installation's configured chat-title format and timezone.
 
 This is an alpha. Keep the common `monitor` interface stable across adapters;
 internal helper paths may change. Use a development branch and preserve private data.

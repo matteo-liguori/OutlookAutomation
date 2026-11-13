@@ -164,9 +164,9 @@ def main():
         raise SystemExit("--limit must be 1..100")
     h = None
     try:
-        from .scheduled_guard import check, enforce, StaleAutomation
+        from .scheduled_guard import enforce, StaleAutomation
         if args.command == 'guard':
-            result = check()
+            result = execute(None, args)
             print(json.dumps(result, ensure_ascii=False))
             raise SystemExit(3 if result['status'] == 'blocked' else 0)
         enforce()  # Before SQLite, activation, extensions or live access.

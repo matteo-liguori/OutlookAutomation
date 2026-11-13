@@ -9,6 +9,11 @@ def read_payload(path):
     return json.loads(sys.stdin.read().lstrip('\ufeff') if path == '-' else Path(path).read_text(encoding='utf-8-sig'))
 
 
+def handle_guard(h, args, payload, kind):
+    from .scheduled_guard import check
+    return check()
+
+
 def handle_init(h, args, payload, kind):
     cmd, op = args.command, getattr(args, "operation", None)
     return {"database": str(h.path), "schema": h.db.execute("PRAGMA user_version").fetchone()[0]}
@@ -414,6 +419,7 @@ def handle_health(h,args,payload,kind):
 
 
 HANDLERS = {
+    "guard": handle_guard,
     "update": handle_updates,
     "extension": handle_extension,
     "config": handle_config,
@@ -449,6 +455,8 @@ HANDLERS = {
 
 
 def execute(h,args):
+    if args.command == 'guard':
+        return HANDLERS['guard'](None, args, None, 'guard')
     from .scheduled_guard import enforce
     enforce()
     from .configuration import snapshot, resolve
