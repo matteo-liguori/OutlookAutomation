@@ -58,6 +58,8 @@ class ScheduledGuardTests(unittest.TestCase):
         self.assertEqual(result['status'], 'warning')
         self.assertEqual(result['automation_id'], 'test-wake')
         self.assertIn('Continue if', result['instruction'])
+        self.assertIn('it is okay to stop without finishing its original task', result['instruction'])
+        self.assertIn('just to be thorough or helpful', result['instruction'])
         self.assertNotIn('stop', result)
         self.assertNotIn('cleanup', result)
         self.assertEqual(result['chat_date'], '2026-11-11')

@@ -1,5 +1,9 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.5` makes the advisory explicit that stopping a stale
+or obsolete run without finishing its original task is a valid outcome. Live user
+work still continues normally and the per-chat 30-minute cooldown is unchanged.
+
 `harness-update/v0.1.0-alpha.4` consolidates the local and published work on main:
 keyword watches, unchanged-default compatibility, and mandatory installed smoke
 validation after automated tests. It retains the advisory date warning from alpha.3.

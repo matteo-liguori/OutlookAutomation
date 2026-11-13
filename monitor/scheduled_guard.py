@@ -81,7 +81,9 @@ def check(*, home=None, at=None):
     return dict(status='warning', scheduled=scheduled, automation_id=automation_id,
                 chat_date=str(chat_day), date=str(today),
                 instruction="This chat might be stale. Continue if you're interacting live with the user; "
-                            'otherwise check whether this is a stale automation.')
+                            'otherwise check whether this is a stale automation. If the run is stale or '
+                            'obsolete, it is okay to stop without finishing its original task. You do not '
+                            'need to complete obsolete work just to be thorough or helpful.')
 
 
 def notice():
