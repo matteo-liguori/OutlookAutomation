@@ -92,6 +92,13 @@ def handle_calendar(h, args, payload, kind):
     return ingest(h, args.run_id, payload, config)
 
 
+def handle_watch(h, args, payload, kind):
+    from .watches import put, all_watches
+    if args.operation == 'put':
+        return put(h, payload)
+    return h.page(kind, all_watches(h), limit=args.limit)
+
+
 def handle_filing(h, args, payload, kind):
     cmd, op = args.command, getattr(args, "operation", None)
     from .filing import record, status
@@ -424,6 +431,7 @@ HANDLERS = {
     "maintenance": handle_maintenance,
     "schedule": handle_schedule,
     "calendar": handle_calendar,
+    "watch": handle_watch,
     "filing": handle_filing,
     "briefing": handle_briefing,
     "cases": handle_briefing,
@@ -465,6 +473,10 @@ def _scoped_execute(h,args):
     try:
         result = _execute(h,args)
         if h is not None and isinstance(result, dict):
+            if args.command in {'outlook', 'calendar', 'run', 'report', 'briefing', 'cases', 'case'}:
+                from .watches import cues
+                prompts = cues(h, [getattr(args, '_payload', None), result])
+                if prompts:result = dict(result, watch_prompts=prompts)
             if args.command == 'case' and getattr(args, 'operation', None) == 'update':
                 from .guidance import retention_reminder, once
                 instruction=once(h, 'completion-retention', retention_reminder())
@@ -519,6 +531,7 @@ def _execute(h, args):
             "doctor": {None},
             "case": {"show", "search"},
             "context": {"get"},
+            "watch": {"list"},
             "approval": {"show", "list"},
             "issue": {"show"},
             "roundup": {"show"},

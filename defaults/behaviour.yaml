@@ -194,6 +194,13 @@ instructions:
     live sends/calendar writes/restarts are not regression tests.
   mail-access: |-
     Check current profile and source health; follow any applicable delivery-test permission before escalating access uncertainty. Use the authorised account and route. Report remaining gaps promptly; the user handles credentials and sign-in.
+  watches: |-
+    `watch put --input -`: id, terms (literal words/phrases), text (brief positive cue),
+    evidence_ids and enabled (boolean). `watch list` shows the private SQLite objects.
+    Mail/calendar reads, receipts, reports and case/briefing data are checked for terms.
+    A match injects the cue once per chat and instruction version. The model evaluates
+    relevance and arranges any authorised action/reminder, with ordinary verification.
+    Set enabled false to stop a watch. Watches retain no encountered content or match logs.
   calendar-decisions: |-
     ## Calendar decisions
 

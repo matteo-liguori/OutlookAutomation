@@ -144,6 +144,9 @@ def parser():
     improvements.add_parser("add").add_argument("--input", required=True)
     improvements.add_parser("checkpoint").add_argument("--input", required=True)
     improvements.add_parser("review").add_argument("--input", required=True)
+    watch = sub.add_parser('watch').add_subparsers(dest='operation', required=True)
+    watch.add_parser('put').add_argument('--input', required=True)
+    watch.add_parser('list')
     report = sub.add_parser("report").add_subparsers(dest="operation", required=True)
     report.add_parser("data").add_argument("id")
     return p
