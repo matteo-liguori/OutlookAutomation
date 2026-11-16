@@ -1,5 +1,11 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.8` makes ordinary reminders card/action records by
+default, delivered through normal mail checks. Reminder plans expose no app rules
+unless --automation-requested records an explicit request for a separate wake-up.
+Existing regular mail checks and pending card reminders are preserved. The shared
+procedure is in help reminders; no migration or dependency change is required.
+
 `harness-update/v0.1.0-alpha.7` requires wrong-date chats to stop unattended runs.
 A saved reminder's date, urgency or previous authorisation is not an exception.
 Current direct user work remains allowed. The 30-minute prose cooldown never clears

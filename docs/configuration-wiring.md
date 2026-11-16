@@ -34,6 +34,10 @@ text is preserved: changing a schedule must not rewrite an unrelated appointment
 time in a user's instructions. Record limits, paging caps, filing deduplication and
 authorization checks are separate protocol safeguards, not implicit YAML settings.
 
+`instructions.reminders` owns the shared card-reminder default. Reminder plans
+return card due fields without app recurrences unless explicit separate-automation
+intent is supplied. Regular mail-check continuation plans are a separate purpose.
+
 ## App reconciliation boundary
 
 `schedule sync` reads only explicitly bound app definitions. The shared JS executor

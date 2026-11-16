@@ -70,6 +70,7 @@ def parser():
     sp.add_argument("--date")
     sp.add_argument("--time", action="append", dest="times")
     sp.add_argument("--purpose", choices=["continuation", "reminder"], default="continuation")
+    sp.add_argument('--automation-requested', action='store_true', help='Only for an explicitly requested separate reminder automation')
     sp.add_argument("--at")
     sp.add_argument("--fold", type=int, choices=[0, 1])
     schedule.add_parser("verify").add_argument("--input", required=True)

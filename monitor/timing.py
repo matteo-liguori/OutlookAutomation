@@ -132,6 +132,24 @@ def plan(day=None, times=None, purpose="continuation", at=None, fold=None):
     )
 
 
+def card_reminder_plan(day=None, times=None, at=None, fold=None):
+    """Prepare local-record due fields, never a separate automation recurrence."""
+    current = datetime.fromisoformat(stamp(at or now()))
+    target = date.fromisoformat(day) if day else current.astimezone(zone()).date()
+    clocks = times or []
+    if clocks:
+        # Share validation/DST handling, but do not expose the app rules prepared
+        # by the lower-level recurrence helper without explicit automation intent.
+        plan(str(target), clocks, 'reminder', current.isoformat(), fold)
+    due = [dict(local=point.astimezone(zone()).isoformat(), utc=point.isoformat(),
+                time=clock, overdue=point<=current)
+           for point,clock in sorted((london_instant(str(target),clock,fold),clock) for clock in clocks)]
+    return dict(purpose='reminder',delivery='card',automation_requested=False,
+                local_date=str(target),timezone=zone().key,due=due,
+                follow_up_mode='handoff',rrule=None,one_shot_rules=[],
+                instruction=resolve().instruction('reminders'))
+
+
 def verify(payload):
     expected = payload["plan"]
     points = [datetime.fromisoformat(p["utc"]) for p in expected["eligible"]]

@@ -52,6 +52,7 @@ def guide(topic):
 
 
 COMMAND_TOPICS = {
+    'remind':'reminders', 'reminder':'reminders', 'action-scheduling':'reminders',
     'watch': 'watches',
     'guard':'scheduled-guard',
     'sending':'mail-helpers', 'config':'configuration', 'extension':'extensions', 'update':'updates', 'action run':'custom-actions',

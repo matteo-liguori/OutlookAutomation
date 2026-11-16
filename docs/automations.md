@@ -1,5 +1,12 @@
 # Daily checks and follow-ups
 
+Ordinary "remind me" requests belong on cards/actions and surface in normal mail
+checks. They do not create an additional app task or wake-up. An exact time or
+weekly cadence alone is not a request for an automation. Use `help reminders`.
+`schedule plan --purpose reminder` prepares card due fields by default; only add
+`--automation-requested` after an explicit request for a separate automated wake-up.
+The agreed regular mail-check schedule below is independent of that default.
+
 After a supervised pass works, agree the schedule. `config show` supplies the
 current schedule and `templates.morning` / `templates.followup` prompts; edit
 private `customisations.yaml` to change them. The shared defaults are 09:00 daily

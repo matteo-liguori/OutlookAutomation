@@ -80,12 +80,14 @@ def handle_schedule(h, args, payload, kind):
     if op=='sync':
         from .automation_sync import reconcile, preflight
         return preflight(payload) if payload else reconcile()
+    if op=='plan' and args.purpose=='reminder' and not getattr(args,'automation_requested',False):
+        from .timing import card_reminder_plan
+        return card_reminder_plan(args.date,args.times,args.at,args.fold)
 
-    return (
-        verify(payload)
-        if op == "verify"
-        else plan(args.date, args.times, args.purpose, args.at, args.fold)
-    )
+    if op=='verify':return verify(payload)
+    result=plan(args.date,args.times,args.purpose,args.at,args.fold)
+    if args.purpose=='reminder':result.update(delivery='automation',automation_requested=True)
+    return result
 
 
 def handle_calendar(h, args, payload, kind):

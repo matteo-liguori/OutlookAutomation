@@ -26,6 +26,7 @@
   "monitor/automation_sync.py": "monitor/automation_sync.py",
   "monitor/integrations/sync_automations.js": "monitor/integrations/sync_automations.js",
   "tests/test_automation_sync.py": "tests/test_automation_sync.py",
+  "tests/test_card_reminders.py": "tests/test_card_reminders.py",
   "tests/Test-AutomationSync.js": "tests/Test-AutomationSync.js",
   "monitor/scheduled_guard.py": "monitor/scheduled_guard.py",
   "monitor/adapters/README.md": "monitor/adapters/README.md",
