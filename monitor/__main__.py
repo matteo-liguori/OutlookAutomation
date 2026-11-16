@@ -15,7 +15,7 @@ def parser():
     p.add_argument("--cursor")
     p.add_argument("--limit", type=int, default=50)
     sub = p.add_subparsers(dest="command", required=True)
-    sub.add_parser('guard', help='Advisory chat-date check, at most once per 30 minutes')
+    sub.add_parser('guard', help='Stop wrong-date non-live runs; warning text at most once per 30 minutes')
     ui = sub.add_parser('ui', help='Open the local card grid, action timeline and card editor')
     ui.add_argument('--port', type=int, default=0, help='Local port; default selects a free port')
     ui.add_argument('--no-browser', action='store_true')
@@ -165,12 +165,14 @@ def main():
         raise SystemExit("--limit must be 1..100")
     h = None
     try:
-        from .scheduled_guard import emit_warning
+        from .scheduled_guard import emit_warning, StaleChat
         if args.command == 'guard':
             result = execute(None, args)
             print(json.dumps(result, ensure_ascii=False))
+            if result.get('stop'):
+                raise SystemExit(3)
             return
-        emit_warning()  # Advisory only; before the main database or live access.
+        emit_warning()  # Stop before the main database, extensions or live access.
         if args.command == 'ui':
             from .ui import serve
             if not 0 <= args.port <= 65535:
@@ -188,6 +190,9 @@ def main():
         if args.format == "markdown":
             rendered = markdown(result)
         print(rendered)
+    except StaleChat as exc:
+        print(json.dumps(exc.result, ensure_ascii=False), file=sys.stderr)
+        raise SystemExit(3)
     except (ValueError, KeyError, OSError, sqlite3.Error) as exc:
         error={"error": str(exc)}
         if args.command=='briefing':

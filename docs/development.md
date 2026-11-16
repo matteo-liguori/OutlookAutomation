@@ -1,8 +1,9 @@
 # Development
 
-The shared core emits an advisory for mismatched chat dates, at most once per chat
-every 30 minutes across processes. `guard` exposes it; `help guard` owns the
-procedure, private cooldown storage and limitations. Commands continue normally.
+The shared core stops wrong-date runs without a current live direct user turn,
+before main database/live access. `guard` exposes the decision (exit 3 means stop);
+`help guard` owns the procedure. Full warning prose is limited to once per chat
+every 30 minutes; the stop decision is never suppressed. Direct user work continues.
 
 This is an alpha. Keep the common `monitor` interface stable across adapters;
 internal helper paths may change. Use a development branch and preserve private data.

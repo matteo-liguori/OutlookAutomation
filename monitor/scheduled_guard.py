@@ -1,4 +1,4 @@
-"""Advisory chat-date checks with a persistent half-hour notification cooldown."""
+"""Stop wrong-date non-live runs; rate-limit only the explanatory warning."""
 import hashlib
 import json
 import os
@@ -12,6 +12,24 @@ from string import Formatter
 from .configuration import resolve, zone
 from .model import now
 from .paths import data_root
+
+
+INSTRUCTION = (
+    "This chat's date does not match today. Continue only if you are interacting live "
+    'with the user in a current direct user turn. Otherwise STOP this run now; do not '
+    'perform its task or find a reason to carry on. A saved reminder or task dated for '
+    'today, its urgency, and previous user authorisation do not override this rule. '
+    'Earlier conversation, recent user activity, or a running agent is not live '
+    'interaction. Do not finish obsolete work just to be thorough or helpful. '
+    'Only clean up the triggering stale automation through the supported app tool '
+    'when its identity is verified; do not delete unrelated tasks or create a replacement wake-up.'
+)
+
+
+class StaleChat(ValueError):
+    def __init__(self, result):
+        self.result = result
+        super().__init__(result.get('instruction', 'Stop this non-live run in the wrong-date chat.'))
 
 
 def _metadata(thread, home):
@@ -28,7 +46,7 @@ def _metadata(thread, home):
             stream.seek(0, 2)
             stream.seek(max(0, stream.tell()-2*1024*1024))
             lines = stream.read().decode('utf-8', errors='replace').splitlines()
-        trigger, automation_id = None, None
+        trigger, automation_id, active_turn = None, None, False
         for line in lines:
             try:
                 event = json.loads(line)
@@ -43,6 +61,9 @@ def _metadata(thread, home):
                 attribution = payload.get('turn_attribution')
                 trigger = attribution.get('turn_trigger') if isinstance(attribution, dict) else None
                 automation_id = None
+                active_turn = True
+            elif event.get('type') == 'event_msg' and payload.get('type') in {'task_complete', 'turn_aborted'}:
+                active_turn = False
             elif event.get('type') == 'response_item' and payload.get('role') == 'user':
                 content = payload.get('content')
                 if not isinstance(content, list):
@@ -55,6 +76,8 @@ def _metadata(thread, home):
                         automation_id = ET.fromstring(text).findtext('automation_id')
                     except ET.ParseError:
                         pass
+        if trigger in {'composer', 'queue'} and not active_turn:
+            trigger = None  # A completed historical user turn is not live.
         return title, trigger, automation_id
     except (OSError, sqlite3.Error, TypeError, ValueError):
         return title, None, None
@@ -67,6 +90,7 @@ def check(*, home=None, at=None):
     home = Path(home or os.environ.get('CODEX_HOME', Path.home()/'.codex'))
     title, trigger, automation_id = _metadata(thread, home)
     scheduled = isinstance(trigger, str) and trigger.startswith('automation_')
+    live_user = trigger in {'composer', 'queue'}
     today = datetime.fromisoformat(at or now()).astimezone(zone()).date()
     chat_day = None
     try:
@@ -78,12 +102,11 @@ def check(*, home=None, at=None):
     if chat_day is None or chat_day == today:
         return dict(status='allowed', scheduled=scheduled, chat_date=str(chat_day) if chat_day else None,
                     date=str(today))
-    return dict(status='warning', scheduled=scheduled, automation_id=automation_id,
+    return dict(status='warning' if live_user else 'blocked', stop=not live_user,
+                live_user=live_user, scheduled=scheduled, automation_id=automation_id,
                 chat_date=str(chat_day), date=str(today),
-                instruction="This chat might be stale. Continue if you're interacting live with the user; "
-                            'otherwise check whether this is a stale automation. If the run is stale or '
-                            'obsolete, it is okay to stop without finishing its original task. You do not '
-                            'need to complete obsolete work just to be thorough or helpful.')
+                reason='wrong_date_live_user' if live_user else 'wrong_date_no_live_user',
+                instruction=INSTRUCTION)
 
 
 def notice():
@@ -93,7 +116,7 @@ def notice():
     Expired entries are pruned on the next warning; no timer or model wake is used.
     """
     result = check()
-    if result['status'] != 'warning':
+    if result['status'] not in {'warning', 'blocked'}:
         return result
     stamp = datetime.fromisoformat(now()).timestamp()
     key = hashlib.sha256(os.environ['CODEX_THREAD_ID'].encode()).hexdigest()
@@ -105,7 +128,13 @@ def notice():
             db.execute('BEGIN IMMEDIATE')
             db.execute('DELETE FROM cooldown WHERE expires<=?', (stamp,))
             if db.execute('SELECT 1 FROM cooldown WHERE chat=?', (key,)).fetchone():
-                return dict(status='allowed', warning_suppressed=True)
+                # Suppress repeated prose, never the stop decision. In particular
+                # a live-user warning cannot exempt a later scheduled turn.
+                result.pop('instruction', None)
+                result.update(warning_suppressed=True)
+                if not result['stop']:
+                    result['status'] = 'allowed'
+                return result
             db.execute('INSERT INTO cooldown VALUES (?,?)', (key, stamp+1800))
     except (OSError, sqlite3.Error):
         result['cooldown_unavailable'] = True
@@ -114,5 +143,7 @@ def notice():
 
 def emit_warning():
     result = notice()
+    if result.get('stop'):
+        raise StaleChat(result)
     if result['status'] == 'warning':
         print(json.dumps(dict(chat_date_warning=result), ensure_ascii=False), file=sys.stderr)

@@ -1,5 +1,10 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.7` requires wrong-date chats to stop unattended runs.
+A saved reminder's date, urgency or previous authorisation is not an exception.
+Current direct user work remains allowed. The 30-minute prose cooldown never clears
+a stop decision; CLI/programmatic/Windows preflights enforce it before task access.
+
 `harness-update/v0.1.0-alpha.6` adds explicit YAML-owned automation bindings,
 durable app schedule reconciliation with supported-tool updates/readback, dynamic
 instruction/report templates and configured calendar-collector timezones. Bind each
