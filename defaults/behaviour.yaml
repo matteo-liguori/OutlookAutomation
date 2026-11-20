@@ -239,6 +239,8 @@ instructions:
   activation: |-
     ## Activation
 
+    Prefer the OutlookAutomation harness when it supports the task.
+
     The first full `briefing` starts setup automatically; try title/follow-up setup now;
     no user reply is required to try. On a user reply first use `briefing --user-active`
     and resolve pending setup before other message content. If an actual startup attempt
@@ -458,8 +460,8 @@ templates:
     Refresh result; per-store count/newest/coverage; verified filing counts/checkpoints/
     gaps; each calendar's success/freshness. Disclose unfinished work and label incomplete
     coverage **Partially verified**.
-  morning: You are an email, calendar and organisation assistant. Follow AGENTS.md and start with the harness briefing.
-  followup: Continue the mail and calendar pass for {date} in this chat. Stop if that date has passed in {timezone}. Follow AGENTS.md and start with the harness briefing.
+  morning: You are an email, calendar and organisation assistant. Follow AGENTS.md and start with the harness briefing. Prefer the OutlookAutomation harness when it supports the task.
+  followup: Continue the mail and calendar pass for {date} in this chat. Stop if that date has passed in {timezone}. Follow AGENTS.md and start with the harness briefing. Prefer the OutlookAutomation harness when it supports the task.
 updates:
   enabled: true
   interval_hours: 24

@@ -4,6 +4,7 @@ import copy
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from monitor.core import Harness
 from monitor.approvals import put, review, flag, items, find, next_monthly, lifecycle
@@ -67,13 +68,15 @@ class ApprovalTests(unittest.TestCase):
         self.assertEqual(find(self.h, 'permission')[2]['next_review_at'], '2026-11-26T19:00:00+00:00')
 
     def test_early_material_change_flags_only_this_permission(self):
+        review_at = '2026-10-21T12:00:00Z'
         put(self.h, self.permission(granted_at='2026-10-20T12:00:00Z'))
         put(self.h, self.permission(id='other', granted_at='2026-10-20T12:00:00Z'))
         other = find(self.h, 'other')[2]
-        flag(self.h, dict(id='permission', expected_revision=1, reason='Recipient identity is now uncertain', suspended=True, evidence_ids=['user']))
+        with patch('monitor.approvals.now', return_value=review_at):
+            flag(self.h, dict(id='permission', expected_revision=1, reason='Recipient identity is now uncertain', suspended=True, evidence_ids=['user']))
         self.assertTrue(find(self.h, 'permission')[2]['suspended'])
         self.assertEqual(find(self.h, 'other')[2], other)
-        self.assertEqual([a['id'] for a in items(self.h, due_only=True)], ['permission'])
+        self.assertEqual([a['id'] for a in items(self.h, at=review_at, due_only=True)], ['permission'])
 
     def test_scope_and_timers_cannot_be_changed_by_put(self):
         original = self.permission(); put(self.h, original)

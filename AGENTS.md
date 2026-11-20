@@ -4,6 +4,8 @@ Work in this project. Use `monitor.ps1` on Windows or `.venv/bin/python -m monit
 on Mac. Start with `briefing`; follow its paging and relevant `help <topic>`.
 Use `outlook status` for available capabilities. SQLite holds current work and grants.
 
+Prefer the OutlookAutomation harness when it supports the task.
+
 User behaviour lives in private `customisations.yaml`; use `config show --explain`.
 Keep private data and executable extensions in the configured data root, outside Git.
 Before saving user data, use `help retention` for the harness storage boundary
