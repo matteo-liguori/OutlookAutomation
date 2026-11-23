@@ -26,7 +26,16 @@ credential from normal PowerShell.
   -Start '2026-10-26T00:00:00+00:00' -End '2026-10-30T00:00:00+00:00' -Output Text
 ```
 
-Reads: explicit offsets, maximum 31 days. Authorised writes: exact calendar,
--WhatIf/PowerShell confirmation, duplicate guard for Create, UID for Update/Delete;
-recurring writes unsupported. Remove local credentials with
+Reads use explicit offsets and a maximum of 31 days. Authorised writes use an exact
+calendar and PowerShell confirmation. Create checks for duplicates. Update and
+Delete need the UID.
+
+Use `-Action AnnualMonth -Calendar NAME -Uid UID -KeepMonth 4 -EffectiveDate YYYY-MM-DD`
+to preview keeping a single month each year from that date. It supports one-day
+all-day series with a fixed day up to 28 and a simple monthly interval that
+divides the year. It preserves past dates and the UID. After checking the preview,
+pass its revision as `-ExpectedRevision` to apply and verify the conditional
+update. Series with exceptions or invitation participants require another workflow.
+
+Remove local credentials with
 Set-iCloudCalDavCredential.ps1 -Remove; revoke separately in Apple settings.

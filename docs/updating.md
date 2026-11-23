@@ -1,5 +1,11 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.10` joins multiday calendar ribbons across refreshed
+imports, synchronises the gold border and background tint for important dates,
+and lets a review save clearer dashboard titles while preserving source titles.
+It adds previewed edits for simple iCloud all-day series and shared guidance for
+card reminders. The harness creates the local title table on normal startup.
+
 `harness-update/v0.1.0-alpha.9` adds a local calendar and report viewer with
 rolling calendar history, event colours, optional card markers and appointment
 acknowledgements. Same-day follow-ups appear below the first report. Account

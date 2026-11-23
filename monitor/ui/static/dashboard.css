@@ -1,4 +1,4 @@
-.dashboard { --important-outline: #d99b31; max-width: 1440px; margin-inline: auto; }
+.dashboard { --important-outline: #bd8a42; max-width: 1440px; margin-inline: auto; }
 .calendar-heading, .calendar-controls { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; }
 .calendar-heading { justify-content: space-between; gap: .85rem; margin-bottom: .9rem; }
 .calendar-controls :is(button, input, select), #reports { min-height: 2.5rem; }
@@ -50,9 +50,9 @@
 .calendar-bands { row-gap: 3px; }
 .calendar-bands:not(:empty) { padding-block: 5px; background: var(--soft); }
 .event-band {
-  margin-inline: 3px; border-radius: 5px; min-height: 1.35rem; min-width: 0;
-  padding: .1rem .42rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  background: var(--event-colour); color: #fff; font-size: .79rem; font-weight: 650;
+  margin-inline: 3px; border-radius: 5px; min-height: 1.2rem; min-width: 0;
+  padding: .05rem .42rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  background: var(--event-colour); color: #fff; font-size: .79rem; font-weight: 650; line-height: 1.25;
 }
 .event-band.timed-band { background: transparent; color: var(--ink); border: 1px dashed var(--event-colour); }
 .milestone {
@@ -70,16 +70,41 @@
   color: var(--ink); background: var(--soft); font-size: .76rem; overflow-wrap: anywhere;
 }
 .important-event {
-  --pulse-light: #ffd358; --pulse-width: 4px; --pulse-period: 2.6s;
-  outline: 2px solid var(--important-outline); outline-offset: -2px;
-  animation: appointment-pulse var(--pulse-period) ease-in-out infinite;
+  --pulse-period: 5.2s;
+  --pulse-peak: .62;
+  position: relative;
+  isolation: isolate;
+  outline: 1px solid var(--important-outline);
+  outline-offset: -1px;
 }
-.important-event.important-near { --pulse-width: 5px; --pulse-period: 1.9s; }
-.important-event.important-now { --pulse-width: 6px; --pulse-period: 1.5s; }
-@keyframes appointment-pulse {
-  50% { box-shadow: inset 0 0 0 var(--pulse-width) var(--pulse-light), inset 0 0 13px #ffbe4260; }
+.important-event.important-near { --pulse-period: 4.6s; --pulse-peak: .76; }
+.important-event.important-now { --pulse-period: 4s; --pulse-peak: .9; }
+.event-band.important-event { overflow: visible; }
+.event-band.important-event > :is(a, span, button) {
+  display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-@media (prefers-reduced-motion: reduce) { .important-event { animation: none; } }
+.important-event::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  /* The tint and shadows pulse together behind the label. */
+  background: color-mix(in srgb, var(--important-outline) 12%, transparent);
+  box-shadow: 0 0 3px 1px #e8ab5499, 0 0 11px 2px #e6a94c55,
+              inset 0 0 8px 1px #e9ad535e;
+  opacity: .2;
+}
+.calendar-event.important-event::after { inset-inline-start: -3px; }
+.milestone.important-event::after { inset: -2px; }
+.event-band.timed-band.important-event::after { inset: -1px; }
+@media (prefers-reduced-motion: no-preference) {
+  .important-event::after { animation: appointment-glow var(--pulse-period) ease-in-out infinite; }
+}
+@keyframes appointment-glow {
+  50% { opacity: var(--pulse-peak); }
+}
 .checkbox-label { display: flex !important; align-items: center; gap: .45rem; }
 #appointment-message { line-height: 1.55; }
 #appointment-dialog { width: min(32rem, calc(100vw - 2rem)); }

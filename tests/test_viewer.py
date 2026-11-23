@@ -91,6 +91,27 @@ class ViewerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             archive_calendar(self.h, dict(payload, complete=False))
 
+    def test_multiday_icloud_ribbon_keeps_one_occurrence_across_refreshes(self):
+        from monitor.configuration import zone
+        from monitor.dashboard import archive_calendar, read_window
+
+        now = datetime.now(zone())
+        first = now.date()
+        middle = first + timedelta(days=1)
+        after = first + timedelta(days=2)
+        end = first + timedelta(days=3)
+        event = dict(id='Family:fixture-uid:', title='Multiday fixture', calendar='Family',
+                     start=first.isoformat(), end=end.isoformat(), all_day=True)
+        snapshot = dict(source='calendar:icloud', complete=True, start=first.isoformat(),
+                        end=end.isoformat(), checked_at=now.isoformat(), events=[event])
+        archive_calendar(self.h, snapshot)
+        archive_calendar(self.h, dict(snapshot, start=middle.isoformat(), end=after.isoformat(),
+                                      events=[dict(event, id='fixture-uid')]))
+
+        events = [e for row in read_window(self.path, first, end)['calendar'] for e in row['events']]
+        self.assertEqual([e['id'] for e in events], ['Family:fixture-uid:', 'fixture-uid', 'Family:fixture-uid:'])
+        self.assertEqual(len({e['occurrence_key'] for e in events}), 1)
+
     def test_ordinary_action_calendar_visibility_is_opt_in(self):
         from datetime import date
         from monitor.card_input import set_calendar_visibility
@@ -118,9 +139,18 @@ class ViewerTests(unittest.TestCase):
         rid = self.h.start_run()['id']
         self.h.record_run(rid, dict(kind='source', source=source, complete=True, status='current',
                                     events=[event], evidence_ids=['fixture'], provenance='assistant'))
-        classify_calendar(self.h, rid, dict(assignments=[dict(source=source, id=event['id'],
-                                                              start=event['start'], category='work')]))
-        self.assertEqual(read_window(self.path, start, end)['calendar'][0]['events'][0]['category'], 'work')
+        assignment = dict(source=source, id=event['id'], start=event['start'], category='work')
+        label = 'Project briefing with the design team'
+        classify_calendar(self.h, rid, dict(assignments=[dict(assignment, display_title=label)]))
+        classify_calendar(self.h, rid, dict(assignments=[assignment]))
+        imported, = read_window(self.path, start, end)['calendar'][0]['events']
+        self.assertEqual(imported['category'], 'work')
+        self.assertEqual(imported['title'], event['title'])
+        self.assertEqual(imported['display_title'], label)
+        with self.assertRaises(ValueError):
+            classify_calendar(self.h, rid, dict(assignments=[dict(assignment, display_title='Two\nlines')]))
+        classify_calendar(self.h, rid, dict(assignments=[dict(assignment, display_title=None)]))
+        self.assertNotIn('display_title', read_window(self.path, start, end)['calendar'][0]['events'][0])
 
     def test_reports_group_by_local_date_and_republishing_keeps_run_order(self):
         from monitor.configuration import zone

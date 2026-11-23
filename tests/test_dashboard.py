@@ -3,7 +3,7 @@ import json
 import sqlite3
 import unittest
 
-from monitor.dashboard import SCHEMA, prune, record_calendar
+from monitor.dashboard import SCHEMA, event_identity, event_occurrence_identity, prune, record_calendar
 
 
 class CalendarArchiveTests(unittest.TestCase):
@@ -35,3 +35,14 @@ class CalendarArchiveTests(unittest.TestCase):
         prune(self.db, date(2026, 11, 23))
         days = [row[0] for row in self.db.execute('SELECT day FROM dashboard_calendar ORDER BY day')]
         self.assertEqual(days, ['2025-11-24', '2026-11-26'])
+
+    def test_icloud_occurrence_matches_current_and_archived_event_ids(self):
+        event = dict(id='fixture:uid', calendar='Family', title='Catch-up',
+                     start='2026-11-24T09:00:00+00:00', end='2026-11-24T10:00:00+00:00')
+        identity = event_identity(event)
+        source = 'calendar:icloud'
+        reviewed = event_occurrence_identity(source, event, identity)
+        for suffix in ('', '2026-11-24T09:00:00+00:00'):
+            archived = dict(event, id=f"Family:{event['id']}:{suffix}")
+            self.assertEqual(event_occurrence_identity(source, archived, identity), reviewed)
+        self.assertNotEqual(event_occurrence_identity(source, dict(event, calendar='Work'), identity), reviewed)

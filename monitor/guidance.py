@@ -51,7 +51,10 @@ def guide(topic):
     if topic == 'reporting':
         result['delivery'] = config.instruction('report-delivery')
         result['calendar_colours'] = config.instruction('calendar-colours')
+        result['calendar_titles'] = config.instruction('calendar-titles')
         result['template'] = config.render(config.get('templates.report'))
+    if topic == 'reminders':
+        result['calendar_reminders'] = config.instruction('calendar-reminders')
     return result
 
 
@@ -69,6 +72,7 @@ COMMAND_TOPICS = {
     'approval': 'permissions', 'run': 'pass-receipts', 'report': 'pass-receipts',
     'filing': 'filing', 'schedule': 'scheduling', 'thread': 'thread-cache',
     'maintenance': 'retention', 'backup': 'retention', 'calendar': 'calendar-decisions',
+    'calendar annual-month': 'icloud-recurrence',
     'refresh': 'mail-access', 'health': 'mail-access',
     'evidence': 'evidence', 'context': 'context',
 }

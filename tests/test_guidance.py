@@ -151,8 +151,17 @@ class GuidanceTests(unittest.TestCase):
             result = self.call('help', 'reporting')
         self.assertEqual(result['instruction'], 'Personal report style.')
         self.assertEqual(result['calendar_colours'], 'Personal classification rule.')
+        self.assertIn('Keep the original invite titles', result['calendar_titles'])
         self.assertIn('report publish RUN --input -', result['delivery'])
         self.assertIn('Each follow-up appears below', result['delivery'])
+
+    def test_reminders_keep_shared_calendar_guidance_with_private_preferences(self):
+        from monitor.configuration import resolve, snapshot
+        config = resolve().overlay({'instructions': {'reminders': 'Personal reminder preference.'}}, 'user')
+        with snapshot(config):
+            result = self.call('help', 'reminders')
+        self.assertEqual(result['instruction'], 'Personal reminder preference.')
+        self.assertIn('show_on_calendar', result['calendar_reminders'])
 
     def test_access_prompt_tracks_actual_failure_recovery_and_refresh_only_failure(self):
         self.assertEqual(self.prompt_types(self.call('briefing')), [])

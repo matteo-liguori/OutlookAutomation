@@ -54,6 +54,10 @@ instructions:
     Open or refresh the viewer and give a short chat summary. In Codex, reuse the built-in browser tab when available. Start the private listener with ui --dashboard --no-browser --duration-minutes 720 if needed and open its printed URL. If the viewer is unavailable, deliver the full report in chat.
   calendar-colours: |-
     When reviewing the rolling calendar, choose one category by the event's purpose. work = work or study (blue), personal = personal admin (teal), social = social plans (purple), travel = transport and trips (orange), health = healthcare (rose), occasion = birthdays, anniversaries and celebrations (ochre), home = household matters (green). Leave unreviewed imports grey. Save assignments with source, id, start and category using calendar classify RUN --input -.
+  calendar-titles: |-
+    In the rolling calendar review, add a short display_title to vague or misleading events in calendar classify. Say what the user is doing and who it is with when verified. Use the same wording in the report when relevant. Keep the original invite titles on the source calendars.
+  icloud-recurrence: |-
+    For a simple all-day iCloud series that should keep one month each year, see docs/icloud.md for the AnnualMonth helper. Preview the exact calendar and UID, verify the kept and removed dates, then apply an authorised change with the preview revision and verify the provider readback.
   card-input: |-
     `case edit --input -`: id, expected_revision, idempotency_key, optional title (180 chars), purpose (600 chars/three lines) and note (2000 chars). Edits preserve action/review clocks. Pending notes appear in briefing and case show until handled. `case note-ack --input -`: id, expected_revision, idempotency_key, note_ids and outcome (600 chars). Handle notes and record resulting changes before acknowledging; leave blocked notes pending. Existing send/calendar permission boundaries still apply.
   ui: |-
@@ -82,6 +86,8 @@ instructions:
     Find the existing card with briefing --task or --case, read it, and save the reminder using normal case update revision/evidence controls. For user work use a needs-user action with follow_up.mode handoff; set explicit_review to the requested reminder instant and snooze_until if it must not appear before then. Handoff reminders need that review field, not due_at alone. Record recurring cadence and advance it only under the user's actual instruction. Use the configured timezone. Do not invent or reset deadlines or reply anchors. Reuse the existing action for the same obligation; keep it pending until the user confirms completion, cancellation or dismissal. Reading or acknowledging a notification does not complete the task. Use help card-writes and help action review for schema and review rules.
 
     schedule plan --purpose reminder returns card due fields and no app recurrence by default. Only use --automation-requested if the user explicitly requested the separate automated mechanism; the flag records that intent, not permission for unrelated work. Verify any authorised app automation through supported tools and readback, retain scope/expiry/deduplication, and remove it when complete. Existing authorised daily mail checks and their same-day continuations remain as agreed; this reminder default adds no wakes and cancels no pending card tasks.
+  calendar-reminders: |-
+    Keep ordinary reminders in the report. Set show_on_calendar when the date helps the user plan or act, and preserve their explicit choice. For recurring dates the user wants tracked, keep the cadence and lead times on the relevant card. For important calendar dates, show one marker on the actual date and surface lead reminders as they come due.
   accounts: |-
     Account identities, source roles and personal routing come from the private profile. Respect explicit account choices and applicable permissions.
   briefing: |-
@@ -242,7 +248,9 @@ instructions:
     acknowledgements, snoozed to each milestone. Repeat until acknowledged; generic
     acknowledgement clears the current milestone only. Newly learned appointments get
     meaningful remaining milestones; urgent ones surface immediately. Stop at start,
-    cancellation or dismissal.
+    cancellation or dismissal. Set important_appointment and the same appointment_start
+    and appointment_title on the event action and its acknowledgements. Show one marker
+    on the actual appointment date. Due acknowledgements surface in the report and viewer.
   activation: |-
     ## Activation
 

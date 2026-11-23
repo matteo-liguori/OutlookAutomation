@@ -78,7 +78,7 @@ def parser():
     schedule.add_parser("verify").add_argument("--input", required=True)
     schedule.add_parser('sync').add_argument('--input', help='Exact fresh plan for preflight validation')
     google = sub.add_parser("calendar").add_subparsers(dest="operation", required=True)
-    classify = google.add_parser('classify', help='Colour reviewed events from a mail check')
+    classify = google.add_parser('classify', help='Colour and label reviewed events in the local calendar')
     classify.add_argument('id')
     classify.add_argument('--input', required=True)
     google.add_parser('archive', help='Import verified history into the local calendar').add_argument('--input', required=True)

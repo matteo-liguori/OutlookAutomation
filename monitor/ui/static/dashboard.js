@@ -112,26 +112,30 @@
   }
   function eventCard(event, formatTime, appointment) {
     const item = node('div', undefined, 'calendar-event ' + eventStyle(event));
+    const label = eventLabel(event);
     const text = event.all_day ? 'All day' : formatTime.format(new Date(event.start)) + '–' + formatTime.format(new Date(event.end));
     item.append(node('div', text, 'event-time'));
     const url = event.url || (/^https?:\/\//i.test(event.location || '') ? event.location : '');
     if (appointment) {
-      const title = node('button', event.title, 'appointment-event-title');
+      const title = node('button', label, 'appointment-event-title');
       title.addEventListener('click', () => displayAppointment(appointment));
       item.append(title);
       styleImportance(item, appointment);
     } else {
-      item.append(url ? link(event.title, url) : node('div', event.title));
+      item.append(url ? link(label, url) : node('div', label));
     }
     if (event.location && event.location !== url) item.append(node('div', event.location, 'event-time'));
-    item.title = event.calendars.join(' · ');
+    item.title = [...event.calendars, ...(event.display_title ? [event.title] : [])].join(' · ');
     return item;
   }
+  function eventLabel(event) { return event.display_title || event.title; }
   function eventStyle(event) {
     const types = ['work', 'personal', 'social', 'travel', 'health', 'occasion', 'home'];
     return 'type-' + (types.includes(event.category) ? event.category : 'neutral');
   }
-  function eventKey(event) { return JSON.stringify([event.source, event.id, event.start, event.end]); }
+  function eventKey(event) {
+    return event.occurrence_key || JSON.stringify([event.source, event.id, event.start, event.end]);
+  }
   function appointmentButton(appointment) {
     const marker = node('button', appointment.title, 'milestone');
     marker.addEventListener('click', () => displayAppointment(appointment));
@@ -204,16 +208,17 @@
       bar.style.gridColumn = (start + 1) + ' / ' + (end + 1);
       bar.style.gridRow = lane + 1;
       bar.title = event.title;
-      bar.setAttribute('aria-label', event.title + (event.all_day ? ', all day' : ', spans multiple days'));
+      const label = eventLabel(event);
+      bar.setAttribute('aria-label', label + (event.all_day ? ', all day' : ', spans multiple days'));
       if (appointment) styleImportance(bar, appointment);
       if (!shown.has(key)) {
         const url = event.url || (/^https?:\/\//i.test(event.location || '') ? event.location : '');
         if (appointment) {
-          const label = node('button', event.title, 'appointment-event-title');
-          label.addEventListener('click', () => displayAppointment(appointment));
-          bar.append(label);
+          const button = node('button', label, 'appointment-event-title');
+          button.addEventListener('click', () => displayAppointment(appointment));
+          bar.append(button);
         } else {
-          bar.append(url ? link(event.title, url) : node('span', event.title));
+          bar.append(url ? link(label, url) : node('span', label));
         }
         shown.add(key);
       }
@@ -240,6 +245,7 @@
         if (!other.url && event.url) other.url = event.url;
         if (!other.location && event.location) other.location = event.location;
         if (!other.category && event.category) other.category = event.category;
+        if (!other.display_title && event.display_title) other.display_title = event.display_title;
       }
     }
     return [...grouped.values()];
@@ -259,7 +265,7 @@
       const id = iso(day);
       const rows = byDay.get(id) || [];
       const events = combineEvents(rows.flatMap(row => row.events.map(event => ({...event, source: row.source}))));
-      events.sort((a, b) => new Date(a.start) - new Date(b.start) || a.title.localeCompare(b.title));
+      events.sort((a, b) => new Date(a.start) - new Date(b.start) || eventLabel(a).localeCompare(eventLabel(b)));
       const bands = events.filter(event => event.all_day || multiDay(event, formatDay));
       const timed = events.filter(event => !bands.includes(event));
       const online = new Set(rows.filter(row => data.sources.includes(row.source)).map(row => row.source)).size;

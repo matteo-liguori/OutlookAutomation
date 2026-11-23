@@ -16,6 +16,8 @@ Verified results update the local archive during ordinary checks. Dated actions
 appear when **Show on calendar** is enabled on their card.
 Imported events start neutral. Use `calendar classify RUN --input -` after review
 with an assignments list containing source, event ID, start and category.
+Add an optional `display_title` for a clearer dashboard label when the activity
+and people are known. Use `null` to clear a label. The source invite keeps its title.
 To backfill outside the usual window, use `calendar archive` for a complete
 provider snapshot or `calendar archive-google` for a paged connector export.
 

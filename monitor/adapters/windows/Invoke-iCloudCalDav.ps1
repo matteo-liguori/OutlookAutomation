@@ -1,7 +1,7 @@
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('Probe', 'Calendars', 'Events', 'Create', 'Update', 'Delete')]
+    [ValidateSet('Probe', 'Calendars', 'Events', 'Create', 'Update', 'Delete', 'AnnualMonth')]
     [string]$Action,
 
     [string]$Calendar,
@@ -9,6 +9,9 @@ param(
     [string]$Title,
     [string]$Location,
     [string]$Description,
+    [ValidateRange(1,12)][int]$KeepMonth,
+    [string]$EffectiveDate,
+    [ValidatePattern('^[a-f0-9]{64}$')][string]$ExpectedRevision,
     [datetimeoffset]$Start,
     [datetimeoffset]$End,
     [switch]$AllDay,
@@ -76,11 +79,23 @@ $credentialJson = @{ username = [string]$record.appleAccount
     password = $plainPassword
 } | ConvertTo-Json -Compress
 
+$operation = if ($Action -eq 'AnnualMonth') { 'annual-month' } else { $Action.ToLowerInvariant() }
 $arguments = @(
     $helper,
-    '--action', $Action.ToLowerInvariant(),
+    '--action', $operation,
     '--timeout', [string]$TimeoutSeconds
 )
+if ($Action -eq 'AnnualMonth') {
+    if (!$Calendar -or !$Uid -or !$KeepMonth -or $EffectiveDate -notmatch '^\d{4}-\d{2}-\d{2}$') {
+        throw 'AnnualMonth requires -Calendar, -Uid, -KeepMonth, and -EffectiveDate YYYY-MM-DD.'
+    }
+    $arguments += @('--calendar', $Calendar, '--uid', $Uid, '--keep-month', [string]$KeepMonth,
+                    '--effective-date', $EffectiveDate)
+    if ($ExpectedRevision) {
+        if (!$PSCmdlet.ShouldProcess("$Calendar / $Uid", "Keep only month $KeepMonth from $EffectiveDate")) { return }
+        $arguments += @('--expected-revision', $ExpectedRevision)
+    }
+}
 if ($Output -eq 'Text') {
     $arguments += '--pretty'
 }

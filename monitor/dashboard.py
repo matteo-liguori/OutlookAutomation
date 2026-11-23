@@ -2,6 +2,7 @@
 from contextlib import closing
 from datetime import date, datetime, time, timedelta
 import json
+import re
 
 from .configuration import zone
 from .model import CAL, digest, dumps, now, stamp
@@ -23,6 +24,9 @@ CREATE TABLE IF NOT EXISTS dashboard_local_events(
 CREATE INDEX IF NOT EXISTS dashboard_local_events_days ON dashboard_local_events(start_day,end_day);
 CREATE TABLE IF NOT EXISTS dashboard_event_categories(
     identity TEXT PRIMARY KEY, end_day TEXT NOT NULL, category TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS dashboard_event_titles(
+    identity TEXT PRIMARY KEY, end_day TEXT NOT NULL, title TEXT NOT NULL
 );
 """
 
@@ -65,6 +69,7 @@ def prune(db, today):
         db.execute(f'DELETE FROM {table} WHERE day < ?', (cutoff(today),))
     db.execute('DELETE FROM dashboard_local_events WHERE end_day < ?', (cutoff(today),))
     db.execute('DELETE FROM dashboard_event_categories WHERE end_day < ?', (cutoff(today),))
+    db.execute('DELETE FROM dashboard_event_titles WHERE end_day < ?', (cutoff(today),))
 
 
 def event_identity(event):
@@ -72,7 +77,18 @@ def event_identity(event):
                    bool(event.get('all_day'))])
 
 
+def event_occurrence_identity(source, event, identity):
+    uid = event['id']
+    calendar = event.get('calendar') if source == 'calendar:icloud' else None
+    if calendar and uid.startswith(calendar + ':'):
+        # Older archive imports qualified CalDAV UIDs with calendar and recurrence ID.
+        uid = re.sub(r':(?:\d{4}-\d{2}-\d{2}(?:[T ].*)?)?$', '', uid[len(calendar) + 1:])
+    return digest([source, calendar, uid, identity])
+
+
 def classify_calendar(h, run_id, payload):
+    from .card_input import text
+
     if not isinstance(payload, dict) or not isinstance(payload.get('assignments'), list):
         raise ValueError('Provide an assignments list for reviewed calendar events.')
     with h.write():
@@ -85,11 +101,12 @@ def classify_calendar(h, run_id, payload):
             if snapshot.get('status') == 'current' and snapshot.get('complete'):
                 for event in snapshot.get('events', []):
                     events.setdefault((source, event['id']), []).append(event)
-        updates = {}
+        updates, titles = {}, {}
+        required = {'source', 'id', 'start', 'category'}
         for assignment in payload['assignments']:
-            if not isinstance(assignment, dict) or set(assignment) != {'source', 'id', 'start', 'category'} or any(
-                not isinstance(value, str) for value in assignment.values()
-            ):
+            if (not isinstance(assignment, dict) or not required <= assignment.keys()
+                    or assignment.keys() - (required | {'display_title'})
+                    or any(not isinstance(assignment[key], str) for key in required)):
                 raise ValueError('Each assignment needs a source, event ID, start and category.')
             category = assignment['category']
             matches = [event for event in events.get((assignment['source'], assignment['id']), [])
@@ -102,8 +119,22 @@ def classify_calendar(h, run_id, payload):
                 raise ValueError('Matching copies of one event must have the same category.')
             end_day = datetime.fromisoformat(stamp(event['end'])).astimezone(zone()).date().isoformat()
             updates[identity] = (end_day, category)
+            if 'display_title' in assignment:
+                title = assignment['display_title']
+                if title is not None:
+                    title = text(title, 'Display title', 180)
+                    if len(title.splitlines()) != 1:
+                        raise ValueError('Use a single line for the display title.')
+                key = event_occurrence_identity(assignment['source'], event, identity)
+                if key in titles and titles[key][1] != title:
+                    raise ValueError('Use one display title per reviewed event.')
+                titles[key] = (end_day, title)
         h.db.executemany('INSERT OR REPLACE INTO dashboard_event_categories VALUES (?,?,?)',
                          [(identity, *values) for identity, values in updates.items()])
+        h.db.executemany('INSERT OR REPLACE INTO dashboard_event_titles VALUES (?,?,?)',
+                         [(key, end_day, title) for key, (end_day, title) in titles.items() if title is not None])
+        h.db.executemany('DELETE FROM dashboard_event_titles WHERE identity=?',
+                         [(key,) for key, (_, title) in titles.items() if title is None])
     return dict(classified=len(updates), allowed_categories=sorted(EVENT_CATEGORIES))
 
 
@@ -334,14 +365,23 @@ def read_window(path, start, until):
         reminders = appointment_reminders(cards, stamp(now()))
         appointments = appointment_markers(cards, reminders)
         categories = dict(db.execute('SELECT identity,category FROM dashboard_event_categories'))
+        titles = {}
+        if db.execute("SELECT 1 FROM sqlite_master WHERE name='dashboard_event_titles'").fetchone():
+            titles = dict(db.execute('SELECT identity,title FROM dashboard_event_titles WHERE end_day >= ?', (start.isoformat(),)))
         for row in calendar:
             for event in row['events']:
                 try:
-                    category = categories.get(event_identity(event))
+                    identity = event_identity(event)
+                    category = categories.get(identity)
+                    occurrence = event_occurrence_identity(row['source'], event, identity)
                 except (KeyError, TypeError, ValueError):
-                    category = None
+                    continue
+                if row['source'] in CAL:
+                    event['occurrence_key'] = occurrence
                 if category in EVENT_CATEGORIES:
                     event['category'] = category
+                if occurrence in titles:
+                    event['display_title'] = titles[occurrence]
     return dict(today=today.isoformat(), timezone=zone().key, sources=CAL, calendar=calendar, report_days=report_days,
                 local_reminders=local_reminder_markers(cards, start, until),
                 appointments=[item for item in appointments if start.isoformat() <= item['day'] < until.isoformat()],

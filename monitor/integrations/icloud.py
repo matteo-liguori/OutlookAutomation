@@ -10,6 +10,7 @@ import argparse
 import json
 import sys
 from datetime import date, datetime, timezone
+from hashlib import sha256
 from typing import Any
 from uuid import uuid4
 
@@ -89,6 +90,94 @@ def _is_recurring(component: Any) -> bool:
     return component.get("RRULE") is not None or component.get("RECURRENCE-ID") is not None
 
 
+def _annual_month_plan(payload, uid, keep_month, effective):
+    calendar = ICalendar.from_ical(payload)
+    events = calendar.walk("VEVENT")
+    if len(events) != 1:
+        raise ValueError("Expected a single recurrence master without exceptions.")
+    event = events[0]
+    if str(event.get("UID")) != uid or any(
+        field in event for field in ("RECURRENCE-ID", "RDATE", "EXDATE", "EXRULE", "ATTENDEE", "ORGANIZER")
+    ):
+        raise ValueError("The series has exceptions, scheduling participants, or a mismatched UID.")
+    start = _component_value(event, "DTSTART")
+    end = _component_value(event, "DTEND")
+    if (type(start) is not date or type(end) is not date or (end - start).days != 1
+            or start.day > 28 or start.month != keep_month or effective <= start):
+        raise ValueError("Use a one-day all-day series starting in the month to keep, with a fixed day up to 28.")
+    rule = event.get("RRULE")
+    if (not isinstance(rule, dict) or rule.keys() - {"FREQ", "INTERVAL", "BYMONTHDAY"}
+            or rule.get("FREQ") != ["MONTHLY"] or rule.get("BYMONTHDAY", [start.day]) != [start.day]):
+        raise ValueError("Use a simple open-ended monthly rule with a fixed day.")
+    interval, = rule.get("INTERVAL", [1])
+    if interval not in (1, 2, 3, 4, 6):
+        raise ValueError("The original monthly interval must divide the year and repeat more than once a year.")
+
+    def occurrence(month_index):
+        year, month = divmod(month_index, 12)
+        return date(year, month + 1, start.day)
+
+    first = start.year * 12 + start.month - 1
+    limit = effective.year * 12 + effective.month - 1
+    preserved = [
+        day for index in range(first, limit + 1, interval)
+        if (day := occurrence(index)) < effective and day.month != keep_month
+    ]
+    next_year = effective.year + (effective > date(effective.year, keep_month, start.day))
+    next_kept = date(next_year, keep_month, start.day)
+    next_removed = next(
+        day for index in range(first + ((limit - first) // interval) * interval, limit + 25, interval)
+        if (day := occurrence(index)) >= effective and day.month != keep_month
+    )
+    del event["RRULE"]
+    event.add("rrule", {"freq": "yearly", "bymonth": keep_month, "bymonthday": start.day})
+    if preserved:
+        event.add("rdate", preserved)
+    return calendar, {
+        "uid": uid, "title": str(event["SUMMARY"]), "effective": effective,
+        "nextKept": next_kept, "nextRemoved": next_removed, "preservedDates": preserved,
+    }
+
+
+def _change_annual_month(client, calendar, uid, keep_month, effective, expected_revision):
+    url = str(calendar.url.join(f"{uid}.ics"))
+    current = client.request(url, "GET", "")
+    if current.status != 200:
+        raise ValueError(f"Could not read the exact series (HTTP {current.status}).")
+    raw = current.raw.encode("utf-8") if isinstance(current.raw, str) else current.raw
+    revision = sha256(raw + f"\0{url}\0{keep_month}\0{effective}".encode()).hexdigest()
+    if expected_revision is not None and expected_revision != revision:
+        raise ValueError("The series changed since preview. Read and preview it again.")
+    proposed, plan = _annual_month_plan(raw, uid, keep_month, effective)
+    if expected_revision is None:
+        return dict(plan, preview=True, revision=revision)
+
+    etag = current.headers.get("ETag", "")
+    if not (etag.startswith('"') and etag.endswith('"')):
+        raise ValueError("iCloud did not provide a strong revision tag for the conditional update.")
+    body = proposed.to_ical()
+    response = client.request(url, "PUT", body,
+                              headers={"If-Match": etag, "Content-Type": "text/calendar; charset=utf-8"})
+    if response.status not in (200, 204):
+        raise ValueError(f"iCloud rejected the conditional series update (HTTP {response.status}).")
+    saved = client.request(url, "GET", "")
+    if saved.status != 200:
+        raise ValueError("iCloud accepted the write, but the series could not be read back.")
+    expected, = ICalendar.from_ical(body).walk("VEVENT")
+    actual = ICalendar.from_ical(saved.raw).walk("VEVENT")
+    def recurrence_dates(event):
+        dates = event.get("RDATE", [])
+        return sorted(item.dt for group in (dates if isinstance(dates, list) else [dates]) for item in group.dts)
+
+    if (len(actual) != 1
+            or any(_component_value(actual[0], field) != _component_value(expected, field)
+                   for field in ("UID", "SUMMARY", "DTSTART", "DTEND"))
+            or actual[0].get("RRULE") != expected["RRULE"]
+            or recurrence_dates(actual[0]) != plan["preservedDates"]):
+        raise ValueError("iCloud accepted the write, but readback did not match the planned series.")
+    return dict(plan, preview=False, verified=True)
+
+
 def _find_calendar(calendars: list[Any], name: str) -> Any:
     matches = [
         calendar for calendar in calendars if _calendar_name(calendar).casefold() == name.casefold()
@@ -153,7 +242,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--action",
-        choices=("probe", "calendars", "events", "create", "update", "delete"),
+        choices=("probe", "calendars", "events", "create", "update", "delete", "annual-month"),
         required=True,
     )
     parser.add_argument("--calendar")
@@ -161,6 +250,9 @@ def main() -> int:
     parser.add_argument("--title")
     parser.add_argument("--location")
     parser.add_argument("--description")
+    parser.add_argument("--keep-month", type=int, choices=range(1, 13))
+    parser.add_argument("--effective-date", type=date.fromisoformat)
+    parser.add_argument("--expected-revision")
     parser.add_argument("--start")
     parser.add_argument("--end")
     parser.add_argument("--all-day", action="store_true")
@@ -220,6 +312,17 @@ def main() -> int:
             selected = calendars
             if args.calendar:
                 selected = [_find_calendar(calendars, args.calendar)]
+
+            if args.action == "annual-month":
+                if (not args.calendar or not args.uid or not args.keep_month or not args.effective_date
+                        or args.effective_date < date.today()):
+                    raise ValueError("Supply a calendar, UID, month to keep, and current or future effective date.")
+                if any(c in args.uid for c in "/\\?#%"):
+                    raise ValueError("Use a single calendar resource UID.")
+                plan = _change_annual_month(client, selected[0], args.uid, args.keep_month,
+                                            args.effective_date, args.expected_revision)
+                _output(dict(plan, success=True), args.pretty)
+                return 0
 
             if args.action == "create":
                 if not args.calendar or not args.title:
