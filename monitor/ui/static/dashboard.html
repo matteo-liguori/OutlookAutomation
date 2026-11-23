@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Mail reports and calendar · Outlook Automation</title>
+  <link rel="stylesheet" href="/static/viewer.css">
+  <link rel="stylesheet" href="/static/dashboard.css">
+  <script src="/static/dashboard.js" defer></script>
+</head>
+<body>
+  <header class="masthead">
+    <div class="brand"><span class="mark" aria-hidden="true">O</span>Outlook Automation</div>
+    <nav aria-label="Harness records"><a href="/?save=1">Save item</a> <a href="/">Open threads</a></nav>
+  </header>
+  <main class="dashboard">
+    <section aria-labelledby="calendar-title">
+      <div class="calendar-heading">
+        <h1 id="calendar-title">Calendar</h1>
+        <div class="calendar-controls">
+          <button id="add-local">Add local event</button>
+          <button id="today">Today</button>
+          <button id="previous" aria-label="Previous calendar window">‹</button>
+          <button id="next" aria-label="Next calendar window">›</button>
+          <input id="date" type="date" aria-label="Jump to date">
+          <select id="mode" aria-label="Calendar view">
+            <option value="rolling">7 days</option><option value="4">4 days</option>
+            <option value="7">Week</option><option value="month">Month</option>
+          </select>
+        </div>
+      </div>
+      <p id="range" aria-live="polite"></p>
+      <ul class="colour-key" aria-label="Calendar colour legend">
+        <li class="type-work">Work &amp; study</li>
+        <li class="type-personal">Personal admin</li>
+        <li class="type-social">Social</li>
+        <li class="type-travel">Travel</li>
+        <li class="type-health">Health</li>
+        <li class="type-occasion">Occasions</li>
+        <li class="type-home">Home</li>
+        <li class="type-neutral">Unreviewed</li>
+        <li class="importance-key">Important</li>
+      </ul>
+      <div id="calendar"></div>
+      <p id="coverage" class="coverage" role="status"></p>
+    </section>
+    <section class="report-panel" aria-labelledby="reports-title">
+      <div class="calendar-heading"><h2 id="reports-title">Mail reports</h2>
+        <select id="reports" aria-label="Select report date"></select>
+      </div>
+      <div id="report" aria-live="polite"></div>
+    </section>
+    <p id="error" class="error" role="alert" hidden></p>
+  </main>
+  <dialog id="local-dialog" aria-labelledby="local-title">
+    <form id="local-form" class="edit-form">
+      <h2 id="local-title">Add local event</h2>
+      <p>Saved in the harness calendar only.</p>
+      <label>Title <input id="local-name" maxlength="180" required></label>
+      <label class="checkbox-label"><input type="checkbox" id="all-day"> All day</label>
+      <label>Starts <input id="local-start" type="datetime-local" required></label>
+      <label><span id="local-end-label">Ends</span><input id="local-end" type="datetime-local" required></label>
+      <label>Link or location <input id="local-location" maxlength="600"></label>
+      <div class="edit-actions"><button id="save-local" type="submit">Save event</button> <button id="cancel-local" type="button">Cancel</button></div>
+      <p id="local-status" role="status"></p>
+    </form>
+  </dialog>
+  <dialog id="appointment-dialog" aria-labelledby="appointment-title">
+    <div class="edit-form">
+      <p class="appointment-kicker">Important appointment</p>
+      <h2 id="appointment-title">Important appointment</h2>
+      <div id="appointment-message"></div>
+      <div id="appointment-acknowledgement">
+        <button id="ack-appointment" type="button" aria-describedby="hold-instructions">Hold to acknowledge</button>
+        <progress id="appointment-progress" value="0" max="5" aria-label="Acknowledgement hold progress"></progress>
+        <p id="hold-instructions">Hold for five seconds using your pointer, Space, or Enter.</p>
+      </div>
+      <button id="close-appointment" type="button">Close</button>
+      <p id="appointment-status" role="status"></p>
+    </div>
+  </dialog>
+</body>
+</html>

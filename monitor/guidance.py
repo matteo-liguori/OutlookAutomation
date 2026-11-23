@@ -34,7 +34,8 @@ def guide(topic):
     if topic not in GUIDES:
         raise ValueError("Unknown guidance topic")
     from .profile import PROFILE
-    instruction = resolve().instruction(topic)
+    config = resolve()
+    instruction = config.instruction(topic)
     result = {"topic": topic, "instruction": instruction}
     if topic in {'permissions','calendar-decisions','filing'}:
         from .policy import effective
@@ -47,7 +48,10 @@ def guide(topic):
     if topic == 'outlook':
         from monitor.adapters.api import status
         result.update(status())
-    if topic=='reporting':result['template']=resolve().render(resolve().get('templates.report'))
+    if topic == 'reporting':
+        result['delivery'] = config.instruction('report-delivery')
+        result['calendar_colours'] = config.instruction('calendar-colours')
+        result['template'] = config.render(config.get('templates.report'))
     return result
 
 

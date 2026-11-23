@@ -141,6 +141,19 @@ class GuidanceTests(unittest.TestCase):
             json.loads(result.stdout)
         self.assertFalse(absent.exists())
 
+    def test_reporting_uses_effective_private_preferences_and_shared_delivery(self):
+        from monitor.configuration import resolve, snapshot
+        config = resolve().overlay({'instructions': {
+            'reporting': 'Personal report style.',
+            'calendar-colours': 'Personal classification rule.',
+        }}, 'user')
+        with snapshot(config):
+            result = self.call('help', 'reporting')
+        self.assertEqual(result['instruction'], 'Personal report style.')
+        self.assertEqual(result['calendar_colours'], 'Personal classification rule.')
+        self.assertIn('report publish RUN --input -', result['delivery'])
+        self.assertIn('Each follow-up appears below', result['delivery'])
+
     def test_access_prompt_tracks_actual_failure_recovery_and_refresh_only_failure(self):
         self.assertEqual(self.prompt_types(self.call('briefing')), [])
         at = '2026-11-08T08:00:00+00:00'

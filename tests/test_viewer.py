@@ -5,6 +5,8 @@ from pathlib import Path
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, time, timedelta
+from unittest.mock import Mock
 
 from monitor.core import Harness
 from monitor.viewer import ReadStore, overview, detail, colour, action_dates
@@ -38,6 +40,112 @@ class ViewerTests(unittest.TestCase):
 
     def dump(self):
         return '\n'.join(self.h.db.iterdump())
+
+    def test_saved_item_has_no_calendar_or_action_date_and_is_idempotent(self):
+        from monitor.card_input import save_item
+        payload = dict(title='Reference', note='Information to keep', idempotency_key='fixture-save')
+        saved = save_item(self.h, payload)
+        self.assertEqual(save_item(self.h, payload), saved)
+        self.assertEqual(detail(self.path, saved['id'])['context'], payload['note'])
+        self.assertFalse(any(row['case_id'] == saved['id'] for row in overview(self.path)['events']))
+        with self.assertRaises(ValueError):
+            save_item(self.h, dict(payload, note='Different note'))
+
+    def test_local_event_and_due_acknowledgement_stay_in_harness(self):
+        from monitor.configuration import zone
+        from monitor.dashboard import acknowledge_appointment, read_window, save_local_event
+        now = datetime.now(zone())
+        today = now.date()
+        tomorrow = today + timedelta(days=1)
+        payload = dict(title='Private day', start=today.isoformat(), end=tomorrow.isoformat(),
+                       all_day=True, idempotency_key='private-day')
+        event = save_local_event(self.h, payload)
+        self.assertEqual(save_local_event(self.h, payload), event)
+        self.create('important', important_appointment=True, status='needs-user',
+                    explicit_review=(now - timedelta(minutes=5)).isoformat(),
+                    appointment_start=(now + timedelta(days=1)).isoformat())
+        data = read_window(self.path, today - timedelta(days=1), tomorrow)
+        self.assertEqual(data['calendar'], [dict(day=today.isoformat(), source='harness:local', events=[event])])
+        reminder, = data['reminders']
+        self.assertTrue(reminder['due'])
+        self.assertEqual(data['appointments'], [])
+        next_day = read_window(self.path, tomorrow, tomorrow + timedelta(days=1))
+        marker, = next_day['appointments']
+        self.assertEqual(marker['day'], tomorrow.isoformat())
+        acknowledge_appointment(self.h, {key: reminder[key] for key in ('id', 'case_id', 'revision')})
+        self.assertFalse(read_window(self.path, today - timedelta(days=1), tomorrow)['reminders'])
+        self.assertTrue(self.h.case('alpha')['actions'])
+
+    def test_archive_keeps_verified_coverage_separate_from_mail_runs(self):
+        from monitor.configuration import zone
+        from monitor.dashboard import archive_calendar, read_window
+        from monitor.model import CAL
+        now = datetime.now(zone())
+        start = now.date()
+        end = start + timedelta(days=2)
+        payload = dict(source=CAL[0], complete=True, start=start.isoformat(), end=end.isoformat(),
+                       checked_at=now.isoformat(), events=[])
+        self.assertEqual(archive_calendar(self.h, payload)['days'], 2)
+        self.assertEqual(len(read_window(self.path, start, end)['calendar']), 2)
+        self.assertEqual(self.h.db.execute('SELECT count(*) FROM runs').fetchone()[0], 0)
+        with self.assertRaises(ValueError):
+            archive_calendar(self.h, dict(payload, complete=False))
+
+    def test_ordinary_action_calendar_visibility_is_opt_in(self):
+        from datetime import date
+        from monitor.card_input import set_calendar_visibility
+        from monitor.dashboard import read_window
+        start, end = date(2026, 11, 12), date(2026, 11, 13)
+        card = self.h.case('alpha')
+        self.assertFalse(read_window(self.path, start, end)['local_reminders'])
+        set_calendar_visibility(self.h, dict(id='alpha', action_id='alpha-action',
+                                            revision=card['revision'], show_on_calendar=True))
+        self.assertEqual(read_window(self.path, start, end)['local_reminders'][0]['category'], 'Deadline')
+        self.assertEqual(self.h.case('alpha')['actions'][0]['next_review'], card['actions'][0]['next_review'])
+
+    def test_archive_stays_neutral_until_verified_event_is_classified(self):
+        from monitor.configuration import zone
+        from monitor.dashboard import archive_calendar, classify_calendar, read_window
+        from monitor.model import CAL
+        now = datetime.now(zone())
+        start, end = now.date(), now.date() + timedelta(days=1)
+        source = CAL[0]
+        event = dict(id='verified', title='Work meeting', start=start.isoformat()+'T09:00:00+00:00',
+                     end=start.isoformat()+'T10:00:00+00:00', all_day=False)
+        archive_calendar(self.h, dict(source=source, complete=True, start=start.isoformat(),
+                                     end=end.isoformat(), checked_at=now.isoformat(), events=[event]))
+        self.assertNotIn('category', read_window(self.path, start, end)['calendar'][0]['events'][0])
+        rid = self.h.start_run()['id']
+        self.h.record_run(rid, dict(kind='source', source=source, complete=True, status='current',
+                                    events=[event], evidence_ids=['fixture'], provenance='assistant'))
+        classify_calendar(self.h, rid, dict(assignments=[dict(source=source, id=event['id'],
+                                                              start=event['start'], category='work')]))
+        self.assertEqual(read_window(self.path, start, end)['calendar'][0]['events'][0]['category'], 'work')
+
+    def test_reports_group_by_local_date_and_republishing_keeps_run_order(self):
+        from monitor.configuration import zone
+        from monitor.dashboard import publish, read_daily_reports, read_window
+
+        today = datetime.now(zone()).date()
+        tomorrow = today + timedelta(days=1)
+        runs = {
+            'first': (today, 9, 'complete'),
+            'later': (today, 14, 'partial'),
+            'tomorrow': (tomorrow, 9, 'complete'),
+        }
+        harness = Mock(wraps=self.h)
+        harness.run.side_effect = lambda rid: dict(
+            started_at=datetime.combine(runs[rid][0], time(runs[rid][1]), zone()).isoformat(),
+            status=runs[rid][2],
+        )
+        for rid in ('later', 'tomorrow', 'first'):
+            publish(harness, rid, {'markdown': rid})
+        publish(harness, 'first', {'markdown': 'Revised morning report'})
+
+        self.assertEqual(read_window(self.path, today, tomorrow)['report_days'], [today.isoformat()])
+        self.assertEqual([(r['run_id'], r['markdown'], r['status']) for r in read_daily_reports(self.path, today)],
+                         [('first', 'Revised morning report', 'complete'), ('later', 'later', 'partial')])
+        self.assertEqual([r['run_id'] for r in read_daily_reports(self.path, tomorrow)], ['tomorrow'])
 
     def test_grid_and_detail_use_current_records_without_any_writes(self):
         before = self.dump()

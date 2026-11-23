@@ -25,7 +25,8 @@ When the YAML changes, apply the mandatory core `schedule sync` operations throu
 the shared executor, then verify app readback. See `help scheduling` for the exact
 procedure. The current configuration supersedes stale hours in older app prompts.
 On a user reply, `briefing --user-active` retries any pending setup. Follow
-`help mail-pass` and `help reporting` for each round; disclose incomplete coverage.
+`help mail-pass` for each round. `report data` points to `help reporting` when
+it is time to write the report. Disclose incomplete coverage.
 
 The app launches the assistant; SQLite reminders alone do not. The harness checks
 setup but does not itself rename chats or create app automations. Keep the computer

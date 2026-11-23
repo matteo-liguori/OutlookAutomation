@@ -101,6 +101,7 @@ def validate(value, base=None, partial=False):
     try:ZoneInfo(value['timezone'])
     except (ZoneInfoNotFoundError,ValueError):raise ValueError('Unknown timezone: '+value['timezone']) from None
     schedule=value['schedule']
+    if schedule['calendar_days_ahead'] > 30:raise ValueError('Calendar days ahead must be 0..30')
     for v in [schedule['morning'],*schedule['continuations'],schedule['roundup_start'],schedule['roundup_end']]:
         if not isinstance(v,str) or len(v)!=5 or time.fromisoformat(v).tzinfo:raise ValueError('Schedule times need local HH:MM values')
     if len(schedule['continuations'])>8 or len(set(schedule['continuations']))!=len(schedule['continuations']):raise ValueError('Use up to eight distinct continuation times')

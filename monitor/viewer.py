@@ -45,9 +45,12 @@ def colour(case_id):
 
 
 def action_view(action, at):
+    from .dashboard import is_important_appointment
     fields = ('id', 'owner', 'status', 'next_step', 'deadline', 'promised_at',
               'next_review', 'snooze_until', 'completion_condition', 'reopening_condition')
     result = {k: action[k] for k in fields if action.get(k) is not None}
+    result['show_on_calendar'] = action.get('show_on_calendar') is True
+    result['calendar_toggle'] = not is_important_appointment(action)
     if action.get('custom_action_state'):result['custom_action_state']=action['custom_action_state']
     result['snoozed'] = bool(action.get('snooze_until') and stamp(action['snooze_until']) > at and not action.get('snooze_override'))
     result['due'] = active_due(action, at)

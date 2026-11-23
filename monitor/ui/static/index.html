@@ -9,9 +9,9 @@
   <script src="/static/viewer.js" defer></script>
 </head>
 <body>
-  <header class="masthead"><div class="brand"><span class="mark" aria-hidden="true">O</span><div>Outlook Automation<span class="eyebrow">YOUR CURRENT WORK</span></div></div><span class="readonly">Local workspace</span></header>
+  <header class="masthead"><div class="brand"><span class="mark" aria-hidden="true">O</span><div>Outlook Automation<span class="eyebrow">YOUR CURRENT WORK</span></div></div><a href="/dashboard">Calendar and reports</a></header>
   <main>
-    <div class="heading"><div><h1>Open threads</h1><p class="subtitle">Current conversations, next steps and the dates that matter.</p></div><button id="refresh" class="quiet">Refresh</button></div>
+    <div class="heading"><div><h1>Open threads</h1><p class="subtitle">Current conversations, next steps and the dates that matter.</p></div><div><button id="new-item">Save item</button> <button id="refresh" class="quiet">Refresh</button></div></div>
     <div class="toolbar">
       <div class="view-switch" role="group" aria-label="View"><button id="grid-mode" aria-pressed="true">Card grid</button><button id="timeline-mode" aria-pressed="false">Action timeline</button></div>
       <label class="search"><span class="sr-only">Search current cards and actions</span><input id="search" type="search" placeholder="Find a thread or actionâ€¦" autocomplete="off"></label>
@@ -25,6 +25,15 @@
   <dialog id="detail" aria-labelledby="detail-title">
     <header class="detail-header"><div><p id="detail-id" class="eyebrow"></p><h2 id="detail-title">Thread details</h2></div><button id="close-detail" class="quiet" aria-label="Close thread details">Close Ã—</button></header>
     <div id="detail-body"></div>
+  </dialog>
+  <dialog id="new-card" aria-labelledby="new-title">
+    <form id="new-card-form" class="edit-form">
+      <h2 id="new-title">Save an item</h2>
+      <label>Title <input id="saved-title" maxlength="180" required></label>
+      <label>Note <textarea id="saved-note" rows="5" maxlength="6000" required></textarea></label>
+      <div class="edit-actions"><button id="save-item" type="submit">Save</button> <button id="cancel-item" type="button" class="quiet">Cancel</button></div>
+      <p id="save-item-status" role="status"></p>
+    </form>
   </dialog>
 </body>
 </html>

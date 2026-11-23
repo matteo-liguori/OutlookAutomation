@@ -1,5 +1,12 @@
 # Alpha updates
 
+`harness-update/v0.1.0-alpha.9` adds a local calendar and report viewer with
+rolling calendar history, event colours, optional card markers and appointment
+acknowledgements. Same-day follow-ups appear below the first report. Account
+bindings and personal preferences stay in the installation's private files.
+Refresh the platform dependency lock to install the viewer. The harness creates
+the new SQLite tables on normal startup.
+
 `harness-update/v0.1.0-alpha.8` makes ordinary reminders card/action records by
 default, delivered through normal mail checks. Reminder plans expose no app rules
 unless --automation-requested records an explicit request for a separate wake-up.

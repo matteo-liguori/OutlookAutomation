@@ -72,7 +72,7 @@ def startup(h, at):
     return dict(timezone=zone().key, first_interaction_local=datetime.fromisoformat(at).astimezone(zone()).isoformat(),
                 title=resolve().get('schedule.title').format(date=day),
                 remaining_followups=[p['time'] for p in plan(at=at)['eligible']],
-                instruction='Use help activation to complete chat setup now; then help mail-pass and help reporting. Retrieve other instructions only for relevant operations.')
+                instruction='Use help activation for chat setup, then help mail-pass. Retrieve other instructions only for relevant operations.')
 
 
 def defer(h, payload):

@@ -180,6 +180,29 @@
       const dates=el('dl','date-list');
       for (const [field,label] of [['deadline','Deadline'],['promised_at','Promised'],['follow_up_at','Follow-up'],['next_review','Next review'],['snooze_until','Snoozed until']]) if(action[field])dates.append(el('dt','',label),el('dd','',formatDate(action[field])+' · '+formatTime(action[field])));
       item.append(dates);
+      if (action.calendar_toggle) {
+        const toggle = el('input'), label = el('label', 'calendar-visibility'), status = el('span', 'more');
+        toggle.type = 'checkbox'; toggle.checked = action.show_on_calendar;
+        status.setAttribute('role', 'status');
+        label.append(toggle, document.createTextNode(' Show on calendar'));
+        item.append(label, status);
+        toggle.addEventListener('change', async () => {
+          if (dirty || saving) {
+            toggle.checked = action.show_on_calendar;
+            status.textContent = 'Save your card edits first.';
+            return;
+          }
+          saving = true; toggle.disabled = true;
+          try {
+            await api('/api/calendar-visibility', {id:card.id, action_id:action.id,
+              revision:card.revision, show_on_calendar:toggle.checked});
+            if (selected === card.id) renderDetail(await api('/api/card/'+encodeURIComponent(card.id)));
+          } catch (error) {
+            toggle.checked = action.show_on_calendar;
+            status.textContent = error.message;
+          } finally { saving = false; toggle.disabled = false; }
+        });
+      }
       if(action.depends_on.length)item.append(el('p','more','Depends on: '+action.depends_on.join(', ')));
       if(action.completion_condition){const details=el('details','');details.append(el('summary','','Completion condition'),el('p','text-block',action.completion_condition));item.append(details);}
       actions.append(item);
@@ -276,6 +299,31 @@
   $('timeline-mode').addEventListener('click',()=>setMode('timeline'));
   function setMode(value){mode=value;$('grid-mode').setAttribute('aria-pressed',String(value==='grid'));$('timeline-mode').setAttribute('aria-pressed',String(value==='timeline'));render();}
   $('search').addEventListener('input',render);$('filter').addEventListener('change',render);$('refresh').addEventListener('click',load);
+  let saveAttempt;
+  $('new-item').addEventListener('click', () => $('new-card').showModal());
+  $('cancel-item').addEventListener('click', () => $('new-card').close());
+  $('new-card').addEventListener('cancel', event => { if ($('save-item').disabled) event.preventDefault(); });
+  $('new-card-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const title = $('saved-title').value.trim(), note = $('saved-note').value.trim();
+    const fingerprint = JSON.stringify([title, note]);
+    if (saveAttempt?.fingerprint !== fingerprint) saveAttempt = {fingerprint, key:crypto.randomUUID()};
+    $('save-item').disabled = $('cancel-item').disabled = true;
+    $('save-item-status').textContent = 'Saving…';
+    try {
+      const result = await api('/api/saved-items', {title, note, idempotency_key:saveAttempt.key});
+      $('new-card-form').reset();
+      $('new-card').close();
+      $('save-item-status').textContent = '';
+      saveAttempt = null;
+      await load();
+      await openDetail(result.id);
+    } catch (error) {
+      $('save-item-status').textContent = error.message;
+    } finally {
+      $('save-item').disabled = $('cancel-item').disabled = false;
+    }
+  });
   function canClose(){return !saving && (!dirty || confirm('Discard your unsaved changes?'));}
   $('close-detail').addEventListener('click',()=>{if(canClose())$('detail').close();});
   $('detail').addEventListener('cancel',event=>{if(!canClose())event.preventDefault();});
@@ -284,5 +332,11 @@
   window.addEventListener('beforeunload',event=>{if(dirty||saving){event.preventDefault();event.returnValue='';}});
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)load();});
   setInterval(()=>{if(!document.hidden)load();},20000);
-  load().then(()=>{if(params.has('card'))openDetail(params.get('card'));});
+  load().then(()=>{
+    if (params.has('card')) openDetail(params.get('card'));
+    if (new URLSearchParams(location.search).get('save') === '1') {
+      history.replaceState(null, '', location.pathname);
+      $('new-card').showModal();
+    }
+  });
 })();

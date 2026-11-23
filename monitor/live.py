@@ -16,7 +16,8 @@ OPERATIONAL_SOURCES={'monitor-report','monitor-report-delivery','monitor-handoff
 
 
 def initialize(h):
-    h.db.executescript(SCHEMA)
+    from .dashboard import SCHEMA as DASHBOARD_SCHEMA
+    h.db.executescript(SCHEMA + DASHBOARD_SCHEMA)
     h.db.commit()
 
 
@@ -141,6 +142,9 @@ def prune(h,keep=None,at=None):
         row=h.db.execute('SELECT id FROM runs ORDER BY started_at DESC,id DESC LIMIT 1').fetchone()
         keep=row[0] if row else None
     at=at or now()
+    from .configuration import zone
+    from .dashboard import prune as prune_dashboard
+    prune_dashboard(h.db, datetime.fromisoformat(at).astimezone(zone()).date())
     cutoff=stamp((datetime.fromisoformat(at)-timedelta(days=resolve().get('maintenance.cache_days'))).isoformat())
     old=[r['id'] for r in h.db.execute('SELECT id,status,started_at FROM runs ORDER BY started_at,id') if r['id']!=keep and r['status']!='running']
     released=set()

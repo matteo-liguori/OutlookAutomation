@@ -58,18 +58,18 @@ macOS:
 
 These commands show which Outlook operations are available on your installation.
 
-### Visual view
+### Calendar and reports
 
-Install the optional viewer in the same project environment:
+The platform setup installs the local viewer. Open the calendar and daily reports:
 
 ```sh
-python -m pip install -r packaging/requirements/requirements-ui.lock
-python -m monitor ui
+python -m monitor ui --dashboard
 ```
 
 Use `.venv/bin/python` on Mac or `.venv\Scripts\python.exe` on Windows for
-`python` above; `monitor.ps1 ui` also launches it on Windows.
-The local browser view shows a card grid and a linked action timeline, with
+`python` above. On Windows you can also run `monitor.ps1 ui --dashboard`.
+Same-day follow-ups appear below the morning report. Use **Open threads** for the
+card grid and linked action timeline, with
 consistent card colours, search and filters. Click a card or action for details.
 It reads current SQLite records without scanning Outlook. Open a card to edit its
 name or recognition/goal, or leave a note for the agent. Notes appear in the next

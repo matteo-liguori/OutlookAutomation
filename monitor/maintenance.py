@@ -3,8 +3,10 @@ from .configuration import zone
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,6 +14,65 @@ from pathlib import Path
 from .model import dumps, digest, now, stamp
 from .backups import limits
 from .configuration import resolve
+from .paths import data_root
+
+
+def storage_size(root):
+    totals = Counter()
+    unreadable = 0
+
+    def on_error(_):
+        nonlocal unreadable
+        unreadable += 1
+
+    def regular(path):
+        try:
+            info = path.lstat()
+        except OSError as error:
+            on_error(error)
+            return None
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            return None
+        return info
+
+    for folder, directories, files in os.walk(root, onerror=on_error):
+        parent = Path(folder)
+        directories[:] = [name for name in directories if regular(parent / name) is not None]
+        for name in files:
+            path = parent / name
+            info = regular(path)
+            if info and stat.S_ISREG(info.st_mode):
+                relative = path.relative_to(root)
+                totals[relative.parts[0]] += info.st_size
+    limit = resolve().get('maintenance.storage_review_mb') * 1_000_000
+    total = sum(totals.values())
+    return dict(bytes=total, threshold_bytes=limit, review_due=total >= limit,
+                unreadable=unreadable, largest=dict(totals.most_common(5)))
+
+
+def storage_prompt(h, at):
+    root = data_root()
+    if h.path.resolve() != root / 'monitor/monitor.db':
+        return []
+    today = datetime.fromisoformat(at).astimezone(zone()).date().isoformat()
+    key = 'storage-review-size'
+    row = h.db.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+    cached = json.loads(row[0]) if row else {}
+    threshold = resolve().get('maintenance.storage_review_mb') * 1_000_000
+    if cached.get('day') != today or cached.get('threshold_bytes') != threshold:
+        cached = dict(storage_size(root), day=today)
+        with h.write():
+            h.db.execute('INSERT OR REPLACE INTO meta VALUES (?,?)', (key, dumps(cached)))
+    if not cached['review_due']:
+        return []
+    total = cached['bytes'] / 1_000_000_000
+    limit = threshold / 1_000_000_000
+    return [dict(
+        type='storage_review_prompt', largest_bytes=cached['largest'],
+        instruction=(f'Local harness data is {total:.2f} GB. The review threshold is {limit:g} GB. '
+                     'Use maintenance status and maintenance clean --dry-run to review the largest folders '
+                     'and identify candidates. Preserve referenced data and obtain approval for discretionary deletion.'),
+    )]
 
 def policy():
     BACKUP_LIMITS=limits()
@@ -296,6 +357,7 @@ def status(h):
         warning=json.loads(warning[0]) if warning else None,
         thread_cache=json.loads(lifecycle[0]) if lifecycle else None,
         backup_rotation=json.loads(rotation[0]) if rotation else None,
+        storage_size=storage_size(data_root()) if h.path.resolve() == data_root() / 'monitor/monitor.db' else None,
         source_health=__import__('monitor.live',fromlist=['items']).items(h),
         storage={
             table: h.db.execute(f"SELECT count(*) FROM {table}").fetchone()[0]

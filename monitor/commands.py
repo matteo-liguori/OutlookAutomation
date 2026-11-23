@@ -91,12 +91,40 @@ def handle_schedule(h, args, payload, kind):
 
 
 def handle_calendar(h, args, payload, kind):
+    if args.operation == 'classify':
+        from .dashboard import classify_calendar
+        return classify_calendar(h, args.id, payload)
+    if args.operation == 'local-add':
+        from .dashboard import save_local_event
+        return save_local_event(h, payload)
+    if args.operation == 'archive':
+        from .dashboard import archive_calendar
+        return archive_calendar(h, payload)
+    if args.operation == 'archive-google':
+        from .dashboard import archive_calendar
+        from .configuration import zone
+        from .google_calendar import capture_time, normalize
+        from .paths import data_root
+        start, end = (capture_time(payload[key]).astimezone(zone()).date() for key in ('start', 'end'))
+        days = (end - start).days
+        if not 1 <= days <= 732:
+            raise ValueError('Google calendar history window is invalid')
+        config = json.loads((data_root() / 'monitor/google-calendar-config.json').read_text(encoding='utf-8-sig'))
+        normalized = normalize(payload, config, days_ahead=days - 1)
+        return dict(sources=[
+            archive_calendar(h, dict(info, start=start.isoformat(), end=end.isoformat(),
+                                     checked_at=info['completed_at']))
+            if info['complete'] else dict(source=info['source'], errors=info['errors'])
+            for info in normalized['sources']])
     cmd, op = args.command, getattr(args, "operation", None)
     from .google_calendar import prepare, normalize, ingest
 
     config = json.loads(Path(args.config).read_text(encoding="utf-8-sig"))
     if op == "google-prepare":
-        return prepare(config, args.date, h.run(args.run_id)["started_at"] if args.run_id else None)
+        run = h.run(args.run_id) if args.run_id else None
+        if run:
+            return prepare(config, args.date, at=run['started_at'], days_ahead=run['details'].get('calendar_days_ahead', 3))
+        return prepare(config, args.date)
     if op == "google-validate":
         return normalize(payload, config)
     return ingest(h, args.run_id, payload, config)
@@ -155,7 +183,8 @@ def handle_briefing(h, args, payload, kind):
         from .briefing import compact
         from .configuration import notices
         from .updates import notice as update_notice
-        items=notices()+update_notice()+compact(h,at)
+        from .maintenance import storage_prompt
+        items=notices()+update_notice()+storage_prompt(h,at)+compact(h,at)
     else:
         items=h.current_items(briefing=False,at=at)
     result = h.page(kind,items,limit=args.limit)
@@ -354,8 +383,13 @@ def handle_run(h, args, payload, kind):
 
 
 def handle_report(h, args, payload, kind):
-    cmd, op = args.command, getattr(args, "operation", None)
-    return h.page(kind, h.report_items(args.id), limit=args.limit)
+    if args.operation == 'publish':
+        from .dashboard import publish
+        return publish(h, args.id, payload)
+    result = h.page(kind, h.report_items(args.id), limit=args.limit)
+    if not args.cursor:
+        result['reminder'] = 'Use help reporting when writing the report.'
+    return result
 
 
 def handle_maintenance(h, args, payload, kind):

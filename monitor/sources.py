@@ -1,10 +1,18 @@
 """Authoritative source identities and collection boundary checks."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from .model import stamp
 from .profile import PROFILE
+from .configuration import zone
 
 MAIL_STORES = PROFILE["mail"]
+
+
+def calendar_window(day, days_ahead):
+    days = [(day + timedelta(days=offset)).isoformat() for offset in range(days_ahead + 1)]
+    start = datetime.combine(day, time.min, zone())
+    end = datetime.combine(day + timedelta(days=len(days)), time.min, zone())
+    return dict(start=start.isoformat(), end=end.isoformat(), days=days)
 
 
 def calendar_cancellations(payload):

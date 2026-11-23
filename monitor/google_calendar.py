@@ -1,10 +1,12 @@
-from .configuration import zone as configured_zone
+from .configuration import resolve, zone as configured_zone
 """Validate bounded connector exports; optionally record complete harness sources."""
 
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
+import re
 from zoneinfo import ZoneInfo
 from .model import CAL, dumps, now, stamp
 from .profile import PROFILE, DEFAULT_PROVIDERS
+from .sources import calendar_window
 
 SOURCES = {s for s in CAL if {**DEFAULT_PROVIDERS, **PROFILE.get('calendar_providers', {})}.get(s) == 'google'}
 
@@ -28,20 +30,18 @@ def check_config(config):
         raise ValueError("Google calendar IDs must match enabled profile sources")
 
 
-def prepare(config, day=None, at=None):
+def prepare(config, day=None, at=None, days_ahead=None):
     check_config(config)
     day = (
         date.fromisoformat(day)
         if day
         else datetime.fromisoformat(stamp(at or now())).astimezone(configured_zone()).date()
     )
-    start = datetime.combine(day, time(), configured_zone())
-    end = datetime.combine(day + timedelta(days=4), time(), configured_zone())
+    if days_ahead is None:
+        days_ahead = resolve().get('schedule.calendar_days_ahead')
     return dict(
-        start=start.isoformat(),
-        end=end.isoformat(),
+        **calendar_window(day, days_ahead),
         timezone=configured_zone().key,
-        days=[(day + timedelta(days=n)).isoformat() for n in range(4)],
         sources=[dict(source=s, calendar_id=config[s]) for s in sorted(SOURCES)],
         allowed_sources=sorted(SOURCES),
     )
@@ -88,6 +88,13 @@ def normalize_event(raw, start, end):
         raise ValueError("Event must be an object")
     if not raw.get("id"):
         raise ValueError("Missing stable event ID")
+    # The connector serializes date-only boundaries as offset-free midnights.
+    # Accept the pair only when it covers one or more whole calendar days.
+    timestamps = [raw.get(key) for key in ('start', 'end')]
+    date_midnight = r'\d{4}-\d{2}-\d{2}T00:00:00(?:\.0+)?'
+    if all(isinstance(value, str) and re.fullmatch(date_midnight, value) for value in timestamps):
+        if timestamps[0][:10] < timestamps[1][:10]:
+            raw = dict(raw, start=timestamps[0][:10], end=timestamps[1][:10])
     if raw.get("status") == "cancelled":
         cancelled = {
             "id": raw["id"],
@@ -122,20 +129,22 @@ def normalize_event(raw, start, end):
         location=raw.get("location") or "",
         all_day=all_day,
     )
+    if raw.get('event_type') == 'birthday':
+        normalized['event_type'] = 'birthday'
     return normalized, False
 
 
-def normalize(payload, config):
+def normalize(payload, config, days_ahead=None):
     check_config(config)
     start = datetime.fromisoformat(payload["start"])
     end = datetime.fromisoformat(payload["end"])
     if start.tzinfo is None or end.tzinfo is None or payload.get("timezone") != configured_zone().key:
         raise ValueError("Collection needs explicit London window offsets")
-    expected = prepare(config, start.astimezone(configured_zone()).date().isoformat())
+    expected = prepare(config, start.astimezone(configured_zone()).date().isoformat(), days_ahead=days_ahead)
     if start != datetime.fromisoformat(expected["start"]) or end != datetime.fromisoformat(
         expected["end"]
     ):
-        raise ValueError("Expected exactly four complete London calendar days")
+        raise ValueError("Calendar export does not match the configured collection window")
     records = payload.get("sources", [])
     if len(records) != len(SOURCES) or {r["source"] for r in records} != SOURCES:
         raise ValueError("Both authoritative Google sources must have explicit results")
@@ -225,10 +234,11 @@ def normalize(payload, config):
 
 
 def ingest(h, rid, payload, config):
-    result = normalize(payload, config)
     run = h.run(rid)
+    days_ahead = run['details'].get('calendar_days_ahead', 3)
+    result = normalize(payload, config, days_ahead)
     day = datetime.fromisoformat(run["started_at"]).astimezone(configured_zone()).date().isoformat()
-    if prepare(config, day)["start"] != payload["start"]:
+    if prepare(config, day, days_ahead=days_ahead)["start"] != payload["start"]:
         raise ValueError("Google window does not match this run")
     if capture_time(payload["started_at"]) < capture_time(run["started_at"]):
         raise ValueError("Collection preceded this run; collect again")

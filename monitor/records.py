@@ -236,6 +236,10 @@ class CaseRecords:
                         a.pop("first_recorded_at", None)
                 else:
                     a["first_recorded_at"] = stamp(payload.get("effective_at") or now())
+                if prior and 'show_on_calendar' in prior and 'show_on_calendar' not in a:
+                    a['show_on_calendar'] = prior['show_on_calendar']
+                if 'show_on_calendar' in a and type(a['show_on_calendar']) is not bool:
+                    raise ValueError('show_on_calendar must be true or false')
                 from .followups import prepare
 
                 prepare(self, a, prior, evidence, payload.get("effective_at"))

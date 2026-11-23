@@ -83,6 +83,26 @@ class GoogleTests(unittest.TestCase):
             end={"dateTime": "2026-10-14T11:00:00+01:00"},
         )
 
+    def test_calendar_can_cover_today_and_seven_more_days(self):
+        expected = google.prepare(self.config, "2026-10-13", days_ahead=7)
+        payload = dict(self.export(), start=expected['start'], end=expected['end'])
+        result = google.normalize(payload, self.config, days_ahead=7)
+        self.assertTrue(result['fully_verified'])
+        self.assertEqual(result['sources'][0]['days'][-1], '2026-10-20')
+        with self.assertRaises(ValueError):
+            google.normalize(payload, self.config, days_ahead=3)
+
+    def test_connector_midnight_boundaries_keep_birthday_all_day(self):
+        payload = self.export()
+        payload['sources'][0]['pages'][0]['events'] = [
+            dict(id='birthday', summary='Birthday', event_type='birthday',
+                 start='2026-10-14T00:00:00', end='2026-10-15T00:00:00')
+        ]
+        result = google.normalize(payload, self.config)
+        event, = result['sources'][0]['events']
+        self.assertTrue(event['all_day'])
+        self.assertEqual(event['event_type'], 'birthday')
+
     def test_empty_and_authentication(self):
         p = self.export()
         self.assertTrue(google.normalize(p, self.config)["fully_verified"])

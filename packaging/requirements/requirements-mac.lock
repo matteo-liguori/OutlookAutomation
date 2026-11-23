@@ -1,4 +1,5 @@
 # Portable harness dependencies; native Outlook probing uses macOS system tools.
+-r requirements-ui.lock
 tzdata==2026.3
 icalendar==7.3.0
 recurring-ical-events==3.8.2

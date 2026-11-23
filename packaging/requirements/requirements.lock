@@ -1,5 +1,6 @@
 # Tested project dependencies, including transitive dependencies.
 # Recreate with Setup-OutlookAutomation.ps1.
+-r requirements-ui.lock
 caldav==3.2.1
 charset-normalizer==3.5.2
 click==8.5.0

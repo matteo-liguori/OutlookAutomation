@@ -19,6 +19,8 @@ def parser():
     ui = sub.add_parser('ui', help='Open the local card grid, action timeline and card editor')
     ui.add_argument('--port', type=int, default=0, help='Local port; default selects a free port')
     ui.add_argument('--no-browser', action='store_true')
+    ui.add_argument('--dashboard', action='store_true', help='Open the mail report and calendar')
+    ui.add_argument('--duration-minutes', type=int, help='Close the local viewer after this many minutes')
     sub.add_parser("init")
     from .guidance import GUIDES
     guide=sub.add_parser("guide");guide.add_argument("topic", choices=sorted(GUIDES));guide.add_argument('--case',dest='case_id')
@@ -76,6 +78,12 @@ def parser():
     schedule.add_parser("verify").add_argument("--input", required=True)
     schedule.add_parser('sync').add_argument('--input', help='Exact fresh plan for preflight validation')
     google = sub.add_parser("calendar").add_subparsers(dest="operation", required=True)
+    classify = google.add_parser('classify', help='Colour reviewed events from a mail check')
+    classify.add_argument('id')
+    classify.add_argument('--input', required=True)
+    google.add_parser('archive', help='Import verified history into the local calendar').add_argument('--input', required=True)
+    google.add_parser('archive-google', help='Validate and import a Google collector export').add_argument('--input', required=True)
+    google.add_parser('local-add', help='Save an event only in the harness').add_argument('--input', required=True)
     gp = google.add_parser("google-prepare")
     gp.add_argument("--date")
     gp.add_argument("--run-id")
@@ -152,6 +160,9 @@ def parser():
     watch.add_parser('list')
     report = sub.add_parser("report").add_subparsers(dest="operation", required=True)
     report.add_parser("data").add_argument("id")
+    publish = report.add_parser('publish', help='Save the written report for the local dashboard')
+    publish.add_argument('id')
+    publish.add_argument('--input', required=True)
     return p
 
 
@@ -178,11 +189,14 @@ def main():
             from .ui import serve
             if not 0 <= args.port <= 65535:
                 raise ValueError('Port must be between 0 and 65535')
-            serve(args.db, args.port, not args.no_browser)
+            viewer_options = {'dashboard': True} if args.dashboard else {}
+            if args.duration_minutes is not None:
+                viewer_options['duration_minutes'] = args.duration_minutes
+            serve(args.db, args.port, not args.no_browser, **viewer_options)
             return
         pure = args.command in {"schedule", "guide", "help", "config", "update"} and not getattr(args,'case_id',None) or (
             args.command == "calendar"
-            and args.operation != "google-ingest"
+            and args.operation in {"google-prepare", "google-validate"}
             and not getattr(args, "run_id", None)
         )
         h = None if pure else Harness(args.db, create=args.command == "init")

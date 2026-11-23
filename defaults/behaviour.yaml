@@ -3,6 +3,7 @@ schema_version: 1
 timezone: Europe/London
 schedule:
   morning: 09:00
+  calendar_days_ahead: 3
   continuations:
     - 14:00
     - 19:00
@@ -19,6 +20,7 @@ reviews:
   upgrades_days: 5
   upgrades_after_hour: 14
 maintenance:
+  storage_review_mb: 1500
   closed_thread_days: 365
   daily_backups: 2
   weekly_backups: 2
@@ -47,10 +49,15 @@ instructions:
     # Reporting
 
     Use the supplied report template. Personal style belongs in private instructions.reporting; required coverage and actual authority still apply.
+  report-delivery: |-
+    Use the local Calendar and reports viewer for morning reports and in-day follow-ups. Finalize the run, then save its markdown with report publish RUN --input -. Each follow-up appears below the first report for that day. Include descriptive labels for actionable links.
+    Open or refresh the viewer and give a short chat summary. In Codex, reuse the built-in browser tab when available. Start the private listener with ui --dashboard --no-browser --duration-minutes 720 if needed and open its printed URL. If the viewer is unavailable, deliver the full report in chat.
+  calendar-colours: |-
+    When reviewing the rolling calendar, choose one category by the event's purpose. work = work or study (blue), personal = personal admin (teal), social = social plans (purple), travel = transport and trips (orange), health = healthcare (rose), occasion = birthdays, anniversaries and celebrations (ochre), home = household matters (green). Leave unreviewed imports grey. Save assignments with source, id, start and category using calendar classify RUN --input -.
   card-input: |-
     `case edit --input -`: id, expected_revision, idempotency_key, optional title (180 chars), purpose (600 chars/three lines) and note (2000 chars). Edits preserve action/review clocks. Pending notes appear in briefing and case show until handled. `case note-ack --input -`: id, expected_revision, idempotency_key, note_ids and outcome (600 chars). Handle notes and record resulting changes before acknowledging; leave blocked notes pending. Existing send/calendar permission boundaries still apply.
   ui: |-
-    Optional current-work viewer: install packaging/requirements/requirements-ui.lock in the project environment, then run ui. Opens a local card grid and action timeline; click for details, label edits or a note for the next agent pass. Notes stay pending until explicitly handled; help card-input. Browsing and label edits preserve task/review clocks. No Outlook scans. Ctrl+C stops it; --no-browser prints the private local link.
+    Run ui --dashboard for the local calendar and reports, or ui for the card grid and action timeline. Platform setup installs the viewer dependencies. Card notes stay pending until explicitly handled; help card-input. Browsing and label edits preserve task/review clocks. No Outlook scans. Ctrl+C stops it; --no-browser prints the private local link.
   outlook: |-
     Outlook access: `outlook <operation> --input -` takes JSON. Enabled operations and fields are listed below.
     Use configured source IDs and ISO timestamps with offsets. The harness handles account binding and backend sequencing.
@@ -180,9 +187,9 @@ instructions:
     | kind | Fields |
     | --- | --- |
     | candidate | id, source, entry_id, evidence_ids, disposition, review_reason; material: body_evidence_id and case_id/case_revision or no_update_reason |
-    | source | source a configured calendar source, status, complete, four days, events, evidence_ids, provenance |
+    | source | source a configured calendar source, status, complete, calendar_window.days, events, evidence_ids, provenance |
     | gate | name refresh/records/title, evidence_ids; refresh: success/completed_at/provenance; records: success; title: value/readback evidence |
-    | handoff | delivered, case_ids/case_revisions, action_ids, event_ids/cancellation_ids (`source:id`), roundup_ids, issue_ids, approval_ids, four days |
+    | handoff | delivered, case_ids/case_revisions, action_ids, event_ids/cancellation_ids (`source:id`), roundup_ids, issue_ids, approval_ids, calendar_window.days |
 
     For scoped quiet decisions, handoff accepts quiet_cases with case_id, revision,
     reason and evidence_ids. These acknowledge review, not delivery; required work
@@ -358,7 +365,7 @@ instructions:
   mail-pass: |-
     # Mail and calendar pass
 
-    Start a run and follow its collection windows. Use outlook collect for each enabled mailbox, follow all pages, inspect freshness and read new candidates fully. Retrieve matching cards; reconcile actions, permissions and replies. File only within approved preferences, preserving read state. Read every enabled calendar for today plus three configured-local days, using outlook calendar or the configured Google/iCloud integration. Follow report data and the reporting template, record actual receipts/handoff, inspect run status and finalize. Disclose incomplete coverage; do not advance unverified checkpoints. Retrieve help for each relevant operation.
+    Start a run and follow its collection windows. Use outlook collect for each enabled mailbox, follow all pages, inspect freshness and read new candidates fully. Retrieve matching cards; reconcile actions, permissions and replies. File only within approved preferences, preserving read state. Read each enabled calendar using the run's calendar_window start and exclusive end, using outlook calendar or the configured Google/iCloud integration. Follow report data and the reporting template, record actual receipts/handoff, inspect run status and finalize. Disclose incomplete coverage; do not advance unverified checkpoints. Retrieve help for each relevant operation.
   upgrades: |-
     After this mail round, briefly review improvement list against concrete issues noticed during use. Add useful suggestions with improvement add --input -; reuse existing entries. Keep the backlog here and implement on development requests. Finish with improvement checkpoint --input - (summary) to defer this prompt {{reviews.upgrades_days}} days.
   mail-helpers: |
@@ -442,18 +449,9 @@ templates:
 
     Identify due scopes; ask keep/change/revoke. Include IDs in handoff approval_ids.
 
-    ## Calendar — today plus three {{timezone}} days
-
-    List cancellations/removals separately, then every current event and explicit
-    empty-day rows, unchanged events included.
-
-    | Date | Local time | Event | Calendar | Location/link | Change |
-    | --- | --- | --- | --- | --- | --- |
-
-    Use start/end or All day. New/Updated/Rescheduled/Unchanged; Unchanged requires a
-    verified earlier baseline. Merge clear duplicates naming sources; flag uncertain
-    matches/conflicts/travel/tentative details. Incomplete empty rows say “No events in
-    checked sources”.
+    The viewer shows the calendar. Include calendar items in the written report when
+    the user needs to act or acknowledge, or when an important change or coverage gap
+    requires attention. Keep calendar source receipts and the run window in the handoff.
 
     ## Verification
 

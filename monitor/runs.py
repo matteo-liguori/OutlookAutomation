@@ -1,8 +1,14 @@
-from .configuration import zone
+from .configuration import resolve, zone
 import json
 import uuid
 from datetime import datetime, timedelta
 from .model import MAIL, CAL, now, stamp, dumps
+from .sources import calendar_window
+
+
+def run_calendar_window(run):
+    day = datetime.fromisoformat(run['started_at']).astimezone(zone()).date()
+    return calendar_window(day, run['details'].get('calendar_days_ahead', 3))
 
 
 def roundup_eligible(started_at):
@@ -24,6 +30,8 @@ class RunRecords:
 
         filing_required = enabled(self)
         filing = filing_status(self, at) if filing_required else []
+        days_ahead = resolve().get('schedule.calendar_days_ahead')
+        calendar = run_calendar_window(dict(started_at=at, details=dict(calendar_days_ahead=days_ahead)))
         with self.write():
             self.db.execute(
                 "INSERT INTO runs VALUES(?,?,?,?)",
@@ -37,6 +45,7 @@ class RunRecords:
                             "mail_since": windows,
                             "filing_required": filing_required,
                             "filing_windows": filing,
+                            "calendar_days_ahead": days_ahead,
                         }
                     ),
                 ),
@@ -44,7 +53,7 @@ class RunRecords:
             self.touch("run", rid)
             from .live import prune
             prune(self,keep=rid)
-        return {"id": rid, "mail_since": windows, "until": at, "filing_windows": filing}
+        return {"id": rid, "mail_since": windows, "until": at, "filing_windows": filing, "calendar_window": calendar}
 
     def run(self, rid):
         r = self.db.execute("SELECT * FROM runs WHERE id=?", (rid,)).fetchone()
@@ -236,8 +245,8 @@ class RunRecords:
                     for a in c["actions"]
                     if a["id"] in required or changed
                 )
-        start = datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
-        days = [(start + timedelta(days=n)).isoformat() for n in range(4)]
+        window = run_calendar_window(run)
+        days = window['days']
         sources = {
             r[0]: json.loads(r[1])
             for r in self.db.execute("SELECT source,details FROM sources WHERE run_id=?", (rid,))
@@ -278,8 +287,8 @@ class RunRecords:
                         eid not in current_ids
                         and event.get("start")
                         and event.get("end")
-                        and stamp(event["start"]) < stamp((start + timedelta(days=4)).isoformat())
-                        and stamp(event["end"]) > stamp(start.isoformat())
+                        and stamp(event["start"]) < stamp(window['end'])
+                        and stamp(event["end"]) > stamp(window['start'])
                     ):
                         items.append({"type": "cancellation", "source": s, **event})
                         cancelled_ids.add(eid)
@@ -288,8 +297,8 @@ class RunRecords:
                         event["id"] not in cancelled_ids
                         and event.get("start")
                         and event.get("end")
-                        and stamp(event["start"]) < stamp((start + timedelta(days=4)).isoformat())
-                        and stamp(event["end"]) > stamp(start.isoformat())
+                        and stamp(event["start"]) < stamp(window['end'])
+                        and stamp(event["end"]) > stamp(window['start'])
                     ):
                         items.append({"type": "cancellation", "source": s, **event})
                         cancelled_ids.add(event["id"])
@@ -397,10 +406,7 @@ class RunRecords:
                 ):
                     failures.append(s + ": scan preceded completed refresh")
             else:
-                start = datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
-                if source.get("days") != [
-                    (start + timedelta(days=n)).isoformat() for n in range(4)
-                ]:
+                if source.get("days") != run_calendar_window(run)['days']:
                     failures.append(s + ": calendar window incomplete")
         pending = 0
         for r in self.db.execute("SELECT details FROM candidates WHERE run_id=?", (rid,)):
@@ -442,10 +448,9 @@ class RunRecords:
                 failures.append("Case changed after delivered report: " + cid)
         events = {s + ":" + str(e["id"]) for s in CAL for e in sources.get(s, {}).get("events", [])}
         if not events.issubset(set(handoff.get("event_ids", []))):
-            failures.append("Calendar events missing from report")
-        start = datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
-        if handoff.get("days") != [(start + timedelta(days=n)).isoformat() for n in range(4)]:
-            failures.append("Four-day calendar table missing")
+            failures.append("Calendar events missing from handoff")
+        if handoff.get("days") != run_calendar_window(run)['days']:
+            failures.append("Calendar coverage missing from handoff")
         if not handoff.get("delivered"):
             failures.append("Handoff not delivered")
         roundups = {x["id"] for x in report if x["type"] == "roundup"}
@@ -563,6 +568,8 @@ class RunRecords:
                     ),
                 )
                 if s in CAL:
+                    from .dashboard import record_calendar
+                    record_calendar(self.db, s, source, run['started_at'])
                     previous = self.db.execute(
                         "SELECT COALESCE(json_extract(c.details,'$._run_started_at'),r.started_at) FROM calendar_state c LEFT JOIN runs r ON r.id=c.run_id WHERE c.source=?",
                         (s,),
@@ -585,13 +592,7 @@ class RunRecords:
                             (c["id"], s, self.encode_message(dict(c,reviewed_run=rid,_run_started_at=run['started_at']))),
                         )
             handoff = run["details"].get("handoff", {})
-            expected_days = [
-                (
-                    datetime.fromisoformat(run["started_at"]).astimezone(zone()).date()
-                    + timedelta(days=n)
-                ).isoformat()
-                for n in range(4)
-            ]
+            expected_days = run_calendar_window(run)['days']
             if handoff.get("delivered") and handoff.get("days") == expected_days:
                 for source_name in CAL:
                     source_row = self.db.execute(

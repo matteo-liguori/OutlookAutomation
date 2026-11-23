@@ -21,6 +21,45 @@ def text(value, name, cap):
     return value.strip()
 
 
+def save_item(h, payload):
+    if not isinstance(payload, dict) or payload.keys() != {'title', 'note', 'idempotency_key'}:
+        raise ValueError('Invalid saved-item fields')
+    title = text(payload['title'], 'Title', 180)
+    note = text(payload['note'], 'Note', 6000)
+    key = 'ui-saved:' + text(payload['idempotency_key'], 'Save key', 100)
+    cid = 'T-SAVED-' + digest(key)[:20]
+    evidence = h.put_evidence(dict(source='user-ui', kind='user-instruction',
+                                   body='User saved an undated item in the local viewer.'))['id']
+    return h.update(dict(id=cid, expected_revision=0, idempotency_key=key,
+                         evidence_ids=[evidence], actions=[],
+                         case=dict(title=title, purpose=title, position='Saved for reference.',
+                                   context=note, status='open')))
+
+
+def set_calendar_visibility(h, payload):
+    from .dashboard import is_important_appointment
+    from .model import OPEN
+    if (not isinstance(payload, dict) or payload.keys() != {'id', 'action_id', 'revision', 'show_on_calendar'}
+            or type(payload['revision']) is not int or type(payload['show_on_calendar']) is not bool):
+        raise ValueError('Invalid calendar visibility request.')
+    card = h.case(payload['id'])
+    if card['revision'] != payload['revision']:
+        raise Conflict('The card changed. Open it again before changing calendar visibility.')
+    action = next((a for a in card['actions'] if a['id'] == payload['action_id']), None)
+    if not action or action['status'] not in OPEN or is_important_appointment(action):
+        raise ValueError('This action cannot be shown or hidden separately.')
+    if (action.get('show_on_calendar') is True) == payload['show_on_calendar']:
+        return dict(id=card['id'], revision=card['revision'])
+    action['show_on_calendar'] = payload['show_on_calendar']
+    evidence = h.put_evidence(dict(source='user-ui', kind='user-instruction', owner_case_id=card['id'],
+                                  body=f"User set calendar visibility for {action['id']} to {payload['show_on_calendar']}."))['id']
+    fields = ('title', 'purpose', 'position', 'context', 'status', 'aliases', 'match_keys')
+    summary = {key: card[key] for key in fields if key in card}
+    return h.update(dict(id=card['id'], expected_revision=card['revision'],
+                         idempotency_key='ui-calendar-visibility:' + digest(payload),
+                         case=summary, actions=card['actions'], evidence_ids=[evidence]))
+
+
 def apply(h, payload, acknowledge=False):
     required = {'id', 'expected_revision', 'idempotency_key'}
     allowed = required | ({'note_ids', 'outcome'} if acknowledge else {'title', 'purpose', 'note'})
