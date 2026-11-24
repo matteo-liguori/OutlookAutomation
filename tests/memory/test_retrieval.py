@@ -269,6 +269,11 @@ def test_t8_find_scopes_cards_stored_calendar_contacts_grants_operations(
     fake.contacts.add_contact("contacts:test", "Alice Example", "alice@example.org")
     [contact] = hits(call(app, "find", scope="contacts", query="alice"))
     assert contact.handle.startswith("con_")
+    shown = call(app, "open", handle=contact.handle)
+    assert isinstance(shown.data, OpenResponse)
+    assert shown.data.content is not None
+    assert shown.data.content.kind.value == "contact"
+    assert shown.data.content.text == "Alice Example\nalice@example.org"
     assert call(app, "find", scope="contacts").error is not None
     assert hits(call(app, "find", scope="grants")) == []
     assert hits(call(app, "find", scope="operations")) == []

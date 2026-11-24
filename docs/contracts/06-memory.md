@@ -213,5 +213,5 @@ crash-mid-sweep, checking after each sweep:
 - **M-33** `forget` on an artifact reports `deleted: true` once it is no longer
   readable; the sweeper removes the bytes later. `RefResolver.repoint` (R4)
   keeps the handle and replaces the locator after a move or draft update.
-- **M-34** `con_` handles open to a view only: ContactsPort has no
-  read-by-locator, so no contact content.
+- **M-34** `con_` handles open to the contact's name and addresses, read live
+  with `ContactsPort.read`; an unreachable source is an error, never a stale view.
