@@ -1,0 +1,188 @@
+# 06 Memory system
+
+Principle 2: the agent receives only what it needs, in bounded pieces;
+everything stored has an owner and an end date; the harness erases it when
+the owner is finished. Binding for the memory track; read by all.
+Code: `src/chamberlain/memory/`, numbers in `src/chamberlain/limits.py`.
+
+## Data classes
+
+Every table and every file under the data root belongs to exactly one class.
+
+| Class | What | Lifetime rule |
+| --- | --- | --- |
+| Records | Cards, actions, grants, operations, sources | Live until closed or terminal; then compacted to an outcome line; the line is deleted after its retention. |
+| Evidence | Small immutable statements | Deleted when its last referrer is deleted or compacted. |
+| Working set | Notes, artifacts (cached bodies, attachments, downloads, imports), refs | Owned. Deleted when the last owner ends or `expires_at` passes, whichever is first. |
+| Ephemeral | Sessions, cursors, leases, guidance deliveries, events | Hours, or end of session. |
+| System | Audit log, backups, logs, quarantine, migrations | Fixed slots and fixed windows. |
+
+- **M-1** There is no sixth class and no table without a class. The
+  mapping lives in `store/schema.py` (`TABLE_CLASSES`) and a test fails when
+  a migration adds a table that is not in it.
+- **M-2** There is no key-value `meta` table. `system_state` holds a closed
+  set of keys listed in code; writing an unknown key raises.
+
+### Lifetime table
+
+| Item | Limit | Then |
+| --- | --- | --- |
+| Closed card | at close | Compact to `outcome` (240 chars); delete position, goal, rules, closed actions' notes |
+| Card outcome line | 365 days | Delete row |
+| Finished action | at finish | Notes deleted, artifacts released; outcome line 90 days |
+| Note | owner action open | Deleted with the action; hard cap 30 days untouched |
+| Evidence | while referenced | Deleted at once when unreferenced |
+| Artifact | owner live and before `expires_at` | Released; bytes deleted when no owner remains |
+| Artifact default expiry | 30 days; maximum 180 days | An open action renews its artifacts on review, never automatically |
+| Session-owned artifact | session end or 24 hours | Deleted |
+| Ref (`msg`, `cev`, `con`) | 30 days after last seen, unless referenced by a live record | Delete row |
+| Session | idle 4 hours | Ended; its ephemeral rows deleted |
+| Cursor, lease | 2 hours, 30 minutes | Deleted; leased file removed |
+| Event | condition true | `expired` when false; row deleted 14 days after terminal |
+| Operation | 30 days after terminal | Compacted (W-25) |
+| Terminal grant | 90 days | Compacted (G-2) |
+| Audit log, compact operations and grants | 730 days | Removed in whole months with a checkpoint (G-22) |
+| Backups | 7 daily + 4 weekly slots | Oldest overwritten |
+| Logs | 14 days, 20 MB | Rotated |
+| Quarantined orphan | 14 days | Deleted |
+
+- **M-3** Each line above is implemented once, in the sweeper's rule table.
+  No other module deletes rows or files for lifetime reasons.
+
+## Artifacts and owners
+
+An artifact row: `handle`, `kind` (`mail_body`, `attachment`, `download`,
+`import`, `text`), `media_type`, `size`, `sha256`, `filename?`, `reason`,
+`created_at`, `expires_at`, `state` (`live`, `released`, `deleted`).
+`artifact_owners` links it to one or more owners.
+
+- **M-4** No owner, no storage. `keep` without a live owner fails with
+  `artifact.no_owner` or `artifact.owner_ended`. Owner kinds and liveness:
+
+  | Owner | Live while |
+  | --- | --- |
+  | action | `state = open` |
+  | card | `state = open` (evidence only; artifacts are owned by actions) |
+  | operation | not terminal, plus 24 hours after terminal |
+  | grant | `proposed`, `active` or `suspended` |
+  | session | not ended |
+  | run | not finished (wave 2) |
+
+- **M-5** Liveness is read from the owning track's tables as defined in
+  `09-storage.md`. The memory track never writes those tables.
+- **M-6** Bytes live in one content-addressed folder,
+  `<data root>/artifacts/<aa>/<sha256>`, written atomically (temporary file,
+  hash verified, rename). Identical content is stored once and shared by
+  rows. The agent never sees or chooses a path there.
+- **M-7** A stored hash is verified on every read. A mismatch marks the
+  artifact `deleted`, raises `artifact.hash_mismatch` and never returns the
+  bytes. A failed or interrupted write leaves neither a partial nor a final
+  file.
+- **M-8** Paths supplied to `keep.import_path` are resolved and checked: the
+  file must exist, be a regular file, not a symlink escaping its parent, and
+  be under `IMPORT_MAX_BYTES` (25 MB). It is copied; the original is not
+  touched.
+- **M-9** `open` with `lease: true` copies the artifact to
+  `<data root>/leases/<random>/<filename>`, returns that path and an expiry
+  (30 minutes). The sweeper deletes it. Leased paths are for handing a file
+  to the user or another program; edits there do not reach the store.
+- **M-10** Releasing: finishing or closing the owner releases its hold.
+  `forget` releases early. When the last hold goes, the row is `released`
+  and the sweeper deletes the bytes if no other live row has that hash.
+- **M-11** An artifact attached to a non-terminal operation (a pending send)
+  survives any clean-up, even past `expires_at`, until the operation is
+  terminal (compare G-10).
+
+## Bounded records
+
+| Field | Cap (characters) |
+| --- | --- |
+| Card `title` | 120 |
+| Card `goal` | 400 |
+| Card `position` | 1,500 |
+| Card `rules` | 600 |
+| Open actions per card | 7 |
+| Action `title` | 160 |
+| Note `text` | 1,000; 5 notes per action |
+| Evidence `text` | 2,000; 15 per open card (target) |
+| Outcome line | 240 |
+| Whole open card, serialised | 3,000 |
+
+- **M-12** A write that would exceed a cap is refused (`card.over_cap`,
+  `note.over_cap`, `evidence.over_cap`) with a `fix` naming the field, its
+  size and its limit. Nothing is truncated silently.
+- **M-13** Imported cards over a cap are stored as they are, flagged
+  `over_cap`, and raise `card.review_due`; their next update must bring them
+  under.
+- **M-14** Cards hold current state only. Updating replaces fields; there is
+  no append, diary or history on the card. History is the audit log.
+- **M-15** Evidence is immutable and MUST NOT hold a mail body, a card dump
+  or an attachment. It holds a statement and, optionally, a ref handle and
+  the hash of what it describes. An expired source cannot be re-used as new
+  authority: evidence whose referrers are gone is gone.
+- **M-16** Card updates carry `expected_version`; a stale one fails with
+  `card.version_conflict`.
+
+## Retrieval
+
+- **M-17** Every list is paged with a character budget (`PAGE_CHARS`,
+  4,000) and a cursor. Cursors are opaque, bound to the session and the
+  query, immutable (a continuation sees the same collection it started
+  with), and expire after 2 hours (`cursor.expired`).
+- **M-18** Lists return handles and one-line summaries, never bodies.
+  `open` returns one bounded range. `find` with `within` returns matching
+  lines and offsets.
+- **M-19** Default projections are minimal; more is an explicit `part`.
+- **M-20** Mail is read live by reference. A body or attachment is cached
+  as an artifact only through `keep` with an owner. Distinct physical copies
+  of one RFC message (same `Message-ID`, different folders) keep distinct
+  refs; they deduplicate only as bytes.
+
+## The sweeper
+
+```python
+def sweep(ctx, now) -> SweepReport
+```
+
+- **M-21** One function, in `memory/sweeper.py`, applies the lifetime table.
+  It runs on every tick, is idempotent, is safe to interrupt at any point
+  (a second run finishes what the first began), and returns a report of
+  counts and bytes per rule, which is audited as one `sweep` row.
+- **M-22** Order within a sweep: end idle sessions; compute live owners;
+  release holds of dead owners; expire artifacts; delete unreferenced
+  evidence; delete bytes with no live row; compact records; trim ephemeral
+  rows; scan for orphans; rotate system files.
+- **M-23** A deletion that fails (file locked) is recorded and retried next
+  sweep; it is reported in `doctor`, never ignored.
+- **M-24** Backups MUST exclude the artifact folder's released content and
+  MUST NOT be able to revive an expired artifact, a closed card's body or a
+  compacted record: restore replays the sweeper before the store is used.
+
+## Orphans and quarantine
+
+- **M-25** The data root has a fixed layout: `chamberlain.sqlite3` (and its
+  `-wal`, `-shm`), `config/`, `artifacts/`, `leases/`, `backups/`, `logs/`,
+  `quarantine/`, `run/`. Anything else under the data root, and any file in
+  `artifacts/` with no live row, is an orphan.
+- **M-26** The sweeper moves orphans to `quarantine/<date>/`, records them
+  in the `quarantine` table, raises one `storage.orphans` event per sweep
+  that found any, and deletes them after 14 days. It never follows a symlink
+  out of the data root and never touches anything outside it.
+
+## Budgets
+
+- **M-27** Limits: 20 MB of artifacts per card, 500 MB in total, both
+  configurable downward or upward in private settings. Passing either raises
+  `storage.over_budget` with the largest releasable handles; `keep` beyond
+  the global limit is refused with the same code.
+
+## Property tests that define done
+
+Random sequences of create, own, keep, finish, close, expire, sweep and
+crash-mid-sweep, checking after each sweep:
+
+1. nothing owned by a live owner is deleted;
+2. nothing survives past its limit without a live owner;
+3. no file exists in `artifacts/` without a live row, and no live row lacks
+   its file;
+4. sweeping twice changes nothing the second time.
