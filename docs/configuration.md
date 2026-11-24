@@ -39,5 +39,8 @@ updates:                         # daily check for a newer release tag (reads ta
 ```
 
 `chamberlain import <old data root>` writes this file from an old installation's profile
-the first time and never overwrites it afterwards. The scheduler side is described in
+the first time and never overwrites it afterwards. The old `schedule.morning` and each
+`schedule.continuations` time (`HH:MM` or minutes after midnight) become daily `mail` passes, and
+`updates.enabled` and `updates.remote` carry over; other old settings are listed as unmapped in
+the import report. The scheduler side is described in
 [scheduling](scheduling.md); cutover in [cutover](cutover.md).
