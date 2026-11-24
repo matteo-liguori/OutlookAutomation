@@ -345,3 +345,18 @@ def test_m26_a_directory_junction_is_never_followed_or_left_held_forever(
     assert held(ctx) == []
     assert get_state(ctx.db, "memory.pending_deletions") == "0"
     assert not any(p.name == "escape" for p in (ctx.data_root / "quarantine").rglob("*"))
+
+
+def test_m25_import_report_and_secrets_are_never_quarantined(
+    ctx: Context, clock: ManualClock
+) -> None:
+    (ctx.data_root / "import").mkdir(parents=True, exist_ok=True)
+    (ctx.data_root / "import" / "report.json").write_text("{}")
+    (ctx.data_root / "secrets").mkdir(parents=True, exist_ok=True)
+    (ctx.data_root / "secrets" / "store.json").write_text("{}")
+    sweep(ctx, clock.now())
+    clock.advance(hours=24 * 15)
+    report = sweep(ctx, clock.now())
+    assert report.orphans_found == 0
+    assert (ctx.data_root / "import" / "report.json").exists()
+    assert (ctx.data_root / "secrets" / "store.json").exists()

@@ -58,10 +58,14 @@ DATA_ROOT_LAYOUT = frozenset(
         "quarantine",
         RUN_DIR,
         "bridge",
+        "import",
+        "secrets",
     }
 )
 """The fixed layout of the data root (M-25, board ruling R9). Anything else is an orphan."""
-NEVER_SCANNED = frozenset({"config", "backups", "logs", "quarantine", RUN_DIR, "bridge"})
+NEVER_SCANNED = frozenset(
+    {"config", "backups", "logs", "quarantine", RUN_DIR, "bridge", "import", "secrets"}
+)
 
 
 class SweepCrash(Exception):

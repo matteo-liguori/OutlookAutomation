@@ -167,7 +167,9 @@ def sweep(ctx, now) -> SweepReport
 - **M-25** The data root has a fixed layout: `chamberlain.sqlite3` (and its
   `-wal`, `-shm`), `config/`, `artifacts/`, `leases/`, `backups/`, `logs/`,
   `quarantine/`, `run/`, `bridge/` (R9: the native-host launcher, manifest,
-  add-on package and runtime token; the sweeper never scans it). Anything else
+  add-on package and runtime token; the sweeper never scans it), `import/`
+  (the importer's `report.json`, which the owner reads) and `secrets/` (the
+  file-store fallback for secrets); the sweeper never scans these either. Anything else
   under the data root, and any file in
   `artifacts/` with no live row, is an orphan.
 - **M-26** The sweeper moves orphans to `quarantine/<date>/`, records them
