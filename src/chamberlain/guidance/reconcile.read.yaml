@@ -1,0 +1,11 @@
+id: reconcile.read
+version: 1
+title: Settling an uncertain change
+when: {tool: reconcile}
+text: >
+  Reconcile only reads. If it still cannot tell whether the change happened,
+  leave it open and tell the user exactly what is known. Never work around it
+  by sending or changing again.
+max_chars: 200
+once_per: operation
+priority: 70

@@ -1,0 +1,11 @@
+id: session.stopped
+version: 1
+title: A session that must stop
+when: {error: session.required}
+text: >
+  If the message says this scheduled run belongs to an earlier day, stop at
+  once. Do not do its work or look for a reason to carry on. Only a live
+  message from the user may begin new work.
+max_chars: 200
+once_per: session
+priority: 90

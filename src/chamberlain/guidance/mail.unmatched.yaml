@@ -1,0 +1,11 @@
+id: mail.unmatched
+version: 1
+title: New mail with no card
+when: {event: mail.new_unmatched}
+text: >
+  New mail matches no card. Decide whether it needs tracking: a deadline, a
+  promise or an expected reply means opening a card; routine mail can be left.
+  Reading mail leaves it unread. Do not mark it read unless a grant covers it.
+max_chars: 250
+once_per: session
+priority: 40

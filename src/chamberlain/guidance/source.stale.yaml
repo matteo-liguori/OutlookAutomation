@@ -1,0 +1,11 @@
+id: source.stale
+version: 1
+title: A source is out of date
+when: {event: source.stale}
+text: >
+  A source is out of date or cannot be reached, so what you read from it may
+  be incomplete. Say so whenever you rely on it, work on with the other
+  sources, and never read an empty result as nothing there.
+max_chars: 250
+once_per: event
+priority: 60

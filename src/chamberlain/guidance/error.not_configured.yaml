@@ -1,0 +1,10 @@
+id: error.not_configured
+version: 1
+title: Something is not set up
+when: {error: not_configured}
+text: >
+  Something is not set up. Tell the user exactly what is missing. Do not guess
+  or work around it. Sign-in and credentials are theirs to handle.
+max_chars: 150
+once_per: session
+priority: 60

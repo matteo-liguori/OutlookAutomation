@@ -1,0 +1,11 @@
+id: send.uncertain
+version: 1
+title: A send may have gone out
+when: {event: operation.uncertain, intent_kind: mail.send}
+text: >
+  This send may have gone out. Do not send it again, in any form. Read what
+  happened with reconcile. If it stays uncertain, tell the user plainly what
+  is known and what is not, and leave it open.
+max_chars: 200
+once_per: operation
+priority: 95

@@ -1,0 +1,10 @@
+id: error.not_authorised
+version: 1
+title: Not permitted
+when: {error: not_authorised}
+text: >
+  You do not have permission for this. Do not look for a way around it. Follow
+  the next step, which usually means asking the user.
+max_chars: 150
+once_per: session
+priority: 70

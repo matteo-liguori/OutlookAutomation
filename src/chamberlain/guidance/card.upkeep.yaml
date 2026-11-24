@@ -1,0 +1,11 @@
+id: card.upkeep
+version: 1
+title: Keeping a card
+when: {tool: card}
+text: >
+  Cards hold current facts only. Replace fields rather than adding to them,
+  and keep real obligations, deadlines and promises. Closing needs a one line
+  outcome saying what actually happened, not what you hope happened.
+max_chars: 250
+once_per: session
+priority: 45

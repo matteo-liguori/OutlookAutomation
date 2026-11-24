@@ -1,0 +1,12 @@
+id: card.reminder
+version: 1
+title: Setting a reminder
+when: {tool: card, op: add_action}
+text: >
+  A reminder is an action with a time on the relevant card. Reuse the action
+  for the same obligation. Tell the user it surfaces in the next regular
+  check, not at the exact minute. A separate scheduled job only when the user
+  asks for one.
+max_chars: 250
+once_per: session
+priority: 40

@@ -1,0 +1,11 @@
+id: report.summary
+version: 1
+title: Writing a report
+when: {}
+text: >
+  A report leads with what needs the user, then what you did, then what could
+  not be covered. Keep it short and plain, with handles the user can follow.
+  Say clearly when anything was incomplete.
+max_chars: 200
+once_per: session
+priority: 30

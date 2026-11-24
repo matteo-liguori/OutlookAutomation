@@ -1,0 +1,11 @@
+id: card.over_cap
+version: 1
+title: A card is too big
+when: {event: card.review_due, reason: over_cap}
+text: >
+  A card is over its size limit. Rewrite it as current facts only: drop
+  history, shorten the position, keep real obligations, deadlines and
+  promises. Anything else can be read again from mail.
+max_chars: 200
+once_per: card
+priority: 55
