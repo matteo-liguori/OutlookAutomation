@@ -18,6 +18,7 @@ disagree, the contracts win and the disagreement is a bug to post on
 | `09-storage.md` | SQLite schema, table ownership, migrations |
 | `10-targets.md` | Numeric success targets |
 | `11-ported-test-intent.md` | Old safety tests mapped to rule IDs |
+| `12-bridge-v2.md` | Thunderbird bridge protocol (written by wave-1 track d) |
 
 ## Reading rules
 

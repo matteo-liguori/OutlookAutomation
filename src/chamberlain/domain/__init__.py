@@ -7,5 +7,5 @@ canonical, events, capabilities, mail, calendar, contacts, intents,
 operations, grants.
 
 Track-owned modules to be added in wave 1: cards.py and artifacts.py
-(memory); grant rules and review dates in grants_rules.py (writes).
+(memory); grant rules and review dates in grant_rules.py (writes).
 """
