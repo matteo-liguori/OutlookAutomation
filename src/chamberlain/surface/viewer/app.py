@@ -22,6 +22,7 @@ from urllib.parse import parse_qs
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
+from chamberlain.livetest.viewer import recent_runs
 from chamberlain.runs.notes import add_note, withdraw_note
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.surface.viewer import pages, views
@@ -38,6 +39,7 @@ STATIC_FILES: dict[str, tuple[str, str]] = {
     "/static/page.css": ("page.css", "text/css; charset=utf-8"),
     "/static/calendar.js": ("calendar.js", "text/javascript; charset=utf-8"),
     "/static/calendar.css": ("calendar.css", "text/css; charset=utf-8"),
+    "/static/livetest.js": ("livetest.js", "text/javascript; charset=utf-8"),
 }
 _DELEGATED = ("/api/grants", "/api/operations/")
 _SAFE_PATH = re.compile(r"^/api/[A-Za-z0-9_/.-]{0,70}$")
@@ -187,6 +189,8 @@ class ViewerApp:
             return views.activity(ctx, self._zone, (query.get("day") or [None])[0])
         if path == "/api/runs":
             return views.runs(ctx)
+        if path == "/api/live-test":
+            return recent_runs(ctx.data_root)
         if path == "/api/storage":
             return views.storage(ctx)
         if path == "/api/notes":

@@ -14,6 +14,9 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain recipients seed [--months N]
                                         learn known recipients from each Sent folder (read-only)
+    chamberlain live-test [run|grant|sweep|report] [--only P] [--skip P] [--keep] [--dry-run]
+                                        exercise the harness against the real accounts
+                                        (docs/live-test.md; off until live_test.enabled)
     chamberlain <tool> --json '{...}'   call a tool and print the envelope
 """
 
@@ -36,6 +39,8 @@ from chamberlain.connections import (
 from chamberlain.connections.demo import demo_document
 from chamberlain.connections.load import profile_path
 from chamberlain.importer.run import run_import
+from chamberlain.livetest.commands import main as live_test_main
+from chamberlain.livetest.runner import RunOptions
 from chamberlain.ports.clock import SystemClock
 from chamberlain.runs.plan import due_passes
 from chamberlain.schema.base import Model, ToolName
@@ -92,6 +97,23 @@ def _parser() -> argparse.ArgumentParser:
     recipients.add_argument(
         "--months", type=int, default=DEFAULT_MONTHS, help="how far back to read (default 24)"
     )
+    live = commands.add_parser(
+        "live-test", help="exercise the harness against the real accounts (docs/live-test.md)"
+    )
+    live.add_argument(
+        "action", nargs="?", choices=["run", "grant", "sweep", "report"], default="run"
+    )
+    live.add_argument("--only", action="append", default=[], help="only scenarios matching this")
+    live.add_argument("--skip", action="append", default=[], help="leave out scenarios matching")
+    live.add_argument("--keep", action="store_true", help="leave the test items in place")
+    live.add_argument("--dry-run", action="store_true", help="show the plan and touch nothing")
+    live.add_argument(
+        "--approve-calendar-edits",
+        action="store_true",
+        help="for this run, approve changing and deleting the calendar events it makes",
+    )
+    live.add_argument("--json", action="store_true", dest="as_json", help="also print the report")
+    live.add_argument("--run", dest="report_run", help="report: the run id (default: the latest)")
     commands.add_parser(
         "tick", help="run one tick (exit status 10: events wait and no session is active)"
     )
@@ -312,6 +334,30 @@ def _recipients(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK if reports and all(r.complete for r in reports) else EXIT_FAILED
 
 
+def _live_test(args: argparse.Namespace, out: TextIO) -> int:
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        reply = error_reply(
+            ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                "No data root is set.",
+                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
+            )
+        )
+        _print(out, reply.model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
+    options = RunOptions(
+        only=tuple(args.only),
+        skip=tuple(args.skip),
+        keep=args.keep,
+        dry_run=args.dry_run,
+        approve_calendar_edits=args.approve_calendar_edits,
+    )
+    return live_test_main(
+        args.action, Path(data), options, out, as_json=args.as_json, run_id=args.report_run
+    )
+
+
 def _viewer(args: argparse.Namespace, out: TextIO) -> int:
     """Serve the viewer. The token goes to the browser only, never to this output (G-18)."""
     data = args.data or os.environ.get(DATA_ENV)
@@ -373,6 +419,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _recipients(args, stream)
     if args.command == "viewer":
         return _viewer(args, stream)
+    if args.command == "live-test":
+        return _live_test(args, stream)
     return _call_tool(args, stream)
 
 
