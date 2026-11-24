@@ -209,6 +209,24 @@ def test_w12_an_unprovable_absence_stays_uncertain_forever(rig: WriteRig) -> Non
     assert not changed
 
 
+def test_w12_an_imported_uncertain_operation_is_not_reported_as_settled(rig: WriteRig) -> None:
+    op = rig.ready_send()
+    rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
+    with fails(ErrorCode.OPERATION_UNCERTAIN):
+        rig.engine().do(op.handle)
+    rig.engine().db.execute(
+        "UPDATE operations SET intent_json = NULL, prepared_json = NULL WHERE handle = ?",
+        (op.handle,),
+    )
+    with fails(ErrorCode.OPERATION_UNCERTAIN) as raised:
+        rig.engine().reconcile(op.handle)
+    text = str(raised.value)
+    assert "old harness" in text
+    assert "never be retried" in text
+    assert "viewer" in text
+    assert rig.engine().get(op.handle).state is S.UNCERTAIN
+
+
 def test_w13_the_user_resolves_an_uncertain_operation(rig: WriteRig) -> None:
     op = rig.ready_send()
     rig.fake.arm(Fault.LOSE_BEFORE_APPLY)

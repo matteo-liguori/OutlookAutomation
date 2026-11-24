@@ -1043,6 +1043,13 @@ class Engine:
         before = self.get(handle)
         if before.state is not OperationState.UNCERTAIN:
             return before, False
+        if before.intent_json is None:
+            raise ChamberlainError(
+                ErrorCode.OPERATION_UNCERTAIN,
+                "This send or write came from the old harness in an unknown state. "
+                "It will never be retried automatically. Check the Sent folder or "
+                "the calendar yourself, then resolve it in the viewer.",
+            )
         after = self._reconcile(before, window=(1, 0), allow_absent=True)
         return after, after.state is not before.state
 
