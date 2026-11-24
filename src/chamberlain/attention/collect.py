@@ -7,6 +7,7 @@ A source that raises is logged and becomes a coverage gap, never a failed call.
 import logging
 import re
 from dataclasses import dataclass
+from datetime import timedelta
 
 from chamberlain.app.context import Context
 from chamberlain.attention import repo
@@ -16,7 +17,7 @@ from chamberlain.attention.models import (
     NewMail,
     SourceSnapshot,
 )
-from chamberlain.attention.tuning import MAIL_LOOKBACK, MAIL_PAGE_LIMIT
+from chamberlain.attention.tuning import MAIL_LOOKBACK, MAIL_PAGE_LIMIT, NOTE_OPEN
 from chamberlain.domain.capabilities import HealthState, SourceHealth
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.mail import FolderRole, MailQuery
@@ -111,6 +112,11 @@ def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> tuple[list[Mai
     return deltas, unreadable
 
 
+def stamp_before(ctx: Context, span: timedelta) -> str:
+    """The stored form of the instant `span` before now."""
+    return (ctx.clock.now() - span).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def collect(ctx: Context) -> Collected:
     """Build the detector input. Store reads are plain SELECTs (A-8)."""
     now = stamp(ctx.clock)
@@ -133,5 +139,8 @@ def collect(ctx: Context) -> Collected:
         budgets=tuple(repo.over_budget(ctx.db)),
         orphan_batch=scan,
         orphan_count=orphans,
+        runs_due=tuple(repo.due_runs(ctx.db)),
+        notes=tuple(repo.open_notes(ctx.db, stamp_before(ctx, NOTE_OPEN))),
+        update_tag=repo.update_tag(ctx.db),
     )
     return Collected(data, frozenset(unreadable))

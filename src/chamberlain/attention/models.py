@@ -136,6 +136,24 @@ class SourceSnapshot:
 
 
 @dataclass(frozen=True)
+class DueRun:
+    """A scheduled pass that is due or in progress (the `runs` table, runs track)."""
+
+    handle: str
+    schedule: str
+    kind: str
+    day: str
+
+
+@dataclass(frozen=True)
+class OpenNote:
+    """A note the person left in the viewer (the `user_notes` table, runs track)."""
+
+    id: int
+    text: str
+
+
+@dataclass(frozen=True)
 class DetectorInput:
     """Everything detectors may look at (A-5). Built once per tick."""
 
@@ -156,3 +174,7 @@ class DetectorInput:
     orphan_batch: str | None = None
     """`found_at` of the latest held quarantine batch, if any."""
     orphan_count: int = 0
+    runs_due: tuple[DueRun, ...] = ()
+    notes: tuple[OpenNote, ...] = ()
+    update_tag: str | None = None
+    """The newer release tag the update checker recorded, if any."""

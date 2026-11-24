@@ -34,6 +34,8 @@ RERAISE: Final[dict[EventKind, timedelta]] = {
 }
 """Kinds with a re-raise interval after being handled (A-3). Others never re-raise."""
 
+NOTE_OPEN: Final = timedelta(days=7)
+"""A viewer note keeps raising `user.note` this long (runs track `user_notes`)."""
 MAIL_LOOKBACK: Final = timedelta(hours=48)
 MAIL_PAGE_LIMIT: Final = 25
 SESSIONS_KEEP_ENDED: Final = timedelta(hours=24)
