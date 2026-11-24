@@ -1,0 +1,44 @@
+"""`chamberlain demo init <data root>`: a demo-only profile in an empty folder."""
+
+import io
+import json
+from pathlib import Path
+
+from chamberlain.connections import load_connections, open_app
+from chamberlain.surface import cli
+
+
+def _run(*argv: str) -> tuple[int, dict[str, object]]:
+    out = io.StringIO()
+    code = cli.main(list(argv), out)
+    return code, json.loads(out.getvalue())
+
+
+def test_demo_init_writes_a_demo_only_profile_into_a_new_folder(tmp_path: Path) -> None:
+    root = tmp_path / "demo"
+    code, shown = _run("demo", "init", str(root))
+    assert code == cli.EXIT_OK
+    assert shown["demo"] is True
+    kinds = {s.kind for s in load_connections(root).sources.values()}
+    assert kinds == {"demo"}
+    app = open_app(root)
+    try:
+        assert app.call("start", {}).ok
+    finally:
+        app.close()
+
+
+def test_demo_init_accepts_an_existing_empty_folder(tmp_path: Path) -> None:
+    (tmp_path / "empty").mkdir()
+    code, _ = _run("demo", "init", str(tmp_path / "empty"))
+    assert code == cli.EXIT_OK
+
+
+def test_demo_init_refuses_a_folder_that_holds_anything(tmp_path: Path) -> None:
+    keep = tmp_path / "real"
+    keep.mkdir()
+    (keep / "notes.txt").write_text("mine", encoding="utf-8")
+    code, reply = _run("demo", "init", str(keep))
+    assert code == cli.EXIT_FAILED
+    assert reply["error"]["code"] == "config.invalid"  # type: ignore[index]
+    assert [p.name for p in keep.iterdir()] == ["notes.txt"]

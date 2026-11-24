@@ -10,6 +10,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
                                         serve the local viewer on 127.0.0.1 (never prints the token)
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
     chamberlain config validate|show    check or print config/connections.yaml (no secrets)
+    chamberlain demo init <data root>   write a demo-only profile into an empty data root
     chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain <tool> --json '{...}'   call a tool and print the envelope
 """
@@ -30,6 +31,8 @@ from chamberlain.connections import (
     open_app,
     render_redacted,
 )
+from chamberlain.connections.demo import demo_document
+from chamberlain.connections.load import profile_path
 from chamberlain.importer.run import run_import
 from chamberlain.ports.clock import SystemClock
 from chamberlain.runs.plan import due_passes
@@ -72,6 +75,9 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("prompt", help="print the standing prompt")
     config = commands.add_parser("config", help="check or print the connection profile")
     config.add_argument("action", choices=["validate", "show"])
+    demo = commands.add_parser("demo", help="try Chamberlain without real accounts")
+    demo.add_argument("action", choices=["init"])
+    demo.add_argument("root", help="an empty (or new) folder to use as the demo data root")
     importing = commands.add_parser(
         "import", help="import the old harness's data (the old folder is only read)"
     )
@@ -214,6 +220,40 @@ def _config(args: argparse.Namespace, out: TextIO) -> int:
         return EXIT_FAILED
 
 
+def _demo(args: argparse.Namespace, out: TextIO) -> int:
+    """Write a demo-only profile. It refuses any folder that already holds something."""
+    root = Path(args.root)
+    try:
+        if root.exists() and (not root.is_dir() or any(root.iterdir())):
+            raise ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                "The demo data root is not empty.",
+                fix="Name a new or empty folder; demo init never touches an existing one.",
+            )
+        path = profile_path(root)
+        path.parent.mkdir(parents=True)
+        path.write_text(demo_document(), encoding="utf-8")
+    except (ChamberlainError, OSError) as error:
+        if isinstance(error, OSError):
+            error = ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                "The demo profile could not be written.",
+                detail=str(error),
+            )
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
+    _print(
+        out,
+        {
+            "ok": True,
+            "demo": True,
+            "profile": str(path),
+            "next": f"chamberlain --data {root} start",
+        },
+    )
+    return EXIT_OK
+
+
 def _import(args: argparse.Namespace, out: TextIO) -> int:
     data = args.data or os.environ.get(DATA_ENV)
     try:
@@ -284,6 +324,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _tick(args, stream)
     if args.command == "config":
         return _config(args, stream)
+    if args.command == "demo":
+        return _demo(args, stream)
     if args.command == "import":
         return _import(args, stream)
     if args.command == "viewer":
