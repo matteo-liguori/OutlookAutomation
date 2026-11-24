@@ -265,11 +265,12 @@ def insert_action(
     due_at: str | None,
     snooze_until: str | None,
     now: str,
+    important: bool = False,
 ) -> None:
     db.execute(
-        "INSERT INTO actions (handle, card, title, due_at, snooze_until, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (handle, card, title, due_at, snooze_until, now, now),
+        "INSERT INTO actions (handle, card, title, due_at, snooze_until, important, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        (handle, card, title, due_at, snooze_until, int(important), now, now),
     )
 
 
@@ -301,11 +302,12 @@ def update_action(
     due_at: str | None,
     snooze_until: str | None,
     now: str,
+    important: bool | None = None,
 ) -> None:
     db.execute(
-        "UPDATE actions SET title = ?, due_at = ?, snooze_until = ?, updated_at = ? "
-        "WHERE handle = ?",
-        (title, due_at, snooze_until, now, handle),
+        "UPDATE actions SET title = ?, due_at = ?, snooze_until = ?, "
+        "important = coalesce(?, important), updated_at = ? WHERE handle = ?",
+        (title, due_at, snooze_until, None if important is None else int(important), now, handle),
     )
 
 

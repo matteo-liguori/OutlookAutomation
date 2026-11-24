@@ -97,7 +97,8 @@ the front page; earlier ones are one click below it, and the Calendar page shows
 - **Calendar.** Events show in the colour of their category (work, personal, social, travel,
   health, occasion, home; grey until the assistant gives one, with a short title if the invite is
   vague). **Add local event** keeps an event only in the viewer; no calendar is changed.
-- **Important appointments.** A reminder the assistant sets for an important appointment opens by
+- **Important appointments.** The assistant decides which appointments are important (from your
+  card rules and the context) and sets reminders for them. A due reminder opens by
   itself when it is due. Hold the button for five seconds (pointer, Space or Enter) to acknowledge
   it. That finishes the reminder and the audit log records you, not the assistant.
 

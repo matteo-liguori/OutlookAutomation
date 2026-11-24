@@ -246,7 +246,7 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 - Trigger: `{'tool': 'card', 'op': 'add_action'}`; shown session; priority 35; cap 380 chars (version 2: the title marker, the two times and who acknowledges are now stated, and it now fires when an action is added instead of being fetch-only)
 
-> For medical or user-marked important appointments, add one action per reminder, titled Important then the appointment, due at its start and snoozed to the day it should surface: seven, two and one day ahead. The owner acknowledges it in the viewer; do not finish it unless the appointment is cancelled.
+> Decide whether an appointment is important: medical ones, ones the owner marked, or what the card's rules say. For each, add one action per reminder with important set, due at its start and snoozed to the day it should surface: seven, two and one day ahead. The owner acknowledges it in the viewer; do not finish it unless the appointment is cancelled.
 
 ## filing.preferences: Filing mail
 

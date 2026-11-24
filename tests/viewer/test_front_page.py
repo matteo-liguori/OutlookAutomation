@@ -50,7 +50,9 @@ def add_sources(rig: Rig) -> None:
         )
 
 
-def important_reminder(rig: Rig, session: str, title: str, days: int, snooze_back_days: int) -> str:
+def important_reminder(
+    rig: Rig, session: str, title: str, days: int, snooze_back_days: int, important: bool = True
+) -> str:
     card = tools(rig, "card", session=session, op="create", fields={"title": "Dentist"})
     handle = card.data.card.handle
     start = rig.clock.now() + timedelta(days=days)
@@ -62,6 +64,7 @@ def important_reminder(rig: Rig, session: str, title: str, days: int, snooze_bac
         card=handle,
         action_fields={
             "title": title,
+            "important": important,
             "due_at": start.strftime("%Y-%m-%dT%H:%M:%SZ"),
             "snooze_until": (rig.clock.now() - timedelta(days=snooze_back_days)).strftime(
                 "%Y-%m-%dT%H:%M:%SZ"
@@ -83,7 +86,7 @@ def test_a_scheduled_pass_ends_with_the_owners_report_as_the_front_page(rig: Rig
     )
     session = tools(rig, "start", agent="pass", purpose="scheduled", scheduled_day="2026-01-05")
     handle = session.data.session
-    reminder = important_reminder(rig, handle, "Important: Dentist check-up", 2, 1)
+    reminder = important_reminder(rig, handle, "Dentist check-up", 2, 1)
     assert reminder.startswith("act_")
 
     # The pass is being worked: the report comes last, with guidance and an outline to read.
@@ -191,8 +194,8 @@ def test_categories_local_events_and_the_owners_acknowledgement(rig: Rig) -> Non
     ] == []
 
     # An important appointment waits for the owner; only the viewer's route can acknowledge it.
-    waiting = important_reminder(rig, session, "Important: Dentist", 1, 1)
-    ordinary = important_reminder(rig, session, "Pay the bill", 1, 1)
+    waiting = important_reminder(rig, session, "Dentist", 1, 1)
+    ordinary = important_reminder(rig, session, "Pay the bill", 1, 1, important=False)
     marks = get(rig, "/api/calendar?start=2026-01-03&until=2026-01-10")
     assert [(m["title"], m["due"]) for m in marks["important"]] == [("Dentist", True)]
     assert [d["title"] for d in marks["dated"]] == ["Pay the bill"]

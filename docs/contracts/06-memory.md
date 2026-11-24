@@ -289,8 +289,9 @@ The written report is the owner's front page in the viewer. Three parts make it:
   `report-outline.txt` (72 hours), that says which sections are the agent's and the owner's wording
   for each. It is not a report: readers of a run's reports leave it out, and it never finishes a run.
   The viewer draws the callouts from the layout's `style`, so text from the agent or from an email can
-  never pose as one. An important appointment is an open action on an open card whose title starts
-  with "Important:", due at the appointment's start, snoozed until its reminder shows. The owner
+  never pose as one. An important appointment is an open action on an open card with `important`
+  set (migration 0140; the agent decides from the card's rules, the context and its general rules,
+  owner ruling 2026-11-24), due at the appointment's start, snoozed until its reminder shows. The owner
   acknowledges a waiting reminder in the viewer (`POST /api/appointments/<action>/acknowledge`, the
   viewer's usual token and Origin checks); that finishes the action and writes an audit row
   (`appointment.acknowledged`) whose actor is `human:viewer`. No tool reaches it. Local events and

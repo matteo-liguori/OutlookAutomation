@@ -138,12 +138,12 @@ class AppointmentRow:
 
 
 def appointment_rows(db: sqlite3.Connection, now: str) -> list[AppointmentRow]:
-    """Open dated actions on open cards, titled "Important...", that have not started yet."""
+    """Open dated actions on open cards, marked important, that have not started yet."""
     rows = db.execute(
         "SELECT a.handle, a.card, c.title AS card_title, a.title, a.due_at, a.snooze_until "
         "FROM actions a JOIN cards c ON c.handle = a.card "
         "WHERE a.state = 'open' AND c.state = 'open' AND a.due_at IS NOT NULL AND a.due_at > ? "
-        "AND lower(a.title) LIKE 'important%' ORDER BY a.due_at, a.handle",
+        "AND a.important = 1 ORDER BY a.due_at, a.handle",
         (now,),
     )
     return [

@@ -98,6 +98,7 @@ class CardService:
             state="open" if state == "open" else ("done" if state == "done" else "dropped"),
             due_at=None if row["due_at"] is None else parse(str(row["due_at"])),
             snooze_until=None if row["snooze_until"] is None else parse(str(row["snooze_until"])),
+            important=bool(row["important"]),
             outcome=None if row["outcome"] is None else str(row["outcome"]),
             notes=notes,
         )
@@ -252,6 +253,7 @@ class CardService:
         title: str,
         due_at: str | None,
         snooze_until: str | None,
+        important: bool = False,
     ) -> CardView:
         self._open_card(card, expected_version)
         if len(title) > ACTION_TITLE_MAX:
@@ -278,6 +280,7 @@ class CardService:
                 due_at=due_at,
                 snooze_until=snooze_until,
                 now=ts(now),
+                important=important,
             )
             repo.bump_card(self._db, card, ts(now))
             view = self.view(card)
@@ -296,6 +299,7 @@ class CardService:
         snooze_until: str | None,
         set_due: bool,
         set_snooze: bool,
+        important: bool | None = None,
     ) -> CardView:
         """Replace the named fields of an open action."""
         row = self._action(action)
@@ -312,6 +316,7 @@ class CardService:
                 due_at=due_at if set_due else row["due_at"],
                 snooze_until=snooze_until if set_snooze else row["snooze_until"],
                 now=ts(now),
+                important=important,
             )
             repo.bump_card(self._db, card, ts(now))
             view = self.view(card)

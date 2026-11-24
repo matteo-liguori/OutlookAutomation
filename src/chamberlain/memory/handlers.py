@@ -296,6 +296,7 @@ def card(ctx: Context, request: CardRequest) -> Result:
                 snooze_until=(
                     None if action_fields.snooze_until is None else ts(action_fields.snooze_until)
                 ),
+                important=bool(action_fields.important),
             )
         case CardOp.UPDATE_ACTION:
             assert request.action is not None
@@ -316,6 +317,7 @@ def card(ctx: Context, request: CardRequest) -> Result:
                 ),
                 set_due="due_at" in action_fields.model_fields_set,
                 set_snooze="snooze_until" in action_fields.model_fields_set,
+                important=action_fields.important,
             )
         case CardOp.FINISH_ACTION:
             assert request.action is not None

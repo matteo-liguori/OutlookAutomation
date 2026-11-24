@@ -190,6 +190,8 @@ class ActionView(Model):
     state: Literal["open", "done", "dropped"]
     due_at: Timestamp | None = None
     snooze_until: Timestamp | None = None
+    important: bool = False
+    """An important appointment: the owner acknowledges each reminder in the viewer."""
     outcome: str | None = Field(default=None, max_length=OUTCOME_MAX)
     notes: tuple[NoteView, ...] = ()
 
@@ -463,6 +465,9 @@ class ActionFields(Model):
     title: str | None = Field(default=None, min_length=1, max_length=ACTION_TITLE_MAX)
     due_at: Timestamp | None = None
     snooze_until: Timestamp | None = None
+    important: bool | None = None
+    """Mark an appointment reminder important (you decide, from the card's rules and context);
+    due_at is the appointment's start and snooze_until when this reminder surfaces."""
 
 
 _NEEDS_CARD = frozenset({CardOp.UPDATE, CardOp.CLOSE, CardOp.REOPEN, CardOp.ADD_ACTION})

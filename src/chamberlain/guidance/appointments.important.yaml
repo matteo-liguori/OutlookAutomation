@@ -1,13 +1,13 @@
 id: appointments.important
-version: 2
+version: 3
 title: Important appointments
 when: {tool: card, op: add_action}
 text: >
-  For medical or user-marked important appointments, add one action per
-  reminder, titled Important then the appointment, due at its start and
-  snoozed to the day it should surface: seven, two and one day ahead. The
-  owner acknowledges it in the viewer; do not finish it unless the
-  appointment is cancelled.
+  Decide whether an appointment is important: medical ones, ones the owner
+  marked, or what the card's rules say. For each, add one action per
+  reminder with important set, due at its start and snoozed to the day it
+  should surface: seven, two and one day ahead. The owner acknowledges it
+  in the viewer; do not finish it unless the appointment is cancelled.
 max_chars: 380
 once_per: session
 priority: 35

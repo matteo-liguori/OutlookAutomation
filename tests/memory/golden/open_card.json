@@ -19,6 +19,7 @@
           "card": "card_#1",
           "title": "Do the thing",
           "state": "open",
+          "important": false,
           "notes": [
             {
               "handle": "note_#3",

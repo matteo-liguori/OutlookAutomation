@@ -1,10 +1,11 @@
 """Important appointments: the owner's reminders that stay until the owner acknowledges them.
 
 Contract: docs/contracts/06-memory.md (the report section) and 05-grants.md (G-17, the viewer is
-the owner's channel). An important appointment is an open action on an open card whose title
-starts with "Important:", whose due time is the appointment's start and whose snooze time is when
-that reminder should surface (the agent sets one action per reminder). No schema or tool carries
-it: the title is the marker, and the two times are the actions' own.
+the owner's channel). An important appointment is an open action on an open card that the agent
+marked `important` (owner ruling 2026-11-24: the agent decides from the card's rules, the context
+and its general rules; it is not a title prefix). Its due time is the appointment's start and its
+snooze time is when that reminder should surface (the agent sets one action per reminder). A
+leading "Important:" in the title is still trimmed for display.
 
 A reminder waits for the owner while its snooze time has passed and the appointment has not
 started. The owner acknowledges it in the viewer by holding a button; that finishes the action,
@@ -47,15 +48,14 @@ def upcoming(ctx: Context) -> list[Appointment]:
     found: list[Appointment] = []
     for row in repo.appointment_rows(ctx.db, now):
         marker = _MARKER.match(row.title)
-        if marker is None:
-            continue
+        title = marker.group("rest") if marker is not None else row.title
         waiting = row.snooze_until is None or row.snooze_until <= now
         found.append(
             Appointment(
                 row.action,
                 row.card,
                 row.card_title,
-                " ".join(marker.group("rest").split()),
+                " ".join(title.split()),
                 row.start,
                 row.snooze_until,
                 waiting,
