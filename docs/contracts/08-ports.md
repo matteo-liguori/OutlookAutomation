@@ -206,8 +206,9 @@ bytes, which the engine reads from the artifact store.
   a whole series; `calendar.occurrence` covers one occurrence. A write needing a capability the
   source does not declare fails at `propose` with `capability.unsupported` and detail
   `recurrence-not-supported`, never faked. Google, CalDAV and the fake declare both; the Owl
-  calendar declares neither (reads occurrences only). A series with guests is not supported on
-  any source: it fails the same way with detail `recurring-invitations-not-supported`.
+  calendar declares neither (reads occurrences only). A series may have guests where the source
+  also declares `calendar.invite` (Google, CalDAV; owner ruling 2026-11-24): the invitation
+  covers every date, and a changed date keeps the series' guests.
 - **P-27** Verified outcome. A series create or update is `server_verified` only when the read-back
   series carries the rule that was written (a create that lost its rule is `unknown`, not
   applied). A cancelled occurrence reads cancelled or gone; a deleted series reads cancelled or

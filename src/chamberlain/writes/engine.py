@@ -141,7 +141,6 @@ ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
 """Reserved key in the `refs` mapping given to `prepare` (board R3)."""
 INVITATIONS_UNSUPPORTED: Final = "invitations-not-supported"
 RECURRENCE_UNSUPPORTED: Final = "recurrence-not-supported"
-RECURRING_INVITATIONS_UNSUPPORTED: Final = "recurring-invitations-not-supported"
 
 _INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
 _CAPABILITY: dict[IntentKind, CapabilityName] = {
@@ -628,14 +627,6 @@ class Engine:
                 fix="Leave recurrence out, or change the series with scope series.",
                 field="event",
             )
-        if event.fields.attendees or (
-            isinstance(intent, CalendarUpdate) and intent.event.attendees
-        ):
-            raise ChamberlainError(
-                ErrorCode.CAPABILITY_UNSUPPORTED,
-                "A repeating event with guests cannot be changed here.",
-                detail=RECURRING_INVITATIONS_UNSUPPORTED,
-            )
         if scope == "occurrence":
             located[EVENT_WHEN_REF] = event.fields.start.isoformat()
         elif event.fields.recurrence is not None:
@@ -649,13 +640,6 @@ class Engine:
         if isinstance(intent, CalendarCreate):
             if intent.event.recurrence is not None:
                 needed = CapabilityName.CALENDAR_RECURRENCE
-                if intent.event.attendees:
-                    raise ChamberlainError(
-                        ErrorCode.CAPABILITY_UNSUPPORTED,
-                        "A repeating event with guests cannot be created here.",
-                        fix="Create it without guests.",
-                        detail=RECURRING_INVITATIONS_UNSUPPORTED,
-                    )
         elif intent.scope == "occurrence":
             needed = CapabilityName.CALENDAR_OCCURRENCE
         elif intent.scope == "series":

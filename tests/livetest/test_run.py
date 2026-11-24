@@ -40,12 +40,14 @@ def test_the_whole_suite_runs_green_and_leaves_only_the_trash(lab: FakeLab) -> N
         "mail.fault_lost_response[mail:laba]",
         "calendar.invite_flow[calendar:laba]",
         "calendar.recurring[calendar:laba]",
+        "calendar.recurring_invite[calendar:laba]",
     ):
         assert needed in ran
     skipped = [r for r in report.results if r.status is Status.SKIPPED]
     assert all(r.reason for r in skipped)
     assert {r.id.split("[")[0] for r in skipped} <= {
         "calendar.invite_flow",
+        "calendar.recurring_invite",
         "mail.outbox_queued",
     }
     assert next(r for r in skipped if r.id == "mail.outbox_queued").manual

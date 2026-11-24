@@ -328,3 +328,37 @@ def test_w33_an_event_we_organise_with_guests_can_be_changed(world: World) -> No
     )
     prepared = port.prepare(update, {handle: "mine.ics"})
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.APPLIED
+
+
+def test_a_changed_date_of_a_series_with_guests_keeps_its_guests() -> None:
+    """Owner ruling 2026-11-24: series may invite. An override without ATTENDEE would tell the
+    server that date has no guests, and it would send them a cancellation."""
+    from chamberlain.connectors.calendar_support import ics
+    from chamberlain.domain.recurrence import expand, occurrence_id
+
+    start = datetime(2027, 3, 1, 9, tzinfo=UTC)
+    fields = EventFields.model_validate(
+        {
+            "title": "Weekly",
+            "start": start,
+            "end": start + timedelta(minutes=30),
+            "attendees": ["guest@example.org"],
+            "recurrence": {"frequency": "weekly", "count": 3, "zone": "Europe/London"},
+        }
+    )
+    text = ics.build_new("uid-1", fields, start, organiser=CALDAV_ADDRESS)
+    assert fields.recurrence is not None
+    dates = expand(
+        fields.recurrence,
+        fields.start,
+        fields.end,
+        all_day=False,
+        window_start=start,
+        window_end=start + timedelta(days=30),
+    )
+    second = occurrence_id(dates[1][0], all_day=False)
+    moved = fields.model_copy(update={"location": "Room 2", "recurrence": None})
+    changed = ics.apply_occurrence(text, second, moved, start)
+    override = next(p for p in ics.parse_events(changed) if p.recurrence_id is not None)
+    assert override.organiser_address == CALDAV_ADDRESS.lower()
+    assert "guest@example.org" in {a for a, _ in override.partstats}

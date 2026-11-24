@@ -17,7 +17,15 @@ from chamberlain.domain.intents import CalendarCreate, CalendarDelete, CalendarU
 from chamberlain.domain.operations import OperationState
 from chamberlain.domain.recurrence import describe, expand
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import CALENDAR, CALENDAR_PLAIN, OWNER_B, WriteRig, make_rig
+from chamberlain.testing.write_rig import (
+    CALENDAR,
+    CALENDAR_B,
+    CALENDAR_PLAIN,
+    OWNER,
+    OWNER_B,
+    WriteRig,
+    make_rig,
+)
 from chamberlain.writes.models import WritePolicy
 from chamberlain.writes.render import describe_intent
 
@@ -187,10 +195,11 @@ def test_the_scope_must_fit_the_handle_and_a_source_that_cannot_says_so(rig: Wri
     one = rig.fake.calendar.read(CALENDAR, single)
     assert refused(handle(rig, single), one.etag, "series").code is ErrorCode.REQUEST_INVALID
 
-    # No guests on a series, and a source that cannot write a series says so at propose.
-    with pytest.raises(ChamberlainError) as guests:
-        engine.propose_intent(CalendarCreate(source=CALENDAR, event=standup(attendees=[OWNER_B])))
-    assert guests.value.detail == "recurring-invitations-not-supported"
+    # A series may invite guests; a source that cannot write a series says so at propose.
+    rig.own(CALENDAR, OWNER)
+    rig.own(CALENDAR_B, OWNER_B)  # inviting the owner's other account
+    invite = CalendarCreate(source=CALENDAR, event=standup(title="Weekly", attendees=[OWNER_B]))
+    assert run(rig, invite)[1] == OperationState.CONFIRMED.value
     with pytest.raises(ChamberlainError) as plain:
         engine.propose_intent(CalendarCreate(source=CALENDAR_PLAIN, event=standup()))
     assert plain.value.code is ErrorCode.CAPABILITY_UNSUPPORTED

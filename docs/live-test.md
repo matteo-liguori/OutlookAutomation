@@ -102,6 +102,7 @@ Calendar, once per listed calendar (all need the calendar approval above):
 | `calendar.timezone` | Nine o'clock London keeps its instant either side of a clock change. |
 | `calendar.recurring` | A daily series of three dates: each date shows as repeating; change one date (the others stay); cancel one; change the whole series (an untouched date follows); delete the series. Runs only on a calendar that declares `calendar.recurrence` and `calendar.occurrence` (Google, CalDAV); an Owl calendar is skipped with that reason. Cleanup deletes a series once, through its series handle. |
 | `calendar.invite_flow` | Invite another owned account, check it arrives, answer from its side, see the answer on the organiser's copy, cancel and check the cancellation. Skipped unless the calendar declares `calendar.invite`. |
+| `calendar.recurring_invite` | Invite another owned account to a daily series of three dates; check every date reaches it; change one date (the guest keeps all three); cancel the series and check every date is cancelled on the guest's side. Needs `calendar.invite`, `calendar.recurrence` and `calendar.occurrence` (Google, iCloud). |
 
 Harness:
 

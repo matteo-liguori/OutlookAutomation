@@ -395,6 +395,11 @@ def apply_occurrence(text: str, occurrence: str, fields: EventFields, now: datet
         event = Event()
         event.add("uid", str(master.get("UID", "")))
         event.add("recurrence-id", _in_form_of(master, occurrence))
+        # A date of a series with guests keeps them: an override without ATTENDEE would tell
+        # the server that date has no guests, and it would send them a cancellation.
+        for name in ("ORGANIZER", "ATTENDEE"):
+            for value in _list(master, name):
+                event.add(name.lower(), value)
         calendar.add_component(event)
     else:
         sequence = _parse_component(event).sequence + 1

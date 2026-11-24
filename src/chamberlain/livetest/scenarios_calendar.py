@@ -417,3 +417,106 @@ def invite_flow(lab: Lab, t: Target) -> None:
             return True if read.data["view"].get("status") == "cancelled" else None
 
         lab.wait_until("the cancellation reaching the invitee", cancelled)
+
+
+@scenario(
+    "calendar.recurring_invite",
+    "calendar",
+    "Invite an owned account to a repeating event, change one date, cancel the series",
+    Scope.CALENDAR,
+    needs=(*_NEEDS, "calendar.invite", "calendar.recurrence", "calendar.occurrence"),
+)
+def recurring_invite(lab: Lab, t: Target) -> None:
+    _require_approval(lab)
+    setting = lab.config.calendars[t.source]
+    if setting.invitee_mail is None:
+        raise ScenarioSkip("live_test.calendars has no invitee_mail for this calendar")
+    invitee = lab.config.address_of(setting.invitee_mail)
+    title = lab.subject(f"series invite {t.tag}")
+    start = _soon(lab, 5)
+    lab.defer("remove invitation mail", lambda: lab.remove_mail(str(setting.invitee_mail), title))
+    lab.defer(f"remove marked events in {t.source}", lambda: lab.remove_events(t.source, title))
+    rule: JSON = {"frequency": "daily", "count": 3}
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.create",
+                "source": t.source,
+                "event": _event(title, start, attendees=[invitee], recurrence=rule),
+            }
+        ),
+        "create a repeating event with a guest",
+    )
+
+    def dates(source: str) -> list[JSON]:
+        found = lab.ok(
+            "find",
+            scope="calendar",
+            source=source,
+            query=title,
+            since=_stamp(start - timedelta(days=1)),
+            until=_stamp(start + timedelta(days=4)),
+        )
+        return [
+            h
+            for h in found.get("hits", [])
+            if title in text_of(h) and not str(h.get("summary", "")).startswith("cancelled")
+        ]
+
+    mine = lab.wait_until(
+        "the three dates showing", lambda: dates(t.source) if len(dates(t.source)) == 3 else None
+    )
+    if setting.invitee_calendar is None:
+        lab.arrival(setting.invitee_mail, title)
+    else:
+        invited = str(setting.invitee_calendar)
+        lab.defer("remove invitee-side events", lambda: lab.remove_events(invited, title))
+        lab.wait_until(
+            "every date of the invitation reaching the invitee",
+            lambda: True if len(dates(invited)) == 3 else None,
+        )
+
+    # One date changed: the guest stays invited to it and to the others.
+    second = _view(lab, str(mine[1]["handle"]))
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.update",
+                "source": t.source,
+                "event_ref": mine[1]["handle"],
+                "expected_etag": second["etag"],
+                "scope": "occurrence",
+                "event": _event(
+                    title, _parse(second["start"]), location="Live test room", attendees=[invitee]
+                ),
+            }
+        ),
+        "change one date of the invitation",
+    )
+    if setting.invitee_calendar is not None:
+        invited = str(setting.invitee_calendar)
+        lab.wait_until(
+            "the invitee keeping all three dates after one changed",
+            lambda: True if len(dates(invited)) == 3 else None,
+        )
+
+    series = str(_view(lab, str(mine[0]["handle"]))["series"])
+    master = _view(lab, series)
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.delete",
+                "source": t.source,
+                "event_ref": series,
+                "expected_etag": master["etag"],
+                "scope": "series",
+            }
+        ),
+        "cancel the repeating invitation",
+    )
+    if setting.invitee_calendar is not None:
+        invited = str(setting.invitee_calendar)
+        lab.wait_until(
+            "the cancellation reaching every date of the invitee",
+            lambda: True if not dates(invited) else None,
+        )
