@@ -15,6 +15,8 @@ from typing import Any, cast
 from chamberlain.app.context import SourceRouter
 from chamberlain.app.core import App
 from chamberlain.app.wiring import build_app
+from chamberlain.connections.model import Connections, GoogleCalendarSource, ThunderbirdMailSource
+from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.fake import FakeProvider, Fault
 from chamberlain.domain.intents import IntentKind, MailIntent
 from chamberlain.domain.operations import DispatchResult, Prepared
@@ -22,6 +24,8 @@ from chamberlain.livetest.config import LiveCalendar, LiveMailbox, LivePair, Liv
 from chamberlain.livetest.env import ClockWaiter, Environment, PortProbe
 from chamberlain.ports.clock import ManualClock
 from chamberlain.ports.mail import MailPort
+from chamberlain.store.db import transaction
+from chamberlain.store.migrate import stamp
 
 FAKE_MAIL_A = "mail:laba"
 FAKE_MAIL_B = "mail:labb"
@@ -142,6 +146,30 @@ def _calendar_source(provider: FakeProvider, source: str, address: str) -> None:
         add(source)
 
 
+def _bindings(config: LiveTestConfig) -> Connections:
+    """The profile a real installation would have: each source bound to its own address.
+
+    The `sources` table is where the harness learns which addresses are the owner's, so the
+    self-test fills it the way `open_app` does.
+    """
+    mail: dict[str, Any] = {
+        source: ThunderbirdMailSource(
+            account_id=source.partition(":")[2],
+            mailbox=box.address,
+            inbox_folder_id="inbox",
+            sent_folder_id="sent",
+            draft_folder_id="drafts",
+            trash_folder_id="trash",
+        )
+        for source, box in config.mail.items()
+    }
+    calendars: dict[str, Any] = {
+        source: GoogleCalendarSource(account=address, calendar_id="primary")
+        for source, address in ((FAKE_CAL_A, ADDRESS_A), (FAKE_CAL_B, ADDRESS_B))
+    }
+    return Connections(sources={**mail, **calendars}, live_test=config)
+
+
 def build_fake_lab(root: Path, *, approve_calendar_edits: bool = True) -> FakeLab:
     """The whole self-test world under `root` (a temporary data root)."""
     clock = ManualClock()
@@ -174,6 +202,9 @@ def build_fake_lab(root: Path, *, approve_calendar_edits: bool = True) -> FakeLa
         },
         approve_calendar_edits=approve_calendar_edits,
     )
+    sources = _bindings(config)
+    with transaction(app.context.db) as db:
+        sync_sources(db, sources, stamp(clock))
     env = Environment(
         mode="fake",
         clock=clock,
