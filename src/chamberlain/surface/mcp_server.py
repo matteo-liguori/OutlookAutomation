@@ -2,22 +2,30 @@
 
 Contract: docs/contracts/02-tools.md (T-15, T-16). No business logic here.
 
+`main` serves the configured app (`chamberlain.connections.open_app`).
+
 This is a deliberately small, dependency-free loop (newline-delimited
 JSON-RPC 2.0: `initialize`, `ping`, `tools/list`, `tools/call`). Whether to
 replace it with the official MCP SDK is a wave-2 decision; the tool
 definitions below are what either would serve.
 """
 
+import argparse
 import json
+import os
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
+from pathlib import Path
 from typing import Any, TextIO
 
 from chamberlain import __version__
+from chamberlain.connections import open_app
 from chamberlain.schema.base import Model
-from chamberlain.schema.envelope import Reply
+from chamberlain.schema.envelope import Reply, error_reply
+from chamberlain.schema.errors import ChamberlainError
 from chamberlain.schema.registry import STANDING_PROMPT, TOOLS
 
+DATA_ENV = "CHAMBERLAIN_DATA"
 PROTOCOL_VERSION = "2025-06-18"
 ToolCaller = Callable[[str, Mapping[str, Any]], Reply[Model]]
 
@@ -86,8 +94,34 @@ def serve(stdin: TextIO, stdout: TextIO, call_tool: ToolCaller | None = None) ->
             stdout.flush()
 
 
-def main() -> int:
-    serve(sys.stdin, sys.stdout)
+def configured_caller(data_root: Path) -> ToolCaller:
+    """Call tools on the app that `config/connections.yaml` describes, one app per call.
+
+    A broken profile is a `config.invalid` reply to the call, never a crashed server.
+    """
+
+    def call_tool(name: str, arguments: Mapping[str, Any]) -> Reply[Model]:
+        try:
+            app = open_app(data_root)
+        except ChamberlainError as error:
+            return error_reply(error)
+        try:
+            return app.call(name, arguments)
+        finally:
+            app.close()
+
+    return call_tool
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="chamberlain-mcp", description="Chamberlain MCP server.")
+    parser.add_argument("--data", help=f"data root (default: ${DATA_ENV})")
+    args = parser.parse_args(argv)
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        sys.stderr.write(f"No data root: set {DATA_ENV} or pass --data.\n")
+        return 2
+    serve(sys.stdin, sys.stdout, configured_caller(Path(data)))
     return 0
 
 

@@ -73,6 +73,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "writes.audit_checkpoint_hash",
         "writes.audit_head",
         "app.installed_version",
+        "importer.last_import",
     }
 )
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""
