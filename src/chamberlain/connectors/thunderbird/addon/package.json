@@ -1,0 +1,13 @@
+{
+  "name": "chamberlain-thunderbird-addon",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Chamberlain Thunderbird bridge add-on (protocol v2). Types are generated from protocol.py.",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --no-warnings --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

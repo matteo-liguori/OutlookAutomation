@@ -1,0 +1,79 @@
+// The slice of Thunderbird's WebExtension API (`messenger`) this add-on uses.
+// Deliberately loose below the first level: Thunderbird owns those shapes.
+
+interface TbFolder {
+  id: string;
+  accountId: string;
+  name?: string;
+  path?: string;
+  specialUse?: string[];
+  subFolders?: TbFolder[];
+}
+
+interface TbHeader {
+  id: number;
+  headerMessageId: string;
+  subject: string;
+  date: Date | number;
+  author: string;
+  recipients?: string[];
+  ccList?: string[];
+  bccList?: string[];
+  read: boolean;
+  priority?: string;
+  folder?: TbFolder;
+}
+
+interface TbPart {
+  contentType?: string;
+  name?: string;
+  partName?: string;
+  body?: string;
+  headers?: { [name: string]: string[] };
+  parts?: TbPart[];
+}
+
+interface TbPage {
+  id?: string;
+  messages: TbHeader[];
+}
+
+interface TbPort {
+  postMessage(value: unknown): void;
+  onMessage: { addListener(listener: (value: unknown) => void): void };
+  onDisconnect: { addListener(listener: () => void): void };
+}
+
+interface TbIdentity {
+  id: string;
+  email: string;
+  name?: string;
+}
+
+interface TbAccount {
+  id: string;
+  type: string;
+  name: string;
+  identities: TbIdentity[];
+  rootFolder?: TbFolder;
+}
+
+interface HarnessMailApi {
+  syncFolders(accountId: string, mailbox: string, folderIds: string[], timeoutMs: number): Promise<any>;
+  holdComposer(tabId: number, accountId: string, mailbox: string, draftFolderId: string, sentFolderId: string): Promise<any>;
+  openDraft(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;
+  findComposers(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;
+  closeComposer(tabId: number, accountId: string, mailbox: string): Promise<any>;
+}
+
+declare const messenger: {
+  runtime: { getBrowserInfo(): Promise<{ version: string }>; connectNative(name: string): TbPort };
+  accounts: { list(includeFolders: boolean): Promise<TbAccount[]>; get(id: string, includeFolders: boolean): Promise<TbAccount | null> };
+  folders: { get(id: string): Promise<TbFolder> };
+  messages: any;
+  messengerUtilities: any;
+  compose: any;
+  tabs: any;
+  addressBooks: any;
+  harnessMail?: HarnessMailApi;
+};

@@ -1,0 +1,149 @@
+"""ContactsPort over the Thunderbird bridge: explicitly bound address books only.
+
+Contract: docs/contracts/08-ports.md. The connector searches the address books
+named in its binding and nothing else; it does not reach a university or
+global directory, and it reports an incomplete scan as a gap (P-4).
+"""
+
+import base64
+from collections.abc import Mapping
+from dataclasses import dataclass
+
+from chamberlain.connectors.thunderbird import protocol
+from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure
+from chamberlain.connectors.thunderbird.identity import encode_contact_locator
+from chamberlain.domain.canonical import sha256_text
+from chamberlain.domain.capabilities import (
+    Capability,
+    CapabilityName,
+    CapabilitySet,
+    HealthState,
+    SourceHealth,
+    VerificationLevel,
+)
+from chamberlain.domain.contacts import Contact, ContactQuery
+from chamberlain.ports.clock import Clock
+from chamberlain.ports.page import Gap, Page
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
+
+
+@dataclass(frozen=True)
+class ContactsBinding:
+    address_book_ids: tuple[str, ...]
+
+
+def _bad_cursor() -> ChamberlainError:
+    return ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid.")
+
+
+class ThunderbirdContacts:
+    """Implements `chamberlain.ports.ContactsPort`."""
+
+    def __init__(
+        self, client: BridgeClient, bindings: Mapping[str, ContactsBinding], clock: Clock
+    ) -> None:
+        self._client = client
+        self._bindings = dict(bindings)
+        self._clock = clock
+
+    def _binding(self, source: str) -> ContactsBinding:
+        try:
+            return self._bindings[source]
+        except KeyError:
+            raise ChamberlainError(
+                ErrorCode.SOURCE_NOT_CONFIGURED, "That contacts source is not bound."
+            ) from None
+
+    def capabilities(self, source: str) -> CapabilitySet:
+        self._binding(source)
+        return CapabilitySet(
+            source=source,
+            capabilities=(
+                Capability(
+                    name=CapabilityName.CONTACTS_SEARCH,
+                    level=VerificationLevel.IMPLEMENTED,
+                    limits={"page_size": 50},
+                ),
+            ),
+        )
+
+    def health(self, source: str) -> SourceHealth:
+        self._binding(source)
+        checked = self._clock.now()
+        try:
+            self._client.call(protocol.Command.STATUS, protocol.StatusArgs())
+        except BridgeFailure:
+            state = HealthState.UNAVAILABLE
+        else:
+            state = HealthState.OK
+        return SourceHealth.model_validate(
+            {"source": source, "state": state, "checked_at": checked, "fresh_as_of": None}
+        )
+
+    def search(self, source: str, query: ContactQuery, cursor: str | None = None) -> Page[Contact]:
+        binding = self._binding(source)
+        tag = sha256_text(query.text)[:12]
+        skip = 0
+        if cursor is not None:
+            try:
+                raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode("ascii")
+                bound, _, offset = raw.partition(":")
+                skip = int(offset)
+            except ValueError:
+                raise _bad_cursor() from None
+            if bound != tag or skip < 0:
+                raise _bad_cursor()
+        reply = self._client.call(
+            protocol.Command.CONTACTS,
+            protocol.ContactsArgs(
+                address_book_ids=binding.address_book_ids,
+                text=query.text,
+                limit=query.limit,
+                skip=skip,
+            ),
+        )
+        result = reply.result
+        if not isinstance(result, protocol.ContactsResult):
+            raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Unexpected bridge result type.")
+        items: list[Contact] = []
+        for found in result.contacts:
+            addresses = tuple(e.strip().lower() for e in found.emails if e.strip())
+            try:
+                items.append(
+                    Contact.model_validate(
+                        {
+                            "source": source,
+                            "locator": encode_contact_locator(found.book_id, found.id),
+                            "name": found.name,
+                            "emails": addresses,
+                        }
+                    )
+                )
+            except ValueError:
+                items.append(
+                    Contact.model_validate(
+                        {
+                            "source": source,
+                            "locator": encode_contact_locator(found.book_id, found.id),
+                            "name": found.name,
+                            "emails": (),
+                        }
+                    )
+                )
+        next_cursor = None
+        if result.more:
+            marker = f"{tag}:{skip + query.limit}".encode("ascii")
+            next_cursor = base64.urlsafe_b64encode(marker).decode("ascii").rstrip("=")
+        gaps: tuple[Gap, ...] = ()
+        if not result.complete:
+            gaps = (
+                Gap.model_validate(
+                    {"source": source, "reason": "An address book was only partly scanned."}
+                ),
+            )
+        return Page[Contact](
+            items=tuple(items),
+            cursor=next_cursor,
+            complete=next_cursor is None and not gaps,
+            gaps=gaps,
+        )

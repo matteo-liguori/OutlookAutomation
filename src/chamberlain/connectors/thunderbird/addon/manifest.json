@@ -1,0 +1,37 @@
+{
+  "manifest_version": 2,
+  "name": "Chamberlain Thunderbird Bridge",
+  "version": "2.0.0",
+  "description": "Local mail bridge for Chamberlain (protocol 2). Composer control and folder sync use a narrow privileged helper.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "chamberlain-bridge@chamberlain.local",
+      "strict_min_version": "159.0"
+    }
+  },
+  "permissions": [
+    "accountsRead",
+    "accountsFolders",
+    "messagesRead",
+    "messagesMove",
+    "messagesUpdate",
+    "compose",
+    "compose.send",
+    "compose.save",
+    "nativeMessaging",
+    "addressBooks"
+  ],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "experiment_apis": {
+    "harnessMail": {
+      "schema": "experiment/schema.json",
+      "parent": {
+        "scopes": ["addon_parent"],
+        "paths": [["harnessMail"]],
+        "script": "experiment/api.js"
+      }
+    }
+  }
+}
