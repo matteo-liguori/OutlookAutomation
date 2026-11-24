@@ -1,0 +1,93 @@
+"""What a handler is given, and what it gives back.
+
+Contract: docs/contracts/01-domain.md (D-12: state arrives through Context)
+and docs/contracts/02-tools.md (T-16). Shared file (docs/OWNERSHIP.md).
+"""
+
+import sqlite3
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Protocol
+
+from chamberlain.app.services import Services
+from chamberlain.ports.calendar import CalendarPort
+from chamberlain.ports.clock import Clock
+from chamberlain.ports.contacts import ContactsPort
+from chamberlain.ports.mail import MailPort
+from chamberlain.schema.base import Model
+from chamberlain.schema.envelope import Coverage, NextStep, Reply
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.schema.registry import ToolSpec
+from chamberlain.schema.tools import CheckResult, ToolRequest
+
+
+@dataclass(frozen=True)
+class SourceRouter:
+    """Source ID to port. The only way the core reaches a connector (P-1)."""
+
+    mail: Mapping[str, MailPort] = field(default_factory=dict[str, MailPort])
+    calendar: Mapping[str, CalendarPort] = field(default_factory=dict[str, CalendarPort])
+    contacts: Mapping[str, ContactsPort] = field(default_factory=dict[str, ContactsPort])
+
+    def mail_port(self, source: str) -> MailPort:
+        return _route(self.mail, source)
+
+    def calendar_port(self, source: str) -> CalendarPort:
+        return _route(self.calendar, source)
+
+    def contacts_port(self, source: str) -> ContactsPort:
+        return _route(self.contacts, source)
+
+    def source_ids(self) -> list[str]:
+        return sorted({*self.mail, *self.calendar, *self.contacts})
+
+
+def _route[PortT](ports: Mapping[str, PortT], source: str) -> PortT:
+    port = ports.get(source)
+    if port is None:
+        raise ChamberlainError(ErrorCode.SOURCE_NOT_CONFIGURED, "That source is not set up.")
+    return port
+
+
+@dataclass(frozen=True)
+class Context:
+    db: sqlite3.Connection
+    clock: Clock
+    data_root: Path
+    sources: SourceRouter
+    services: Services
+    session: str | None = None
+    """Set by the app from the request, after validation (T-3)."""
+
+
+@dataclass(frozen=True)
+class Result:
+    """What a handler returns. The app wraps it in the envelope."""
+
+    data: Model
+    coverage: Coverage | None = None
+    next: tuple[NextStep, ...] = ()
+
+
+Handler = Callable[[Context, Any], Result]
+"""`handler(ctx, request)` where request is the tool's validated request model.
+
+A handler raises `ChamberlainError` for anything the agent can meet (E-14).
+"""
+
+DoctorCheckFn = Callable[[Context], list[CheckResult]]
+
+
+class Hooks(Protocol):
+    """Implemented by attention (07-attention.md, A-6, A-19)."""
+
+    def tick(self, ctx: Context) -> None:
+        """Run before every handler. Must not raise (A-7)."""
+        ...
+
+    def decorate(
+        self, ctx: Context, spec: ToolSpec, request: ToolRequest, reply: Reply[Model]
+    ) -> Reply[Model]:
+        """Add `next` (if empty), `guidance` and `notices`. Nothing else (A-19)."""
+        ...
