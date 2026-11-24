@@ -15,7 +15,6 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
 """
 
 import argparse
-import io
 import json
 import os
 import sys
@@ -260,10 +259,12 @@ def _viewer(args: argparse.Namespace, out: TextIO) -> int:
 
 
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
-    if out is None and isinstance(sys.stdout, io.TextIOWrapper):
+    console: TextIO = sys.stdout
+    reconfigure: Any = getattr(console, "reconfigure", None)
+    if out is None and callable(reconfigure):
         # Windows consoles default to a legacy code page; mail subjects carry emoji.
-        sys.stdout.reconfigure(encoding="utf-8")
-    stream = out or sys.stdout
+        reconfigure(encoding="utf-8")
+    stream: TextIO = out or console
     args = _parser().parse_args(argv)
     if args.command == "tools":
         if args.as_json:
