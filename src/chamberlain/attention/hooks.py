@@ -17,7 +17,7 @@ from chamberlain.attention.rules import load_rules
 from chamberlain.attention.selection import Chosen, Situation, select
 from chamberlain.attention.work import next_step, notice
 from chamberlain.limits import MAX_REPLY_CHARS, NEXT_STEPS_MAX, NOTICE_PRIORITY, NOTICES_MAX
-from chamberlain.schema.base import Model
+from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import GuidanceItem, NextStep, Notice, Reply
 from chamberlain.schema.registry import ToolSpec
 from chamberlain.schema.tools import ToolRequest
@@ -25,6 +25,9 @@ from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 
 log = logging.getLogger("chamberlain.attention")
+
+PULL_TOOLS = frozenset({ToolName.START, ToolName.NEXT})
+"""Replies that already carry work items never piggyback notices (the pull route)."""
 
 _HANDLE_PREFIXES = ("card_", "act_", "op_", "grant_", "msg_", "cev_", "con_", "art_", "evt_")
 
@@ -76,7 +79,7 @@ class AttentionHooks:
         request_dict = request.model_dump(mode="json", exclude_none=True)
         concerned = repo.events_by_subject(db, _named_subjects(request_dict))
         notice_events: list[EventRow] = []
-        if active and session is not None:
+        if active and session is not None and spec.name not in PULL_TOOLS:
             shown = {e.handle for e in work_events}
             notice_events = [
                 e

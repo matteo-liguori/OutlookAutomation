@@ -66,10 +66,9 @@ def start(
         end_idle(db, clock)
         if resume is not None:
             row = repo.get_session(db, resume)
+            if row is not None and is_stale_scheduled(row, clock):
+                raise stop_error()
             if row is not None and row.ended_at is None:
-                if is_stale_scheduled(row, clock):
-                    repo.end_session(db, row.handle, stamp(clock))
-                    raise stop_error()
                 repo.touch_session(db, row.handle, stamp(clock))
                 return row
         for other in repo.active_sessions(db, agent, purpose):

@@ -1,0 +1,146 @@
+{
+ "action.due": {
+  "hash": "19559ed21691ced18c32f1d41a2ccbd00b6405f746d427a7506c422ea2da1866",
+  "version": 1
+ },
+ "appointments.important": {
+  "hash": "85183224e5bad7f1e0f8623db66d5f8e929893f9f5d8d1a6b1654003bca2e490",
+  "version": 1
+ },
+ "calendar.checks": {
+  "hash": "d1331ef8f64933810d530b0e204f1307ff42914dbe2e50cd4457a798fbcab7e3",
+  "version": 1
+ },
+ "card.over_cap": {
+  "hash": "9b49e4f1f1c53c263a1bfc00900815023e2eb39920198f2fab094e24ea1d9b52",
+  "version": 1
+ },
+ "card.reminder": {
+  "hash": "583a17bebcdd999a469937e03aff9377312c743884372697de7b1153532f3f58",
+  "version": 1
+ },
+ "card.review": {
+  "hash": "6b8f6f74a03556ec39e0637b0747c0d5ca3512ab6cf3838b77704a97bffab57f",
+  "version": 1
+ },
+ "card.upkeep": {
+  "hash": "365c184fd4c8b0a8612ebb790160ba85e9484f92c20e58dc02f85605e81fc95e",
+  "version": 1
+ },
+ "coverage.incomplete": {
+  "hash": "d98a96e2a9b51384adc3a0c7c1d10d2e949a74440c28f77cf98d50c06471c5ad",
+  "version": 1
+ },
+ "do.once": {
+  "hash": "1054920183fca61ffc2fcc8926e9406851d068156e15abed1088d88eb72480b4",
+  "version": 1
+ },
+ "error.conflict": {
+  "hash": "1f02052aa6510aa195465ea727f28ed27b49c9b7588482d6a6b1aa6232a2381c",
+  "version": 1
+ },
+ "error.not_authorised": {
+  "hash": "e8fd7bfbbb140dddcd8e461695bb9cf1533643ad583b2174550626928cfa07ff",
+  "version": 1
+ },
+ "error.not_configured": {
+  "hash": "77c4f57604dcf1badf4887e096efff1092708389cb88f831cd3d3dea802c81f7",
+  "version": 1
+ },
+ "error.unavailable": {
+  "hash": "b5a60ca886013df3192cc66357940f0a7b7c7344ca61f55a40a3d2cba4c0c44b",
+  "version": 1
+ },
+ "error.unsupported": {
+  "hash": "5c336aac7942d5c9d1d94c400da0c94a49813491e87712d0626ae5a8482604d5",
+  "version": 1
+ },
+ "filing.preferences": {
+  "hash": "67ce3e144ce6b6c6d7ad1f919d2edc5f740908cbed6c47bce33e1396c20c93ad",
+  "version": 1
+ },
+ "forget.grant": {
+  "hash": "5814911b6d118d99cbd23377bca01849c06a00986c63f7f5ce7e5eee0d0e409a",
+  "version": 1
+ },
+ "grant.confirm": {
+  "hash": "2a505e50c99b7c5c7f656157e89477616931206d66293d6a60acfbabccb8e9ce",
+  "version": 1
+ },
+ "grant.review": {
+  "hash": "512974ac82af9c32f2d63b0d6fe6bcd88aeb9eadd25cb074b02579fbe11e9fd3",
+  "version": 1
+ },
+ "keep.owner": {
+  "hash": "7eb0fd0c35b18a2573f3af9c7a8ec367a44177b554395f69dace3d26b8a21048",
+  "version": 1
+ },
+ "mail.for_card": {
+  "hash": "4e0a1c1bcdf1438deccf857bfc9abe9c91b75f0cf4de9e82939a292e6806666a",
+  "version": 1
+ },
+ "mail.read_state": {
+  "hash": "e7ea887a9124d9107fbb2c44dec96f268b75d790e4fc8b2992d4ff54299b5309",
+  "version": 1
+ },
+ "mail.unmatched": {
+  "hash": "69fe8ff64c486597b83311394ba90aa9bfeee2cd53ebbcf9f28985f426c2e06f",
+  "version": 1
+ },
+ "propose.check": {
+  "hash": "eee9cc0306140bb39032576bf8f8d65eff01700b19e08d3a59f577ea32b87ede",
+  "version": 1
+ },
+ "reconcile.read": {
+  "hash": "37b54203d9636fb3820bc0a149306e562d046ad9b3b42b7d1b63fec15327f38f",
+  "version": 1
+ },
+ "reminder.back": {
+  "hash": "4c9cae6af691f69ce4ff012d83da6fca75f59625a18c761f8321381b460c5d8d",
+  "version": 1
+ },
+ "report.summary": {
+  "hash": "738269020fc19c4164085f31047e73a287c7f34132b048a41437e6b41dd67026",
+  "version": 1
+ },
+ "send.uncertain": {
+  "hash": "ede9e0f36ace4a169ef3348eea5a85c4f013103683c9c8ec568ccb397519b8d2",
+  "version": 1
+ },
+ "session.first": {
+  "hash": "faad82c24d45045b282af655c5d38d8b8ae00112d6b9f376c513d8909dc9c70d",
+  "version": 1
+ },
+ "session.scheduled": {
+  "hash": "aef0da3268fe5a8a7f9f357de3a01b1f0b29c877df9842da4aa1fa6496f6b590",
+  "version": 1
+ },
+ "session.stopped": {
+  "hash": "deb28978337decca01fe63958e06f04044d418f4759cae66a588869357c9f107",
+  "version": 1
+ },
+ "source.sign_in": {
+  "hash": "3c3b9a9ff83da2e37e9ed4951c867df1e0b08bed2149d48de820e7dda163cd14",
+  "version": 1
+ },
+ "source.stale": {
+  "hash": "048706efcafc5fbfa18ce4ec86fe62b03506a889095dab856ca01f03e806f0fe",
+  "version": 1
+ },
+ "storage.budget": {
+  "hash": "b85e6bb6a8d61646c45ff035492e05cd99727893a3db8dc9b2dba1276fec100c",
+  "version": 1
+ },
+ "storage.orphans": {
+  "hash": "79174b6ba31b74cc6a0452e6c9da6f0fb0acda4381ba14795b5e916d3aa0ddf3",
+  "version": 1
+ },
+ "write.attempted": {
+  "hash": "fa7f22681ed902f172ae0bd96644744be67df9cba129d3a51807b46aa0b250c4",
+  "version": 1
+ },
+ "write.uncertain": {
+  "hash": "d3137b4805320ac9d400f7ce0997e3a7a367fe7d10df479005d09296b36b6e78",
+  "version": 1
+ }
+}

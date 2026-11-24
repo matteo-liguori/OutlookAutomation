@@ -15,7 +15,8 @@ from importlib import resources
 from typing import Any, Literal, Self, cast
 
 import yaml
-from pydantic import Field, ValidationError, model_validator
+from pydantic import Field, TypeAdapter, ValidationError, model_validator
+from pydantic.fields import FieldInfo
 
 from chamberlain.attention.models import EventAttrs
 from chamberlain.domain.canonical import sha256_text
@@ -58,9 +59,12 @@ _OPS: dict[str, Callable[[Any, Any], bool]] = {
 }
 
 
+TriggerKind = Literal["event", "tool", "result", "error"]
+
+
 @dataclass(frozen=True)
 class Trigger:
-    kind: Literal["event", "tool", "result", "error"]
+    kind: TriggerKind
     value: str
     filters: tuple[tuple[str, tuple[str, ...]], ...]
     """Equality filters; several listed values mean any of them."""
@@ -106,11 +110,21 @@ def parse_when(when: dict[str, Any]) -> Trigger | None:
         raise ValueError("when needs exactly one trigger: event, tool, result or error")
     key = keys[0]
     filters = tuple(sorted((name, _values(value)) for name, value in when.items() if name != key))
-    return Trigger(key, str(when[key]), filters)
+    return Trigger(cast(TriggerKind, key), str(when[key]), filters)
 
 
 def _request_fields(tool: str) -> set[str]:
     return set(BY_NAME[tool].request.model_fields)
+
+
+def _accepts(field: FieldInfo, value: str) -> bool:
+    if field.annotation is None:
+        return True
+    try:
+        TypeAdapter(field.annotation).validate_python(value)
+    except ValidationError:
+        return False
+    return True
 
 
 def check_trigger(rule: Rule) -> list[str]:
@@ -123,6 +137,14 @@ def check_trigger(rule: Rule) -> list[str]:
         return []
     problems: list[str] = []
     names = {name for name, _ in trigger.filters}
+    fields: dict[str, FieldInfo] = {}
+    if trigger.kind == "event":
+        fields = dict(EventAttrs.model_fields)
+    elif trigger.kind == "tool" and trigger.value in BY_NAME:
+        fields = dict(BY_NAME[trigger.value].request.model_fields)
+    for name, values in trigger.filters:
+        if name in fields:
+            problems += [f"{name} cannot be {v}" for v in values if not _accepts(fields[name], v)]
     if trigger.kind == "event":
         if trigger.value not in {k.value for k in EventKind}:
             problems.append(f"unknown event kind {trigger.value}")
