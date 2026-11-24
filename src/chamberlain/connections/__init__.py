@@ -1,7 +1,7 @@
 """The private connection profile and the connector router built from it (S-16, S-17)."""
 
 from chamberlain.connections.app import open_app
-from chamberlain.connections.build import Runtime, build_router, build_runtime
+from chamberlain.connections.build import Runtime, build_router, build_runtime, policy_of
 from chamberlain.connections.load import (
     load_connections,
     parse_connections,
@@ -19,6 +19,7 @@ __all__ = [
     "load_connections",
     "open_app",
     "parse_connections",
+    "policy_of",
     "profile_path",
     "render_redacted",
     "save_connections",

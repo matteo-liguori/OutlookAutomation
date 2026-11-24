@@ -10,11 +10,33 @@ from chamberlain.app.core import App
 from chamberlain.app.wiring import build_app
 from chamberlain.connections.build import build_runtime
 from chamberlain.connections.load import load_connections
+from chamberlain.connections.model import Connections
 from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.calendar_support.secrets import SecretStore
 from chamberlain.ports.clock import Clock, SystemClock
+from chamberlain.runs.models import PassKind
+from chamberlain.runs.schedule import ScheduleSpec, apply_schedules
+from chamberlain.runs.updates import TagLister, git_tag_lister
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
+
+
+def _specs(connections: Connections) -> list[ScheduleSpec]:
+    return [
+        ScheduleSpec(
+            name=item.name,
+            kind=PassKind(item.kind),
+            at_local=item.at,
+            zone=item.zone or connections.timezone,
+            weekdays=frozenset(item.weekdays),
+            enabled=item.enabled,
+        )
+        for item in connections.schedules
+    ]
+
+
+def _update_lister(connections: Connections) -> TagLister | None:
+    return git_tag_lister(connections.updates.remote) if connections.updates.enabled else None
 
 
 def open_app(
@@ -34,10 +56,12 @@ def open_app(
         sources=runtime.sources,
         policy=runtime.policy,
         budgets=runtime.budgets,
+        update_lister=_update_lister(connections),
     )
     try:
         with transaction(app.context.db) as db:
             sync_sources(db, connections, stamp(the_clock))
+        apply_schedules(app.context, _specs(connections))
     except BaseException:
         app.close()
         raise
