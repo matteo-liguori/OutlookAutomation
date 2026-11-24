@@ -217,6 +217,11 @@ def _decode_cursor(text: str, query: MailQuery) -> _Cursor:
     return cursor
 
 
+def _first_id(raw: str) -> str:
+    parts = raw.split()
+    return bracketed(parts[0]) if parts else ""
+
+
 class ThunderbirdMail:
     """Implements `chamberlain.ports.MailPort` for bound Thunderbird mailboxes."""
 
@@ -543,6 +548,8 @@ class ThunderbirdMail:
                 "body_text": result.body,
                 "raw_sha256": result.raw_sha256,
                 "attachments": attachments,
+                "in_reply_to": _first_id(result.in_reply_to),
+                "references": tuple(bracketed(i) for i in result.references.split() if i),
             }
         )
 

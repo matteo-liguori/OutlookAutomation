@@ -79,8 +79,9 @@ text?}`.
 Request: `scope` (`cards` | `mail` | `calendar` | `contacts` | `stored` |
 `grants` | `operations`), `query?` (200 chars), `within?` (a card, artifact
 or message handle to search inside), `source?`, `since?`, `until?`,
-`unread?`, `limit` (1 to 25, default 10), `cursor?`.
-Response: `hits[] {handle, kind, when?, summary?, content?, offset?}`.
+`unread?`, `folder?` (mail: a folder role such as `inbox`), `limit` (1 to 25, default 10),
+`cursor?`.
+Response: `hits[] {handle, kind, when?, summary?, content?, offset?, suggested_card?}`.
 
 - **T-8** `find` never returns a body. A hit's `content.text` is one line of
   at most 200 characters. Searching inside a handle (`within`) returns

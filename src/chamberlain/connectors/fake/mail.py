@@ -123,6 +123,8 @@ class FakeMail:
         unread: bool = True,
         date: datetime | None = None,
         attachments: tuple[tuple[str, bytes], ...] = (),
+        in_reply_to: str = "",
+        references: tuple[str, ...] = (),
     ) -> str:
         """Store one physical copy and return its stable locator."""
         world = self._world
@@ -138,6 +140,8 @@ class FakeMail:
             date=date or world.clock.now(),
             unread=unread,
             body=body,
+            in_reply_to=in_reply_to,
+            references=references,
             attachments=[
                 (
                     AttachmentMeta(
@@ -588,6 +592,8 @@ class FakeMail:
                 "unread": stored.unread,
                 "has_attachments": bool(stored.attachments),
                 "preview": stored.body[:120],
+                "in_reply_to": stored.in_reply_to,
+                "references": stored.references,
             }
         )
 

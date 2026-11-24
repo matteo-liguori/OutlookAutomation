@@ -57,6 +57,8 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "known_recipients": (_D.RECORDS, _T.WRITES),
     "operations": (_D.RECORDS, _T.WRITES),
     "audit_log": (_D.SYSTEM, _T.WRITES),
+    "mail_watermarks": (_D.RECORDS, _T.ATTENTION),
+    "mail_seen": (_D.RECORDS, _T.ATTENTION),
     "schedules": (_D.RECORDS, _T.RUNS),
     "runs": (_D.RECORDS, _T.RUNS),
     "user_notes": (_D.EPHEMERAL, _T.RUNS),
