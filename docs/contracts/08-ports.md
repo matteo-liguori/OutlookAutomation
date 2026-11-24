@@ -27,6 +27,10 @@ Names: `mail.read`, `mail.search`, `mail.attachments`, `mail.send`,
 `mail.draft`, `mail.move`, `mail.trash`, `mail.mark_read`, `calendar.read`,
 `calendar.write`, `contacts.search`.
 
+`ContactsPort.read(source, locator)` returns the one contact a `search` locator
+names (it is part of `contacts.search`); an unknown locator is
+`request.unknown_handle`.
+
 Levels: `live_verified` (passed live validation on this installation's
 connector version), `implemented` (passes the contract suite against a fake
 or recorded transport only), `known_broken`.

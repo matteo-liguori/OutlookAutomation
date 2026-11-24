@@ -312,6 +312,13 @@ export function createWorld() {
     compose,
     addressBooks: {
       get: async (id) => ({ id, contacts: world.books.filter((c) => c.book === id).map((c) => ({ id: c.id, properties: c.properties })) }),
+      contacts: {
+        get: async (id) => {
+          const found = world.books.find((c) => c.id === id);
+          if (!found) throw new Error("No such contact");
+          return { id: found.id, parentId: found.book, properties: found.properties };
+        },
+      },
     },
     chamberlainMail: {
       syncFolders: async (accountId, mailbox, folderIds) => ({

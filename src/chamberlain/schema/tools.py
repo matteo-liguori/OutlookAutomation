@@ -555,6 +555,16 @@ class Metrics(Model):
     grants_awaiting_human: int = 0
 
 
+class StoredBytesHistory(Model):
+    """Stored bytes at the 4, 12 and 26 week targets; null until the history reaches them."""
+
+    weeks_recorded: int = 0
+    week_4: int | None = None
+    week_12: int | None = None
+    week_26: int | None = None
+
+
 class DoctorResponse(Model):
     checks: tuple[CheckResult, ...] = ()
     metrics: Metrics | None = None
+    stored_bytes_history: StoredBytesHistory | None = None

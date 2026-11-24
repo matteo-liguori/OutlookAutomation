@@ -48,6 +48,7 @@ Every table and every file under the data root belongs to exactly one class.
 | Backups | 7 daily + 4 weekly slots | Oldest overwritten |
 | Logs | 14 days, 20 MB | Rotated |
 | Quarantined orphan | 14 days | Deleted |
+| Metrics history (`memory.metrics_history`) | one snapshot a week, 30 kept | Oldest dropped |
 
 - **M-3** Each line above is implemented once, in the sweeper's rule table.
   No other module deletes rows or files for lifetime reasons.
@@ -212,5 +213,5 @@ crash-mid-sweep, checking after each sweep:
 - **M-33** `forget` on an artifact reports `deleted: true` once it is no longer
   readable; the sweeper removes the bytes later. `RefResolver.repoint` (R4)
   keeps the handle and replaces the locator after a move or draft update.
-- **M-34** `con_` handles open to a view only: ContactsPort has no
-  read-by-locator, so no contact content.
+- **M-34** `con_` handles open to the contact's name and addresses, read live
+  with `ContactsPort.read`; an unreachable source is an error, never a stale view.

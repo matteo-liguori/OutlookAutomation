@@ -66,6 +66,7 @@ class Command(StrEnum):
     RESOLVE = "resolve"
     REFRESH = "refresh"
     CONTACTS = "contacts"
+    CONTACT_READ = "contact_read"
     SEND = "send"
     DRAFT_SAVE = "draft_save"
     DRAFT_UPDATE = "draft_update"
@@ -485,6 +486,15 @@ class ContactsResult(Model):
     scanned: int
 
 
+class ContactReadArgs(Model):
+    address_book_id: Annotated[str, Field(min_length=1, max_length=200)]
+    contact_id: Annotated[str, Field(min_length=1, max_length=200)]
+
+
+class ContactReadResult(Model):
+    contact: ContactInfo
+
+
 # --- writes ----------------------------------------------------------------------------------
 
 
@@ -769,6 +779,7 @@ ARGS_MODELS: dict[Command, type[Model]] = {
     Command.RESOLVE: ResolveArgs,
     Command.REFRESH: RefreshArgs,
     Command.CONTACTS: ContactsArgs,
+    Command.CONTACT_READ: ContactReadArgs,
     Command.SEND: SendArgs,
     Command.DRAFT_SAVE: DraftSaveArgs,
     Command.DRAFT_UPDATE: DraftUpdateArgs,
@@ -801,6 +812,7 @@ RESULT_MODELS: dict[Command, type[Model]] = {
     Command.RESOLVE: ResolveResult,
     Command.REFRESH: RefreshResult,
     Command.CONTACTS: ContactsResult,
+    Command.CONTACT_READ: ContactReadResult,
     Command.SEND: SendResult,
     Command.DRAFT_SAVE: DraftResult,
     Command.DRAFT_UPDATE: DraftResult,

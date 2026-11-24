@@ -36,6 +36,7 @@ from chamberlain.memory.artifacts import (
     Budgets,
     blob_path,
 )
+from chamberlain.memory.history import record_snapshot
 from chamberlain.memory.timeutil import minus, plus, ts
 from chamberlain.schema.base import Model
 from chamberlain.store.db import DB_NAME, transaction
@@ -163,6 +164,7 @@ def sweep(
     with transaction(ctx.db):
         set_state(ctx.db, ctx.clock, "memory.pending_deletions", str(run.failed))
         set_state(ctx.db, ctx.clock, "memory.last_sweep_at", ts(now))
+        record_snapshot(ctx.db, ctx.clock, ctx.data_root, now)
         report = SweepReport(
             at=ts(now),
             rules=dict(run.counts),

@@ -79,6 +79,29 @@ def encode_contact_locator(book_id: str, contact_id: str) -> str:
     )
 
 
+def decode_contact_locator(locator: str) -> tuple[str, str]:
+    """The address book and contact ids a contact locator names."""
+    if not locator.startswith(CONTACT_PREFIX):
+        raise _unknown_contact("not a Thunderbird contact locator")
+    token = locator[len(CONTACT_PREFIX) :]
+    try:
+        parts: object = json.loads(base64.urlsafe_b64decode(token + "=" * (-len(token) % 4)))
+    except (ValueError, UnicodeError):
+        raise _unknown_contact("undecodable") from None
+    if not isinstance(parts, list):
+        raise _unknown_contact("wrong shape")
+    items = cast(list[object], parts)
+    if len(items) != 2 or not all(isinstance(item, str) for item in items):
+        raise _unknown_contact("wrong shape")
+    return cast(str, items[0]), cast(str, items[1])
+
+
+def _unknown_contact(detail: str) -> ChamberlainError:
+    return ChamberlainError(
+        ErrorCode.REQUEST_UNKNOWN_HANDLE, "That contact locator is not recognised.", detail=detail
+    )
+
+
 def normalise_body(text: str) -> str:
     """CRLF to LF, ASCII whitespace trimmed; identical to `normaliseBody` in the add-on."""
     return text.replace("\r\n", "\n").replace("\r", "\n").strip(_ASCII_SPACE)

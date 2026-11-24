@@ -74,6 +74,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "memory.last_orphan_scan_at",
         "memory.pending_deletions",
         "memory.over_budget",
+        "memory.metrics_history",
         "writes.audit_checkpoint_hash",
         "writes.audit_head",
         "app.installed_version",

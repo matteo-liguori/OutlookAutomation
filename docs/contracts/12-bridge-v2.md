@@ -126,7 +126,7 @@ the models of `protocol.py`.
 **Reads** (never change remote state, including the read flag; the add-on
 captures the flag before and after and fails with `changed` if it moved):
 `status`, `accounts`, `folders`, `query`, `read`, `attachment`, `resolve`,
-`refresh`, `contacts`.
+`refresh`, `contacts`, `contact_read`.
 
 - `query` filters by folder, bare Message-ID, text, subject (normalised:
   reply prefixes and case ignored), unread, window. Results are ordered newest

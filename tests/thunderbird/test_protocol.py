@@ -25,7 +25,7 @@ def test_b2_every_command_has_an_args_and_a_result_model() -> None:
 
 def test_b2_the_command_list_is_the_one_in_the_brief() -> None:
     reads = {"status", "accounts", "folders", "query", "read", "attachment", "resolve"}
-    reads |= {"refresh", "contacts"}
+    reads |= {"refresh", "contacts", "contact_read"}
     writes = {"send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read"}
     twins = {f"reconcile_{name}" for name in writes - {"send"}} | {"reconcile_send"}
     calendar = {

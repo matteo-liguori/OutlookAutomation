@@ -69,13 +69,7 @@ def open_handle(ctx: Context, request: OpenRequest) -> Result:
         case HandleKind.CALENDAR_EVENT:
             return Result(_calendar_event(ctx, request))
         case HandleKind.CONTACT:
-            source, _ = refs.locate(ctx.db, request.handle)
-            return Result(
-                OpenResponse(
-                    handle=request.handle,
-                    view=ContactView(handle=request.handle, source=source),
-                )
-            )
+            return Result(_contact(ctx, request))
         case HandleKind.NOTE | HandleKind.SESSION | HandleKind.RUN:
             raise ChamberlainError(
                 ErrorCode.REQUEST_WRONG_KIND,
@@ -270,6 +264,19 @@ def _message(ctx: Context, request: OpenRequest) -> OpenResponse:
         )
         return OpenResponse(handle=request.handle, view=view, attachments=infos)
     return OpenResponse(handle=request.handle, view=view)
+
+
+def _contact(ctx: Context, request: OpenRequest) -> OpenResponse:
+    source, locator = refs.locate(ctx.db, request.handle)
+    contact = ctx.sources.contacts_port(source).read(source, locator)
+    text = "\n".join([contact.name, *contact.emails])
+    content, window = _page(text, request, ContentKind.CONTACT)
+    return OpenResponse(
+        handle=request.handle,
+        view=ContactView(handle=request.handle, source=source),
+        content=content,
+        range=window,
+    )
 
 
 def _calendar_event(ctx: Context, request: OpenRequest) -> OpenResponse:
