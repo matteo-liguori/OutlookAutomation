@@ -211,8 +211,6 @@ def outline_text(template: ReportTemplate, run: RunRow) -> str:
             + "; ".join(ours)
             + "."
         )
-    if template.notes.strip():
-        lines += ["", "From the owner:", template.notes.strip()]
     return "\n".join(lines).strip() + "\n"
 
 
