@@ -91,19 +91,24 @@ class CalendarPortContract:
         assert after.fields.title == "Changed"
         assert after.etag != current.etag
 
-    def test_p16_a_deleted_event_reads_as_cancelled_not_missing(self, rig: CalendarRig) -> None:
+    def test_p16_a_deleted_event_reads_as_cancelled_or_is_gone(self, rig: CalendarRig) -> None:
+        """A connector whose store keeps no tombstone may report the event as gone."""
         locator = rig.seed(fields())
         handle = ref_handle(HandleKind.CALENDAR_EVENT, rig.source, locator)
         etag = rig.port.read(rig.source, locator).etag
         delete = CalendarDelete(source=rig.source, event_ref=handle, expected_etag=etag)
         prepared = rig.port.prepare(delete, {handle: locator})
         assert rig.port.dispatch(prepared, "k-delete").outcome is DispatchOutcome.APPLIED
-        assert rig.port.read(rig.source, locator).status is EventStatus.CANCELLED
+        try:
+            after = rig.port.read(rig.source, locator)
+        except ChamberlainError as gone:
+            assert gone.code is ErrorCode.REQUEST_UNKNOWN_HANDLE
+        else:
+            assert after.status is EventStatus.CANCELLED
         assert not rig.port.events(rig.source, _window()).items
         query = _window().model_copy(update={"include_cancelled": True})
-        assert [e.status for e in rig.port.events(rig.source, query).items] == [
-            EventStatus.CANCELLED
-        ]
+        listed = rig.port.events(rig.source, query).items
+        assert [e.status for e in listed] in ([], [EventStatus.CANCELLED])
         assert rig.port.reconcile(prepared, "k-delete").status is ReconcileStatus.PRESENT
 
     def test_w8_a_lost_response_settles_from_a_read_back(self, rig: CalendarRig) -> None:
