@@ -353,18 +353,14 @@ class Engine:
         return self._proposal_for(self.get(operation), intent)
 
     def _check_evidence(self, evidence: str) -> None:
+        """The approval is the user's own words from this session, not remote content (G-13)."""
         facts = repo.evidence_facts(self.db, evidence)
         session = self.ctx.session
-        if facts is None:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_UNKNOWN_HANDLE,
-                "There is no such evidence.",
-                field="approval_evidence",
-            )
         recorded_in_session = session is not None and self.ctx.services.evidence.created_in_session(
             evidence, session
         )
-        if not recorded_in_session or facts[1] is not None:
+        from_remote = facts is not None and facts[1] is not None
+        if not recorded_in_session or from_remote:
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID,
                 "Approval must be evidence recording the user's own words in this session.",
