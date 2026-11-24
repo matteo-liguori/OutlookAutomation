@@ -138,3 +138,25 @@ def test_g18_the_token_is_in_no_tool_reply_no_audit_row_and_no_viewer_reply(rig:
 def test_g18_the_token_file_is_in_run_and_matches_the_launch_token(rig: Rig) -> None:
     saved = (rig.ctx.data_root / "run" / "viewer.token").read_text(encoding="utf-8")
     assert saved == rig.token
+
+
+def test_g18_a_tool_cannot_import_the_viewer_token_or_the_store_into_an_artifact(rig: Rig) -> None:
+    """`keep` copies a file the agent names; the token file and the store must be off limits."""
+    started = rig.app.call("start", {"agent": "agent"})
+    session = started.data.session  # type: ignore[union-attr]
+    root = rig.ctx.data_root
+    for target in (root / "run" / "viewer.token", root / "chamberlain.sqlite3"):
+        reply = rig.app.call(
+            "keep",
+            {
+                "session": session,
+                "kind": "artifact",
+                "owner": session,
+                "reason": "x",
+                "import_path": str(target),
+            },
+        )
+        assert reply.ok is False, target.name
+        assert reply.error is not None
+        assert reply.error.code.value == "request.invalid"
+    assert rig.rows("SELECT * FROM artifacts") == []
