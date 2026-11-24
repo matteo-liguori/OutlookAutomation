@@ -33,6 +33,14 @@ schedules:                       # scheduled passes; applied at every start
     weekdays: [1, 2, 3, 4, 5]    # 1 = Monday ... 7 = Sunday; default every day
     enabled: true
 
+authorised_senders:              # who may instruct by email (see docs/permissions.md)
+  owner: [you@example.com]       # a verified email from these counts like chat
+  others:
+    - address: assistant@example.com
+      scope: [calendar.create]   # intent kinds, or ask_only
+      note: my PA
+  # trusted_authserv_ids: [mx.google.com, "*.outlook.com"]   # whose Authentication-Results to believe
+
 updates:                         # daily check for a newer release tag (reads tag names only)
   enabled: false
   remote: origin

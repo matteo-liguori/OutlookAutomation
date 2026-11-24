@@ -432,6 +432,7 @@ interface ReadResult {
   in_reply_to: string;
   references: string;
   raw_sha256?: string | null;
+  authentication_results: string[];
   read_state_preserved: boolean;
 }
 
@@ -2913,6 +2914,15 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
      "$ref": "#/$defs/AttachmentInfo"
     },
     "title": "Attachments",
+    "type": "array"
+   },
+   "authentication_results": {
+    "default": [],
+    "items": {
+     "maxLength": 2000,
+     "type": "string"
+    },
+    "title": "Authentication Results",
     "type": "array"
    },
    "bcc": {

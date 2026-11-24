@@ -78,12 +78,15 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "writes.audit_checkpoint_hash",
         "writes.audit_head",
         "app.installed_version",
+        "app.authorised_senders",
         "importer.last_import",
         "runs.update_tag",
         "runs.update_checked_at",
     }
 )
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""
+AUTHORISED_SENDERS_KEY = "app.authorised_senders"
+"""The profile's `authorised_senders`, mirrored at every start for the tools that check email."""
 
 
 def get_state(connection: sqlite3.Connection, key: str) -> str | None:

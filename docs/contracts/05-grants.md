@@ -99,14 +99,25 @@ proposed -> active -> spent        (one_off, its operation confirmed)
   `active` with `confirmed_via: agent_evidence` and that evidence gains the
   grant as an owner. The evidence MUST have been created in the same session
   and MUST NOT be `content` from a remote source.
+- **G-13a** (owner decision 2026-11-24) Evidence with an `instruction:` ref
+  (an authenticated email, T-10a) also satisfies G-13 for an `agent_evidence`
+  action: from the owner's own address for any kind; from another listed
+  sender only for the intent kinds in that sender's `scope` (`ask_only`
+  covers none). It never satisfies `human_confirmation`, and it must be at
+  most 7 days old when `keep` accepts it.
 - **G-14** `human_confirmation`: only the confirmation channel below can
   activate. `propose` with `approval_evidence` on such a grant fails with
   `grant.human_confirmation_required`; its `fix` tells the agent to ask the
   user to open the viewer. The viewer URL in that text carries no token.
-- **G-15** A recipient becomes known for a source only when a
-  human-confirmed grant naming it is activated. Receiving mail from an
-  address, or the agent sending to it under `agent_evidence`, does not make
-  it known.
+- **G-15** (amended by owner decision 2026-11-24) A recipient is known for a
+  source when (a) a human-confirmed grant naming it was activated
+  (`origin: confirmed-grant`), (b) it appears as To or Cc on a message in
+  that source's Sent folder, read through the connector by
+  `chamberlain recipients seed` or the importer (`origin: sent-history`), or
+  (c) it is the source's own mailbox address, which counts without a row.
+  Receiving mail from an address, or the agent sending to it under
+  `agent_evidence`, does not make it known. Seeding is read-only and
+  never touches grants.
 
 ## Send limits
 

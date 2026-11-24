@@ -420,6 +420,8 @@ class ReadResult(Model):
     in_reply_to: str = ""
     references: str = ""
     raw_sha256: Hex64 | None = None
+    authentication_results: tuple[Annotated[str, Field(max_length=2000)], ...] = ()
+    """Every Authentication-Results header, topmost first (sender authentication)."""
     read_state_preserved: bool
 
 

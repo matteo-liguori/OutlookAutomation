@@ -7,14 +7,17 @@ run finds every derived handle already there and writes nothing.
 
 import json
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
 from chamberlain.app.wiring import build_services
+from chamberlain.connections.build import build_router
 from chamberlain.connections.load import dump_connections, profile_path
 from chamberlain.connections.model import GoogleCalendarSource
+from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
 from chamberlain.connectors.google_calendar import auth
 from chamberlain.importer import authority, records
@@ -23,10 +26,12 @@ from chamberlain.importer.old import SKIPPED_TABLES, OldInstallation, read_insta
 from chamberlain.importer.profile_map import MappedProfile, map_profile
 from chamberlain.importer.report import ImportReport
 from chamberlain.ports.clock import Clock, SystemClock
+from chamberlain.ports.mail import MailPort
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import open_store, stamp
 from chamberlain.store.schema import get_state, set_state
+from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
 STATE_KEY = "importer.last_import"
 REPORT_RELATIVE = Path("import") / "report.json"
@@ -91,7 +96,7 @@ def _import_all(
     the_clock: Clock,
     secrets: SecretStore | None,
     report: ImportReport,
-) -> None:
+) -> MappedProfile:
     icloud = icloud_credential(old_root)
     mapped = map_profile(old, report, icloud[0] if icloud else None)
     zone = ZoneInfo(mapped.connections.timezone)
@@ -102,6 +107,46 @@ def _import_all(
     _check_google_accounts(mapped, store, report)
     _write_profile(data_root, mapped, report)
     _write_rows(old, mapped, zone, data_root, the_clock, report)
+    return mapped
+
+
+def _seed_recipients(
+    mapped: MappedProfile,
+    data_root: Path,
+    the_clock: Clock,
+    secrets: SecretStore | None,
+    mail: Mapping[str, MailPort] | None,
+    report: ImportReport,
+) -> None:
+    """Read each mail source's Sent folder for known recipients, when the connector is there.
+
+    Never fails the import: a source that cannot be read is reported with the command to
+    run later (`chamberlain recipients seed`).
+    """
+    ports: Mapping[str, MailPort]
+    if mail is not None:
+        ports = mail
+    else:
+        try:
+            ports = build_router(mapped.connections, data_root, the_clock, secrets=secrets).mail
+        except ChamberlainError as error:
+            report.warnings.append(f"recipients not seeded: {error.message}")
+            return
+    if not ports:
+        return
+    db = open_store(data_root, the_clock)
+    try:
+        with transaction(db):
+            sync_sources(db, mapped.connections, stamp(the_clock))
+        for result in seed_all(db, dict(ports), the_clock, months=DEFAULT_MONTHS):
+            report.recipients[result.source] = result.summary()
+            if not result.complete:
+                report.warnings.append(
+                    f"{result.source}: recipients not fully seeded ({result.reason}); "
+                    "run `chamberlain recipients seed` once the mail client is open."
+                )
+    finally:
+        db.close()
 
 
 def run_import(
@@ -110,6 +155,8 @@ def run_import(
     *,
     clock: Clock | None = None,
     secrets: SecretStore | None = None,
+    mail: Mapping[str, MailPort] | None = None,
+    seed_recipients: bool = True,
 ) -> ImportReport:
     the_clock = clock or SystemClock()
     _guard_paths(old_root, data_root)
@@ -122,7 +169,7 @@ def run_import(
     report.next_steps = list(NEXT_STEPS)
 
     try:
-        _import_all(old, old_root, data_root, the_clock, secrets, report)
+        mapped = _import_all(old, old_root, data_root, the_clock, secrets, report)
     except ChamberlainError:
         raise
     except (sqlite3.Error, ValidationError, ValueError, KeyError, TypeError) as error:
@@ -134,6 +181,8 @@ def run_import(
             detail=str(error)[:300],
         ) from None
 
+    if seed_recipients:
+        _seed_recipients(mapped, data_root, the_clock, secrets, mail, report)
     _write_report(data_root, report)
     return report
 

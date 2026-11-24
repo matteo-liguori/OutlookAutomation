@@ -10,6 +10,7 @@ This is the rebuild. The old harness stays as the fallback until you cut over.
 
 - Why and how: [docs/rebuild-plan.md](docs/rebuild-plan.md)
 - The binding specification (the contracts): [docs/contracts/](docs/contracts/00-index.md)
+- When you need to click, standing permissions, known recipients and authorised senders: [docs/permissions.md](docs/permissions.md)
 - The guidance rules, as one page for your review: [docs/guidance-review.md](docs/guidance-review.md)
 - Who builds what: [docs/OWNERSHIP.md](docs/OWNERSHIP.md), [docs/waves/](docs/waves/)
 - Message board for builders: [docs/BOARD.md](docs/BOARD.md)

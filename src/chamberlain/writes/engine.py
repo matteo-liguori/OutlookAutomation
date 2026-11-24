@@ -66,6 +66,7 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
     Verification,
 )
+from chamberlain.domain.senders import parse_instruction_ref
 from chamberlain.limits import (
     ABSENCE_MARGIN_SECONDS,
     CONNECTOR_DEADLINE_SECONDS,
@@ -395,25 +396,34 @@ class Engine:
                 needed is Requirement.HUMAN_CONFIRMATION
             ):
                 raise ChamberlainError(ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED)
-            self._check_evidence(evidence)
+            self._check_evidence(evidence, intent)
             activated = self.grants.activate(
                 grant.handle, via=ConfirmedVia.AGENT_EVIDENCE, actor=self.actor()
             )
             self.ctx.services.evidence.link(evidence, activated.handle)
         return self._proposal_for(self.get(operation), intent)
 
-    def _check_evidence(self, evidence: str) -> None:
-        """The approval is the user's own words from this session, not remote content (G-13)."""
+    def _check_evidence(self, evidence: str, intent: WriteIntent) -> None:
+        """The approval is the user's own words from this session, or an authenticated email
+        from an authorised sender recorded by `keep` (G-13, G-13a). Other remote text is refused."""
         facts = repo.evidence_facts(self.db, evidence)
         session = self.ctx.session
         recorded_in_session = session is not None and self.ctx.services.evidence.created_in_session(
             evidence, session
         )
-        from_remote = facts is not None and facts[1] is not None
-        if not recorded_in_session or from_remote:
+        ref = None if facts is None else facts[1]
+        instruction = parse_instruction_ref(ref)
+        if not recorded_in_session or (ref is not None and instruction is None):
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID,
                 "Approval must be evidence recording the user's own words in this session.",
+                field="approval_evidence",
+            )
+        if instruction is not None and not instruction.covers(intent.kind.value):
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "That sender's email does not cover this kind of change.",
+                fix="Ask the user in chat.",
                 field="approval_evidence",
             )
 

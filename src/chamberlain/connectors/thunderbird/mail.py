@@ -423,6 +423,8 @@ class ThunderbirdMail:
                 "unread": not header.read,
                 "has_attachments": header.has_attachments,
                 "preview": "",
+                "to": emails_only(header.recipients),
+                "cc": emails_only(header.cc),
             }
         )
 
@@ -543,6 +545,7 @@ class ThunderbirdMail:
                 "body_text": result.body,
                 "raw_sha256": result.raw_sha256,
                 "attachments": attachments,
+                "authentication_results": result.authentication_results,
             }
         )
 

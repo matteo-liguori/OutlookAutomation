@@ -20,6 +20,7 @@ from chamberlain.schema.tools import (
     ReconcileRequest,
     ReconcileResponse,
 )
+from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.engine import Engine, Proposal
 from chamberlain.writes.models import WritePolicy
@@ -108,7 +109,29 @@ def audit_checks(ctx: Context) -> list[CheckResult]:
         status="ok",
         summary="Viewer confirmation raises the bar against a manipulated agent; not a sandbox.",
     )
-    return [chain, channel]
+    return [chain, channel, *recipient_checks(ctx)]
+
+
+def recipient_checks(ctx: Context) -> list[CheckResult]:
+    """How many recipients each mail source knows, by origin (G-15)."""
+    found: list[CheckResult] = []
+    for source in sorted(ctx.sources.mail):
+        counts = repo.recipient_counts(ctx.db, source)
+        seeded = counts["sent-history"]
+        found.append(
+            CheckResult(
+                id=f"recipients.{source.replace(':', '_')}"[:40],
+                status="ok" if seeded else "warn",
+                summary=(
+                    f"{source}: {counts['confirmed-grant']} confirmed, {seeded} from Sent "
+                    f"history, {counts['own']} own address."
+                ),
+                fix=None
+                if seeded
+                else "Run `chamberlain recipients seed` with the mail client open.",
+            )
+        )
+    return found
 
 
 HANDLERS: dict[ToolName, Handler] = make_handlers()

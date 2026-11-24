@@ -176,7 +176,7 @@ def test_a18_append_replace_and_disable_each_change_one_rule(data_root: Path):
     put_patch(
         data_root,
         "b",
-        {"id": "keep.owner", "base_version": 1, "op": "replace", "text": "Own words."},
+        {"id": "keep.owner", "base_version": 2, "op": "replace", "text": "Own words."},
     )
     put_patch(data_root, "c", {"id": "storage.orphans", "base_version": 1, "op": "disable"})
     applied = apply_overrides(RULES, data_root)

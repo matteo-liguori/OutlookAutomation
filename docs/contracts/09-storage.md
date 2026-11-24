@@ -51,7 +51,7 @@ Binding for every track that touches SQLite. Code:
 | `cursors` | Ephemeral | memory | Page cursors |
 | `quarantine` | System | memory | Orphans awaiting deletion |
 | `grants` | Records | writes | Grants |
-| `known_recipients` | Records | writes | Human-confirmed recipients per source |
+| `known_recipients` | Records | writes | Known recipients per source: confirmed by a grant, or seeded from Sent history (`origin`) |
 | `operations` | Records | writes | Write operations |
 | `audit_log` | System | writes | Hash-chained audit rows |
 | `schedules` | Records | runs | The schedule record: which passes are due, when |

@@ -271,6 +271,7 @@ async function cmdRead(a: ReadArgs): Promise<ReadResult> {
     attachments: await attachmentInfo(after.id),
     in_reply_to: (headers["in-reply-to"] ?? []).join(" ").trim(),
     references: (headers.references ?? []).join(" ").trim(),
+    authentication_results: (headers["authentication-results"] ?? []).slice(0, 8).map((v: string) => clip(v, 2000)),
     raw_sha256: a.raw_hash ? await rawHash(after.id) : undefined,
     read_state_preserved: true,
   };

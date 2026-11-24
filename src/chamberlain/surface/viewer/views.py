@@ -65,6 +65,9 @@ def overview(ctx: Context) -> dict[str, Any]:
             "open_cards": repo.count_open_cards(db),
             "live_events": repo.count_live_events(db),
         },
+        "known_recipients": {
+            source: write_repo.recipient_counts(db, source) for source in sorted(ctx.sources.mail)
+        },
         "over_budget": repo.over_budget_flag(db),
     }
 

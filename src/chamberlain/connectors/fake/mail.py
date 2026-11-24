@@ -119,6 +119,8 @@ class FakeMail:
         subject: str = "Hello",
         sender: str = "alice@example.org",
         to: tuple[str, ...] = ("owner@example.org",),
+        cc: tuple[str, ...] = (),
+        authentication_results: tuple[str, ...] = (),
         body: str = "Body text.",
         unread: bool = True,
         date: datetime | None = None,
@@ -134,10 +136,11 @@ class FakeMail:
             subject=subject,
             sender=Address(address=sender),
             to=tuple(Address(address=a) for a in to),
-            cc=(),
+            cc=tuple(Address(address=a) for a in cc),
             date=date or world.clock.now(),
             unread=unread,
             body=body,
+            authentication_results=authentication_results,
             attachments=[
                 (
                     AttachmentMeta(
@@ -232,6 +235,7 @@ class FakeMail:
                 "cc": stored.cc,
                 "body_text": stored.body,
                 "raw_sha256": stored.raw_sha256,
+                "authentication_results": stored.authentication_results,
                 "attachments": [meta for meta, _ in stored.attachments],
             }
         )
@@ -588,6 +592,8 @@ class FakeMail:
                 "unread": stored.unread,
                 "has_attachments": bool(stored.attachments),
                 "preview": stored.body[:120],
+                "to": stored.to,
+                "cc": stored.cc,
             }
         )
 
