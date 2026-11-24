@@ -1,0 +1,11 @@
+id: calendar.conflict
+version: 1
+title: Two events overlap
+when: {event: calendar.conflict}
+text: >
+  Two of the owner's events overlap. Open both and see if one is a copy of
+  the other or if either can really be attended. Tell the owner plainly in
+  your report. Move or cancel nothing unless they ask.
+max_chars: 260
+once_per: event
+priority: 55

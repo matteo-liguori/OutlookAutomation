@@ -133,6 +133,19 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   long gap while a span is held extends it from its start and asks again. The first look back
   of a never-watched source is not held. Rows are not pruned inside a held span.
 
+### Calendar conflicts
+
+- **A-26** `calendar.conflict` is raised for each pair of the owner's events that overlap in
+  the next 14 days (`CONFLICT_WINDOW`), earliest first, at most 10 at once. The tick reads every
+  healthy calendar read-only (up to 4 pages of 250). Not counted: cancelled events, all-day
+  events, events the owner declined, events that only touch, and a copy of one event held by
+  two calendars (same uid and start, or same title and times). The summary gives the time and
+  the calendars, never the titles (E-8); the key is the pair, so a moved event is a new
+  conflict. Its next call is a `find` of the calendars for the overlap; the rule
+  `calendar.conflict` rides with it. A calendar that is not healthy, or not read to the end,
+  leaves existing conflict events as they are (silence proves nothing). The agent may mark it
+  handled; it does not come back while the pair still overlaps.
+
 ### Folder sync (before any read of a mail source)
 
 Thunderbird reads from its own local index. It syncs Inbox, Sent, Drafts and Trash when the bridge
