@@ -1,8 +1,8 @@
 """All SQL of the attention track (S-4): its own tables, and SELECTs on others'.
 
 Contract: docs/contracts/09-storage.md (S-3, S-4), 07-attention.md (A-8).
-Only `sessions`, `events`, `guidance_deliveries`, `source_health`, `mail_watermarks` and
-`mail_seen` are written.
+Only `sessions`, `events`, `guidance_deliveries`, `source_health`, `mail_watermarks`, `mail_sync`,
+`mail_sync_folders` and `mail_seen` are written.
 """
 
 import json
@@ -784,3 +784,150 @@ def sent_recipients(db: sqlite3.Connection) -> list[tuple[str, str]]:
         "WHERE o.kind = 'mail.send' AND o.intent_json IS NOT NULL"
     )
     return [(r["card"], r["intent"]) for r in rows]
+
+
+# --- mail folder sync (0150) ---------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class SyncFolder:
+    """What the harness knows about one folder the scan reads."""
+
+    folder_id: str
+    name: str
+    role: str
+    synced_at: str | None
+    """When the client last said this folder was in sync; None if it never did."""
+    attempted_at: str
+    failure: str
+    """Empty, or why the last attempt did not finish."""
+    catchup_from: str | None
+    """Set when the folder failed to sync: mail in it dated from here on is read on its own once
+    it syncs again, because the scan's watermark may have moved past it meanwhile."""
+
+
+def sync_folder_rows(db: sqlite3.Connection, source: str) -> list[SyncFolder]:
+    rows = db.execute(
+        "SELECT folder_id, name, role, synced_at, attempted_at, failure, catchup_from "
+        "FROM mail_sync_folders WHERE source_id = ? ORDER BY folder_id",
+        (source,),
+    )
+    return [
+        SyncFolder(
+            r["folder_id"],
+            r["name"],
+            r["role"],
+            r["synced_at"],
+            r["attempted_at"],
+            r["failure"],
+            r["catchup_from"],
+        )
+        for r in rows
+    ]
+
+
+def save_sync_folder(db: sqlite3.Connection, source: str, row: SyncFolder) -> None:
+    db.execute(
+        "INSERT INTO mail_sync_folders (source_id, folder_id, name, role, synced_at, "
+        "attempted_at, failure, catchup_from) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (source_id, folder_id) DO UPDATE SET name = excluded.name, "
+        "role = excluded.role, synced_at = excluded.synced_at, "
+        "attempted_at = excluded.attempted_at, failure = excluded.failure, "
+        "catchup_from = excluded.catchup_from",
+        (
+            source,
+            row.folder_id,
+            row.name,
+            row.role,
+            row.synced_at,
+            row.attempted_at,
+            row.failure,
+            row.catchup_from,
+        ),
+    )
+
+
+def drop_sync_folders(db: sqlite3.Connection, source: str, keep: list[str]) -> None:
+    """Forget folders the scan no longer reads (deleted, or now a skipped role)."""
+    marks = ",".join("?" for _ in keep)
+    db.execute(
+        f"DELETE FROM mail_sync_folders WHERE source_id = ? AND folder_id NOT IN ({marks})",
+        (source, *keep),
+    )
+
+
+def set_catchup(
+    db: sqlite3.Connection, source: str, folder_id: str, catchup_from: str | None
+) -> None:
+    db.execute(
+        "UPDATE mail_sync_folders SET catchup_from = ? WHERE source_id = ? AND folder_id = ?",
+        (catchup_from, source, folder_id),
+    )
+
+
+def sync_state(db: sqlite3.Connection, source: str) -> tuple[str | None, str] | None:
+    """`(complete_at, attempted_at)`: the last time every folder was in sync, and the last try."""
+    row = db.execute(
+        "SELECT complete_at, attempted_at FROM mail_sync WHERE source_id = ?", (source,)
+    ).fetchone()
+    return None if row is None else (row["complete_at"], row["attempted_at"])
+
+
+def save_sync_state(
+    db: sqlite3.Connection, source: str, complete_at: str | None, attempted_at: str
+) -> None:
+    db.execute(
+        "INSERT INTO mail_sync (source_id, complete_at, attempted_at) VALUES (?, ?, ?) "
+        "ON CONFLICT (source_id) DO UPDATE SET complete_at = excluded.complete_at, "
+        "attempted_at = excluded.attempted_at",
+        (source, complete_at, attempted_at),
+    )
+
+
+def sync_failures(db: sqlite3.Connection) -> list[tuple[str, SyncFolder]]:
+    """Every folder whose last sync did not finish, by source."""
+    rows = db.execute(
+        "SELECT source_id, folder_id, name, role, synced_at, attempted_at, failure, "
+        "catchup_from FROM mail_sync_folders WHERE failure <> '' ORDER BY source_id, folder_id"
+    )
+    return [
+        (
+            r["source_id"],
+            SyncFolder(
+                r["folder_id"],
+                r["name"],
+                r["role"],
+                r["synced_at"],
+                r["attempted_at"],
+                r["failure"],
+                r["catchup_from"],
+            ),
+        )
+        for r in rows
+    ]
+
+
+@dataclass(frozen=True)
+class PresyncSchedule:
+    """A scheduled pass the tick may sync ahead of (the `schedules` table, runs track)."""
+
+    at_local: str
+    weekdays: frozenset[int]
+    zone: str
+    minutes: int
+
+
+def presync_schedules(db: sqlite3.Connection) -> list[PresyncSchedule]:
+    rows = db.execute(
+        "SELECT at_local, weekdays, zone, presync_minutes FROM schedules "
+        "WHERE enabled = 1 AND presync_minutes > 0"
+    )
+    return [
+        PresyncSchedule(
+            r["at_local"],
+            frozenset(int(d) for d in r["weekdays"].split(",") if d),
+            r["zone"],
+            r["presync_minutes"],
+        )
+        for r in rows
+    ]

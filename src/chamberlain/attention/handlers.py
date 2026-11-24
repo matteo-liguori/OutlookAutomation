@@ -9,7 +9,7 @@ import binascii
 from typing import Literal
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Hooks, Result
-from chamberlain.attention import inbox, older, repo, sessions
+from chamberlain.attention import inbox, older, repo, sessions, sync
 from chamberlain.attention.collect import source_health
 from chamberlain.attention.hooks import HOOKS as _HOOKS
 from chamberlain.attention.overrides import apply_overrides
@@ -69,6 +69,8 @@ def _sources(ctx: Context) -> tuple[SourceStatus, ...]:
 
 
 def start(ctx: Context, request: StartRequest) -> Result:
+    # The agent is about to read mail: folders last synced too long ago are synced first (A-24).
+    sync.ensure_all_fresh(ctx)
     row = sessions.start(
         ctx.db,
         ctx.clock,
@@ -191,6 +193,7 @@ def source_checks(ctx: Context) -> list[CheckResult]:
     bad = sorted(s for s, state in health.items() if state is not HealthState.OK)
     summary = f"{len(bad)} of {len(health)} sources need attention."
     held = repo.mail_held(ctx.db)
+    unsynced = repo.sync_failures(ctx.db)
     return [
         CheckResult(
             id="sources.health",
@@ -208,7 +211,28 @@ def source_checks(ctx: Context) -> list[CheckResult]:
             )[:160],
             fix="Ask the owner whether to read it, then answer through next." if held else None,
         ),
+        CheckResult(
+            id="sources.sync",
+            status="warn" if unsynced else "ok",
+            summary=_sync_summary(ctx, unsynced),
+            fix="Say the report is partly verified; the folders are tried again every tick."
+            if unsynced
+            else None,
+        ),
     ]
+
+
+def _sync_summary(ctx: Context, unsynced: list[tuple[str, repo.SyncFolder]]) -> str:
+    if unsynced:
+        counts: dict[str, int] = {}
+        for source, _ in unsynced:
+            counts[source] = counts.get(source, 0) + 1
+        return "; ".join(f"{s}: {n} folder(s) not synced" for s, n in counts.items())[:160]
+    done = [(s, repo.sync_state(ctx.db, s)) for s in sorted(ctx.sources.mail)]
+    last = [f"{s}: {st[0]}" for s, st in done if st is not None and st[0] is not None]
+    if not last:
+        return "No folder sync has been recorded."
+    return ("Every folder was synced. Last complete: " + ", ".join(last))[:160]
 
 
 HANDLERS: dict[ToolName, Handler] = {

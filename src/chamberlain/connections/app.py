@@ -19,7 +19,7 @@ from chamberlain.runs.schedule import ScheduleSpec, apply_schedules
 from chamberlain.runs.updates import TagLister, git_tag_lister
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
-from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, set_state
+from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, MAIL_SYNC_KEY, set_state
 
 
 def _specs(connections: Connections) -> list[ScheduleSpec]:
@@ -31,6 +31,7 @@ def _specs(connections: Connections) -> list[ScheduleSpec]:
             zone=item.zone or connections.timezone,
             weekdays=frozenset(item.weekdays),
             enabled=item.enabled,
+            presync_minutes=item.presync_minutes,
         )
         for item in connections.schedules
     ]
@@ -68,6 +69,7 @@ def open_app(
                 AUTHORISED_SENDERS_KEY,
                 connections.authorised_senders.model_dump_json(),
             )
+            set_state(db, the_clock, MAIL_SYNC_KEY, connections.mail_sync.model_dump_json())
         apply_schedules(app.context, _specs(connections))
     except BaseException:
         app.close()

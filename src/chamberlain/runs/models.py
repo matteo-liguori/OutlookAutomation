@@ -25,6 +25,8 @@ class ScheduleRow:
     weekdays: frozenset[int]
     zone: str
     enabled: bool
+    presync_minutes: int = 5
+    """Minutes before its time that the tick syncs mail folders for this pass (0: not at all)."""
 
 
 @dataclass(frozen=True)

@@ -9,7 +9,7 @@ Behaviours carried over from the old adapter are named in the tests.
 
 import base64
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final, TypeVar
@@ -77,6 +77,7 @@ from chamberlain.domain.operations import (
 )
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.page import Gap, Page
+from chamberlain.ports.sync import FOLDER_SECONDS, FolderOutcome, SyncReport, run_sync
 from chamberlain.schema.base import Model
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -345,6 +346,38 @@ class ThunderbirdMail:
         )
         return _typed(reply, protocol.RefreshResult).provider_callback_verified
 
+    def sync_folders(
+        self,
+        source: str,
+        folder_ids: Sequence[str],
+        time_limit: timedelta,
+        retry: Collection[str] = frozenset(),
+    ) -> SyncReport:
+        """`FolderSync` (P-20): ask Thunderbird to sync each folder and wait for its answer.
+
+        A few folders go in one call, so the add-on answers inside its read deadline even when
+        every one of them is stuck. Thunderbird keeps syncing a folder that missed its wait, so
+        a folder in `retry` is asked again, and the second ask usually finds it done."""
+        binding = self._binding(source)
+
+        def attempt(group: Sequence[str]) -> list[FolderOutcome]:
+            reply = self._client.call(
+                Command.REFRESH,
+                protocol.RefreshArgs(
+                    account_id=binding.account_id,
+                    mailbox=binding.mailbox,
+                    folder_ids=tuple(group),
+                    timeout_ms=FOLDER_SECONDS * 1000,
+                ),
+            )
+            now = self._clock.now()
+            return [
+                FolderOutcome(folder_id=f.folder_id, synced=f.success, code=f.code, at=now)
+                for f in _typed(reply, protocol.RefreshResult).folders
+            ]
+
+        return run_sync(attempt, folder_ids, self._clock, time_limit, retry)
+
     def _vouched(self, source: str, binding: ThunderbirdBinding) -> bool:
         """Whether the store may be called fresh now; refreshes at most once per TTL."""
         state = self._fresh.get(source)
@@ -401,6 +434,8 @@ class ThunderbirdMail:
         )
         found: list[Folder] = []
         for item in _typed(reply, protocol.FoldersResult).folders:
+            if item.path in ("", "/"):
+                continue  # the account's root folder holds no mail and cannot be synced
             role = FolderRole.OTHER
             for use in item.special_use:
                 role = _ROLE_BY_USE.get(use, role)

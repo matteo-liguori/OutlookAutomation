@@ -178,6 +178,16 @@ class HeldMail:
 
 
 @dataclass(frozen=True)
+class SyncGap:
+    """Folders of `source` that would not sync, as roles (folder names are remote text, E-8)."""
+
+    source: str
+    roles: tuple[str, ...]
+    since: str
+    """The oldest time any of them was last known in sync, or the first try."""
+
+
+@dataclass(frozen=True)
 class SourceSnapshot:
     id: str
     state: HealthState
@@ -214,6 +224,7 @@ class DetectorInput:
     mail: tuple[MailBatch, ...] = ()
     mail_gaps: tuple[MailGap, ...] = ()
     mail_held: tuple[HeldMail, ...] = ()
+    sync_gaps: tuple[SyncGap, ...] = ()
     actions: tuple[ActionRow, ...] = ()
     cards: tuple[CardRow, ...] = ()
     open_cards: tuple[CardRow, ...] = ()

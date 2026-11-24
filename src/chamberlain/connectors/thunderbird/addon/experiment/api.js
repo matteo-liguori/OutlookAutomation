@@ -20,6 +20,12 @@ function ownerAccount(accountId, mailbox) {
 function syncOne(id, accountId, timeoutMs) {
   const target = getFolder(id);
   need(target.accountKey === accountId && target.folder.server.type === "imap", "account_mismatch");
+  // An account root, a container such as Gmail's "[Gmail]" and a saved search hold no mail:
+  // there is nothing to sync, and waiting for one would never end.
+  const flags = Ci.nsMsgFolderFlags;
+  if (target.folder.isServer || (target.folder.flags & (flags.ImapNoselect | flags.Virtual)) !== 0) {
+    return Promise.resolve({ folder_id: id, success: false, code: "not-selectable" });
+  }
   return new Promise((resolve) => {
     let done = false;
     const finish = (value) => {

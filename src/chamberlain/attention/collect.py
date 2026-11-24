@@ -15,6 +15,7 @@ from chamberlain.attention.models import (
     HeldMail,
     MailGap,
     SourceSnapshot,
+    SyncGap,
 )
 from chamberlain.attention.suggest import Suggester
 from chamberlain.attention.tuning import NOTE_OPEN
@@ -79,6 +80,20 @@ def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> set[str]:
     return unreadable
 
 
+def _sync_gaps(ctx: Context) -> tuple[SyncGap, ...]:
+    by_source: dict[str, list[repo.SyncFolder]] = {}
+    for source, folder in repo.sync_failures(ctx.db):
+        by_source.setdefault(source, []).append(folder)
+    return tuple(
+        SyncGap(
+            source,
+            tuple(sorted(f.role for f in folders)),
+            min(f.synced_at or f.attempted_at for f in folders),
+        )
+        for source, folders in by_source.items()
+    )
+
+
 def stamp_before(ctx: Context, span: timedelta) -> str:
     """The stored form of the instant `span` before now."""
     return (ctx.clock.now() - span).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -96,6 +111,7 @@ def collect(ctx: Context) -> Collected:
         sources=snapshots,
         mail=tuple(repo.mail_batches(ctx.db)),
         mail_gaps=tuple(MailGap(*g) for g in repo.mail_gaps(ctx.db)),
+        sync_gaps=_sync_gaps(ctx),
         mail_held=tuple(
             HeldMail(source, h.start, h.end, h.state, h.estimate)
             for source, h in repo.mail_held(ctx.db)

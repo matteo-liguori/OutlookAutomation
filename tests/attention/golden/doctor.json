@@ -31,6 +31,11 @@
         "id": "sources.older_mail",
         "status": "ok",
         "summary": "No mail is held back as too old."
+      },
+      {
+        "id": "sources.sync",
+        "status": "ok",
+        "summary": "Every folder was synced. Last complete: mail:test: 2026-01-05T09:00:00Z"
       }
     ]
   },

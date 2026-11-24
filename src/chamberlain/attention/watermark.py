@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from chamberlain.app.context import Context
-from chamberlain.attention import repo
+from chamberlain.attention import repo, sync
 from chamberlain.attention.suggest import Suggester
 from chamberlain.attention.tuning import (
     MAIL_BOOTSTRAP,
@@ -26,6 +26,7 @@ from chamberlain.attention.tuning import (
     MAIL_PAGE_LIMIT,
     MAIL_REQUIRED_OVERLAP,
     MAIL_SENT_KEEP,
+    MAIL_SKIPPED_ROLES,
     MAIL_STANDARD,
 )
 from chamberlain.domain.capabilities import HealthState
@@ -38,8 +39,6 @@ from chamberlain.store.db import transaction
 log = logging.getLogger("chamberlain.attention")
 
 _FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-_SKIPPED = frozenset({FolderRole.TRASH, FolderRole.JUNK, FolderRole.DRAFTS})
-"""Folders whose mail the owner does not want triaged. Outbox is not part of the mailbox."""
 _MIN_SLICE = timedelta(seconds=1)
 
 
@@ -77,6 +76,7 @@ def _walk(
     hi: datetime,
     width: int | None,
     take: Take,
+    folder_id: str | None = None,
 ) -> _Walk:
     """Read [lo, hi] oldest slice first. Items are handed to `take` even from a slice that did not
     finish; the frontier moves only over slices read to the end with no gap (A-20).
@@ -92,7 +92,12 @@ def _walk(
         slice_end = walk.frontier + step
         last = slice_end >= hi
         # Timestamps are whole seconds (D-7): take the whole last second of the slice.
-        query = MailQuery(since=walk.frontier, until=slice_end + _MIN_SLICE, limit=MAIL_PAGE_LIMIT)
+        query = MailQuery(
+            since=walk.frontier,
+            until=slice_end + _MIN_SLICE,
+            limit=MAIL_PAGE_LIMIT,
+            folder_id=folder_id,
+        )
         cursor: str | None = None
         used = 0
         finished = other = False
@@ -169,6 +174,10 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
         _record(ctx, source, state, (_fmt(begin), _fmt(max(now, begin))))
         return Scanned(False)
 
+    # Every folder the scan reads is brought up to date first, and the scan waits for it (A-24).
+    # A folder that will not sync is named by `source.stale`; the scan goes on without it.
+    sync.ensure_fresh(ctx, source)
+
     held = state.held
     hold_from: datetime | None = None
     if fresh and now - through > MAIL_STANDARD:
@@ -184,6 +193,7 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
     width = state.scan_width
     estimate: int | None = None
     catch_up: _Walk | None = None
+    catch_ups: dict[str, _Walk] = {}
     port: MailPort | None = None
     frontier = through - MAIL_REQUIRED_OVERLAP
     if first:
@@ -197,7 +207,7 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
     try:
         port = ctx.sources.mail_port(source)
         roles = {f.id: f.role for f in port.folders(source)}
-        skipped = frozenset(i for i, role in roles.items() if role in _SKIPPED)
+        skipped = frozenset(i for i, role in roles.items() if role in MAIL_SKIPPED_ROLES)
 
         def take(items: list[MessageSummary]) -> None:
             for item in items:
@@ -237,6 +247,7 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
                 )
             except Exception:
                 log_failure(log, "reading older mail failed for %s", source)
+        catch_ups = _catch_up(ctx, port, source, started, take)
     except Exception:
         log_failure(log, "mail scan failed for %s", source)
         failed = True
@@ -281,6 +292,9 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
             ctx.services.writes.learn_recipients(source, learned)
         if held_now != held:
             repo.save_held(ctx.db, source, held_now)
+        for folder, walked_folder in catch_ups.items():
+            done = walked_folder.clean and walked_folder.frontier >= started
+            repo.set_catchup(ctx.db, source, folder, None if done else _fmt(walked_folder.frontier))
         if complete:
             repo.save_scan(
                 ctx.db,
@@ -308,6 +322,28 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
             gap=(_fmt(begin), _fmt(max(now, begin))),
         )
     return Scanned(False)
+
+
+def _catch_up(
+    ctx: Context, port: MailPort, source: str, started: datetime, take: Take
+) -> dict[str, _Walk]:
+    """Read, on its own, each folder that failed to sync and has synced again (A-27).
+
+    While a folder would not sync, mail may have reached it dated before the watermark moved on;
+    the ordinary window would never look there again. Each such folder is read from its last good
+    sync (an hour earlier, at most a day back) to now. A walk that does not finish keeps its
+    place for the next tick.
+    """
+    found: dict[str, _Walk] = {}
+    for row in repo.sync_folder_rows(ctx.db, source):
+        if row.catchup_from is None or row.failure:
+            continue
+        lo = max(_parse(row.catchup_from) - MAIL_REQUIRED_OVERLAP, started - MAIL_STANDARD)
+        try:
+            found[row.folder_id] = _walk(port, source, lo, started, None, take, row.folder_id)
+        except Exception:
+            log_failure(log, "reading folder %s of %s failed", row.folder_id, source)
+    return found
 
 
 def _held_after(

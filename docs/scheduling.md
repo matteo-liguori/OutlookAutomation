@@ -9,6 +9,13 @@ This page is for the person setting up Chamberlain on their own computer. The co
 1. The operating system scheduler runs `chamberlain tick` every few minutes. It never decides
    *what* is due; the schedule record in the data root does (`schedules` table, set from your
    configuration through `chamberlain.runs.schedule.apply_schedules`).
+   Five minutes before a pass is due (`presync_minutes`, set per schedule) that tick also asks
+   Thunderbird to sync every mail folder the scan reads and waits for it, so the agent's pass finds
+   them fresh. The scheduler should therefore tick at least that often. A folder that will not sync
+   within the time limit (`mail_sync.time_limit_seconds`, default 3 minutes) is left out, named in
+   the report ("Partially verified") and tried again at the next tick; a tick waits for one mail
+   source about that long at most. When the agent starts, any folder last synced more than
+   `mail_sync.fresh_minutes` (default 10) ago is synced again first.
 2. When a pass reaches its time on one of its weekdays, the tick records one run for that
    local day and attention raises a `schedule.pass_due` event. A pass first noticed more than
    six hours late is recorded as `missed`; it is never run late.
