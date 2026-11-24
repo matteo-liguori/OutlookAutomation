@@ -13,6 +13,7 @@ dependencies = [
   "PyYAML>=6.0.2",
   "icalendar>=6.1",
   "keyring>=25",
+  "pypdf>=5.0",
   "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
