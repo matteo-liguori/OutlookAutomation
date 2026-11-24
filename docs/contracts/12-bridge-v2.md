@@ -144,7 +144,7 @@ captures the flag before and after and fails with `changed` if it moved):
 - `send` composes with the bound Sent folder applied explicitly (also on
   replies), verifies the composer against the request (sender, subject, body,
   recipients, Sent folder, priority, attachment bytes), then submits. It adds
-  the header `X-Chamberlain-Token: <token>`. Thunderbird does not let an
+  the header `X-Chamberlain-Write-Token: <token>`. Thunderbird does not let an
   add-on choose `Message-ID` (R1): the connector declares
   `message_id_honoured: 0` and reconciles by content (section 6).
 - `draft_save` / `draft_update` save into the bound draft folder with
@@ -275,7 +275,7 @@ leave the connector in angle-bracket form (`<id>`) and enter the bridge bare.
 
 ## 12. Live validation must check first
 
-1. That `X-Chamberlain-Token` survives into the Sent copy on each provider, and
+1. That `X-Chamberlain-Write-Token` survives into the Sent copy on each provider, and
    whether Thunderbird ever keeps a supplied `Message-ID` (it should not).
 2. That re-saving a reopened draft replaces the old copy and what Message-ID
    the new copy carries.

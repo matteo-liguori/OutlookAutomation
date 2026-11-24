@@ -346,8 +346,8 @@ export function createWorld() {
     for (const m of world.messages) m.id = world.nextId++;
   };
   world.copies = (id, folderId) =>
-    world.messages.filter((m) => (bare(m.headerMessageId) === bare(id) || (m.headers["x-chamberlain-token"] ?? []).includes(id)) && (!folderId || m.folderId === folderId)).length;
+    world.messages.filter((m) => (bare(m.headerMessageId) === bare(id) || (m.headers["x-chamberlain-write-token"] ?? []).includes(id)) && (!folderId || m.folderId === folderId)).length;
   world.find = (id, folderId) =>
-    world.messages.find((m) => (bare(m.headerMessageId) === bare(id) || (m.headers["x-chamberlain-token"] ?? []).includes(id)) && (!folderId || m.folderId === folderId));
+    world.messages.find((m) => (bare(m.headerMessageId) === bare(id) || (m.headers["x-chamberlain-write-token"] ?? []).includes(id)) && (!folderId || m.folderId === folderId));
   return world;
 }
