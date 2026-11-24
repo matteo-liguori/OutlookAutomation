@@ -65,7 +65,11 @@ def recipients_of(intent: WriteIntent) -> frozenset[str]:
 
 
 def may_reach_attendees(intent: WriteIntent) -> bool:
-    """Calendar updates and deletes notify attendees the intent does not list (Q2)."""
+    """Calendar updates and deletes act on an existing event whose attendees the intent omits.
+
+    Used by scope matching: a standing grant never covers them. One-off requirement selection
+    asks the stored event instead (`existing_attendees` of `requirement_for`).
+    """
     return isinstance(intent, CalendarUpdate | CalendarDelete)
 
 
@@ -79,17 +83,20 @@ def requirement_for(
     *,
     send_known: Requirement,
     other: Requirement,
+    existing_attendees: bool = False,
 ) -> Requirement:
     """The G-12 table: what it takes to activate a one-off grant for this intent.
 
-    `send_known` and `other` come from config and may only tighten a row.
+    `send_known` and `other` come from config and may only tighten a row. Calendar writes
+    need the human only when the event has attendees (owner ruling 2026-11-24):
+    `existing_attendees` says the stored event, which an update or delete acts on, has some.
     """
     if isinstance(intent, MailSend):
         if recipients_of(intent) <= known_recipients:
             return stricter(send_known, Requirement.AGENT_EVIDENCE)
         return Requirement.HUMAN_CONFIRMATION
     if isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete) and (
-        may_reach_attendees(intent) or not recipients_of(intent) <= known_recipients
+        existing_attendees or recipients_of(intent)
     ):
         return Requirement.HUMAN_CONFIRMATION
     return stricter(other, Requirement.AGENT_EVIDENCE)

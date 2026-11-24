@@ -6,8 +6,11 @@ import pytest
 
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.canonical import sha256_bytes
+from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import (
     AttachmentRef,
+    CalendarDelete,
+    CalendarUpdate,
     MailMarkRead,
     MailMove,
     MailSend,
@@ -351,6 +354,44 @@ def test_q2_a_calendar_change_with_attendees_needs_the_human(rig: WriteRig) -> N
     assert proposal.requirement.value == "human_confirmation"
     with fails(ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED):
         rig.agent_approves(proposal)
+
+
+def test_g12_owner_calendar_writes_without_attendees_use_agent_evidence(rig: WriteRig) -> None:
+    """Owner ruling 2026-11-24: create, update and delete on an event with no attendees."""
+    created = rig.engine().propose_intent(rig.event())
+    assert created.requirement.value == "agent_evidence"
+    fields = rig.event().event
+    locator = rig.fake.calendar.add_event(CALENDAR, fields)
+    handle = rig.refs.remember(HandleKind.CALENDAR_EVENT, CALENDAR, locator)
+    stored = rig.fake.calendar.read(CALENDAR, locator)
+    update = CalendarUpdate(
+        source=CALENDAR,
+        event_ref=handle,
+        expected_etag=stored.etag,
+        event=fields.model_copy(update={"title": "Lunch moved"}),
+    )
+    delete = CalendarDelete(source=CALENDAR, event_ref=handle, expected_etag=stored.etag)
+    assert rig.engine().propose_intent(update).requirement.value == "agent_evidence"
+    assert rig.engine().propose_intent(delete).requirement.value == "agent_evidence"
+
+
+def test_g12_owner_updating_or_deleting_an_event_with_attendees_needs_the_human(
+    rig: WriteRig,
+) -> None:
+    fields = rig.event(attendees=("guest@example.org",)).event
+    locator = rig.fake.calendar.add_event(CALENDAR, fields)
+    handle = rig.refs.remember(HandleKind.CALENDAR_EVENT, CALENDAR, locator)
+    stored = rig.fake.calendar.read(CALENDAR, locator)
+    quiet = fields.model_copy(update={"title": "Lunch moved", "attendees": ()})
+    update = CalendarUpdate(
+        source=CALENDAR, event_ref=handle, expected_etag=stored.etag, event=quiet
+    )
+    delete = CalendarDelete(source=CALENDAR, event_ref=handle, expected_etag=stored.etag)
+    for intent in (update, delete):
+        proposal = rig.engine().propose_intent(intent)
+        assert proposal.requirement.value == "human_confirmation"
+        with fails(ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED):
+            rig.agent_approves(proposal)
 
 
 def test_t11_cancel_only_before_prepare_and_never_after_dispatch(rig: WriteRig) -> None:

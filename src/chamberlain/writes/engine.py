@@ -99,6 +99,8 @@ CALENDAR_SETTLE_ATTEMPTS: Final = 7
 CALENDAR_SETTLE_WINDOW_SECONDS: Final = 60
 ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
 """Reserved key in the `refs` mapping given to `prepare` (board R3)."""
+EVENT_ATTENDEES_REF: Final = "_event_attendees"
+"""Reserved key in the stored refs: the event an update or delete acts on has attendees."""
 
 _INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
 _CAPABILITY: dict[IntentKind, CapabilityName] = {
@@ -248,7 +250,7 @@ class Engine:
         if existing is not None:
             return self._proposal_for(existing, completed)
         handle = new_handle(HandleKind.OPERATION)
-        decision = self._decide(completed, handle, sha, card, reserved=None)
+        decision = self._decide(completed, handle, sha, card, reserved=None, refs=refs)
         with transaction(self.db):
             repo.insert_operation(
                 self.db,
@@ -429,6 +431,10 @@ class Engine:
                     ErrorCode.REQUEST_INVALID, "A handle belongs to a different source."
                 )
             located[handle] = locator
+        if isinstance(intent, CalendarUpdate | CalendarDelete):
+            port = self.ctx.sources.calendar_port(intent.source)
+            if port.read(intent.source, located[intent.event_ref]).fields.attendees:
+                located[EVENT_ATTENDEES_REF] = "1"
         return located
 
     def _complete(self, intent: WriteIntent, refs: Mapping[str, str]) -> WriteIntent:
@@ -468,8 +474,17 @@ class Engine:
 
     # --- authorisation ------------------------------------------------------------
 
-    def _usage(self, intent: WriteIntent, handle: str, reserved: str | None) -> Usage:
+    def _usage(
+        self,
+        intent: WriteIntent,
+        handle: str,
+        reserved: str | None,
+        refs: Mapping[str, str] | None = None,
+    ) -> Usage:
         now = self.ctx.clock.now()
+        if refs is None:
+            stored = repo.get_operation(self.db, handle)
+            refs = {} if stored is None else self._refs(stored)
         grants = self._active_grants(intent.source, reserved)
         names = [g.handle for g in grants]
         return Usage(
@@ -481,6 +496,7 @@ class Engine:
                 self.db, intent.source, format_ts(now - timedelta(hours=1)), handle
             ),
             known_recipients=repo.known_recipients(self.db, intent.source),
+            event_has_attendees=EVENT_ATTENDEES_REF in refs,
         )
 
     def _active_grants(self, source: str, reserved: str | None) -> list[GrantRow]:
@@ -492,13 +508,19 @@ class Engine:
         return grants
 
     def _decide(
-        self, intent: WriteIntent, handle: str, sha: str, card: str | None, reserved: str | None
+        self,
+        intent: WriteIntent,
+        handle: str,
+        sha: str,
+        card: str | None,
+        reserved: str | None,
+        refs: Mapping[str, str] | None = None,
     ) -> Decision:
         return authorise(
             intent,
             OperationFacts(handle, sha, card, reserved),
             self._active_grants(intent.source, reserved),
-            self._usage(intent, handle, reserved),
+            self._usage(intent, handle, reserved, refs),
             self.policy,
             self.ctx.clock.now(),
         )

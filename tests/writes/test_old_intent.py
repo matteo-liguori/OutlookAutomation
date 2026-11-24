@@ -143,8 +143,8 @@ def test_p16_a_calendar_update_with_a_stale_etag_fails_clean_and_dispatches_noth
         event=fields.model_copy(update={"title": "Review (moved)"}),
     )
     proposal = rig.engine().propose_intent(update)
-    assert proposal.requirement.value == "human_confirmation"
-    rig.human_approves(proposal)
+    assert proposal.requirement.value == "agent_evidence"
+    proposal = rig.agent_approves(proposal, "Yes, move the review.")
     assert proposal.operation is not None
     assert code_of(lambda: rig.engine().do(proposal.operation.handle)) is ErrorCode.REMOTE_CHANGED  # type: ignore[union-attr]
     op = rig.engine().get(proposal.operation.handle)

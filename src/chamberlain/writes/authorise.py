@@ -46,6 +46,8 @@ class Usage:
     or reserved and not yet dispatched."""
     source_sends_last_hour: int = 0
     known_recipients: frozenset[str] = frozenset()
+    event_has_attendees: bool = False
+    """The stored event an update or delete acts on has attendees (read at propose)."""
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,11 @@ Decision = Allow | Deny
 
 def requirement_needed(intent: WriteIntent, usage: Usage, policy: WritePolicy) -> Requirement:
     return requirement_for(
-        intent, usage.known_recipients, send_known=policy.send_known, other=policy.other
+        intent,
+        usage.known_recipients,
+        send_known=policy.send_known,
+        other=policy.other,
+        existing_attendees=usage.event_has_attendees,
     )
 
 
