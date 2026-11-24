@@ -1,6 +1,7 @@
 """The sweeper: docs/contracts/06-memory.md (M-21 to M-26, lifetime table)."""
 
 import os
+import sqlite3
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,7 +14,7 @@ from chamberlain.app.doubles import RecordingAuditLog
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.memory import backups, repo
 from chamberlain.memory import sweeper as sweeper_module
-from chamberlain.memory.artifacts import ArtifactService, blob_path
+from chamberlain.memory.artifacts import ArtifactService, blob_path, write_blob
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.checks import storage_checks
 from chamberlain.memory.restore import restore
@@ -136,6 +137,8 @@ def test_m26_orphans_are_quarantined_reported_once_then_deleted_after_the_grace_
     stray_blob = blob_path(root, "ab" + "0" * 62)
     stray_blob.parent.mkdir(parents=True)
     stray_blob.write_bytes(b"blob without a row")
+    long_ago = clock.now().timestamp() - 3600
+    os.utime(stray_blob, (long_ago, long_ago))
     (root / "bridge").mkdir()
     (root / "bridge" / "token").write_text("kept")
     (root / "config").mkdir()
@@ -345,3 +348,62 @@ def test_m26_a_directory_junction_is_never_followed_or_left_held_forever(
     assert held(ctx) == []
     assert get_state(ctx.db, "memory.pending_deletions") == "0"
     assert not any(p.name == "escape" for p in (ctx.data_root / "quarantine").rglob("*"))
+
+
+def test_m25_import_report_and_secrets_are_never_quarantined(
+    ctx: Context, clock: ManualClock
+) -> None:
+    (ctx.data_root / "import").mkdir(parents=True, exist_ok=True)
+    (ctx.data_root / "import" / "report.json").write_text("{}")
+    (ctx.data_root / "secrets").mkdir(parents=True, exist_ok=True)
+    (ctx.data_root / "secrets" / "store.json").write_text("{}")
+    sweep(ctx, clock.now())
+    clock.advance(hours=24 * 15)
+    report = sweep(ctx, clock.now())
+    assert report.orphans_found == 0
+    assert (ctx.data_root / "import" / "report.json").exists()
+    assert (ctx.data_root / "secrets" / "store.json").exists()
+
+
+def test_m7_a_blob_younger_than_ten_minutes_is_not_an_orphan_yet(
+    ctx: Context, clock: ManualClock
+) -> None:
+    """Another process may be between `write_blob` and inserting its row."""
+    sha = sha256_bytes(b"in flight")
+    write_blob(ctx.data_root, b"in flight", sha)
+    path = blob_path(ctx.data_root, sha)
+    now = clock.now().timestamp()
+    os.utime(path, (now - 5 * 60, now - 5 * 60))
+    assert sweep(ctx, clock.now()).orphans_found == 0
+    assert path.exists()
+    os.utime(path, (now - 11 * 60, now - 11 * 60))
+    assert sweep(ctx, clock.now()).orphans_found == 1
+    assert not path.exists()
+
+
+def test_m7_a_blob_restored_by_another_process_survives_the_delete_step(
+    ctx: Context, store: ArtifactService, action: str, clock: ManualClock
+) -> None:
+    """Interleaving: the sweep has read the released sha; a writer then inserts a live row."""
+    handle = keep_text(store, action, "shared bytes")
+    sha = sha256_bytes(b"shared bytes")
+    store.release(handle, None)
+
+    def writer_wins(path: Path) -> None:
+        raise AssertionError("the sweeper unlinked bytes that have a live row")
+
+    real = repo.sha_has_live_row
+    calls = {"n": 0}
+
+    def racing(db: sqlite3.Connection, value: str) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 2 and value == sha:  # the re-check inside the lock
+            ctx.db.execute("UPDATE artifacts SET state = 'live' WHERE sha256 = ?", (sha,))
+        return real(db, value)
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(repo, "sha_has_live_row", racing)
+        report = sweep(ctx, clock.now(), hooks=SweepHooks(unlink=writer_wins))
+    assert calls["n"] >= 2
+    assert report.failed_deletions == 0
+    assert blob_path(ctx.data_root, sha).exists()

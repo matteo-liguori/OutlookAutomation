@@ -5,6 +5,7 @@ Contract: docs/contracts/06-memory.md (M-4 to M-11, M-27). Bytes live in
 Only the sweeper deletes bytes for lifetime reasons (M-3).
 """
 
+import contextlib
 import mimetypes
 import os
 import re
@@ -74,6 +75,8 @@ def write_blob(data_root: Path, data: bytes, sha256: str) -> None:
     """
     target = blob_path(data_root, sha256)
     if target.exists() and read_blob(data_root, sha256) is not None:
+        with contextlib.suppress(OSError):
+            os.utime(target)  # fresh again: a sweep must not take it before the row exists
         return  # identical content is stored once; a damaged copy is replaced below
     run = data_root / RUN_DIR
     run.mkdir(parents=True, exist_ok=True)

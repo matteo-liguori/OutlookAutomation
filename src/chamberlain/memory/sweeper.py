@@ -45,6 +45,8 @@ from chamberlain.store.schema import set_state
 TOMBSTONE_DAYS = 7
 """How long the row of a deleted artifact stays, so `open` can say it expired."""
 RUN_TEMP_MINUTES = 60
+YOUNG_BLOB_MINUTES = 10
+"""A blob this fresh may belong to a writer that has not yet inserted its row (M-7)."""
 DATA_ROOT_LAYOUT = frozenset(
     {
         DB_NAME,
@@ -58,10 +60,14 @@ DATA_ROOT_LAYOUT = frozenset(
         "quarantine",
         RUN_DIR,
         "bridge",
+        "import",
+        "secrets",
     }
 )
 """The fixed layout of the data root (M-25, board ruling R9). Anything else is an orphan."""
-NEVER_SCANNED = frozenset({"config", "backups", "logs", "quarantine", RUN_DIR, "bridge"})
+NEVER_SCANNED = frozenset(
+    {"config", "backups", "logs", "quarantine", RUN_DIR, "bridge", "import", "secrets"}
+)
 
 
 class SweepCrash(Exception):
@@ -244,15 +250,19 @@ def _delete_bytes(run: _Run) -> None:
             continue
         path = blob_path(run.root, sha)
         size = 0
-        try:
-            size = path.stat().st_size if path.exists() else 0
-            run.hooks.unlink(path)
-        except FileNotFoundError:
-            pass
-        except OSError:
-            run.failed += 1
-            continue
+        # Another process may have re-stored these bytes since the check above: look again
+        # inside the write lock, so a new live row and the unlink cannot interleave.
         with transaction(run.db):
+            if repo.sha_has_live_row(run.db, sha):
+                continue
+            try:
+                size = path.stat().st_size if path.exists() else 0
+                run.hooks.unlink(path)
+            except FileNotFoundError:
+                pass
+            except OSError:
+                run.failed += 1
+                continue
             deleted += repo.mark_sha_deleted(run.db, sha, ts(run.now))
         freed += size
         _remove_empty(path.parent)
@@ -346,6 +356,16 @@ def _scan_orphans(run: _Run) -> None:
         repo.purge_quarantine_rows(run.db, minus(run.now, days=QUARANTINE_DAYS))
 
 
+def _is_young(run: _Run, path: Path) -> bool:
+    """A fresh regular file may be a blob whose row is about to be written."""
+    try:
+        if _is_link(path) or not path.is_file():
+            return False
+        return path.stat().st_mtime > run.now.timestamp() - YOUNG_BLOB_MINUTES * 60
+    except OSError:
+        return False
+
+
 def _find_orphans(run: _Run) -> list[Path]:
     orphans: list[Path] = []
     root = run.root
@@ -368,7 +388,7 @@ def _find_orphans(run: _Run) -> list[Path]:
                     and blob.name in known
                     and blob.name.startswith(entry.name)
                 )
-                if not ok:
+                if not ok and not _is_young(run, blob):
                     orphans.append(blob)
     leases = root / LEASES_DIR
     if leases.is_dir() and not _is_link(leases):

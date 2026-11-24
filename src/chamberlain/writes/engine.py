@@ -74,6 +74,7 @@ from chamberlain.limits import (
 )
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import OperationView
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
@@ -94,6 +95,20 @@ from chamberlain.writes.render import describe_intent, describe_scope, grant_sum
 from chamberlain.writes.transitions import build_receipt, move_operation
 
 log = logging.getLogger("chamberlain.writes")
+
+_RESERVABLE_STATES: Final = frozenset(
+    {OperationState.PROPOSED, OperationState.AUTHORISED, OperationState.PREPARED}
+)
+"""The only states `do` may reserve from; later ones belong to the dispatching worker."""
+_SENT_STATES: Final = frozenset(
+    {
+        OperationState.DISPATCHED,
+        OperationState.UNCERTAIN,
+        OperationState.RECONCILING,
+        OperationState.CONFIRMED,
+    }
+)
+"""States from `dispatched` onward, where nothing may be declared "failed clean" unseen."""
 
 LEASE_SECONDS: Final = 300
 """Longer than a connector deadline plus the immediate-settle budget (R5, R6)."""
@@ -331,7 +346,7 @@ class Engine:
         except ChamberlainError:
             raise
         except Exception as error:
-            log.exception("prepare failed while proposing a send")
+            log_failure(log, "prepare failed while proposing a send")
             raise ChamberlainError(
                 ErrorCode.SOURCE_UNAVAILABLE, "The source could not check the send."
             ) from error
@@ -615,6 +630,13 @@ class Engine:
         reserved: OperationRow | None = None
         with transaction(self.db):
             current = self.get(op.handle)
+            if current.state not in _RESERVABLE_STATES:
+                # A racing `do` may have moved it on: never touch it from here (W-17).
+                if current.state in MAY_HAVE_HAPPENED_STATES:
+                    raise self.needs_reconcile(current.handle)
+                raise ChamberlainError(
+                    ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed."
+                )
             decision = self._decide(
                 intent, current.handle, current.intent_sha256, current.card, current.grant
             )
@@ -653,7 +675,16 @@ class Engine:
     def _fail_clean(
         self, op: OperationRow, code: ErrorCode, *, expected_lease: str | bool | None = False
     ) -> OperationRow | None:
-        """Proven nothing happened: release the grant use (W-10, W-11)."""
+        """Proven nothing happened: release the grant use (W-10, W-11).
+
+        From `dispatched` onward only the worker holding the lease can prove that, so
+        a caller without `expected_lease` is refused.
+        """
+        if op.state in _SENT_STATES and not isinstance(expected_lease, str):
+            raise ChamberlainError(
+                ErrorCode.INTERNAL_UNEXPECTED,
+                f"Operation {op.handle} may have happened and cannot be failed clean.",
+            )
         row = move_operation(
             self.db,
             self.ctx.clock,
@@ -697,7 +728,7 @@ class Engine:
             self._fail_clean(op, error.code)
             raise
         except Exception as error:
-            log.exception("prepare failed for %s", op.handle)
+            log_failure(log, "prepare failed for %s", op.handle)
             self._fail_clean(op, ErrorCode.SOURCE_UNAVAILABLE)
             raise ChamberlainError(
                 ErrorCode.SOURCE_UNAVAILABLE, "The source could not prepare the write."
@@ -758,7 +789,7 @@ class Engine:
         try:
             result = self._port_dispatch(intent, prepared, journal.idempotency_key, payloads)
         except Exception:
-            log.exception("dispatch raised for %s", journal.handle)
+            log_failure(log, "dispatch raised for %s", journal.handle)
             result = DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="exception")
         return self._settle_dispatch(journal, prepared, result)
 
@@ -891,7 +922,7 @@ class Engine:
             try:
                 self.ctx.services.refs.repoint(old, receipt.locator, source=op.source_id)
             except Exception:
-                log.exception("could not repoint the handle of %s", op.handle)
+                log_failure(log, "could not repoint the handle of %s", op.handle)
         self._release_attachments(op)
 
     def _upgrade_verification(self, op: OperationRow, prepared: Prepared) -> None:
@@ -905,7 +936,7 @@ class Engine:
         try:
             reading = self._reconcile_loop(op, intent, prepared, self._window(op))
         except Exception:
-            log.exception("verification upgrade failed for %s", op.handle)
+            log_failure(log, "verification upgrade failed for %s", op.handle)
             return
         found = reading.present
         if found is not None and found.verification.server_verified:
@@ -1165,7 +1196,7 @@ class Engine:
                 return self.ctx.sources.calendar_port(intent.source).reconcile(prepared, key)
             return self.ctx.sources.mail_port(intent.source).reconcile(prepared, key)
         except Exception:
-            log.exception("reconcile failed")
+            log_failure(log, "reconcile failed")
             return ReconcileResult(status=ReconcileStatus.UNKNOWN)
 
 
