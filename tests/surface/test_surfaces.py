@@ -45,8 +45,8 @@ def test_t14_cli_prints_the_envelope_and_maps_exit_codes(data_root: Path) -> Non
         "--data", str(data_root), "do", "--session", "ses_0123456789abcdef",
         "--json", '{"operation": "op_0123456789abcdef"}',
     )  # fmt: skip
-    assert code == cli.EXIT_FAILED
-    assert json.loads(text)["error"]["code"] == "tool.not_implemented"
+    assert code == cli.EXIT_INVALID
+    assert json.loads(text)["error"]["code"] == "request.unknown_handle"
 
 
 def test_cli_refuses_to_guess_a_data_root(monkeypatch: pytest.MonkeyPatch) -> None:
