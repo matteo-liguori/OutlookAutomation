@@ -52,6 +52,11 @@ target names what enforces it. Constants are in `src/chamberlain/limits.py`.
 
 ## `doctor --metrics` output (fixed keys)
 
+Collected by `app/metrics.py`. `largest_reply_chars_7d` is read from the reply
+size every `tool.call` audit row records (`"<tool>: <outcome> (<n> chars)"`, size
+before the cap); `guidance_total_chars` is the rules in force with the owner's
+patches applied.
+
 `open_cards`, `open_card_chars_avg`, `open_card_chars_max`,
 `evidence_rows`, `evidence_per_open_card`, `artifacts_live`,
 `artifact_bytes`, `artifacts_without_owner`, `orphans_quarantined`,

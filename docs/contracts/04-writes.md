@@ -32,10 +32,14 @@ the agent supplies for one of them is ignored and replaced.
   only then hashes and stores it. `do` takes only an operation handle and
   can change nothing.
 - **W-2** `intent_sha256` is the content hash (D-14) of the completed
-  intent. For `mail.send` and the draft kinds the harness assigns the RFC
-  `Message-ID` (`message_id`), and for `calendar.create` the `uid`, at
-  propose time. That value is the operation's `reconcile_token`, so a later
-  read can recognise the write.
+  intent, EXCLUDING the tokens the harness assigns (`message_id`, `uid`;
+  board R1), so the same content always hashes the same. When `do` reserves the
+  grant the harness derives the token from the idempotency key (W-15): the RFC
+  `Message-ID` for `mail.send` and the draft kinds, the `uid` for
+  `calendar.create`. That value is the operation's `reconcile_token`, so a
+  later read can recognise the write. A connector proves it honours a supplied
+  Message-ID with the capability limit `message_id_honoured`; where it does not,
+  reconcile matches the envelope, a normalised body hash and attachment hashes.
 - **W-3** Attachments come only from the artifact store and are matched by
   hash at `prepare` and again at `dispatch` (`artifact.hash_mismatch`).
 - **W-4** `mail.trash` moves to the source's configured recoverable trash
@@ -82,8 +86,12 @@ obtained.
   operation, ever. `uncertain` is left only through `reconciling`, which
   calls only the connector's read-only `reconcile`.
 - **W-9** A crash is treated as the worst case. On start-up, and on every
-  tick, any operation found in `dispatched` or `reconciling` whose process
-  is gone moves to `uncertain`. Operations in `authorised` or `prepared`
+  tick (even a throttled one, before detection), any operation found in
+  `dispatched` or `reconciling` whose dispatch lease has expired moves to
+  `uncertain` (R5: `lease_owner` is pid plus a process nonce, `lease_expires_at`
+  is five minutes ahead; recovery touches only expired leases, and a late
+  `applied` result after takeover is reconcile evidence that moves `uncertain`
+  to `confirmed` through the reconcile path). Operations in `authorised` or `prepared`
   stay; `do` may be called again for them.
 - **W-10** Dispatch outcomes map as follows. `applied` with a receipt:
   `confirmed`. `not_applied` (the connector proves nothing was mutated, for
@@ -184,3 +192,35 @@ and reconcile over the fake provider with random faults, checking:
 2. the fake's dispatch log never shows two dispatches for one operation;
 3. every terminal operation has a receipt, and every transition has an
    audit row whose hash chain verifies.
+
+## Review rulings as built (board, 2026-11-24)
+
+- **W-26** (R6) Immediate settle. After a timeout or an unverified result the
+  engine runs bounded read-only reconciles before declaring `uncertain` and
+  raising the event: mail up to 3 attempts within 30 seconds, calendar up to
+  7 attempts within 60 seconds.
+- **W-27** (R3) `propose` for `mail.send` runs the connector's read-only
+  `prepare` before the operation is stored, so the duplicate scan over Sent,
+  Drafts and Outbox (normalised subject, body match, recipient overlap) fails
+  early with a conflict error and leaves nothing behind (T-13). An incomplete
+  scan or a match fails unless the covering grant's scope sets
+  `allow_duplicate`; the engine tells `prepare` through the reserved ref key
+  `_allow_duplicate` = "1". `do` runs `prepare` again.
+- **W-28** (R2) `ReconcileStatus.QUEUED`: an exact copy sits in Outbox or
+  Drafts awaiting submission. It carries no receipt and no proof, keeps the
+  operation `uncertain` and never releases the grant. Any `absence_provable`
+  claim for sends must cover Sent, Outbox and Drafts.
+- **W-29** (R4) Move, trash and draft-update receipts return the NEW locator;
+  on `confirmed` the engine calls `RefResolver.repoint(old, new)` so a handle
+  survives filing.
+- **W-30** (R7) `ProviderReceipt.warnings` carries harness-safe codes
+  (`merged_existing_copy` when a Gmail trash merges into an existing copy) and
+  `read_state_preserved` says whether the flag survived. The operation is
+  `applied`, not failed; both surface on `OperationView.warnings`.
+- **W-31** (R11) If the Sent copy is missing but the exact message (token or
+  content match) arrived in the sender's own Inbox for a self-addressed send,
+  reconcile counts it `present`.
+- **W-32** (owner ruling) Calendar writes on events without attendees need
+  only `agent_evidence` (G-12a). For `update` and `delete`, `propose` reads the
+  stored event and keeps the attendee fact in the stored refs
+  (`_event_attendees`).

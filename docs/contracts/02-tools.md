@@ -52,7 +52,8 @@ Owner is the wave-1 track that implements the handler.
 ### start
 
 Request: `agent?` (label, 40 chars), `purpose` (`interactive` | `scheduled`),
-`resume?` (`ses_` handle).
+`resume?` (`ses_` handle), `scheduled_day?` (`YYYY-MM-DD`, the local day a scheduled
+run was meant for, given by the wake adapter; without it a start is a live chat, R10).
 Response: `session`, `now`, `sources[] {id, kind, state, capabilities[]}`,
 `work[]` (`WorkItem`), `more_work` (count not shown).
 
@@ -156,7 +157,7 @@ Request: `operation`. Response: `operation` (`OperationView`), `changed`.
 Request: `check` (`all` | `sources` | `storage` | `guidance` | `audit` |
 `schema`), `metrics` (bool).
 Response: `checks[] {id, status, summary, fix?}`, `metrics?`
-(the storage figures of `10-targets.md`).
+(all sixteen keys of `10-targets.md`; `chamberlain doctor --metrics`).
 
 ## Surfaces
 

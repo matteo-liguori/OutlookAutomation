@@ -99,14 +99,16 @@ bytes, which the engine reads from the artifact store.
   on a timeout.
 - **P-11** `reconcile` is read-only and returns `ReconcileResult {status,
   receipt?, proof}`: `present` (the write is there; receipt filled in),
-  `absent`, or `unknown`. It MUST NOT need the original attachment files or
+  `queued` (an exact copy waits in Outbox or Drafts; no receipt, no proof; the
+  operation stays `uncertain`, R2), `absent`, or `unknown`. It MUST NOT need the original attachment files or
   any state other than `Prepared` and the key. It may refresh the client's
   view of exactly the folders or calendar involved before reading.
 - **P-12** `absent` with `proof: true` is allowed only for intent kinds the
   capability lists in `absence_provable`, and only when the connector has
   complete, fresh coverage of every place the write could have landed.
   Otherwise `absent` MUST carry `proof: false` and the engine keeps the
-  operation `uncertain` (W-12).
+  operation `uncertain` (W-12). For sends, coverage means Sent, Outbox and
+  Drafts (R2).
 - **P-13** A connector keeps no journal and no idempotency state. `key` is
   passed so that a transport which supports request IDs can make the remote
   side recognise a duplicate; it does not move safety out of the engine.
@@ -114,15 +116,21 @@ bytes, which the engine reads from the artifact store.
   and none at the source, identified by `Message-ID`, or the result is not
   `applied`. Trash goes only to the folder the binding names as recoverable.
   `move` with `mark_read: false` leaves the flag as it was.
-- **P-15** Send: the outgoing message carries the `Message-ID` from the
-  intent's reconcile token and is filed in the bound sent folder. `applied`
+- **P-15** Send: the outgoing message carries the reconcile token (as its
+  `Message-ID` where the connector honours one, `message_id_honoured` in the
+  capability limits, and always in the header `X-Chamberlain-Write-Token`) and
+  is filed in the bound sent folder. `applied`
   with `client_verified` means the client accepted it for sending;
   `server_verified` only after it is read back from the sent folder.
 - **P-16** Calendar update and delete use optimistic concurrency
   (`expected_etag`); a mismatch at `prepare` is `remote.changed`. Create
   uses the `uid` from the intent; a second create with the same `uid` is
   `not_applied` plus a `present` reconcile, never a duplicate event. A
-  cancelled event is reported as cancelled, not as missing.
+  cancelled event is reported as cancelled, not as missing. After a delete the
+  read-back accepts either answer: the event read as cancelled or gone
+  (`request.unknown_handle`), and `events(include_cancelled)` returns nothing
+  or the cancelled one. CalDAV and Owl deletes are real deletes; reconcile of
+  a delete is `present` either way.
 - **P-17** Time limits: every port call takes its deadline from the
   connector's configuration, and a call that exceeds it raises
   `source.unavailable` for reads and returns `unknown` for `dispatch`.

@@ -50,11 +50,16 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   calls no connector. One detector per kind, registered in
   `attention/detectors/__init__.py`.
 - **A-6** A tick: collect connector deltas (bounded, read-only, P-3), run
-  all detectors, reconcile the inbox (A-1, A-2), run the sweeper (M-21),
-  recover crashed operations (W-9). A tick runs at the start of every tool
-  call and when the scheduler calls `chamberlain tick`. A tick that ran less
-  than `TICK_MIN_INTERVAL` (60 seconds) ago is skipped, except for the
-  operation recovery step.
+  all detectors, reconcile the inbox (A-1, A-2), run the sweeper (M-21), then
+  write maintenance. Crashed-operation recovery (W-9) is an `ALWAYS_STEPS`
+  entry: it runs on every call, even a skipped tick, and BEFORE detection, so a
+  recovered operation raises `operation.uncertain` in the same call. The sweeper
+  and `writes.maintenance.maintain` are `EXTRA_STEPS` run after the inbox is
+  reconciled, at most once per interval; `app/wiring.py` installs all three. A
+  tick runs at the start of every tool call and when the scheduler calls
+  `chamberlain tick` (forced; exit status 10 when events wait and no session is
+  active). A tick that ran less than `TICK_MIN_INTERVAL` (60 seconds) ago is
+  skipped, except for the always-steps.
 - **A-7** A tick MUST NOT fail a tool call. A detector or source that
   raises is logged, shows as a coverage gap or a `source.stale` event, and
   the tool proceeds.
@@ -78,7 +83,11 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   `start` supersedes it for the same agent label. Ending a session deletes
   its guidance deliveries, cursors and session-owned artifacts (M-3). The
   schedule and session record held here replaces any reliance on chat
-  titles.
+  titles. Sessions are keyed by agent label AND purpose: a scheduled run and a
+  live chat never supersede each other (R10). A scheduled session whose local
+  start day is not today (`StartRequest.scheduled_day`, given by the wake
+  adapter) with no live user turn is stopped on every tool with
+  `session.stale`, the port of the old wrong-day guard (`Hooks.guard`).
 
 ## Guidance rules
 
