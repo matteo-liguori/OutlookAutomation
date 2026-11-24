@@ -66,6 +66,26 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
 - **A-8** Detectors read other tracks' tables as defined in `09-storage.md`
   and never write them.
 
+### New mail (watermark and triage)
+
+- **A-20** Each mail source has a covered-through watermark (`mail_watermarks`). A tick
+  scans the inbox from a little before it (`MAIL_OVERLAP`), whatever the read state, pages
+  until the connector says it is complete, and only then moves the watermark to the scan's
+  start. A scan that cannot finish in one tick (page budget, connector gap, failure, stale
+  health) keeps what it found, resumes below the oldest date reached, and raises
+  `source.stale` naming the uncovered span. Mail read on another device is still seen once.
+  A source never watched starts `MAIL_BOOTSTRAP` back; `watching_since` records it. Known
+  residue: mail whose Date header is older than the required overlap (1 hour) and that
+  arrives after a scan that could not finish the overlap.
+- **A-21** New messages are stored once (`mail_seen`: identity, time, suggested card; no
+  sender or subject). The detector raises one `mail.new_unmatched` event per source, keyed by
+  the oldest waiting row, whose next call is a `find` of the inbox since then. Handling the
+  event triages only the rows shown with it; mail that arrived later raises a fresh event.
+  `mail.new_for_card` is retired as a trigger. A mail event no longer ends because the
+  message was marked read; it ends when the agent handles it.
+- **A-22** The harness only suggests a card (reply headers first, then a sender who
+  corresponds with exactly one open card). It MUST NOT write `card_links`; the agent links.
+
 ## Delivery
 
 1. **Pull.** `start` and `next` return the highest-priority non-terminal

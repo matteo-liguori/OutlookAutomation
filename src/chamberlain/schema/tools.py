@@ -13,6 +13,7 @@ from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind, EventState
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind, WriteIntent
+from chamberlain.domain.mail import FolderRole
 from chamberlain.domain.operations import OperationState, Verification
 from chamberlain.limits import (
     ACTION_TITLE_MAX,
@@ -144,6 +145,8 @@ class FindRequest(ToolRequest):
     since: Timestamp | None = None
     until: Timestamp | None = None
     unread: bool | None = None
+    folder: FolderRole | None = None
+    """Mail only: limit to the folder with this role (for example the inbox)."""
     limit: int = Field(default=10, ge=1, le=FIND_LIMIT_MAX)
     cursor: str | None = None
 
@@ -157,6 +160,8 @@ class Hit(Model):
     summary: str | None = Field(default=None, max_length=SUMMARY_MAX)
     content: ContentLine | None = None
     offset: int | None = Field(default=None, ge=0)
+    suggested_card: CardHandle | None = None
+    """Mail: an open card this message probably belongs to. A suggestion only."""
 
 
 class FindResponse(Model):

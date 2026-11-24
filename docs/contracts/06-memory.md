@@ -38,6 +38,8 @@ Every table and every file under the data root belongs to exactly one class.
 | Ref (`msg`, `cev`, `con`) | 30 days after last seen, unless referenced by a live record | Delete row |
 | Session | idle 4 hours | Ended; its ephemeral rows deleted |
 | Cursor, lease | 2 hours, 30 minutes | Deleted; leased file removed |
+| Mail watermark | per source, until the source is removed | Kept (a record) |
+| Seen mail | triaged and older than the overlap behind the watermark | Deleted (untriaged rows are never deleted) |
 | Schedule | until the person removes it | Kept (a record) |
 | Run | 35 days after its day | Deleted by the sweeper's records step (`runs_trimmed`); its report artifacts follow their own `expires_at` (30 days by default) |
 | User note | 7 days open, 14 days kept | Stops raising `user.note` after 7 days; deleted after 14 (`notes_trimmed`) |

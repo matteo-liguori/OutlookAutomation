@@ -49,6 +49,8 @@ class StoredMail:
     attachments: list[tuple[AttachmentMeta, bytes]] = field(default_factory=lambda: [])
     raw_sha256: str | None = None
     authentication_results: tuple[str, ...] = ()
+    in_reply_to: str = ""
+    references: tuple[str, ...] = ()
 
 
 @dataclass

@@ -56,6 +56,10 @@ class MessageSummary(Model):
     to: tuple[Address, ...] = ()
     cc: tuple[Address, ...] = ()
     """Recipients as the folder listing shows them: Sent-history seeding reads these."""
+    in_reply_to: str = ""
+    """Message-ID this replies to, when the connector has it cheaply; empty otherwise."""
+    references: tuple[str, ...] = ()
+    """Message-IDs of the thread, oldest first, when the connector has them cheaply."""
 
 
 class Message(MessageSummary):

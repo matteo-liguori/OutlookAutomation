@@ -54,6 +54,8 @@ Binding for every track that touches SQLite. Code:
 | `known_recipients` | Records | writes | Known recipients per source: confirmed by a grant, or seeded from Sent history (`origin`) |
 | `operations` | Records | writes | Write operations |
 | `audit_log` | System | writes | Hash-chained audit rows |
+| `mail_watermarks` | Records | attention | Per source: mail covered through a time, an in-progress scan, the uncovered span |
+| `mail_seen` | Records | attention | Identity, time and suggested card of each new message; the batch awaiting triage |
 | `schedules` | Records | runs | The schedule record: which passes are due, when |
 | `runs` | Records | runs | One row per scheduled pass and day; owns its report artifacts |
 | `user_notes` | Ephemeral | runs | Short notes from the viewer, raised as `user.note` |
@@ -87,7 +89,7 @@ Column definitions are in `0001_initial.sql`; that file is normative.
   database; before any release, renumber.
 - **S-12** Number ranges avoid collisions between parallel tracks:
   `0001-0009` skeleton, `0010-0019` memory, `0020-0029` attention,
-  `0030-0039` writes, `0040-0049` wave 2, `0050-0059` viewer and runs. Gaps are allowed. Connectors have
+  `0030-0039` writes, `0040-0049` wave 2, `0050-0059` viewer and runs, `0060-0069` mail awareness. Gaps are allowed. Connectors have
   no range because they do not touch SQLite (D-10).
 - **S-13** A migration that changes a table another track reads is a
   contract change and needs a board entry before it lands (00-index).

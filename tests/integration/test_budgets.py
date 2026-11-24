@@ -23,6 +23,8 @@ from chamberlain.schema.registry import STANDING_PROMPT, TOOLS
 
 GUIDANCE_PER_PASS_CHARS = 1_500
 """10-targets.md: guidance per typical mail pass."""
+GUIDANCE_PER_PASS_TARGET = 1_200
+"""Headroom kept under the budget so new rules can land."""
 FRIENDS = ("ann@example.org", "bob@example.org", "cat@example.org", "dan@example.org")
 
 
@@ -34,6 +36,7 @@ class Measured:
         self.replies: list[int] = []
         self.guidance_text: list[int] = []
         self.tools: list[str] = []
+        self.delivered: dict[str, int] = {}
 
     def ok(self, tool: str, **request: Any) -> dict[str, Any]:
         reply = self._stack.call(tool, **request)
@@ -41,6 +44,8 @@ class Measured:
         self.replies.append(len(json.dumps(reply, ensure_ascii=False)))
         self.guidance_text.append(sum(len(g.get("text", "")) for g in reply.get("guidance", [])))
         self.tools.append(tool)
+        for item in reply.get("guidance", []):
+            self.delivered[item.get("id", "?")] = len(item.get("text", ""))
         data: dict[str, Any] = reply["data"]
         return data
 
@@ -127,6 +132,7 @@ def test_a14_a_full_mail_pass_stays_inside_the_reply_and_guidance_budgets(stack:
         f"guidance_total={seen.guidance_chars} guidance_max_reply={per_reply_guidance} "
         f"tokens_est={tokens}"
     )
+    print("GUIDANCE", dict(sorted(seen.delivered.items(), key=lambda kv: -kv[1])))
     assert biggest <= MAX_REPLY_CHARS
     assert per_reply_guidance <= GUIDANCE_REPLY_CHARS
     assert seen.guidance_chars < GUIDANCE_PER_PASS_CHARS

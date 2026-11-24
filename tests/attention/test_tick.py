@@ -14,8 +14,7 @@ from chamberlain.attention.models import (
     CardRow,
     DetectorInput,
     GrantRow,
-    MailDelta,
-    NewMail,
+    MailBatch,
     OperationRow,
     SourceSnapshot,
 )
@@ -110,29 +109,18 @@ def test_a4_sign_in_and_stale_are_per_source(clock: ManualClock):
     assert [d.subject for d in DETECTORS[EventKind.SOURCE_STALE](data)] == ["mail:b"]
 
 
-def test_a1_mail_matches_a_card_by_title_or_by_link(clock: ManualClock):
-    mails = (
-        NewMail("msg_0000000000000001", "mail:test", "<1@x>", "invoice query"),
-        NewMail("msg_0000000000000002", "mail:test", "<2@x>", "lunch on friday"),
-        NewMail("msg_0000000000000003", "mail:test", "<3@x>", "unrelated words"),
-    )
+def test_a1_new_mail_is_one_batch_per_source_and_for_card_is_retired(clock: ManualClock):
     data = DetectorInput(
         now=clock.now(),
-        mail=(MailDelta("mail:test", mails, True),),
-        open_cards=(
-            CardRow("card_0000000000000001", "Invoice query", None, False),
-            CardRow("card_0000000000000002", "Other", None, False),
+        mail=(
+            MailBatch("mail:a", 3, 7, "2026-01-01T00:00:00Z", 1),
+            MailBatch("mail:b", 1, 9, "2026-01-02T00:00:00Z", 0),
         ),
-        linked_cards={"<2@x>": "card_0000000000000002"},
     )
-    matched = {d.subject: d.attrs.card for d in DETECTORS[EventKind.MAIL_NEW_FOR_CARD](data)}
-    assert matched == {
-        "msg_0000000000000001": "card_0000000000000001",
-        "msg_0000000000000002": "card_0000000000000002",
-    }
-    assert [d.subject for d in DETECTORS[EventKind.MAIL_NEW_UNMATCHED](data)] == [
-        "msg_0000000000000003"
-    ]
+    drafts = list(DETECTORS[EventKind.MAIL_NEW_UNMATCHED](data))
+    assert [(d.subject, d.discriminator) for d in drafts] == [("mail:a", "7"), ("mail:b", "9")]
+    assert "1 with a suggested card" in drafts[0].summary
+    assert list(DETECTORS[EventKind.MAIL_NEW_FOR_CARD](data)) == []
 
 
 def test_g8_grants_waiting_and_due(clock: ManualClock):
@@ -157,14 +145,16 @@ def test_a6_new_mail_becomes_events_and_stays_unread(
     assert fake.mail.is_unread("mail:test", locator)
 
 
-def test_a2_filing_mail_makes_its_event_expire(
+def test_a2_mail_already_read_elsewhere_is_still_seen_once_and_stays_until_handled(
     ctx: Context, seed: Any, fake: FakeProvider, clock: ManualClock
 ):
-    fake.mail.add_message("mail:test", internet_message_id="<m1@x>")
+    fake.mail.add_message("mail:test", internet_message_id="<m1@x>", unread=False)
     tick.tick(ctx, force=True)
+    assert kinds(ctx) == ["mail.new_unmatched"]
     fake.world.mail["mail:test"][0].unread = False
+    clock.advance(seconds=120)
     tick.tick(ctx, force=True)
-    assert kinds(ctx) == []
+    assert kinds(ctx) == ["mail.new_unmatched"]
 
 
 def test_a6_a_tick_within_a_minute_is_skipped(ctx: Context, seed: Any, clock: ManualClock):

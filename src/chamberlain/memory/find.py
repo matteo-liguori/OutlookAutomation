@@ -11,7 +11,7 @@ from chamberlain.app.context import Context, Result
 from chamberlain.domain.calendar import CalendarQuery
 from chamberlain.domain.contacts import ContactQuery
 from chamberlain.domain.handles import HandleKind, handle_kind
-from chamberlain.domain.mail import MailQuery
+from chamberlain.domain.mail import Folder, FolderRole, MailQuery, MessageSummary
 from chamberlain.memory import refs, repo
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
@@ -187,27 +187,43 @@ def _port_gaps(source: str, gaps: tuple[Gap, ...], more: bool) -> list[CoverageG
 
 
 def _mail(ctx: Context, request: FindRequest) -> Snapshot:
-    query = MailQuery(
-        text=request.query,
-        since=request.since,
-        until=request.until,
-        unread=request.unread,
-        limit=SNAPSHOT_MAX,
-    )
     found: list[tuple[str, Hit]] = []
     gaps: list[CoverageGap] = []
     for source in _sources(request, sorted(ctx.sources.mail)):
         port = ctx.sources.mail_port(source)
         try:
-            page = port.search(source, query)
+            folders = {f.id: f for f in port.folders(source)}
+            folder_id = None
+            if request.folder is not None:
+                wanted = [f.id for f in folders.values() if f.role is request.folder]
+                if not wanted:
+                    gaps.append(_gap(source, "The source has no folder with that role."))
+                    continue
+                folder_id = wanted[0]
+            page = port.search(
+                source,
+                MailQuery(
+                    folder_id=folder_id,
+                    text=request.query,
+                    since=request.since,
+                    until=request.until,
+                    unread=request.unread,
+                    limit=SNAPSHOT_MAX,
+                ),
+            )
         except ChamberlainError as error:
             if error.code not in _SOFT_FAILURES:
                 raise
             gaps.append(_gap(source, "The source did not answer; nothing was changed."))
             continue
         gaps.extend(_port_gaps(source, page.gaps, page.cursor is not None))
+        # One hit per message: copies in several folders share a Message-ID (P-7).
+        copies: dict[str, list[MessageSummary]] = {}
         for item in page.items:
-            handle = refs.remember(
+            copies.setdefault(item.internet_message_id or item.locator, []).append(item)
+        shown = [_representative(group, folders) for group in copies.values()]
+        handles = {
+            item.locator: refs.remember(
                 ctx.db,
                 ctx.clock,
                 HandleKind.MESSAGE,
@@ -215,10 +231,22 @@ def _mail(ctx: Context, request: FindRequest) -> Snapshot:
                 item.locator,
                 item.internet_message_id,
             )
-            flags = "unread" if item.unread else "read"
+            for item in shown
+        }
+        suggestions = repo.mail_suggestions(ctx.db, source, list(handles.values()))
+        for item in shown:
+            handle = handles[item.locator]
+            group = copies[item.internet_message_id or item.locator]
+            flags = "unread" if any(c.unread for c in group) else "read"
             if item.has_attachments:
                 flags += ", with attachments"
+            suggestion = suggestions.get(handle)
+            if suggestion is not None:
+                flags += f"; may belong to card {suggestion[0]}: {suggestion[1][:50]}"
+            names = _folder_names(group, folders)
             line = f"{item.sender.address}: {item.subject}"
+            if len(names) > 1:
+                line += f" [{', '.join(names)}]"
             found.append(
                 (
                     item.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -226,8 +254,9 @@ def _mail(ctx: Context, request: FindRequest) -> Snapshot:
                         handle=handle,
                         kind="message",
                         when=item.date,
-                        summary=flags,
+                        summary=flags[:160],
                         content=one_line(line, ContentKind.MAIL_LINE, handle),
+                        suggested_card=None if suggestion is None else suggestion[0],
                     ),
                 )
             )
@@ -237,6 +266,25 @@ def _mail(ctx: Context, request: FindRequest) -> Snapshot:
         gaps=tuple(gaps),
         incomplete=bool(gaps),
     )
+
+
+def _representative(group: list[MessageSummary], folders: dict[str, Folder]) -> MessageSummary:
+    """The inbox copy when there is one, else the first listed."""
+    for item in group:
+        folder = folders.get(item.folder_id)
+        if folder is not None and folder.role is FolderRole.INBOX:
+            return item
+    return group[0]
+
+
+def _folder_names(group: list[MessageSummary], folders: dict[str, Folder]) -> list[str]:
+    names: list[str] = []
+    for item in group:
+        folder = folders.get(item.folder_id)
+        name = folder.name if folder is not None else item.folder_id
+        if name not in names:
+            names.append(name)
+    return names
 
 
 def _calendar(ctx: Context, request: FindRequest) -> Snapshot:

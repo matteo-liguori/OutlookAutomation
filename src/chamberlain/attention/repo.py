@@ -1,10 +1,12 @@
 """All SQL of the attention track (S-4): its own tables, and SELECTs on others'.
 
 Contract: docs/contracts/09-storage.md (S-3, S-4), 07-attention.md (A-8).
-Only `sessions`, `events`, `guidance_deliveries` and `source_health` are written.
+Only `sessions`, `events`, `guidance_deliveries`, `source_health`, `mail_watermarks` and
+`mail_seen` are written.
 """
 
 import sqlite3
+from dataclasses import dataclass
 
 from chamberlain.attention.models import (
     ActionRow,
@@ -15,6 +17,7 @@ from chamberlain.attention.models import (
     EventDraft,
     EventRow,
     GrantRow,
+    MailBatch,
     OpenNote,
     OperationRow,
     SessionRow,
@@ -442,3 +445,154 @@ def update_tag(db: sqlite3.Connection) -> str | None:
 
 def last_tick(db: sqlite3.Connection) -> str | None:
     return _system(db, "attention.last_tick_at")
+
+
+# --- mail watermark and the batch awaiting triage (0060) ----------------------------------
+
+
+@dataclass(frozen=True)
+class Watermark:
+    covered_through: str
+    watching_since: str
+    scan_started_at: str | None
+    scan_until: str | None
+
+
+def watermark(db: sqlite3.Connection, source: str) -> Watermark | None:
+    row = db.execute(
+        "SELECT covered_through, watching_since, scan_started_at, scan_until "
+        "FROM mail_watermarks WHERE source_id = ?",
+        (source,),
+    ).fetchone()
+    if row is None:
+        return None
+    return Watermark(
+        row["covered_through"], row["watching_since"], row["scan_started_at"], row["scan_until"]
+    )
+
+
+def begin_watching(db: sqlite3.Connection, source: str, through: str, now: str) -> None:
+    db.execute(
+        "INSERT OR IGNORE INTO mail_watermarks (source_id, covered_through, watching_since) "
+        "VALUES (?, ?, ?)",
+        (source, through, now),
+    )
+
+
+def save_scan(
+    db: sqlite3.Connection,
+    source: str,
+    *,
+    through: str,
+    started: str | None,
+    until: str | None,
+    gap: tuple[str, str] | None,
+) -> None:
+    db.execute(
+        "UPDATE mail_watermarks SET covered_through = ?, scan_started_at = ?, scan_until = ?, "
+        "gap_from = ?, gap_to = ? WHERE source_id = ?",
+        (
+            through,
+            started,
+            until,
+            None if gap is None else gap[0],
+            None if gap is None else gap[1],
+            source,
+        ),
+    )
+
+
+def is_seen(db: sqlite3.Connection, source: str, locator: str) -> bool:
+    row = db.execute(
+        "SELECT 1 FROM mail_seen WHERE source_id = ? AND locator = ?", (source, locator)
+    ).fetchone()
+    return row is not None
+
+
+def add_seen(
+    db: sqlite3.Connection,
+    source: str,
+    locator: str,
+    handle: str,
+    received: str,
+    now: str,
+    suggested: str | None,
+) -> None:
+    db.execute(
+        "INSERT OR IGNORE INTO mail_seen (source_id, locator, handle, received_at, "
+        "first_seen_at, suggested_card) VALUES (?, ?, ?, ?, ?, ?)",
+        (source, locator, handle, received, now, suggested),
+    )
+
+
+def prune_seen(db: sqlite3.Connection, source: str, before: str) -> None:
+    """Triaged rows older than every future scan window are no longer needed to dedupe."""
+    db.execute(
+        "DELETE FROM mail_seen WHERE source_id = ? AND triaged = 1 AND received_at < ?",
+        (source, before),
+    )
+
+
+def mail_batches(db: sqlite3.Connection) -> list[MailBatch]:
+    rows = db.execute(
+        "SELECT s.source_id AS source_id, COUNT(*) AS n, MIN(s.seq) AS first_seq, "
+        "MIN(s.received_at) AS oldest, SUM(c.handle IS NOT NULL) AS suggested "
+        "FROM mail_seen s LEFT JOIN cards c ON c.handle = s.suggested_card AND c.state = 'open' "
+        "WHERE s.triaged = 0 GROUP BY s.source_id ORDER BY s.source_id"
+    )
+    return [
+        MailBatch(r["source_id"], r["n"], r["first_seq"], r["oldest"], r["suggested"] or 0)
+        for r in rows
+    ]
+
+
+def stamp_delivered(db: sqlite3.Connection, source: str, event: str) -> None:
+    """The agent is being shown the batch: remember which rows it covers."""
+    db.execute(
+        "UPDATE mail_seen SET delivered_event = ? "
+        "WHERE source_id = ? AND triaged = 0 AND (delivered_event IS NULL OR "
+        "delivered_event NOT IN (SELECT handle FROM events WHERE state IN ('new', 'delivered')))",
+        (event, source),
+    )
+
+
+def triage_delivered(db: sqlite3.Connection, source: str, event: str) -> None:
+    """The agent handled the batch it was shown; later arrivals stay pending."""
+    if (
+        db.execute(
+            "SELECT 1 FROM mail_seen WHERE source_id = ? AND delivered_event = ?", (source, event)
+        ).fetchone()
+        is None
+    ):
+        stamp_delivered(db, source, event)
+    db.execute(
+        "UPDATE mail_seen SET triaged = 1 WHERE source_id = ? AND delivered_event = ?",
+        (source, event),
+    )
+
+
+def mail_gaps(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    rows = db.execute(
+        "SELECT source_id, gap_from, gap_to FROM mail_watermarks WHERE gap_from IS NOT NULL"
+    )
+    return [(r["source_id"], r["gap_from"], r["gap_to"]) for r in rows]
+
+
+def linked_message_refs(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    """(card, source, locator) of messages linked to open cards, newest links first."""
+    rows = db.execute(
+        "SELECT l.card AS card, r.source_id AS source_id, r.locator AS locator "
+        "FROM card_links l JOIN cards c ON c.handle = l.card AND c.state = 'open' "
+        "JOIN refs r ON r.handle = l.ref AND r.kind = 'message' ORDER BY l.created_at DESC"
+    )
+    return [(r["card"], r["source_id"], r["locator"]) for r in rows]
+
+
+def sent_recipients(db: sqlite3.Connection) -> list[tuple[str, str]]:
+    """(card, intent JSON) of sends made under open cards."""
+    rows = db.execute(
+        "SELECT o.card AS card, o.intent_json AS intent FROM operations o "
+        "JOIN cards c ON c.handle = o.card AND c.state = 'open' "
+        "WHERE o.kind = 'mail.send' AND o.intent_json IS NOT NULL"
+    )
+    return [(r["card"], r["intent"]) for r in rows]

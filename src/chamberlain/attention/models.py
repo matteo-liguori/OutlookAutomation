@@ -23,6 +23,8 @@ class EventAttrs(Model):
     source: SourceId | None = None
     card: CardHandle | None = None
     health: HealthState | None = None
+    since: str | None = None
+    """Mail batches: the oldest received time, so the next call can list them."""
 
 
 @dataclass(frozen=True)
@@ -114,19 +116,25 @@ class BudgetRow:
 
 
 @dataclass(frozen=True)
-class NewMail:
-    handle: str
+class MailBatch:
+    """New mail of one source awaiting triage: counts and times only, never text (E-8)."""
+
     source: str
-    internet_message_id: str
-    subject_norm: str
-    """Normalised subject, used only for matching; never copied into text (E-8)."""
+    count: int
+    first_seq: int
+    """Sequence of the oldest untriaged row; fixed for the batch, so it names it."""
+    oldest_received: str
+    suggested: int
+    """How many of the messages come with a suggested open card."""
 
 
 @dataclass(frozen=True)
-class MailDelta:
+class MailGap:
+    """Mail of `source` received between `start` and `end` (UTC) has not been looked at."""
+
     source: str
-    items: tuple[NewMail, ...]
-    complete: bool
+    start: str
+    end: str
 
 
 @dataclass(frozen=True)
@@ -159,7 +167,8 @@ class DetectorInput:
 
     now: datetime
     sources: tuple[SourceSnapshot, ...] = ()
-    mail: tuple[MailDelta, ...] = ()
+    mail: tuple[MailBatch, ...] = ()
+    mail_gaps: tuple[MailGap, ...] = ()
     actions: tuple[ActionRow, ...] = ()
     cards: tuple[CardRow, ...] = ()
     open_cards: tuple[CardRow, ...] = ()

@@ -102,6 +102,8 @@ def handle_events(db: sqlite3.Connection, clock: Clock, handles: Iterable[str]) 
             interval = RERAISE.get(event.kind)
             quiet = None if interval is None else (now + interval).strftime("%Y-%m-%dT%H:%M:%SZ")
             repo.mark_handled(db, handle, stamp(clock), quiet)
+            if event.kind in _MAIL_KINDS and event.subject is not None:
+                repo.triage_delivered(db, event.subject, handle)
             closed.append(handle)
         return closed
 
@@ -111,3 +113,5 @@ def deliver(db: sqlite3.Connection, clock: Clock, session: str, events: Iterable
     with transaction(db):
         for event in events:
             repo.mark_delivered(db, event.handle, session, stamp(clock))
+            if event.kind in _MAIL_KINDS and event.subject is not None:
+                repo.stamp_delivered(db, event.subject, event.handle)

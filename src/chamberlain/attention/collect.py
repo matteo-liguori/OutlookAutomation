@@ -5,7 +5,6 @@ A source that raises is logged and becomes a coverage gap, never a failed call.
 """
 
 import logging
-import re
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -13,24 +12,17 @@ from chamberlain.app.context import Context
 from chamberlain.attention import repo
 from chamberlain.attention.models import (
     DetectorInput,
-    MailDelta,
-    NewMail,
+    MailGap,
     SourceSnapshot,
 )
-from chamberlain.attention.tuning import MAIL_LOOKBACK, MAIL_PAGE_LIMIT, NOTE_OPEN
+from chamberlain.attention.suggest import Suggester
+from chamberlain.attention.tuning import NOTE_OPEN
+from chamberlain.attention.watermark import scan
 from chamberlain.domain.capabilities import HealthState, SourceHealth
-from chamberlain.domain.handles import HandleKind
-from chamberlain.domain.mail import FolderRole, MailQuery
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.migrate import stamp
 
 log = logging.getLogger("chamberlain.attention")
-
-_PREFIX = re.compile(r"^\s*((re|fw|fwd|aw|wg)\s*:\s*)+", re.IGNORECASE)
-
-
-def normalise_subject(subject: str) -> str:
-    return " ".join(_PREFIX.sub("", subject).casefold().split())
 
 
 @dataclass(frozen=True)
@@ -71,46 +63,19 @@ def _health(ctx: Context) -> tuple[SourceSnapshot, ...]:
     return tuple(snapshots)
 
 
-def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> tuple[list[MailDelta], set[str]]:
-    deltas: list[MailDelta] = []
+def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> set[str]:
+    """Scan every mail source from its watermark; return the sources not fully covered."""
     unreadable: set[str] = set()
     states = {s.id: s.state for s in snapshots}
-    since = ctx.clock.now() - MAIL_LOOKBACK
+    suggester = Suggester(ctx)
     for source in sorted(ctx.sources.mail):
-        if states.get(source) in (HealthState.UNAVAILABLE, HealthState.SIGN_IN_NEEDED):
-            unreadable.add(source)
-            continue
         try:
-            port = ctx.sources.mail_port(source)
-            inbox = [f for f in port.folders(source) if f.role is FolderRole.INBOX]
-            if not inbox:
+            if not scan(ctx, source, states.get(source), suggester).complete:
                 unreadable.add(source)
-                continue
-            page = port.search(
-                source,
-                MailQuery(folder_id=inbox[0].id, unread=True, since=since, limit=MAIL_PAGE_LIMIT),
-            )
-            items: list[NewMail] = []
-            for summary in page.items:
-                handle = ctx.services.refs.remember(
-                    HandleKind.MESSAGE, source, summary.locator, summary.internet_message_id
-                )
-                items.append(
-                    NewMail(
-                        handle,
-                        source,
-                        summary.internet_message_id,
-                        normalise_subject(summary.subject),
-                    )
-                )
-            complete = page.complete and states.get(source) is HealthState.OK
-            if not complete:
-                unreadable.add(source)
-            deltas.append(MailDelta(source, tuple(items), complete))
         except Exception:
-            log_failure(log, "mail delta failed for %s", source)
+            log_failure(log, "mail scan failed for %s", source)
             unreadable.add(source)
-    return deltas, unreadable
+    return unreadable
 
 
 def stamp_before(ctx: Context, span: timedelta) -> str:
@@ -122,13 +87,14 @@ def collect(ctx: Context) -> Collected:
     """Build the detector input. Store reads are plain SELECTs (A-8)."""
     now = stamp(ctx.clock)
     snapshots = _health(ctx)
-    deltas, unreadable = _mail(ctx, snapshots)
+    unreadable = _mail(ctx, snapshots)
     scan, orphans = repo.orphan_batch(ctx.db)
     links = repo.card_links(ctx.db)
     data = DetectorInput(
         now=ctx.clock.now(),
         sources=snapshots,
-        mail=tuple(deltas),
+        mail=tuple(repo.mail_batches(ctx.db)),
+        mail_gaps=tuple(MailGap(*g) for g in repo.mail_gaps(ctx.db)),
         actions=tuple(repo.due_actions(ctx.db, now)),
         cards=tuple(repo.cards_needing_review(ctx.db, now)),
         open_cards=tuple(repo.open_cards(ctx.db)),
