@@ -125,89 +125,50 @@ def ask(env: Env, request: RequestFrame) -> object:
     return None
 
 
-def test_the_response_of_a_marked_send_is_lost_but_the_request_still_runs(tmp_path: Path) -> None:
-    with hosted(tmp_path) as env:
-        arm(env)
-        answer = ask(env, send_request(SUBJECT))
-        assert answer is None
-        assert [f.cmd for f in env.addon.received if isinstance(f, RequestFrame)] == ["send"]
-        assert not env.fault_file.exists()
-
-
-def test_the_fault_is_used_once(tmp_path: Path) -> None:
+def test_a_marked_send_loses_its_response_once_but_still_runs(tmp_path: Path) -> None:
     with hosted(tmp_path) as env:
         arm(env)
         assert ask(env, send_request(SUBJECT)) is None
+        assert [f.cmd for f in env.addon.received if isinstance(f, RequestFrame)] == ["send"]
+        assert list(env.fault_file.parent.iterdir()) == []  # consumed, nothing left behind
         second = ask(env, send_request(SUBJECT, request_id="req_second0001"))
         assert isinstance(second, protocol.ResponseFrame)
-        leftovers = [p.name for p in env.fault_file.parent.iterdir()]
-        assert leftovers == []
 
 
-def test_a_send_with_another_subject_is_never_touched(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "case",
+    ["other_subject", "other_run", "not_a_send", "unknown_fault", "stale", "broken", "no_file"],
+)
+def test_nothing_else_is_ever_touched(tmp_path: Path, case: str) -> None:
+    subject, cmd = SUBJECT, "send"
     with hosted(tmp_path) as env:
-        arm(env)
-        answer = ask(env, send_request("An ordinary subject"))
-        assert isinstance(answer, protocol.ResponseFrame)
-        assert env.fault_file.exists()  # not consumed by a request it must not touch
+        if case == "broken":
+            env.fault_file.write_text("not json", encoding="utf-8")
+        elif case == "unknown_fault":
+            arm(env, fault="explode")
+        elif case != "no_file":
+            arm(env)
+        if case == "other_subject":
+            subject = "An ordinary subject"
+        elif case == "other_run":
+            subject = "CHAMBERLAIN LIVE TEST 20200101T000000-0000 self_send"
+        elif case == "not_a_send":
+            cmd = "status"
+        elif case == "stale":
+            old = env.fault_file.stat().st_mtime - 3600
+            os.utime(env.fault_file, (old, old))
+        assert isinstance(ask(env, send_request(subject, cmd=cmd)), protocol.ResponseFrame)
+        if case in {"other_subject", "other_run", "not_a_send"}:
+            assert env.fault_file.exists()  # a request it must not touch does not use it up
 
 
-def test_a_marker_of_another_run_does_not_match(tmp_path: Path) -> None:
-    with hosted(tmp_path) as env:
-        arm(env)
-        other = "CHAMBERLAIN LIVE TEST 20200101T000000-0000 self_send"
-        assert isinstance(ask(env, send_request(other)), protocol.ResponseFrame)
-        assert env.fault_file.exists()
-
-
-def test_only_a_send_is_dropped(tmp_path: Path) -> None:
-    with hosted(tmp_path) as env:
-        arm(env)
-        answer = ask(env, send_request(SUBJECT, cmd="status"))
-        assert isinstance(answer, protocol.ResponseFrame)
-        assert env.fault_file.exists()
-
-
-def test_an_unknown_fault_name_does_nothing(tmp_path: Path) -> None:
-    with hosted(tmp_path) as env:
-        arm(env, fault="explode")
-        assert isinstance(ask(env, send_request(SUBJECT)), protocol.ResponseFrame)
-
-
-def test_a_stale_file_is_ignored(tmp_path: Path) -> None:
-    with hosted(tmp_path) as env:
-        arm(env)
-        old = env.fault_file.stat().st_mtime - 3600
-        os.utime(env.fault_file, (old, old))
-        assert isinstance(ask(env, send_request(SUBJECT)), protocol.ResponseFrame)
-
-
-def test_a_broken_file_is_ignored(tmp_path: Path) -> None:
-    with hosted(tmp_path) as env:
-        env.fault_file.write_text("not json", encoding="utf-8")
-        assert isinstance(ask(env, send_request(SUBJECT)), protocol.ResponseFrame)
-
-
-def test_no_file_means_no_hook(tmp_path: Path) -> None:
-    with hosted(tmp_path) as env:
-        assert isinstance(ask(env, send_request(SUBJECT)), protocol.ResponseFrame)
-
-
-def test_two_claims_cannot_both_win(tmp_path: Path) -> None:
+def test_one_claim_wins_and_the_host_looks_only_in_the_default_layout(tmp_path: Path) -> None:
     path = tmp_path / native_host.FAULT_FILE
     path.write_text(json.dumps({"run_id": RUN, "fault": FAULT_DROP_RESPONSE}), encoding="utf-8")
     hook = LiveFault(path)
     request = send_request(SUBJECT)
-    assert hook.claim(request) is True
-    assert hook.claim(request) is False
-
-
-@pytest.mark.parametrize(
-    ("bridge", "expected"),
-    [("data/bridge", "data/run/livetest-fault.json"), ("elsewhere/other", None)],
-)
-def test_the_host_looks_for_the_file_only_in_the_default_layout(
-    bridge: str, expected: str | None
-) -> None:
-    found = native_host.fault_file_for(Path(bridge))
-    assert (None if found is None else found.as_posix()) == expected
+    assert (hook.claim(request), hook.claim(request)) == (True, False)
+    default = native_host.fault_file_for(Path("data/bridge"))
+    assert default is not None
+    assert default.as_posix() == "data/run/livetest-fault.json"
+    assert native_host.fault_file_for(Path("elsewhere/other")) is None

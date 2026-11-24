@@ -45,13 +45,8 @@ GOOD: dict[str, Any] = {
 }
 
 
-def test_live_test_is_off_by_default() -> None:
-    connections = parse_connections(profile(None))
-    assert connections.live_test.enabled is False
-    assert connections.live_test.mail == {}
-
-
-def test_a_complete_section_is_accepted() -> None:
+def test_off_by_default_and_a_complete_section_is_accepted() -> None:
+    assert parse_connections(profile(None)).live_test.enabled is False
     live = parse_connections(profile(GOOD)).live_test
     assert live.owned_addresses() == {"me@example.test", "me@other.test"}
     assert live.approve_calendar_edits is False
@@ -95,13 +90,17 @@ def test_unknown_keys_are_rejected(change: dict[str, Any]) -> None:
     ],
 )
 def test_a_section_naming_the_wrong_things_is_rejected(change: dict[str, Any]) -> None:
+    # case does not matter in an address, but it must be the source's own mailbox
+    parse_connections(
+        profile(
+            {
+                **GOOD,
+                "mail": {"mail:a": {"address": "ME@Example.test"}},
+                "pairs": [],
+                "calendars": {},
+            }
+        )
+    )
     with pytest.raises(ChamberlainError) as raised:
         parse_connections(profile({**GOOD, **change}))
     assert raised.value.code is ErrorCode.CONFIG_INVALID
-
-
-def test_a_mailbox_address_must_be_the_sources_own_mailbox() -> None:
-    live = {**GOOD, "mail": {"mail:a": {"address": "ME@Example.test"}}, "pairs": []}
-    parse_connections(profile({**live, "calendars": {}}))  # case does not matter
-    with pytest.raises(ChamberlainError):
-        parse_connections(profile({**live, "mail": {"mail:a": {"address": "me@other.test"}}}))

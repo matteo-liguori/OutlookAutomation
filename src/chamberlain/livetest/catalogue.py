@@ -73,6 +73,11 @@ def _skip_reason(
         if problem:
             return problem
         missing = [need for need in needs if need not in names]
+        if "calendar.invite" in missing:
+            return (
+                f"{source} does not declare calendar.invite "
+                "(invitations are not supported there; Owl and Exchange refuse them)"
+            )
         if missing:
             return f"{source} does not declare {', '.join(missing)}"
     return ""

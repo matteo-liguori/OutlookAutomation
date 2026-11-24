@@ -34,7 +34,7 @@ def run(root: Path, *args: str) -> tuple[int, str]:
     return code, out.getvalue()
 
 
-def test_it_is_off_until_the_owner_switches_it_on(tmp_path: Path) -> None:
+def test_it_is_off_until_switched_on_and_a_dry_run_changes_nothing(tmp_path: Path) -> None:
     write_profile(tmp_path, None)
     code, text = run(tmp_path)
     assert code == 2
@@ -42,44 +42,30 @@ def test_it_is_off_until_the_owner_switches_it_on(tmp_path: Path) -> None:
     assert reply["error"]["code"] == "config.invalid"
     assert "live_test.enabled" in reply["error"]["fix"]
 
-
-def test_a_dry_run_prints_the_plan_and_writes_nothing(tmp_path: Path) -> None:
     write_profile(tmp_path, ENABLED)
     code, text = run(tmp_path, "run", "--dry-run", "--only", "self_send")
     assert code == 0
     assert "mail.self_send[mail:demo]" in text
     assert "planned (dry run)" in text
     assert not (tmp_path / "logs").exists()
+    code, text = run(tmp_path, "report")
+    assert (code, text.startswith("No live-test report")) == (2, True)
 
 
-def test_grant_proposes_and_says_the_owner_must_confirm(tmp_path: Path) -> None:
-    write_profile(tmp_path, ENABLED)
-    code, text = run(tmp_path, "grant")
-    assert code == 0
-    assert "mail:demo: waiting for you" in text
-    assert "never confirms" in text
-    _, again = run(tmp_path, "grant")
-    assert again.split("(")[1] == text.split("(")[1]  # the same proposal, not a second one
-
-
-def test_run_stops_with_the_next_step_when_the_grant_is_unconfirmed(tmp_path: Path) -> None:
-    write_profile(tmp_path, ENABLED)
-    run(tmp_path, "grant")
-    code, text = run(tmp_path, "run")
-    assert code == 2
-    assert "waiting for you" in text
-    assert not (tmp_path / "logs" / "live-test").exists()
-
-
-def test_run_without_any_grant_says_to_run_grant(tmp_path: Path) -> None:
+def test_grant_proposes_once_and_run_stops_until_the_owner_confirms(tmp_path: Path) -> None:
     write_profile(tmp_path, ENABLED)
     code, text = run(tmp_path, "run")
     assert code == 2
     assert "chamberlain live-test grant" in text
 
+    code, granted = run(tmp_path, "grant")
+    assert code == 0
+    assert "mail:demo: waiting for you" in granted
+    assert "never confirms" in granted
+    _, again = run(tmp_path, "grant")
+    assert again.split("(")[1] == granted.split("(")[1]  # the same proposal, not a second one
 
-def test_report_with_no_runs(tmp_path: Path) -> None:
-    write_profile(tmp_path, ENABLED)
-    code, text = run(tmp_path, "report")
+    code, text = run(tmp_path, "run")
     assert code == 2
-    assert "No live-test report" in text
+    assert "waiting for you" in text
+    assert not (tmp_path / "logs" / "live-test").exists()

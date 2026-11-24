@@ -1,5 +1,5 @@
 """Authority: one standing grant per mailbox, proposed never confirmed, and the run stops
-when it is missing or waiting. The runner has no way to confirm anything (layering test)."""
+when it is missing or waiting. The runner has no way to confirm anything."""
 
 import ast
 from pathlib import Path
@@ -37,55 +37,49 @@ def test_the_runner_cannot_confirm() -> None:
     """No module of the package imports the confirmation code or the engine."""
     offenders: list[str] = []
     for path in sorted(LIVETEST.glob("*.py")):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom | ast.Import):
-                names = (
-                    [node.module or ""] + [a.name for a in node.names]
-                    if isinstance(node, ast.ImportFrom)
-                    else [a.name for a in node.names]
-                )
-                for name in names:
-                    if name.startswith("chamberlain.writes.confirm") or name in FORBIDDEN_NAMES:
-                        offenders.append(f"{path.name}: imports {name}")
-            elif isinstance(node, ast.Name | ast.Attribute):
-                name = node.id if isinstance(node, ast.Name) else node.attr
-                if name in FORBIDDEN_NAMES:
-                    offenders.append(f"{path.name}: uses {name}")
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ImportFrom):
+                names = [node.module or "", *[a.name for a in node.names]]
+            elif isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.Name):
+                names = [node.id]
+            elif isinstance(node, ast.Attribute):
+                names = [node.attr]
+            else:
+                continue
+            offenders += [
+                f"{path.name}: {name}"
+                for name in names
+                if name.startswith("chamberlain.writes.confirm") or name in FORBIDDEN_NAMES
+            ]
     assert not offenders
 
 
-def test_grant_proposes_one_standing_grant_per_mailbox_and_never_confirms(lab: FakeLab) -> None:
+def test_grant_proposes_exactly_the_scope_and_only_the_owner_confirms(lab: FakeLab) -> None:
     live = open_lab(lab.app, lab.env, lab.config, "20260105T090000-0000", RunOptions())
-    states = authority.start_standing_proposals(live, [FAKE_MAIL_A, FAKE_MAIL_B])
+    sources = [FAKE_MAIL_A, FAKE_MAIL_B]
+    states = authority.start_standing_proposals(live, sources)
     assert [s.state for s in states] == ["proposed", "proposed"]
-    rows = [repo.get_grant(lab.app.context.db, s.handle) for s in states]
-    for row in rows:
-        assert row is not None
-        assert row.kind is GrantKind.STANDING
-        assert row.state is GrantState.PROPOSED
-    again = authority.start_standing_proposals(live, [FAKE_MAIL_A, FAKE_MAIL_B])
+    again = authority.start_standing_proposals(live, sources)
     assert [s.handle for s in again] == [s.handle for s in states]  # no second proposal
+    waiting = execute(lab.app, lab.env, lab.config, RunOptions())
+    assert "waiting for you" in waiting.stopped
 
-
-def test_the_grant_covers_exactly_the_owned_recipients_and_the_test_card(lab: FakeLab) -> None:
     confirm_all(lab)
-    db = lab.app.context.db
-    live = open_lab(lab.app, lab.env, lab.config, "20260105T090000-0000", RunOptions())
     card = authority.ensure_card(live)
     assert live.ok("open", handle=card)["view"]["title"] == CARD_TITLE
-    for source in (FAKE_MAIL_A, FAKE_MAIL_B):
-        found = live.ok("find", scope="grants", query=grant_title(source))["hits"]
-        assert len(found) == 1
-        row = repo.get_grant(db, found[0]["handle"])
+    for source in sources:
+        [hit] = live.ok("find", scope="grants", query=grant_title(source))["hits"]
+        row = repo.get_grant(lab.app.context.db, hit["handle"])
         assert row is not None
-        assert row.state is GrantState.ACTIVE
+        assert (row.kind, row.state) == (GrantKind.STANDING, GrantState.ACTIVE)
+        assert row.requirement.value == "human_confirmation"
         scope = row.scope
         assert scope is not None
-        assert scope.source == source
+        assert (scope.source, scope.card) == (source, card)
         assert scope.recipients == {ADDRESS_A, ADDRESS_B}
         assert scope.recipient_domains == frozenset()
-        assert scope.card == card
         assert scope.intent_kinds == {
             IntentKind.MAIL_SEND,
             IntentKind.MAIL_DRAFT_SAVE,
@@ -94,9 +88,7 @@ def test_the_grant_covers_exactly_the_owned_recipients_and_the_test_card(lab: Fa
             IntentKind.MAIL_TRASH,
             IntentKind.MAIL_MARK_READ,
         }
-        ids = {f.id for f in lab.env.probe.folders(source)}
-        assert scope.folders <= ids
-        assert row.requirement.value == "human_confirmation"
+        assert scope.folders <= {f.id for f in lab.env.probe.folders(source)}
 
 
 def test_a_run_stops_before_doing_anything_without_a_confirmed_grant(lab: FakeLab) -> None:
@@ -104,22 +96,13 @@ def test_a_run_stops_before_doing_anything_without_a_confirmed_grant(lab: FakeLa
     assert "No confirmed live-test grant" in report.stopped
     assert "chamberlain live-test grant" in report.stopped
     assert all(r.status is Status.SKIPPED for r in report.results)
-    assert lab.provider.dispatch_log == []
-    assert all(not messages for messages in lab.provider.world.mail.values())
 
-
-def test_a_run_stops_while_a_grant_is_waiting_for_the_owner(lab: FakeLab) -> None:
-    live = open_lab(lab.app, lab.env, lab.config, "20260105T090000-0000", RunOptions())
-    authority.start_standing_proposals(live, [FAKE_MAIL_A, FAKE_MAIL_B])
-    report = execute(lab.app, lab.env, lab.config, RunOptions())
-    assert "waiting for you" in report.stopped
-    assert lab.provider.dispatch_log == []
-
-
-def test_a_changed_address_list_needs_a_new_confirmed_grant(lab: FakeLab) -> None:
     confirm_all(lab)
     moved = lab.config.mail[FAKE_MAIL_B].model_copy(update={"address": "new.b@lab.example.test"})
     changed = lab.config.model_copy(update={"mail": {**lab.config.mail, FAKE_MAIL_B: moved}})
-    report = execute(lab.app, lab.env, changed, RunOptions())
-    assert "No confirmed live-test grant" in report.stopped
+    stale = execute(lab.app, lab.env, changed, RunOptions())
+    assert (
+        "No confirmed live-test grant" in stale.stopped
+    )  # a changed address list needs a new grant
     assert lab.provider.dispatch_log == []
+    assert all(not messages for messages in lab.provider.world.mail.values())

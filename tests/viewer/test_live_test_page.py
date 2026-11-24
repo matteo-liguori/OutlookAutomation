@@ -36,25 +36,16 @@ def a_report() -> RunReport:
     )
 
 
-def test_the_page_lists_recent_runs_with_their_score(rig: Rig) -> None:
+def test_the_page_lists_recent_runs_behind_the_viewers_gate(rig: Rig) -> None:
     assert rig.call("GET", "/api/live-test").body == {"runs": []}
+    assert rig.call("GET", "/api/live-test", token=None).status == 403
+    assert rig.call("GET", "/static/livetest.js", token=None).status == 200
+    assert rig.call("GET", "/static/livetest.js", token=None, host="evil.example").status == 403
+
     write_report(rig.ctx.data_root, a_report(), datetime(2026, 11, 24, 16, 0, tzinfo=UTC))
-    body = rig.call("GET", "/api/live-test").body
-    [run] = body["runs"]
+    [run] = rig.call("GET", "/api/live-test").body["runs"]
     assert run["run_id"] == RUN
-    assert run["score"]["passed"] == 1
-    assert run["score"]["failed"] == 1
+    assert (run["score"]["passed"], run["score"]["failed"]) == (1, 1)
     reasons = {r["id"]: r["reason"] for r in run["results"]}
     assert reasons["mail.reply_thread[mail:a>mail:b]"] == "the reply did not arrive"
     assert "calendar.recurring[calendar:a]" not in reasons  # a skip without a reason is noise
-
-
-def test_the_page_script_is_served_and_needs_the_viewers_own_host(rig: Rig) -> None:
-    served = rig.call("GET", "/static/livetest.js", token=None)
-    assert served.status == 200
-    refused = rig.call("GET", "/static/livetest.js", token=None, host="evil.example")
-    assert refused.status == 403
-
-
-def test_the_api_needs_the_token(rig: Rig) -> None:
-    assert rig.call("GET", "/api/live-test", token=None).status == 403
