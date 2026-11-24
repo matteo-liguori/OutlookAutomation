@@ -1,0 +1,33 @@
+"""A page of connector results with honest coverage.
+
+Contract: docs/contracts/08-ports.md (P-4).
+"""
+
+from typing import Self
+
+from pydantic import BaseModel, model_validator
+
+from chamberlain.schema.base import Model, SourceId
+
+
+class Gap(Model):
+    """Something the connector could not look at."""
+
+    source: SourceId
+    reason: str
+
+
+class Page[ItemT: BaseModel](Model):
+    items: tuple[ItemT, ...] = ()
+    cursor: str | None = None
+    complete: bool = True
+    """True only when nothing was left unseen and there is no further page."""
+    gaps: tuple[Gap, ...] = ()
+
+    @model_validator(mode="after")
+    def _honest(self) -> Self:
+        if self.complete and (self.cursor is not None or self.gaps):
+            raise ValueError("a complete page has no cursor and no gaps")
+        if not self.complete and self.cursor is None and not self.gaps:
+            raise ValueError("an incomplete page names a cursor or a gap")
+        return self
