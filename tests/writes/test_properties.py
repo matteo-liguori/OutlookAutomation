@@ -25,9 +25,14 @@ from hypothesis.stateful import (
 )
 
 from chamberlain.connectors.fake import Fault
-from chamberlain.domain.operations import TERMINAL_STATES, TRANSITIONS, OperationState
 from chamberlain.domain.grants import GrantKind
-from chamberlain.domain.operations import ReconcileResult, ReconcileStatus
+from chamberlain.domain.operations import (
+    TERMINAL_STATES,
+    TRANSITIONS,
+    OperationState,
+    ReconcileResult,
+    ReconcileStatus,
+)
 from chamberlain.schema.errors import ChamberlainError
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify

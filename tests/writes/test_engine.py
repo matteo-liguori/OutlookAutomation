@@ -1,6 +1,5 @@
 """The write state machine against the fake provider (04-writes.md, 11-ported-test-intent.md)."""
 
-from collections.abc import Iterator
 from contextlib import AbstractContextManager
 
 import pytest
@@ -21,13 +20,6 @@ from chamberlain.writes.maintenance import maintain
 from chamberlain.writes.rig import CALENDAR, MAIL, SimulatedCrash, WriteRig, make_rig
 
 S = OperationState
-
-
-@pytest.fixture
-def rig() -> Iterator[WriteRig]:
-    made = make_rig()
-    yield made
-    made.close()
 
 
 def fails(code: ErrorCode) -> AbstractContextManager[pytest.ExceptionInfo[ChamberlainError]]:

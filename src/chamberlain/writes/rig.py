@@ -238,6 +238,16 @@ class WriteRig:
         sent = self.fake.world.folder_by_role(MAIL, FolderRole.SENT).id
         return len([m for m in self.fake.world.mail[MAIL] if m.folder_id == sent])
 
+    def grant_for(self, op: OperationRow) -> GrantRow:
+        """The one-off grant made for an operation's exact content."""
+        row = self.db.execute(
+            "SELECT handle FROM grants WHERE kind = 'one_off' AND content_sha256 = ?",
+            (op.intent_sha256,),
+        ).fetchone()
+        found = repo.get_grant(self.db, row["handle"])
+        assert found is not None
+        return found
+
     def state(self, handle: str) -> str:
         op = repo.get_operation(self.db, handle)
         assert op is not None
