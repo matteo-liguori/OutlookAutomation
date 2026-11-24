@@ -184,6 +184,7 @@ def bridge(
     addon_hello: bool = True,
     caps: tuple[str, ...] = ALL_CAPS,
     addon_version: int = PROTOCOL_VERSION,
+    deadlines: Deadlines = FAST,
 ) -> Iterator[Env]:
     addon = Addon(handler)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -193,7 +194,7 @@ def bridge(
         FdWriter(addon.from_host_w),
         listener,
         token=TOKEN,
-        deadlines=FAST,
+        deadlines=deadlines,
     )
     host.start()
     addon.start()
@@ -205,7 +206,7 @@ def bridge(
                 break
             threading.Event().wait(0.01)
     try:
-        yield Env(addon, host, BridgeClient(RuntimeConnector(tmp_path), FAST), tmp_path)
+        yield Env(addon, host, BridgeClient(RuntimeConnector(tmp_path), deadlines), tmp_path)
     finally:
         addon.close()
         host.stop()
@@ -277,6 +278,12 @@ def test_b2_a_command_outside_the_list_is_refused_by_the_host(tmp_path: Path) ->
 
 
 def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
+    # The first request must still be in flight when the second arrives. With the fast
+    # deadlines a busy machine let the first one time out first (the old flake), so this
+    # test gives the host a long read deadline and releases the add-on itself.
+    slow = Deadlines(
+        addon_read=5, addon_write=5, host_read=30, host_write=30, client_read=60, client_write=60
+    )
     gate = threading.Event()
     arrived = threading.Event()
 
@@ -286,7 +293,7 @@ def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
             gate.wait(10)
             status_handler(frame, addon)
 
-    with bridge(tmp_path, hold) as env:
+    with bridge(tmp_path, hold, deadlines=slow) as env:
         first = env.raw()
         second = env.raw()
         try:
