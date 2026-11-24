@@ -105,7 +105,8 @@ obtained.
 - **W-12** `confirmed_absent` requires the connector to report `absent` with
   `proof: true`, which a connector may do only where its capability declares
   `absence_provable` for that intent kind (P-12), and only after
-  `SETTLE_AFTER` (10 minutes) has passed since dispatch. Otherwise the
+  `SETTLE_AFTER` (10 minutes, never less than the connector deadline plus a 120
+  second margin, because a timed-out write can land late) has passed since dispatch. Otherwise the
   operation returns to `uncertain`.
 - **W-13** While an operation is `uncertain`, the grant use stays reserved,
   a one-off grant cannot be used for anything else, and the event

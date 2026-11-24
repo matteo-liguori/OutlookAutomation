@@ -66,7 +66,12 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
     Verification,
 )
-from chamberlain.limits import REPEAT_WINDOW_HOURS, SETTLE_AFTER_MINUTES
+from chamberlain.limits import (
+    ABSENCE_MARGIN_SECONDS,
+    CONNECTOR_DEADLINE_SECONDS,
+    REPEAT_WINDOW_HOURS,
+    SETTLE_AFTER_MINUTES,
+)
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import OperationView
@@ -1019,7 +1024,11 @@ class Engine:
         """`absent` frees the grant only with proof, capability and settled time (W-12)."""
         if op.dispatched_at is None:
             return False
-        settled = op.dispatched_at + timedelta(minutes=SETTLE_AFTER_MINUTES)
+        wait = max(
+            timedelta(minutes=SETTLE_AFTER_MINUTES),
+            timedelta(seconds=CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS),
+        )
+        settled = op.dispatched_at + wait
         if self.ctx.clock.now() < settled:
             return False
         try:

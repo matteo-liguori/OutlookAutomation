@@ -3,6 +3,8 @@
 from contextlib import AbstractContextManager
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.canonical import sha256_bytes
@@ -17,6 +19,11 @@ from chamberlain.domain.intents import (
     MailTrash,
 )
 from chamberlain.domain.operations import OperationState
+from chamberlain.limits import (
+    ABSENCE_MARGIN_SECONDS,
+    CONNECTOR_DEADLINE_SECONDS,
+    SETTLE_AFTER_MINUTES,
+)
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.testing.write_rig import CALENDAR, MAIL, SimulatedCrash, WriteRig, make_rig
 from chamberlain.writes import repo
@@ -517,3 +524,28 @@ def test_w9_w25_the_tick_seams_recover_compact_and_sweep_grants(rig: WriteRig) -
     assert [name for name, _ in COMPACTORS] == ["operations_compacted", "grants_changed"]
     changed = [fn(rig.ctx, rig.clock.now()) for _, fn in COMPACTORS]
     assert changed == [0, 0]
+
+
+@settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(elapsed=st.integers(min_value=0, max_value=1200))
+def test_w12_an_absent_proof_never_frees_a_grant_before_deadline_plus_margin(elapsed: int) -> None:
+    """Coordinator ruling: a late-landing timed-out write must not be released early."""
+    rig = make_rig(send_absence_provable=True)
+    try:
+        op = rig.ready_send()
+        rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
+        with fails(ErrorCode.OPERATION_UNCERTAIN):
+            rig.engine().do(op.handle)
+        rig.clock.advance(seconds=elapsed)
+        after, _ = rig.engine().reconcile(op.handle)
+        floor = CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS
+        if elapsed < floor:
+            assert after.state is S.UNCERTAIN
+        if elapsed >= SETTLE_AFTER_MINUTES * 60:
+            assert after.state is S.CONFIRMED_ABSENT
+    finally:
+        rig.close()
+
+
+def test_w12_the_settle_wait_covers_the_deadline_and_margin() -> None:
+    assert SETTLE_AFTER_MINUTES * 60 >= CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS
