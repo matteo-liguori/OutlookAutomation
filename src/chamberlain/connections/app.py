@@ -14,6 +14,8 @@ from chamberlain.connections.model import Connections
 from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.calendar_support.secrets import SecretStore
 from chamberlain.ports.clock import Clock, SystemClock
+from chamberlain.review.homes import agent_homes
+from chamberlain.review.scan import ReviewSettings, checkout_root
 from chamberlain.runs.models import PassKind
 from chamberlain.runs.schedule import ScheduleSpec, apply_schedules
 from chamberlain.runs.updates import TagLister, git_tag_lister
@@ -41,6 +43,14 @@ def _update_lister(connections: Connections) -> TagLister | None:
     return git_tag_lister(connections.updates.remote) if connections.updates.enabled else None
 
 
+def _review(connections: Connections) -> ReviewSettings | None:
+    if not connections.review.enabled:
+        return None
+    return ReviewSettings(
+        homes=agent_homes(), checkout=checkout_root(), every_days=connections.review.every_days
+    )
+
+
 def open_app(
     data_root: Path, *, clock: Clock | None = None, secrets: SecretStore | None = None
 ) -> App:
@@ -59,6 +69,7 @@ def open_app(
         policy=runtime.policy,
         budgets=runtime.budgets,
         update_lister=_update_lister(connections),
+        review=_review(connections),
     )
     try:
         with transaction(app.context.db) as db:

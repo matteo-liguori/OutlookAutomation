@@ -24,6 +24,7 @@ from pydantic import Field
 from chamberlain.app.context import Context
 from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME, ArtifactKind
 from chamberlain.memory.artifacts import ArtifactService
+from chamberlain.review import findings as review_findings
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs import sections
 from chamberlain.runs.models import RunRow
@@ -95,12 +96,25 @@ def snapshot(ctx: Context, run: RunRow) -> ComposedReport:
                 markdown=text,
             )
         )
+    worrying, _ = review_findings.report_lines(ctx)
+    if worrying:
+        blocks.append(
+            Block(
+                id="harness_review",
+                by="harness",
+                heading="Worth a look: how the assistant has been working",
+                markdown=worrying,
+            )
+        )
     return ComposedReport(title=_title(template, run, zone), zone=zone.key, blocks=tuple(blocks))
 
 
 def settle_snapshot(ctx: Context, run: RunRow) -> None:
     """Keep the snapshot of a pass that has just ended. A second call keeps the first."""
+    first = repo.get_run_report(ctx.db, run.handle) is None
     report = snapshot(ctx, run)
+    if first:
+        review_findings.mark_reported(ctx, review_findings.report_lines(ctx)[1])
     with transaction(ctx.db):
         repo.put_run_report(ctx.db, run.handle, stamp(ctx.clock), report.model_dump_json())
 

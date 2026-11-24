@@ -23,6 +23,7 @@ from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.retrieval import one_line
 from chamberlain.memory.timeutil import parse
+from chamberlain.review.rounds import brief
 from chamberlain.schema.envelope import Content, ContentKind
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import (
@@ -68,7 +69,7 @@ def open_handle(ctx: Context, request: OpenRequest) -> Result:
         case HandleKind.OPERATION:
             return Result(_operation(ctx, request.handle))
         case HandleKind.EVENT:
-            return Result(_event(ctx, request.handle))
+            return Result(_event(ctx, request))
         case HandleKind.MESSAGE:
             return Result(_message(ctx, request))
         case HandleKind.CALENDAR_EVENT:
@@ -205,7 +206,8 @@ def _operation(ctx: Context, handle: str) -> OpenResponse:
     return OpenResponse(handle=handle, view=view)
 
 
-def _event(ctx: Context, handle: str) -> OpenResponse:
+def _event(ctx: Context, request: OpenRequest) -> OpenResponse:
+    handle = request.handle
     row = repo.get_event(ctx.db, handle)
     if row is None:
         raise _unknown()
@@ -218,6 +220,9 @@ def _event(ctx: Context, handle: str) -> OpenResponse:
         state=EventState(str(row["state"])),
         detected_at=parse(str(row["detected_at"])),
     )
+    if row["kind"] == EventKind.HARNESS_REVIEW.value and request.part is OpenPart.BODY:
+        content, window = _page(brief(ctx), request, ContentKind.STORED_TEXT)
+        return OpenResponse(handle=handle, view=view, content=content, range=window)
     return OpenResponse(handle=handle, view=view)
 
 

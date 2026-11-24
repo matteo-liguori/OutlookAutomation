@@ -26,6 +26,10 @@ from chamberlain.memory import services as memory_services
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.memory.sweeper import Compactor, sweep
 from chamberlain.ports.clock import Clock, SystemClock
+from chamberlain.review import handlers as review_handlers
+from chamberlain.review import maintenance as review_maintenance
+from chamberlain.review.scan import ReviewSettings
+from chamberlain.review.scan import tick_step as review_tick_step
 from chamberlain.runs import maintenance as run_maintenance
 from chamberlain.runs import plan as run_plan
 from chamberlain.runs import updates as run_updates
@@ -51,6 +55,7 @@ WRITES_MODULE = "chamberlain.writes.handlers"
 COMPACTORS: tuple[tuple[str, Compactor], ...] = (
     *write_maintenance.COMPACTORS,
     *run_maintenance.COMPACTORS,
+    *review_maintenance.COMPACTORS,
 )
 """Other tracks' lifetime rules for their own tables, run inside the sweeper's records step.
 
@@ -77,6 +82,7 @@ def load_tracks(
             handlers[name] = handler
         checks.extend(module.DOCTOR_CHECKS)
         hooks = getattr(module, "HOOKS", None) or hooks
+    checks.extend(review_handlers.DOCTOR_CHECKS)
     handlers[ToolName.DOCTOR] = make_doctor(checks)
     return handlers, hooks
 
@@ -96,7 +102,10 @@ def build_services(
 
 
 def tick_steps(
-    policy: WritePolicy | None, budgets: Budgets | None, update_lister: TagLister | None = None
+    policy: WritePolicy | None,
+    budgets: Budgets | None,
+    update_lister: TagLister | None = None,
+    review: ReviewSettings | None = None,
 ) -> tuple[list[Callable[[Context], None]], list[Callable[[Context], None]]]:
     """`(always, extra)`: what the tick runs on every call, and what it runs when due."""
 
@@ -113,6 +122,8 @@ def tick_steps(
     extra: list[Callable[[Context], None]] = [sweep_everything, maintain_writes]
     if update_lister is not None:
         extra.append(run_updates.tick_step(update_lister))
+    if review is not None:
+        extra.append(review_tick_step(review))
     return always, extra
 
 
@@ -120,9 +131,10 @@ def install_tick_steps(
     policy: WritePolicy | None = None,
     budgets: Budgets | None = None,
     update_lister: TagLister | None = None,
+    review: ReviewSettings | None = None,
 ) -> None:
     """Fill attention's step lists in place. Idempotent: the last built app's settings win."""
-    always, extra = tick_steps(policy, budgets, update_lister)
+    always, extra = tick_steps(policy, budgets, update_lister, review)
     attention_tick.ALWAYS_STEPS[:] = always
     attention_tick.EXTRA_STEPS[:] = extra
 
@@ -136,6 +148,7 @@ def build_app(
     policy: WritePolicy | None = None,
     budgets: Budgets | None = None,
     update_lister: TagLister | None = None,
+    review: ReviewSettings | None = None,
 ) -> App:
     """Open the store under `data_root` and assemble the app (S-18).
 
@@ -154,7 +167,7 @@ def build_app(
         or build_services(db, the_clock, data_root, policy=policy, budgets=budgets),
     )
     handlers, hooks = load_tracks(policy)
-    install_tick_steps(policy, budgets, update_lister)
+    install_tick_steps(policy, budgets, update_lister, review)
     return App(context, handlers, hooks)
 
 
