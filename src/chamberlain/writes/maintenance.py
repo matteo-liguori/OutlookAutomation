@@ -4,8 +4,9 @@ Contract: docs/contracts/04-writes.md (W-9, W-25), 05-grants.md (G-2, G-8, G-22)
 Attention's tick calls `maintain(ctx)`; it never raises into a tool call.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from chamberlain.app.context import Context
 from chamberlain.domain.grant_rules import format_ts
@@ -27,9 +28,9 @@ class MaintenanceReport:
     audit_pruned: int = 0
 
 
-def compact_operations(ctx: Context) -> int:
+def compact_operations(ctx: Context, now: datetime | None = None) -> int:
     """Replace settled operations older than 30 days with a one-line receipt (W-25)."""
-    cutoff = format_ts(ctx.clock.now() - timedelta(days=OPERATION_COMPACT_DAYS))
+    cutoff = format_ts((now or ctx.clock.now()) - timedelta(days=OPERATION_COMPACT_DAYS))
     count = 0
     with transaction(ctx.db):
         for op in repo.compactable_operations(ctx.db, cutoff):
@@ -54,3 +55,20 @@ def maintain(ctx: Context, policy: WritePolicy | None = None) -> MaintenanceRepo
         removed += repo.delete_compacted_grants(ctx.db, before)
     pruned = prune(ctx.db, ctx.clock, AuditChain(ctx.db, ctx.clock))
     return MaintenanceReport(recovered, changed, compacted, removed, pruned)
+
+
+def recover_operations(ctx: Context) -> None:
+    """The tick's crash-recovery step (W-9): expired leases become `uncertain`."""
+    Engine(ctx).recover()
+
+
+def compact_grants(ctx: Context, now: datetime) -> int:
+    """Grant timers and compaction (G-2, G-8, G-9) for the sweeper's `compactors` seam."""
+    return Engine(ctx).grants.sweep()
+
+
+COMPACTORS: list[tuple[str, Callable[[Context, datetime], int]]] = [
+    ("operations_compacted", compact_operations),
+    ("grants_changed", compact_grants),
+]
+"""Pass to `memory.sweeper.sweep(..., compactors=COMPACTORS)`; each applies writes' own rules."""

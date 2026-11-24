@@ -443,3 +443,19 @@ def test_w9_prepared_operations_survive_a_crash_and_do_resumes(rig: WriteRig) ->
     assert rig.fake.dispatch_log[0].applied
     assert len(rig.fake.dispatch_log) == 1
     assert artifact in rig.artifacts.blobs
+
+
+def test_the_tick_seams_recover_compact_and_sweep_grants(rig: WriteRig) -> None:
+    from chamberlain.writes.maintenance import COMPACTORS, recover_operations
+
+    op = rig.ready_send()
+    rig.mail.crash_after_dispatch = True
+    with pytest.raises(SimulatedCrash):
+        rig.engine().do(op.handle)
+    rig.mail.crash_after_dispatch = False
+    rig.clock.advance(minutes=6)
+    recover_operations(rig.ctx)
+    assert rig.engine().get(op.handle).state is S.UNCERTAIN
+    assert [name for name, _ in COMPACTORS] == ["operations_compacted", "grants_changed"]
+    changed = [fn(rig.ctx, rig.clock.now()) for _, fn in COMPACTORS]
+    assert changed == [0, 0]
