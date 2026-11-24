@@ -7,6 +7,7 @@ Contract: docs/contracts/02-tools.md (`open`, T-6, T-9) and 06-memory.md
 
 from chamberlain.app.context import Context, Result
 from chamberlain.domain.artifacts import ArtifactKind
+from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.events import EventKind
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement
 from chamberlain.domain.handles import HandleKind, handle_kind
@@ -18,11 +19,13 @@ from chamberlain.domain.operations import (
     Verification,
     recheck_text,
 )
-from chamberlain.memory import refs, repo
+from chamberlain.limits import ATTACHMENT_TEXT_MAX_BYTES
+from chamberlain.memory import attachment_text, refs, repo
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.retrieval import one_line
 from chamberlain.memory.timeutil import parse
+from chamberlain.ports import MailPort
 from chamberlain.schema.envelope import Content, ContentKind
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import (
@@ -49,6 +52,13 @@ _TEXT_TYPES = ("text/", "application/json", "application/xml")
 
 def open_handle(ctx: Context, request: OpenRequest) -> Result:
     kind = handle_kind(request.handle)
+    if request.attachment is not None and kind is not HandleKind.MESSAGE:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_WRONG_KIND,
+            "Only a message handle has attachments to read.",
+            fix="Open the message with attachment set to one of its attachment ids.",
+            field="attachment",
+        )
     match kind:
         case HandleKind.CARD:
             card = CardService(ctx.db, ctx.clock).view(request.handle)
@@ -143,6 +153,10 @@ def _artifact(ctx: Context, request: OpenRequest) -> OpenResponse:
         return OpenResponse(handle=request.handle, view=view)
     media = str(row["media_type"])
     kind = str(row["kind"])
+    if kind == "attachment" and state == "live":
+        data = store.read_bytes(request.handle)
+        if attachment_text.readable(media, data):
+            return _attachment_page(request, view, attachment_text.extract(media, data))
     if kind not in ("mail_body", "text") and not media.startswith(_TEXT_TYPES):
         raise ChamberlainError(
             ErrorCode.REQUEST_WRONG_KIND,
@@ -157,6 +171,15 @@ def _artifact(ctx: Context, request: OpenRequest) -> OpenResponse:
     }.get(kind, ContentKind.STORED_TEXT)
     content, window = _page(text, request, content_kind)
     return OpenResponse(handle=request.handle, view=view, content=content, range=window)
+
+
+def _attachment_page(
+    request: OpenRequest, view: ArtifactView | MessageView, found: attachment_text.Extracted
+) -> OpenResponse:
+    content, window = _page(found.text, request, ContentKind.ATTACHMENT_TEXT)
+    return OpenResponse(
+        handle=request.handle, view=view, content=content, range=window, text_info=found.info
+    )
 
 
 def _grant(ctx: Context, handle: str) -> OpenResponse:
@@ -258,6 +281,17 @@ def _message(ctx: Context, request: OpenRequest) -> OpenResponse:
         raw_sha256=message.raw_sha256,
         cards=tuple(repo.cards_for_ref(ctx.db, request.handle)),
     )
+    if request.attachment is not None:
+        if request.part is not OpenPart.BODY:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "An attachment's text is read with part body.",
+                fix="Add part body to the call.",
+                field="part",
+            )
+        return _attachment_page(
+            request, view, _attachment_text(port, source, locator, message, request)
+        )
     if request.part is OpenPart.BODY:
         content, window = _page(message.body_text, request, ContentKind.MAIL_BODY)
         return OpenResponse(handle=request.handle, view=view, content=content, range=window)
@@ -276,6 +310,33 @@ def _message(ctx: Context, request: OpenRequest) -> OpenResponse:
         )
         return OpenResponse(handle=request.handle, view=view, attachments=infos)
     return OpenResponse(handle=request.handle, view=view)
+
+
+def _attachment_text(
+    port: MailPort, source: str, locator: str, message: Message, request: OpenRequest
+) -> attachment_text.Extracted:
+    """The text of one attachment, read live and held in memory only (T-9a)."""
+    meta = next((m for m in message.attachments if m.id == request.attachment), None)
+    if meta is None:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_UNKNOWN_HANDLE,
+            "That message has no attachment with that id.",
+            fix="Open the message with part attachments to see the ids.",
+            field="attachment",
+        )
+    if meta.size > ATTACHMENT_TEXT_MAX_BYTES:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_TOO_LARGE,
+            "That attachment is too large to read as text.",
+            fix="Keep it as an artifact, then open it with part file and lease true.",
+            field="attachment",
+        )
+    got = port.attachment(source, locator, meta.id)
+    if sha256_bytes(got.data) != got.sha256:
+        raise ChamberlainError(
+            ErrorCode.ARTIFACT_HASH_MISMATCH, "The attachment did not match its hash."
+        )
+    return attachment_text.extract(got.meta.media_type, got.data)
 
 
 def _contact(ctx: Context, request: OpenRequest) -> OpenResponse:
