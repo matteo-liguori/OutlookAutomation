@@ -64,6 +64,10 @@ or recorded transport only), `known_broken`.
   item where exactly one is required, `remote.ambiguous`.
 - **P-7** Two physical copies of one RFC message (same `Message-ID` in two
   folders) are two items with two locators. A connector MUST NOT merge them.
+- **P-7a** A `MessageSummary` carries `to` and `cc` as the folder listing shows
+  them (Sent-history seeding, G-15). `Message.authentication_results` carries
+  the message's `Authentication-Results` headers, topmost first (owner
+  decision 2026-11-24: authorised-sender email instructions).
 - **P-8** Attachment bytes are returned with their SHA-256 and size; a
   transfer whose bytes do not match the announced hash raises and yields
   nothing.

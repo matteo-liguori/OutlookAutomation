@@ -133,6 +133,10 @@ captures the flag before and after and fails with `changed` if it moved):
   first by `(date_ms, folder_id + NUL + message_id)` and paged by an explicit
   keyset cursor (`after`), so a cursor stays valid when mail arrives. When the
   scan stops at `max_scan` the result says `complete: false`.
+- `read` returns `authentication_results`: every `Authentication-Results`
+  header of the message, topmost first, each clipped to 2000 characters (at
+  most 8). The receiving provider adds the topmost; the sender can add the
+  others, so only the topmost is evidence (`domain/sender_auth.py`).
 - `resolve` returns every physical copy of one Message-ID in one folder.
 - `refresh` asks the provider to synchronise exactly the named folders (at
   most 8) and reports the provider callback per folder. It is a read: it

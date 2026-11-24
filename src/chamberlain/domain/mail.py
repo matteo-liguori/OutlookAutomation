@@ -53,11 +53,15 @@ class MessageSummary(Model):
     unread: bool
     has_attachments: bool = False
     preview: str = ""
+    to: tuple[Address, ...] = ()
+    cc: tuple[Address, ...] = ()
+    """Recipients as the folder listing shows them: Sent-history seeding reads these."""
 
 
 class Message(MessageSummary):
-    to: tuple[Address, ...] = ()
-    cc: tuple[Address, ...] = ()
+    authentication_results: tuple[str, ...] = ()
+    """Every `Authentication-Results` header, topmost first, each clipped. Only the topmost,
+    added by the receiving provider, may be trusted (`domain/sender_auth.py`)."""
     body_text: str = ""
     raw_sha256: Sha256 | None = None
     """Hash of the stored message; drafts use it for optimistic concurrency."""
