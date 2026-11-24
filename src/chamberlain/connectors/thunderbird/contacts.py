@@ -11,7 +11,10 @@ from dataclasses import dataclass
 
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure
-from chamberlain.connectors.thunderbird.identity import encode_contact_locator
+from chamberlain.connectors.thunderbird.identity import (
+    decode_contact_locator,
+    encode_contact_locator,
+)
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.domain.capabilities import (
     Capability,
@@ -34,6 +37,19 @@ class ContactsBinding:
 
 def _bad_cursor() -> ChamberlainError:
     return ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid.")
+
+
+def _contact(source: str, found: protocol.ContactInfo) -> Contact:
+    addresses = tuple(e.strip().lower() for e in found.emails if e.strip())
+    fields: dict[str, object] = {
+        "source": source,
+        "locator": encode_contact_locator(found.book_id, found.id),
+        "name": found.name,
+    }
+    try:
+        return Contact.model_validate({**fields, "emails": addresses})
+    except ValueError:
+        return Contact.model_validate({**fields, "emails": ()})
 
 
 class ThunderbirdContacts:
@@ -80,6 +96,23 @@ class ThunderbirdContacts:
             {"source": source, "state": state, "checked_at": checked, "fresh_as_of": None}
         )
 
+    def read(self, source: str, locator: str) -> Contact:
+        """The one contact a locator names, read live from its bound address book."""
+        binding = self._binding(source)
+        book_id, contact_id = decode_contact_locator(locator)
+        if book_id not in binding.address_book_ids:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_UNKNOWN_HANDLE, "That contact is not in a bound address book."
+            )
+        reply = self._client.call(
+            protocol.Command.CONTACT_READ,
+            protocol.ContactReadArgs(address_book_id=book_id, contact_id=contact_id),
+        )
+        result = reply.result
+        if not isinstance(result, protocol.ContactReadResult):
+            raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Unexpected bridge result type.")
+        return _contact(source, result.contact)
+
     def search(self, source: str, query: ContactQuery, cursor: str | None = None) -> Page[Contact]:
         binding = self._binding(source)
         tag = sha256_text(query.text)[:12]
@@ -105,31 +138,7 @@ class ThunderbirdContacts:
         result = reply.result
         if not isinstance(result, protocol.ContactsResult):
             raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Unexpected bridge result type.")
-        items: list[Contact] = []
-        for found in result.contacts:
-            addresses = tuple(e.strip().lower() for e in found.emails if e.strip())
-            try:
-                items.append(
-                    Contact.model_validate(
-                        {
-                            "source": source,
-                            "locator": encode_contact_locator(found.book_id, found.id),
-                            "name": found.name,
-                            "emails": addresses,
-                        }
-                    )
-                )
-            except ValueError:
-                items.append(
-                    Contact.model_validate(
-                        {
-                            "source": source,
-                            "locator": encode_contact_locator(found.book_id, found.id),
-                            "name": found.name,
-                            "emails": (),
-                        }
-                    )
-                )
+        items = [_contact(source, found) for found in result.contacts]
         next_cursor = None
         if result.more:
             marker = f"{tag}:{skip + query.limit}".encode("ascii")

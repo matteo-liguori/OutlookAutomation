@@ -190,6 +190,15 @@ interface ContactInfo {
   emails: string[];
 }
 
+interface ContactReadArgs {
+  address_book_id: string;
+  contact_id: string;
+}
+
+interface ContactReadResult {
+  contact: ContactInfo;
+}
+
 interface ContactsArgs {
   address_book_ids: string[];
   text: string;
@@ -647,6 +656,7 @@ interface CommandArgs {
   resolve: ResolveArgs;
   refresh: RefreshArgs;
   contacts: ContactsArgs;
+  contact_read: ContactReadArgs;
   send: SendArgs;
   draft_save: DraftSaveArgs;
   draft_update: DraftUpdateArgs;
@@ -679,6 +689,7 @@ interface CommandResults {
   resolve: ResolveResult;
   refresh: RefreshResult;
   contacts: ContactsResult;
+  contact_read: ContactReadResult;
   send: SendResult;
   draft_save: DraftResult;
   draft_update: DraftResult;
@@ -704,7 +715,7 @@ interface CommandResults {
 const PROTOCOL_VERSION = 2;
 const CHUNK_BYTES = 196608;
 const TO_ADDON_LIMIT = 900000;
-const COMMANDS: readonly string[] = ["status", "accounts", "folders", "query", "read", "attachment", "resolve", "refresh", "contacts", "send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read", "reconcile_send", "reconcile_draft_save", "reconcile_draft_update", "reconcile_draft_discard", "reconcile_move", "reconcile_trash", "reconcile_mark_read", "calendar_list", "calendar_query", "calendar_read", "calendar_create", "calendar_update", "calendar_delete"];
+const COMMANDS: readonly string[] = ["status", "accounts", "folders", "query", "read", "attachment", "resolve", "refresh", "contacts", "contact_read", "send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read", "reconcile_send", "reconcile_draft_save", "reconcile_draft_update", "reconcile_draft_discard", "reconcile_move", "reconcile_trash", "reconcile_mark_read", "calendar_list", "calendar_query", "calendar_read", "calendar_create", "calendar_update", "calendar_delete"];
 const WRITE_COMMANDS: readonly string[] = ["calendar_create", "calendar_delete", "calendar_update", "draft_discard", "draft_save", "draft_update", "mark_read", "move", "send", "trash"];
 const REQUIRED_CAPABILITIES: readonly string[] = ["attachments", "contacts", "draft", "mark_read", "move", "read", "refresh", "search", "send", "trash"];
 const ADVERTISED_CAPABILITIES: readonly string[] = ["attachments", "calendar", "contacts", "draft", "mark_read", "move", "read", "refresh", "search", "send", "trash"];
@@ -718,6 +729,7 @@ const ARGS_SCHEMA_NAME: { [cmd: string]: string } = {
  "resolve": "ResolveArgs",
  "refresh": "RefreshArgs",
  "contacts": "ContactsArgs",
+ "contact_read": "ContactReadArgs",
  "send": "SendArgs",
  "draft_save": "DraftSaveArgs",
  "draft_update": "DraftUpdateArgs",
@@ -1662,6 +1674,42 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
    "name"
   ],
   "title": "ContactInfo",
+  "type": "object"
+ },
+ "ContactReadArgs": {
+  "additionalProperties": false,
+  "properties": {
+   "address_book_id": {
+    "maxLength": 200,
+    "minLength": 1,
+    "title": "Address Book Id",
+    "type": "string"
+   },
+   "contact_id": {
+    "maxLength": 200,
+    "minLength": 1,
+    "title": "Contact Id",
+    "type": "string"
+   }
+  },
+  "required": [
+   "address_book_id",
+   "contact_id"
+  ],
+  "title": "ContactReadArgs",
+  "type": "object"
+ },
+ "ContactReadResult": {
+  "additionalProperties": false,
+  "properties": {
+   "contact": {
+    "$ref": "#/$defs/ContactInfo"
+   }
+  },
+  "required": [
+   "contact"
+  ],
+  "title": "ContactReadResult",
   "type": "object"
  },
  "ContactsArgs": {

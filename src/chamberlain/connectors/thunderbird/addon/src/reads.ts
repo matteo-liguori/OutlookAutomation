@@ -350,6 +350,20 @@ async function cmdContacts(a: ContactsArgs): Promise<ContactsResult> {
   return { contacts: window, more: contacts.length > a.skip + a.limit, complete, scanned };
 }
 
+async function cmdContactRead(a: ContactReadArgs): Promise<ContactReadResult> {
+  let person: any;
+  try {
+    person = await messenger.addressBooks.contacts.get(a.contact_id);
+  } catch {
+    person = null;
+  }
+  check(person && String(person.parentId ?? a.address_book_id) === a.address_book_id, "not_found", "That contact is not in the address book.");
+  const p = person.properties ?? {};
+  const emails = [p.PrimaryEmail, p.SecondEmail].filter(Boolean).map(String);
+  const name = p.DisplayName || [p.FirstName, p.LastName].filter(Boolean).join(" ");
+  return { contact: { id: String(person.id), book_id: a.address_book_id, name: clip(name, 500), emails } };
+}
+
 async function cmdStatus(): Promise<StatusResult> {
   const info = await messenger.runtime.getBrowserInfo();
   return { addon_version: ADDON_VERSION, browser_version: info.version, write_busy: writeBusy, capabilities: advertisedCapabilities() };

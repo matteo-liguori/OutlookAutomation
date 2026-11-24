@@ -81,6 +81,8 @@ async function runCommand(frame: RequestFrame, ctx: Ctx): Promise<{ result: unkn
       return plain(cmdRefresh(args));
     case "contacts":
       return plain(cmdContacts(args));
+    case "contact_read":
+      return plain(cmdContactRead(args));
     case "send":
       return plain(cmdCompose(args, ctx, "send"));
     case "draft_save":

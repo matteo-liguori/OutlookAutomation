@@ -472,6 +472,17 @@ test("P-11 reconcile_mark_read reports copies and flags without changing them", 
   assert.equal(world.counters.update, 0);
 });
 
+test("a contact is read by its book and id, and only inside that book", async () => {
+  const { addon, world } = setup();
+  world.books.push({ book: "book1", id: "c9", properties: { DisplayName: "Ada Reader", PrimaryEmail: "ada@example.org" } });
+  const got = await call(addon, "contact_read", { address_book_id: "book1", contact_id: "c9" });
+  assert.deepEqual(got.result.contact, { id: "c9", book_id: "book1", name: "Ada Reader", emails: ["ada@example.org"] });
+  const wrongBook = await call(addon, "contact_read", { address_book_id: "book2", contact_id: "c9" });
+  assert.equal(wrongBook.error.code, "not_found");
+  const missing = await call(addon, "contact_read", { address_book_id: "book1", contact_id: "nope" });
+  assert.equal(missing.error.code, "not_found");
+});
+
 test("contacts are matched by name and address and paged", async () => {
   const { addon, world } = setup();
   for (let i = 0; i < 3; i++) world.books.push({ book: "book1", id: "c" + i, properties: { DisplayName: "Paging Marker " + i, PrimaryEmail: "p" + i + "@example.org" } });
