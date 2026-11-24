@@ -1,0 +1,16 @@
+{
+  "ok": true,
+  "data": {
+    "rules": [
+      {
+        "id": "send.uncertain",
+        "version": 1,
+        "title": "A send may have gone out",
+        "text": "This send may have gone out. Do not send it again, in any form. Read what happened with reconcile. If it stays uncertain, tell the user plainly what is known and what is not, and leave it open."
+      }
+    ]
+  },
+  "next": [],
+  "guidance": [],
+  "notices": []
+}

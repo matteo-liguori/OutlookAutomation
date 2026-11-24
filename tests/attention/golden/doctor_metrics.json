@@ -1,0 +1,53 @@
+{
+  "ok": true,
+  "data": {
+    "checks": [
+      {
+        "id": "schema.migrations",
+        "status": "ok",
+        "summary": "0 migrations waiting to be applied."
+      },
+      {
+        "id": "schema.table_classes",
+        "status": "ok",
+        "summary": "0 tables have no lifetime class."
+      },
+      {
+        "id": "guidance.rules",
+        "status": "ok",
+        "summary": "36 rules, 6929 characters."
+      },
+      {
+        "id": "guidance.overrides",
+        "status": "ok",
+        "summary": "0 overrides need re-checking, 0 were ignored."
+      },
+      {
+        "id": "sources.health",
+        "status": "ok",
+        "summary": "0 of 0 sources need attention."
+      }
+    ],
+    "metrics": {
+      "open_cards": 0,
+      "open_card_chars_avg": 0,
+      "open_card_chars_max": 0,
+      "evidence_rows": 0,
+      "evidence_per_open_card": 0.0,
+      "artifacts_live": 0,
+      "artifact_bytes": 0,
+      "artifacts_without_owner": 0,
+      "orphans_quarantined": 0,
+      "db_bytes": 0,
+      "data_root_bytes": 0,
+      "largest_reply_chars_7d": 0,
+      "guidance_total_chars": 6929,
+      "uncertain_operations": 0,
+      "grants_active": 0,
+      "grants_awaiting_human": 0
+    }
+  },
+  "next": [],
+  "guidance": [],
+  "notices": []
+}

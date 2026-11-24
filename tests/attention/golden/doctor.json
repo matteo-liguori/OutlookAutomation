@@ -1,0 +1,35 @@
+{
+  "ok": true,
+  "data": {
+    "checks": [
+      {
+        "id": "schema.migrations",
+        "status": "ok",
+        "summary": "0 migrations waiting to be applied."
+      },
+      {
+        "id": "schema.table_classes",
+        "status": "ok",
+        "summary": "0 tables have no lifetime class."
+      },
+      {
+        "id": "guidance.rules",
+        "status": "ok",
+        "summary": "36 rules, 6929 characters."
+      },
+      {
+        "id": "guidance.overrides",
+        "status": "ok",
+        "summary": "0 overrides need re-checking, 0 were ignored."
+      },
+      {
+        "id": "sources.health",
+        "status": "ok",
+        "summary": "0 of 0 sources need attention."
+      }
+    ]
+  },
+  "next": [],
+  "guidance": [],
+  "notices": []
+}

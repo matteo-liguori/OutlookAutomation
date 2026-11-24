@@ -520,4 +520,18 @@ def test_s14_runs_and_review_history_are_left_behind_and_counted(
 ) -> None:
     assert imported.left_behind["runs"] == 1
     assert imported.left_behind["message_reviews"] == 1
-    assert imported.unmapped_settings["schedule"] == {"morning": "08:00"}
+    assert imported.unmapped_settings["schedule"] == {"calendar_days_ahead": 3}
+    assert imported.unmapped_settings["updates"] == {"interval_hours": 24}
+
+
+def test_g_old_schedule_and_update_settings_become_connection_settings(
+    data_root: Path, imported: ImportReport
+) -> None:
+    connections = load_connections(data_root)
+    assert [(s.name, s.kind, s.at, s.zone, s.weekdays) for s in connections.schedules] == [
+        ("morning", "mail", "08:00", None, (1, 2, 3, 4, 5, 6, 7)),
+        ("continuation-1400", "mail", "14:00", None, (1, 2, 3, 4, 5, 6, 7)),
+        ("continuation-1900", "mail", "19:00", None, (1, 2, 3, 4, 5, 6, 7)),
+    ]
+    assert connections.updates.enabled is True
+    assert connections.updates.remote == "upstream"

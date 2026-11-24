@@ -15,9 +15,11 @@ from chamberlain.connections.model import (
     Connections,
     GoogleCalendarSource,
     OwlCalendarSource,
+    ScheduleConfig,
     SourceConfig,
     ThunderbirdContactsSource,
     ThunderbirdMailSource,
+    UpdatesConfig,
     WritePolicyConfig,
 )
 from chamberlain.connectors.caldav.credentials import credential_name
@@ -43,7 +45,8 @@ _MAIL_FIELDS = {
     "draft_folder_id": "draft_folder_id",
     "trash_folder_id": "trash_folder_id",
 }
-_SETTING_GROUPS = ("schedule", "reviews", "maintenance", "updates", "templates")
+_SETTING_GROUPS = ("reviews", "maintenance", "templates")
+_CLOCK_TEXT = re.compile(r"^([01]?[0-9]|2[0-3]):([0-5][0-9])$")
 
 
 @dataclass
@@ -111,6 +114,73 @@ def _policy(old: OldInstallation, report: ImportReport) -> WritePolicyConfig:
     if ignored:
         report.unmapped_settings["permission_defaults"] = {k: merged[k] for k in ignored}
     return WritePolicyConfig(send_known=send, other=other)
+
+
+def _clock_time(value: object) -> str | None:
+    """`HH:MM` text or minutes after midnight (840 is 14:00), as the old files wrote them."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int) and 0 <= value < 24 * 60:
+        return f"{value // 60:02d}:{value % 60:02d}"
+    if isinstance(value, str):
+        found = _CLOCK_TEXT.match(value.strip())
+        if found:
+            return f"{int(found.group(1)):02d}:{found.group(2)}"
+    return None
+
+
+def _schedules(old: OldInstallation, report: ImportReport) -> tuple[ScheduleConfig, ...]:
+    """The morning pass and each continuation become daily `mail` passes."""
+    raw = old.customisations.get("schedule")
+    if not isinstance(raw, dict):
+        return ()
+    rest: dict[str, Any] = dict(cast(Json, raw))
+    found: dict[str, ScheduleConfig] = {}
+
+    def add(name: str, value: object) -> bool:
+        at = _clock_time(value)
+        if at is None:
+            return False
+        found.setdefault(at, ScheduleConfig(name=name, kind="mail", at=at))
+        return True
+
+    if add("morning", rest.get("morning")):
+        del rest["morning"]
+    continuations = rest.get("continuations")
+    if isinstance(continuations, list):
+        items = cast(list[Any], continuations)
+        left = [
+            v
+            for v in items
+            if not add(f"continuation-{(_clock_time(v) or '').replace(':', '')}", v)
+        ]
+        if left:
+            rest["continuations"] = left
+        else:
+            del rest["continuations"]
+    if rest:
+        report.unmapped_settings["schedule"] = rest
+    return tuple(found.values())
+
+
+def _updates(old: OldInstallation, report: ImportReport) -> UpdatesConfig:
+    raw = old.customisations.get("updates")
+    if not isinstance(raw, dict):
+        return UpdatesConfig()
+    rest: dict[str, Any] = dict(cast(Json, raw))
+    enabled = rest.get("enabled")
+    remote = rest.get("remote")
+    config = UpdatesConfig(
+        enabled=enabled if isinstance(enabled, bool) else False,
+        remote=remote.strip() if isinstance(remote, str) and remote.strip() else "origin",
+    )
+    if isinstance(enabled, bool):
+        del rest["enabled"]
+    if isinstance(remote, str) and remote.strip():
+        del rest["remote"]
+    if rest:
+        report.unmapped_settings["updates"] = rest
+    return config
 
 
 def _carry_settings(old: OldInstallation, report: ImportReport) -> None:
@@ -224,6 +294,8 @@ def map_profile(
         timezone=_zone(old),
         write_policy=_policy(old, report),
         budgets=BudgetsConfig(),
+        schedules=_schedules(old, report),
+        updates=_updates(old, report),
         sources=sources,
     )
     return mapped

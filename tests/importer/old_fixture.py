@@ -96,7 +96,8 @@ def profile() -> dict[str, Any]:
 
 def customisations() -> dict[str, Any]:
     return {
-        "schedule": {"morning": "08:00"},
+        "schedule": {"morning": "08:00", "continuations": [840, 1140], "calendar_days_ahead": 3},
+        "updates": {"enabled": True, "remote": "upstream", "interval_hours": 24},
         "instructions": {"reporting": "Private reporting rule: lead with calendar clashes."},
     }
 

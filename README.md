@@ -6,23 +6,70 @@ hands over guidance when it is relevant, keeps every stored item owned and
 time-limited, and refuses any write that lacks verifiable permission or
 would be a blind resend.
 
-This is the rebuild (alpha). It is being built in waves against a written
-contract. Nothing here connects to a real mailbox yet.
+This is the rebuild. The old harness stays as the fallback until you cut over.
 
 - Why and how: [docs/rebuild-plan.md](docs/rebuild-plan.md)
-- The binding specification: [docs/contracts/](docs/contracts/00-index.md)
+- The binding specification (the contracts): [docs/contracts/](docs/contracts/00-index.md)
+- The guidance rules, as one page for your review: [docs/guidance-review.md](docs/guidance-review.md)
 - Who builds what: [docs/OWNERSHIP.md](docs/OWNERSHIP.md), [docs/waves/](docs/waves/)
 - Message board for builders: [docs/BOARD.md](docs/BOARD.md)
 
-## Set up
+## Getting started
 
-Python 3.12 or later.
+Use a new, empty data root for Chamberlain, never the old one. Pass it with
+`--data <folder>` or set `CHAMBERLAIN_DATA`. Commands below use the Windows path to
+Python; on macOS or Linux use `.venv/bin/python`.
 
-```
-python -m venv .venv
-.venv/Scripts/python -m pip install -e ".[dev]"      # Windows
-.venv/bin/python -m pip install -e ".[dev]"          # macOS, Linux
-```
+1. Install. Python 3.12 or later, and Node 22.13 or later for the Thunderbird add-on.
+
+   ```
+   python -m venv .venv
+   .venv/Scripts/python -m pip install -e ".[dev]"
+   ```
+
+2. Thunderbird add-on. The setup command builds the add-on and writes the native host
+   manifest into the folders you name. It registers nothing system-wide.
+
+   ```
+   .venv/Scripts/python -m chamberlain.connectors.thunderbird.setup --bridge-dir <data root>/bridge --manifest-dir <manifest folder>
+   ```
+
+   Then, with your approval, register that manifest for your platform and install the
+   built package in Thunderbird (Add-ons Manager, Install Add-on From File). It has its
+   own ID, so the old add-on can keep running beside it.
+
+3. Calendars, if you use them. Each is a guided command that saves secrets only in the
+   operating system's credential store.
+
+   ```
+   .venv/Scripts/python -m chamberlain.connectors.google_calendar.setup client
+   .venv/Scripts/python -m chamberlain.connectors.google_calendar.setup link you@example.com
+   .venv/Scripts/python -m chamberlain.connectors.caldav.setup credential   # iCloud
+   .venv/Scripts/python -m chamberlain.connectors.caldav.setup register
+   ```
+
+4. Import your old data, if you have any:
+
+   ```
+   chamberlain --data <data root> import <copy of old data root>
+   ```
+
+   The import only reads the old folder and never modifies it. Import a copy taken while
+   the old harness is closed. It writes `config/connections.yaml` (once, never
+   overwritten), your cards, and the report at `<data root>/import/report.json`. Then run
+   `chamberlain config validate`. The full steps are in [docs/cutover.md](docs/cutover.md);
+   settings are in [docs/configuration.md](docs/configuration.md).
+
+5. Viewer. `chamberlain viewer` opens a local page where you confirm grants, settle
+   uncertain operations and read reports.
+
+6. Scheduling. See [docs/scheduling.md](docs/scheduling.md) for the five-minute tick and
+   the passes in `connections.yaml`.
+
+Check the result with `chamberlain doctor --metrics`. Real-account checks before cutover
+are in [docs/live-validation.md](docs/live-validation.md).
+
+## Development setup
 
 The type checker (pyright) fetches its engine through Node the first time it
 runs; Node 18 or later must be on the path.
@@ -48,8 +95,6 @@ chamberlain prompt                     # the standing prompt an agent is given
 chamberlain --data ./scratch-data doctor
 ```
 
-Most tools answer `tool.not_implemented` until wave 1 lands.
-
 ## Layout
 
 ```
@@ -59,12 +104,12 @@ src/chamberlain/
   ports/        MailPort, CalendarPort, ContactsPort, Clock
   store/        SQLite connection and numbered migrations
   app/          the one entry point and the seams between tracks
-  memory/       principle 2: records, artifacts, the sweeper        (wave 1)
-  attention/    principle 1: events, guidance selection             (wave 1)
-  writes/       authorisation, the write state machine, audit       (wave 1)
-  connectors/   fake/ (done), thunderbird/ (wave 1), calendars (wave 2)
-  surface/      cli.py, mcp_server.py, viewer/ (wave 2)
-  guidance/     one small rule file per rule                        (wave 1)
-  importer/     one-shot import from the old harness                (wave 2)
+  memory/       principle 2: records, artifacts, the sweeper
+  attention/    principle 1: events, guidance selection
+  writes/       authorisation, the write state machine, audit
+  connectors/   fake/, thunderbird/, calendars
+  surface/      cli.py, mcp_server.py, viewer/
+  guidance/     one small rule file per rule
+  importer/     one-shot import from the old harness
   testing/      connector contract suites and rigs
 ```
