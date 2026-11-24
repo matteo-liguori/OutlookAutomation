@@ -7,6 +7,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain prompt                  print the standing prompt
     chamberlain tick                    run one tick for the operating system scheduler
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
+    chamberlain config validate|show    check or print config/connections.yaml (no secrets)
     chamberlain <tool> --json '{...}'   call a tool and print the envelope
 """
 
@@ -19,7 +20,14 @@ from pathlib import Path
 from typing import Any, TextIO
 
 from chamberlain import __version__
-from chamberlain.app.wiring import build_app, run_tick
+from chamberlain.app.wiring import run_tick
+from chamberlain.connections import (
+    build_runtime,
+    load_connections,
+    open_app,
+    render_redacted,
+)
+from chamberlain.ports.clock import SystemClock
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Reply, error_reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
@@ -56,6 +64,8 @@ def _parser() -> argparse.ArgumentParser:
     schema = commands.add_parser("schema", help="print a tool's schema")
     schema.add_argument("tool", choices=sorted(BY_NAME))
     commands.add_parser("prompt", help="print the standing prompt")
+    config = commands.add_parser("config", help="check or print the connection profile")
+    config.add_argument("action", choices=["validate", "show"])
     commands.add_parser(
         "tick", help="run one tick (exit status 10: events wait and no session is active)"
     )
@@ -106,11 +116,15 @@ def _call_tool(args: argparse.Namespace, out: TextIO) -> int:
             )
         )
     else:
-        app = build_app(Path(data))
         try:
-            reply = app.call(args.command, request)
-        finally:
-            app.close()
+            app = open_app(Path(data))
+        except ChamberlainError as error:
+            reply = error_reply(error)
+        else:
+            try:
+                reply = app.call(args.command, request)
+            finally:
+                app.close()
     _print(out, reply.model_dump(mode="json", exclude_none=True))
     return exit_code(reply)
 
@@ -127,13 +141,61 @@ def _tick(args: argparse.Namespace, out: TextIO) -> int:
         )
         _print(out, reply.model_dump(mode="json", exclude_none=True))
         return EXIT_FAILED
-    app = build_app(Path(data))
+    try:
+        app = open_app(Path(data))
+    except ChamberlainError as error:
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
     try:
         ran, wake = run_tick(app)
     finally:
         app.close()
     _print(out, {"ran": ran, "wake": wake != 0})
     return wake
+
+
+class _NoSecrets:
+    """A credential store that holds nothing, so `config validate` never touches the real one."""
+
+    def get(self, service: str, name: str) -> str | None:
+        return None
+
+    def set(self, service: str, name: str, value: str) -> None:
+        raise ChamberlainError(ErrorCode.CONFIG_INVALID, "Validation does not save secrets.")
+
+    def delete(self, service: str, name: str) -> bool:
+        return False
+
+
+def _config(args: argparse.Namespace, out: TextIO) -> int:
+    data = args.data or os.environ.get(DATA_ENV)
+    try:
+        if not data:
+            raise ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                "No data root is set.",
+                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
+            )
+        connections = load_connections(Path(data))
+        if args.action == "show":
+            _print(out, render_redacted(connections))
+            return EXIT_OK
+        runtime = build_runtime(connections, Path(data), SystemClock(), secrets=_NoSecrets())
+        _print(
+            out,
+            {
+                "ok": True,
+                "sources": {
+                    source_id: {"kind": source.kind, "enabled": source.enabled}
+                    for source_id, source in sorted(connections.sources.items())
+                },
+                "connectors": runtime.sources.source_ids(),
+            },
+        )
+        return EXIT_OK
+    except ChamberlainError as error:
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
 
 
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
@@ -155,6 +217,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return EXIT_OK
     if args.command == "tick":
         return _tick(args, stream)
+    if args.command == "config":
+        return _config(args, stream)
     return _call_tool(args, stream)
 
 
