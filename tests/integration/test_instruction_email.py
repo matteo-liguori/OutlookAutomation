@@ -36,12 +36,12 @@ def email(stack: Stack, number: int, sender: str, *auth: str) -> str:
     stack.fake.mail.add_message(
         MAIL,
         internet_message_id=f"<i{number}@example.org>",
-        subject="Please mark the invoice mail read",
+        subject=f"Please mark invoice number {number} read",
         sender=sender,
         authentication_results=auth,
         body="Please do it.",
     )
-    hits = stack.ok("find", scope="mail", query="invoice")["hits"]
+    hits = stack.ok("find", scope="mail", query=f"number {number}")["hits"]
     return str(hits[0]["handle"])
 
 
@@ -180,3 +180,15 @@ def test_the_agent_cannot_attach_a_ref_through_text_evidence(stack: Stack) -> No
     ).fetchone()
     assert stored["ref"] is None
     assert json.dumps(words)
+
+
+def test_accepted_and_refused_instructions_show_in_the_viewer_audit(stack: Stack) -> None:
+    from chamberlain.surface.viewer.views import activity
+
+    configure(stack, owner=[OWNER])
+    approve_with(stack, email(stack, 1, OWNER, PASS))
+    approve_with(stack, email(stack, 2, OWNER, SPOOF))
+    shown = activity(stack.app.context, "UTC", None)
+    kinds = [row["kind"] for row in shown["events"]]
+    assert "instruction.accepted" in kinds
+    assert "instruction.refused" in kinds
