@@ -92,7 +92,8 @@ def _object(node: dict[str, JsonValue]) -> str:
     assert isinstance(required, list)
     lines: list[str] = []
     for name, child in properties.items():
-        mark = "" if name in required else "?"
+        has_default = isinstance(child, dict) and child.get("default") is not None
+        mark = "" if name in required or has_default else "?"
         lines.append(f"  {name}{mark}: {_ts(child)};")
     return "{\n" + "\n".join(lines) + "\n}"
 

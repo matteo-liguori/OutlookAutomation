@@ -12,7 +12,7 @@ interface AccountInfo {
   id: string;
   type: string;
   name: string;
-  identities?: IdentityInfo[];
+  identities: IdentityInfo[];
 }
 
 interface AccountsArgs {
@@ -24,12 +24,12 @@ interface AccountsResult {
 }
 
 interface AddonHello {
-  t?: "addon_hello";
+  t: "addon_hello";
   v: number;
   id: string;
   addon_version: string;
-  browser_version?: string;
-  capabilities?: string[];
+  browser_version: string;
+  capabilities: string[];
 }
 
 interface AttachmentArgs {
@@ -45,7 +45,7 @@ interface AttachmentInfo {
   part_name: string;
   name: string;
   size: number;
-  content_type?: string;
+  content_type: string;
 }
 
 interface AttachmentResult {
@@ -61,21 +61,21 @@ interface AttachmentSpec {
   name: string;
   size: number;
   sha256: string;
-  content_type?: string;
+  content_type: string;
   chunks: number;
 }
 
 interface BridgeError {
   code: BridgeErrorCode;
-  message?: string;
-  mutation?: "none" | "possible";
-  retryable?: boolean;
+  message: string;
+  mutation: "none" | "possible";
+  retryable: boolean;
 }
 
 type BridgeErrorCode = "bad_request" | "unknown_command" | "account_mismatch" | "not_found" | "ambiguous" | "changed" | "busy" | "timeout" | "client_offline" | "not_verified" | "too_large" | "hash_mismatch" | "unsupported" | "internal";
 
 interface ChunkFrame {
-  t?: "chunk";
+  t: "chunk";
   v: number;
   id: string;
   name: string;
@@ -85,44 +85,44 @@ interface ChunkFrame {
 }
 
 interface ClientHello {
-  t?: "client_hello";
+  t: "client_hello";
   v: number;
   id: string;
   token: string;
-  client_version?: string;
-  require?: string[];
+  client_version: string;
+  require: string[];
 }
 
 interface ComposeArgs {
   account_id: string;
   mailbox: string;
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
+  to: string[];
+  cc: string[];
+  bcc: string[];
   subject: string;
   body: string;
-  high_importance?: boolean;
+  high_importance: boolean;
   sent_folder_id: string;
   draft_folder_id: string;
   token: string;
-  attachments?: AttachmentSpec[];
+  attachments: AttachmentSpec[];
   reply_to?: MessageRef | null;
-  display_only?: boolean;
+  display_only: boolean;
 }
 
 interface ContactInfo {
   id: string;
   book_id: string;
   name: string;
-  emails?: string[];
+  emails: string[];
 }
 
 interface ContactsArgs {
   address_book_ids: string[];
   text: string;
-  limit?: number;
-  skip?: number;
-  max_items?: number;
+  limit: number;
+  skip: number;
+  max_items: number;
 }
 
 interface ContactsResult {
@@ -134,7 +134,7 @@ interface ContactsResult {
 
 interface DiscardResult {
   closed: number;
-  saved_mail_deleted?: false;
+  saved_mail_deleted: false;
 }
 
 interface DraftDiscardArgs {
@@ -148,55 +148,55 @@ interface DraftResult {
   header: Header;
   raw_sha256: string;
   attachment_bytes_verified: boolean;
-  old_copies_remaining?: number;
+  old_copies_remaining: number;
 }
 
 interface DraftSaveArgs {
   account_id: string;
   mailbox: string;
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
+  to: string[];
+  cc: string[];
+  bcc: string[];
   subject: string;
   body: string;
-  high_importance?: boolean;
+  high_importance: boolean;
   sent_folder_id: string;
   draft_folder_id: string;
   token: string;
-  attachments?: AttachmentSpec[];
+  attachments: AttachmentSpec[];
   reply_to?: MessageRef | null;
-  display_only?: boolean;
+  display_only: boolean;
 }
 
 interface DraftUpdateArgs {
   account_id: string;
   mailbox: string;
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
+  to: string[];
+  cc: string[];
+  bcc: string[];
   subject: string;
   body: string;
-  high_importance?: boolean;
+  high_importance: boolean;
   sent_folder_id: string;
   draft_folder_id: string;
   token: string;
-  attachments?: AttachmentSpec[];
+  attachments: AttachmentSpec[];
   reply_to?: MessageRef | null;
-  display_only?: boolean;
+  display_only: boolean;
   draft: MessageRef;
   expected_raw_sha256: string;
 }
 
 interface Fingerprint {
   sender: string;
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
+  to: string[];
+  cc: string[];
+  bcc: string[];
   subject: string;
   body_sha256: string;
-  attachment_sha256?: string[];
-  high_importance?: boolean;
-  in_reply_to?: string;
+  attachment_sha256: string[];
+  high_importance: boolean;
+  in_reply_to: string;
   token: string;
 }
 
@@ -211,19 +211,19 @@ interface FolderInfo {
   name: string;
   path: string;
   account_id: string;
-  special_use?: string[];
+  special_use: string[];
 }
 
 interface FolderRefresh {
   folder_id: string;
   success: boolean;
-  code?: string;
+  code: string;
 }
 
 interface FoldersArgs {
   account_id: string;
   mailbox: string;
-  include_outbox?: boolean;
+  include_outbox: boolean;
 }
 
 interface FoldersResult {
@@ -236,35 +236,35 @@ interface Header {
   subject: string;
   date_ms: number;
   author: string;
-  recipients?: string[];
-  cc?: string[];
-  bcc?: string[];
+  recipients: string[];
+  cc: string[];
+  bcc: string[];
   read: boolean;
   folder_id: string;
-  folder_path?: string;
-  special_use?: string[];
-  has_attachments?: boolean;
-  priority?: string;
+  folder_path: string;
+  special_use: string[];
+  has_attachments: boolean;
+  priority: string;
 }
 
 interface IdentityInfo {
   id: string;
   email: string;
-  name?: string;
+  name: string;
 }
 
 interface MarkReadArgs {
   account_id: string;
   mailbox: string;
   refs: MessageRef[];
-  read?: boolean;
+  read: boolean;
 }
 
 interface MarkReadItem {
   ref: MessageRef;
   ok: boolean;
   was_read?: boolean | null;
-  code?: string;
+  code: string;
 }
 
 interface MarkReadResult {
@@ -277,7 +277,7 @@ interface Match {
   exact: boolean;
   token_match: boolean;
   raw_sha256?: string | null;
-  internet_message_id_matches_token?: boolean;
+  internet_message_id_matches_token: boolean;
 }
 
 interface MessageRef {
@@ -290,14 +290,14 @@ interface MoveArgs {
   mailbox: string;
   ref: MessageRef;
   destination_folder_id: string;
-  mark_read?: boolean;
+  mark_read: boolean;
 }
 
 interface MoveResult {
   message: Header;
   read_state_preserved: boolean;
-  merged_existing_copy?: boolean;
-  marked_read?: boolean;
+  merged_existing_copy: boolean;
+  marked_read: boolean;
   original_read: boolean;
 }
 
@@ -308,14 +308,14 @@ interface QueryArgs {
   internet_message_id?: string | null;
   text?: string | null;
   subject?: string | null;
-  subject_contains?: boolean;
+  subject_contains: boolean;
   unread?: boolean | null;
   since_ms?: number | null;
   until_ms?: number | null;
-  limit?: number;
+  limit: number;
   after?: QueryCursor | null;
-  max_scan?: number;
-  own_only?: boolean;
+  max_scan: number;
+  own_only: boolean;
 }
 
 interface QueryCursor {
@@ -336,19 +336,19 @@ interface ReadArgs {
   mailbox: string;
   folder_id: string;
   internet_message_id: string;
-  raw_hash?: boolean;
+  raw_hash: boolean;
 }
 
 interface ReadResult {
   header: Header;
   subject: string;
   body: string;
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
-  attachments?: AttachmentInfo[];
-  in_reply_to?: string;
-  references?: string;
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  attachments: AttachmentInfo[];
+  in_reply_to: string;
+  references: string;
   raw_sha256?: string | null;
   read_state_preserved: boolean;
 }
@@ -361,14 +361,14 @@ interface ReconcileComposeArgs {
   draft_folder_id: string;
   inbox_folder_id?: string | null;
   since_ms: number;
-  refresh?: boolean;
+  refresh: boolean;
 }
 
 interface ReconcileComposeResult {
   matches: Match[];
   complete: boolean;
   refreshed: boolean;
-  errors?: string[];
+  errors: string[];
   old_copies?: number | null;
 }
 
@@ -393,7 +393,7 @@ interface ReconcileDraftSaveArgs {
   draft_folder_id: string;
   inbox_folder_id?: string | null;
   since_ms: number;
-  refresh?: boolean;
+  refresh: boolean;
 }
 
 interface ReconcileDraftUpdateArgs {
@@ -404,7 +404,7 @@ interface ReconcileDraftUpdateArgs {
   draft_folder_id: string;
   inbox_folder_id?: string | null;
   since_ms: number;
-  refresh?: boolean;
+  refresh: boolean;
   old: MessageRef;
   old_raw_sha256: string;
 }
@@ -424,7 +424,7 @@ interface ReconcileMoveArgs {
   mailbox: string;
   ref: MessageRef;
   destination_folder_id: string;
-  refresh?: boolean;
+  refresh: boolean;
 }
 
 interface ReconcileMoveResult {
@@ -448,7 +448,7 @@ interface ReconcileSendArgs {
   draft_folder_id: string;
   inbox_folder_id?: string | null;
   since_ms: number;
-  refresh?: boolean;
+  refresh: boolean;
 }
 
 interface ReconcileTrashArgs {
@@ -456,14 +456,14 @@ interface ReconcileTrashArgs {
   mailbox: string;
   ref: MessageRef;
   destination_folder_id: string;
-  refresh?: boolean;
+  refresh: boolean;
 }
 
 interface RefreshArgs {
   account_id: string;
   mailbox: string;
   folder_ids: string[];
-  timeout_ms?: number;
+  timeout_ms: number;
 }
 
 interface RefreshResult {
@@ -472,17 +472,17 @@ interface RefreshResult {
 }
 
 interface Refusal {
-  t?: "refusal";
+  t: "refusal";
   v: number;
   id: string;
   code: RefusalCode;
-  message?: string;
+  message: string;
 }
 
 type RefusalCode = "unauthenticated" | "version_mismatch" | "capability_missing" | "addon_not_connected" | "bad_hello" | "duplicate_id";
 
 interface RequestFrame {
-  t?: "request";
+  t: "request";
   v: number;
   id: string;
   cmd: string;
@@ -502,35 +502,35 @@ interface ResolveResult {
 }
 
 interface ResponseFrame {
-  t?: "response";
+  t: "response";
   v: number;
   id: string;
   cmd: string;
   ok: boolean;
   result?: { [key: string]: JsonValue } | null;
   error?: BridgeError | null;
-  chunks?: number;
+  chunks: number;
 }
 
 interface SendArgs {
   account_id: string;
   mailbox: string;
-  to?: string[];
-  cc?: string[];
-  bcc?: string[];
+  to: string[];
+  cc: string[];
+  bcc: string[];
   subject: string;
   body: string;
-  high_importance?: boolean;
+  high_importance: boolean;
   sent_folder_id: string;
   draft_folder_id: string;
   token: string;
-  attachments?: AttachmentSpec[];
+  attachments: AttachmentSpec[];
   reply_to?: MessageRef | null;
-  display_only?: boolean;
+  display_only: boolean;
 }
 
 interface SendResult {
-  submitted?: true;
+  submitted: true;
   attachment_bytes_verified: boolean;
 }
 
@@ -553,7 +553,7 @@ interface TrashArgs {
 }
 
 interface Welcome {
-  t?: "welcome";
+  t: "welcome";
   v: number;
   id: string;
   host_version: string;

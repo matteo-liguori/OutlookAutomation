@@ -1,0 +1,353 @@
+// A scripted Thunderbird: the `messenger` API subset the add-on uses, over an in-memory mailbox.
+// Synthetic data only. Faults are armed through `world.faults` (see harness.mjs).
+import { File } from "node:buffer";
+
+export const OWNER = "owner@example.org";
+export const ACCOUNT = "account1";
+
+const BASE_DATE = Date.parse("2026-01-05T09:00:00Z");
+
+function bare(id) {
+  return String(id).replace(/^<|>$/g, "");
+}
+
+export function createWorld() {
+  const world = {
+    tick: 0,
+    nextId: 1,
+    nextTab: 1,
+    nextGenerated: 1,
+    folders: new Map(),
+    messages: [],
+    composers: new Map(),
+    lists: new Map(),
+    latches: [],
+    faults: { slow: 0, duplicate: 0, stale: false, staleCallback: false, flipReadOnFull: false, hold: 0 },
+    counters: { move: 0, send: 0, save: 0, update: 0, full: 0 },
+    books: [],
+  };
+
+  const folder = (id, accountId, name, specialUse = []) => {
+    const f = { id, accountId, name, path: "/" + name, specialUse };
+    world.folders.set(id, f);
+    return f;
+  };
+  folder(ACCOUNT + "://INBOX", ACCOUNT, "INBOX", ["inbox"]);
+  folder(ACCOUNT + "://Sent", ACCOUNT, "Sent", ["sent"]);
+  folder(ACCOUNT + "://Drafts", ACCOUNT, "Drafts", ["drafts"]);
+  folder(ACCOUNT + "://Trash", ACCOUNT, "Trash", ["trash"]);
+  folder(ACCOUNT + "://Archive", ACCOUNT, "Archive", ["archive"]);
+  folder(ACCOUNT + "://Filed", ACCOUNT, "Filed");
+  folder("local://Outbox", "local", "Outbox", ["outbox"]);
+
+  const clone = (value) => structuredClone(value);
+  const headerOf = (m) => ({
+    id: m.id,
+    headerMessageId: m.headerMessageId,
+    subject: m.subject,
+    date: new Date(m.date),
+    author: m.author,
+    recipients: [...m.recipients],
+    ccList: [...m.ccList],
+    bccList: [...m.bccList],
+    read: m.read,
+    priority: m.priority,
+    folder: clone(world.folders.get(m.folderId)),
+  });
+  const byId = (id) => {
+    const m = world.messages.find((x) => x.id === id);
+    if (!m) throw new Error("Message not found: " + id);
+    return m;
+  };
+
+  world.add = (spec) => {
+    world.tick += 1;
+    const m = {
+      id: world.nextId++,
+      headerMessageId: bare(spec.headerMessageId ?? "gen-" + world.nextGenerated++ + "@fake.example"),
+      folderId: spec.folderId,
+      subject: spec.subject ?? "Hello",
+      author: spec.author ?? "Alice <alice@example.org>",
+      recipients: spec.recipients ?? [OWNER],
+      ccList: spec.ccList ?? [],
+      bccList: spec.bccList ?? [],
+      date: spec.date ?? BASE_DATE + world.tick * 1000,
+      read: spec.read ?? false,
+      priority: spec.priority ?? "normal",
+      body: spec.body ?? "Body text.",
+      attachments: spec.attachments ?? [],
+      headers: spec.headers ?? {},
+    };
+    world.messages.push(m);
+    return m;
+  };
+
+  const rootOf = (accountId) => {
+    const make = (f) => ({ ...clone(f), subFolders: [] });
+    const root = { id: accountId + "://", accountId, subFolders: [] };
+    for (const f of world.folders.values()) if (f.accountId === accountId) root.subFolders.push(make(f));
+    return root;
+  };
+  const accounts = [
+    { id: ACCOUNT, type: "imap", name: "Owner", identities: [{ id: "id1", email: OWNER, name: "Owner" }] },
+    { id: "local", type: "none", name: "Local Folders", identities: [] },
+  ];
+
+  const matches = (m, q) => {
+    const f = world.folders.get(m.folderId);
+    if (q.accountId && f.accountId !== q.accountId) return false;
+    if (q.folderId && m.folderId !== q.folderId) return false;
+    if (q.headerMessageId && m.headerMessageId !== bare(q.headerMessageId)) return false;
+    if (q.unread !== undefined && m.read === q.unread) return false;
+    if (q.fullText && !(m.subject + "\n" + m.body).toLowerCase().includes(String(q.fullText).toLowerCase())) return false;
+    if (q.fromDate && m.date < q.fromDate.getTime()) return false;
+    if (q.toDate && m.date > q.toDate.getTime()) return false;
+    return true;
+  };
+
+  const full = (m) => {
+    world.counters.full += 1;
+    if (world.faults.flipReadOnFull) m.read = !m.read;
+    const headers = { subject: [m.subject], ...Object.fromEntries(Object.entries(m.headers).map(([k, v]) => [k, [...v]])) };
+    if (m.bccList.length) headers.bcc = [...m.bccList];
+    return {
+      contentType: "multipart/mixed",
+      headers,
+      parts: [
+        { contentType: "text/plain", body: m.body },
+        ...m.attachments.map((a, i) => ({ name: a.name, partName: "1." + (i + 2), contentType: a.contentType })),
+      ],
+    };
+  };
+
+  const rawFile = (m) =>
+    new File([JSON.stringify({ s: m.subject, b: m.body, to: m.recipients, cc: m.ccList, bcc: m.bccList, a: m.attachments.map((x) => [x.name, x.bytes.length]), h: m.headers, p: m.priority })], "message.eml");
+
+  const holdLatch = () => new Promise((resolve) => world.latches.push(resolve));
+
+  const move = async (ids, destination) => {
+    world.counters.move += 1;
+    if (world.faults.slow > 0) {
+      world.faults.slow -= 1;
+      await holdLatch();
+    }
+    for (const id of ids) {
+      const m = byId(id);
+      const dup = world.faults.duplicate > 0;
+      if (dup) {
+        world.faults.duplicate -= 1;
+        world.add({ ...m, folderId: m.folderId, read: m.read, attachments: m.attachments, headers: m.headers, headerMessageId: m.headerMessageId, date: m.date });
+      }
+      const existing = world.messages.find((x) => x !== m && x.folderId === destination && x.headerMessageId === m.headerMessageId);
+      if (world.faults.merge && existing) {
+        // Gmail merges labels into the copy already in Trash; no extra physical copy appears.
+        world.messages = world.messages.filter((x) => x !== m);
+        continue;
+      }
+      // An IMAP move yields a new physical copy (new session id) at the destination.
+      m.id = world.nextId++;
+      m.folderId = destination;
+    }
+  };
+
+  const tabState = (id) => {
+    const c = world.composers.get(id);
+    if (!c) throw new Error("No such tab " + id);
+    return c;
+  };
+
+  const compose = {
+    async beginNew(details) {
+      const id = world.nextTab++;
+      world.composers.set(id, { id, details: clone({ ...details, body: undefined }), files: [], held: false, modified: false, from: null });
+      return { id };
+    },
+    async beginReply(messageId, type, details) {
+      const original = byId(messageId);
+      original.read = true; // Thunderbird marks the replied-to message read (incident)
+      const id = world.nextTab++;
+      world.composers.set(id, { id, details: clone({ ...details, body: undefined }), files: [], held: false, modified: false, from: null, replyTo: original.headerMessageId });
+      return { id };
+    },
+    async setComposeDetails(tabId, details) {
+      tabState(tabId).details = clone({ ...details, body: undefined });
+    },
+    async getComposeDetails(tabId) {
+      const c = tabState(tabId);
+      return { ...clone(c.details), isModified: c.modified };
+    },
+    async listAttachments(tabId) {
+      return tabState(tabId).files.map((f, i) => ({ id: i + 1, name: f.name }));
+    },
+    async addAttachment(tabId, { file }) {
+      tabState(tabId).files.push(file);
+    },
+    async removeAttachment(tabId, attachmentId) {
+      tabState(tabId).files.splice(attachmentId - 1, 1);
+    },
+    async getAttachmentFile(attachmentId) {
+      for (const c of world.composers.values()) if (c.files[attachmentId - 1]) return c.files[attachmentId - 1];
+      throw new Error("no attachment");
+    },
+    async saveMessage(tabId) {
+      world.counters.save += 1;
+      if (world.faults.slow > 0) {
+        world.faults.slow -= 1;
+        await holdLatch();
+      }
+      const c = tabState(tabId);
+      if (c.existingId) world.messages = world.messages.filter((m) => m.id !== c.existingId);
+      const drafts = [...world.folders.values()].find((f) => f.accountId === ACCOUNT && f.specialUse.includes("drafts"));
+      const m = world.add({
+        folderId: drafts.id,
+        subject: c.details.subject,
+        author: OWNER,
+        recipients: [...(c.details.to ?? [])],
+        ccList: [...(c.details.cc ?? [])],
+        bccList: [...(c.details.bcc ?? [])],
+        body: c.details.plainTextBody,
+        read: true,
+        priority: c.details.priority,
+        attachments: await Promise.all(c.files.map(async (f) => ({ name: f.name, contentType: f.type, bytes: new Uint8Array(await f.arrayBuffer()) }))),
+        headers: Object.fromEntries((c.details.customHeaders ?? []).map((h) => [h.name.toLowerCase(), [h.value]]).concat(c.replyTo ? [["in-reply-to", ["<" + c.replyTo + ">"]]] : [])),
+      });
+      c.existingId = m.id;
+      const header = headerOf(m);
+      return { messages: [world.faults.staleCallback ? { ...header, headerMessageId: "stale-callback", read: !header.read } : header] };
+    },
+    async sendMessage(tabId) {
+      world.counters.send += 1;
+      if (world.faults.slow > 0) {
+        world.faults.slow -= 1;
+        await holdLatch();
+      }
+      const c = tabState(tabId);
+      const sentId = c.details.overrideDefaultFccFolder?.id;
+      const spec = {
+        subject: c.details.subject,
+        author: OWNER,
+        recipients: [...(c.details.to ?? [])],
+        ccList: [...(c.details.cc ?? [])],
+        bccList: [...(c.details.bcc ?? [])],
+        body: c.details.plainTextBody,
+        read: true,
+        priority: c.details.priority,
+        attachments: await Promise.all(c.files.map(async (f) => ({ name: f.name, contentType: f.type, bytes: new Uint8Array(await f.arrayBuffer()) }))),
+        headers: Object.fromEntries((c.details.customHeaders ?? []).map((h) => [h.name.toLowerCase(), [h.value]]).concat(c.replyTo ? [["in-reply-to", ["<" + c.replyTo + ">"]]] : [])),
+      };
+      const generated = "sent-" + world.nextGenerated++ + "@fake.example";
+      if (!world.faults.noSentCopy) world.add({ ...spec, folderId: sentId, headerMessageId: generated });
+      if ([...spec.recipients, ...spec.ccList].some((v) => v.toLowerCase().includes(OWNER))) {
+        world.add({ ...spec, bccList: [], read: false, folderId: ACCOUNT + "://INBOX", headerMessageId: generated });
+      }
+      if (world.faults.queueOnly) world.add({ ...spec, folderId: "local://Outbox", headerMessageId: generated });
+      world.composers.delete(tabId);
+      return { messages: [] };
+    },
+  };
+
+  const messenger = {
+    runtime: { getBrowserInfo: async () => ({ version: "159.0" }) },
+    accounts: {
+      list: async () => accounts.map((a) => ({ ...clone(a) })),
+      get: async (id) => {
+        const a = accounts.find((x) => x.id === id);
+        return a ? { ...clone(a), rootFolder: rootOf(id) } : null;
+      },
+    },
+    folders: {
+      get: async (id) => {
+        const f = world.folders.get(id);
+        if (!f) throw new Error("Folder not found: " + id);
+        return clone(f);
+      },
+    },
+    messages: {
+      get: async (id) => headerOf(byId(id)),
+      query: async (q) => {
+        const found = world.messages.filter((m) => matches(m, q)).map(headerOf);
+        const size = q.messagesPerPage ?? 50;
+        if (found.length <= size) return { messages: found };
+        const listId = "list" + world.lists.size + "-" + found.length;
+        world.lists.set(listId, { found, at: size, size });
+        return { id: listId, messages: found.slice(0, size) };
+      },
+      continueList: async (listId) => {
+        const list = world.lists.get(listId);
+        const slice = list.found.slice(list.at, list.at + list.size);
+        list.at += list.size;
+        if (list.at >= list.found.length) {
+          world.lists.delete(listId);
+          return { messages: slice };
+        }
+        return { id: listId, messages: slice };
+      },
+      abortList: async (listId) => {
+        world.lists.delete(listId);
+      },
+      getFull: async (id) => full(byId(id)),
+      getRaw: async (id) => rawFile(byId(id)),
+      listAttachments: async (id) => byId(id).attachments.map((a, i) => ({ name: a.name, partName: "1." + (i + 2), size: a.bytes.length, contentType: a.contentType })),
+      getAttachmentFile: async (id, part) => {
+        const a = byId(id).attachments[Number(part.split(".")[1]) - 2];
+        return new File([a.bytes], a.name, { type: a.contentType });
+      },
+      update: async (id, values) => {
+        world.counters.update += 1;
+        Object.assign(byId(id), values);
+      },
+      move,
+    },
+    messengerUtilities: {
+      parseMailboxString: async (text) => {
+        const m = /<([^>]+)>/.exec(text);
+        return [{ email: m ? m[1] : text.trim() }];
+      },
+      decodeMimeHeader: async (name, values) => values,
+      convertToPlainText: async (html) => html.replace(/<[^>]*>/g, "").trim(),
+    },
+    compose,
+    addressBooks: {
+      get: async (id) => ({ id, contacts: world.books.filter((c) => c.book === id).map((c) => ({ id: c.id, properties: c.properties })) }),
+    },
+    harnessMail: {
+      syncFolders: async (accountId, mailbox, folderIds) => ({
+        folders: folderIds.map((id) => ({ folder_id: id, success: !world.faults.stale, ...(world.faults.stale ? { code: "sync-callback-timeout" } : {}) })),
+      }),
+      holdComposer: async (tabId, accountId, mailbox, draftFolderId, sentFolderId) => {
+        const c = tabState(tabId);
+        if (c.details.overrideDefaultFccFolder?.id !== sentFolderId) throw new Error("changed");
+        c.held = true;
+        return { held: true };
+      },
+      openDraft: async (accountId, mailbox, messageId) => {
+        const m = byId(messageId);
+        const id = world.nextTab++;
+        world.composers.set(id, { id, details: { subject: m.subject, plainTextBody: m.body }, files: [], held: false, modified: false, existingId: m.id });
+        return { tab_id: id };
+      },
+      findComposers: async (accountId, mailbox, messageId) => ({
+        tab_ids: [...world.composers.values()].filter((c) => c.held && c.existingId === messageId).map((c) => c.id),
+      }),
+      closeComposer: async (tabId) => {
+        world.composers.delete(tabId);
+        return { closed: true };
+      },
+    },
+    tabs: { remove: async (id) => world.composers.delete(id) },
+  };
+
+  world.messenger = messenger;
+  world.headerOf = headerOf;
+  world.release = () => {
+    for (const resolve of world.latches.splice(0)) resolve();
+  };
+  world.restart = () => {
+    for (const m of world.messages) m.id = world.nextId++;
+  };
+  world.copies = (id, folderId) =>
+    world.messages.filter((m) => (bare(m.headerMessageId) === bare(id) || (m.headers["x-chamberlain-token"] ?? []).includes(id)) && (!folderId || m.folderId === folderId)).length;
+  world.find = (id, folderId) =>
+    world.messages.find((m) => (bare(m.headerMessageId) === bare(id) || (m.headers["x-chamberlain-token"] ?? []).includes(id)) && (!folderId || m.folderId === folderId));
+  return world;
+}

@@ -1,0 +1,62 @@
+[
+  {
+    "namespace": "harnessMail",
+    "functions": [
+      {
+        "name": "syncFolders",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "folderIds", "type": "array", "items": { "type": "string" } },
+          { "name": "timeoutMs", "type": "integer" }
+        ]
+      },
+      {
+        "name": "holdComposer",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "tabId", "type": "integer" },
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "draftFolderId", "type": "string" },
+          { "name": "sentFolderId", "type": "string" }
+        ]
+      },
+      {
+        "name": "openDraft",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "messageId", "type": "integer" },
+          { "name": "internetMessageId", "type": "string" }
+        ]
+      },
+      {
+        "name": "findComposers",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "messageId", "type": "integer" },
+          { "name": "internetMessageId", "type": "string" }
+        ]
+      },
+      {
+        "name": "closeComposer",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "tabId", "type": "integer" },
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" }
+        ]
+      }
+    ]
+  }
+]
