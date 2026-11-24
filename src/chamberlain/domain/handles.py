@@ -20,6 +20,7 @@ class HandleKind(StrEnum):
     OPERATION = "op"
     EVENT = "evt"
     SESSION = "ses"
+    RUN = "run"
     MESSAGE = "msg"
     CALENDAR_EVENT = "cev"
     CONTACT = "con"

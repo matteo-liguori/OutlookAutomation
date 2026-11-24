@@ -35,8 +35,9 @@ OWNER_PREFIX: dict[OwnerKind, str] = {
     OwnerKind.OPERATION: "op",
     OwnerKind.GRANT: "grant",
     OwnerKind.SESSION: "ses",
+    OwnerKind.RUN: "run",
 }
-"""Handle prefix of each owner kind. `run` is wave 2 and has no handle yet."""
+"""Handle prefix of each owner kind. A run is owned by the runs track (`runs` table)."""
 
 
 def owner_kind_of(handle: str) -> OwnerKind | None:

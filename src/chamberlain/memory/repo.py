@@ -23,11 +23,14 @@ LIVE_OPERATION = (
 LIVE_GRANT = "SELECT handle FROM grants WHERE state IN ('proposed', 'active', 'suspended')"
 LIVE_SESSION = "SELECT handle FROM sessions WHERE ended_at IS NULL AND last_seen_at > :idle_edge"
 
+LIVE_RUN = "SELECT handle FROM runs"
+
 _LIVE_BY_KIND = {
     "action": LIVE_ACTION,
     "operation": LIVE_OPERATION,
     "grant": LIVE_GRANT,
     "session": LIVE_SESSION,
+    "run": LIVE_RUN,
 }
 
 
@@ -57,6 +60,7 @@ def owner_exists(db: sqlite3.Connection, kind: str, handle: str) -> bool:
         "operation": "operations",
         "grant": "grants",
         "session": "sessions",
+        "run": "runs",
         "card": "cards",
     }[kind]
     return db.execute(f"SELECT 1 FROM {table} WHERE handle = ?", (handle,)).fetchone() is not None
@@ -475,7 +479,8 @@ def dead_holds(db: sqlite3.Connection, edges: Edges) -> list[Row]:
         f"(owner_kind = 'action' AND owner IN ({LIVE_ACTION})) OR "
         f"(owner_kind = 'operation' AND owner IN ({LIVE_OPERATION})) OR "
         f"(owner_kind = 'grant' AND owner IN ({LIVE_GRANT})) OR "
-        f"(owner_kind = 'session' AND owner IN ({LIVE_SESSION})))",
+        f"(owner_kind = 'session' AND owner IN ({LIVE_SESSION})) OR "
+        f"(owner_kind = 'run' AND owner IN ({LIVE_RUN})))",
         params,
     ).fetchall()
     return rows
@@ -490,7 +495,8 @@ def count_artifacts_without_live_owner(db: sqlite3.Connection, edges: Edges) -> 
         f"(o.owner_kind = 'action' AND o.owner IN ({LIVE_ACTION})) OR "
         f"(o.owner_kind = 'operation' AND o.owner IN ({LIVE_OPERATION})) OR "
         f"(o.owner_kind = 'grant' AND o.owner IN ({LIVE_GRANT})) OR "
-        f"(o.owner_kind = 'session' AND o.owner IN ({LIVE_SESSION}))))",
+        f"(o.owner_kind = 'session' AND o.owner IN ({LIVE_SESSION})) OR "
+        f"(o.owner_kind = 'run' AND o.owner IN ({LIVE_RUN}))))",
         params,
     ).fetchone()
     return int(row[0])
