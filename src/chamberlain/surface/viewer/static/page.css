@@ -1,0 +1,80 @@
+:root {
+  --bg: #f7f6f2;
+  --panel: #ffffff;
+  --text: #1d1d1b;
+  --muted: #62625c;
+  --line: #d9d7cf;
+  --accent: #1f5f8b;
+  --warn: #9a3412;
+  --ok: #276749;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161715;
+    --panel: #20211f;
+    --text: #ecebe6;
+    --muted: #a3a29a;
+    --line: #3a3b37;
+    --accent: #6cb4e4;
+    --warn: #f0a070;
+    --ok: #7fd0a0;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+header { padding: 12px 16px 0; }
+h1 { margin: 0 0 8px; font-size: 1.25rem; }
+h2 { font-size: 1.05rem; margin: 20px 0 8px; }
+nav { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); }
+nav button {
+  background: none;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  color: var(--muted);
+  padding: 8px 12px;
+  font: inherit;
+  cursor: pointer;
+}
+nav button[aria-current="true"] { color: var(--text); border-bottom-color: var(--accent); }
+main { padding: 8px 16px 40px; max-width: 60rem; }
+section.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+section.card h3 { margin: 0 0 4px; font-size: 1rem; }
+.muted { color: var(--muted); font-size: 0.9rem; }
+.warn { color: var(--warn); }
+.ok { color: var(--ok); }
+pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 8px 0;
+  font: 0.9rem/1.45 ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+button.act, input[type="text"], input[type="password"] {
+  font: inherit;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 12px;
+  background: var(--panel);
+  color: var(--text);
+}
+button.act { cursor: pointer; margin-right: 8px; }
+button.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+button.danger { color: var(--warn); border-color: var(--warn); }
+input[type="text"], input[type="password"] { width: min(32rem, 100%); }
+table { border-collapse: collapse; width: 100%; font-size: 0.92rem; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+code { font: 0.88rem ui-monospace, Consolas, monospace; overflow-wrap: anywhere; }
