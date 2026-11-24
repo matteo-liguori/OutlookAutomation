@@ -120,6 +120,28 @@ The lost-response test needs the Thunderbird native host to load the fault hook,
 Thunderbird once after updating. If the hook never fires the scenario is skipped and says so.
 It works only when the bridge folder is `<data root>/bridge` (the default).
 
+## Things to know before the first live run
+
+- **The send to a stranger leaves a proposal.** `mail.refuse_non_owned` proposes a send to
+  `someone@example.invalid`. The harness cannot withdraw a proposal, so one grant stays in
+  `proposed` state (you may see it in the viewer) until it lapses after seven days. Do not
+  confirm it.
+- **Suggested card needs a clear match.** `mail.watermark_suggestion` fails, naming the
+  reason, if another open card also sent to the same address; the harness then rightly
+  suggests nothing.
+- **Reading is normal.** Every tool call runs the tick, which scans your inbox for new mail
+  as it always does. The run does not mark any event handled, so your real new-mail batch
+  is left for your agent.
+- **Gmail** keeps one message in several folders (Inbox, All Mail, Sent). The scenarios
+  count copies per folder and accept the merged-copy warning on trash. The default scratch
+  folder is the archive folder (All Mail on Gmail); set `scratch_folder` to a label of your
+  own if you prefer.
+- **Invitations** are checked on the invitee's calendar when `invitee_calendar` is set,
+  otherwise only on the invitee's mailbox, and the response is read back from the
+  organiser's copy. The read-only probe fills in the answer if `open` does not show it.
+- **Restart Thunderbird** after updating the harness so the native host loads the
+  lost-response hook.
+
 ## How it cleans up
 
 Every scenario registers its cleanup before it creates anything, and runs it even if the

@@ -479,13 +479,13 @@ def fault_lost_response(lab: Lab, t: Target) -> None:
 
 
 def _state_after(lab: Lab, operation: str) -> str:
-    """Let the harness settle the write: reconcile a few times, then read the state."""
-    for _ in range(3):
+    """Let the harness settle the write: read the state, reconcile, wait, a few times."""
+    for _ in range(6):
         state = str(lab.ok("open", handle=operation)["view"]["state"])
         if state == "confirmed":
             return state
         lab.call("reconcile", operation=operation)
-        lab.env.waiter.sleep(2)
+        lab.env.waiter.sleep(5)
     return str(lab.ok("open", handle=operation)["view"]["state"])
 
 
