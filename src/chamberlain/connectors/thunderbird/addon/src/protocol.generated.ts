@@ -74,6 +74,79 @@ interface BridgeError {
 
 type BridgeErrorCode = "bad_request" | "unknown_command" | "account_mismatch" | "not_found" | "ambiguous" | "changed" | "busy" | "timeout" | "client_offline" | "not_verified" | "too_large" | "hash_mismatch" | "unsupported" | "internal";
 
+interface CalendarCreateArgs {
+  calendar_id: string;
+  event_id: string;
+  icalendar: string;
+}
+
+interface CalendarDeleteArgs {
+  calendar_id: string;
+  event_id: string;
+  expected_icalendar: string;
+}
+
+interface CalendarInfo {
+  id: string;
+  name: string;
+  type: string;
+  read_only: boolean;
+  disabled: boolean;
+  fresh_as_of?: string | null;
+}
+
+interface CalendarItem {
+  id: string;
+  recurrence_id?: string | null;
+  icalendar: string;
+}
+
+interface CalendarListArgs {
+
+}
+
+interface CalendarListResult {
+  calendars: CalendarInfo[];
+}
+
+interface CalendarQueryArgs {
+  calendar_id: string;
+  start: string;
+  end: string;
+  limit: number;
+}
+
+interface CalendarQueryResult {
+  items: CalendarItem[];
+  complete: boolean;
+  gaps: string[];
+}
+
+interface CalendarReadArgs {
+  calendar_id: string;
+  event_id: string;
+}
+
+interface CalendarReadResult {
+  item?: CalendarItem | null;
+}
+
+interface CalendarRef {
+  calendar_id: string;
+}
+
+interface CalendarUpdateArgs {
+  calendar_id: string;
+  event_id: string;
+  icalendar: string;
+  expected_icalendar: string;
+}
+
+interface CalendarWriteResult {
+  item?: CalendarItem | null;
+  timing_ms?: { [key: string]: number };
+}
+
 interface ChunkFrame {
   t: "chunk";
   v: number;
@@ -588,6 +661,12 @@ interface CommandArgs {
   reconcile_move: ReconcileMoveArgs;
   reconcile_trash: ReconcileTrashArgs;
   reconcile_mark_read: ReconcileMarkReadArgs;
+  calendar_list: CalendarListArgs;
+  calendar_query: CalendarQueryArgs;
+  calendar_read: CalendarReadArgs;
+  calendar_create: CalendarCreateArgs;
+  calendar_update: CalendarUpdateArgs;
+  calendar_delete: CalendarDeleteArgs;
 }
 
 interface CommandResults {
@@ -614,14 +693,21 @@ interface CommandResults {
   reconcile_move: ReconcileMoveResult;
   reconcile_trash: ReconcileMoveResult;
   reconcile_mark_read: ReconcileMarkReadResult;
+  calendar_list: CalendarListResult;
+  calendar_query: CalendarQueryResult;
+  calendar_read: CalendarReadResult;
+  calendar_create: CalendarWriteResult;
+  calendar_update: CalendarWriteResult;
+  calendar_delete: CalendarWriteResult;
 }
 
 const PROTOCOL_VERSION = 2;
 const CHUNK_BYTES = 196608;
 const TO_ADDON_LIMIT = 900000;
-const COMMANDS: readonly string[] = ["status", "accounts", "folders", "query", "read", "attachment", "resolve", "refresh", "contacts", "send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read", "reconcile_send", "reconcile_draft_save", "reconcile_draft_update", "reconcile_draft_discard", "reconcile_move", "reconcile_trash", "reconcile_mark_read"];
-const WRITE_COMMANDS: readonly string[] = ["draft_discard", "draft_save", "draft_update", "mark_read", "move", "send", "trash"];
+const COMMANDS: readonly string[] = ["status", "accounts", "folders", "query", "read", "attachment", "resolve", "refresh", "contacts", "send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read", "reconcile_send", "reconcile_draft_save", "reconcile_draft_update", "reconcile_draft_discard", "reconcile_move", "reconcile_trash", "reconcile_mark_read", "calendar_list", "calendar_query", "calendar_read", "calendar_create", "calendar_update", "calendar_delete"];
+const WRITE_COMMANDS: readonly string[] = ["calendar_create", "calendar_delete", "calendar_update", "draft_discard", "draft_save", "draft_update", "mark_read", "move", "send", "trash"];
 const REQUIRED_CAPABILITIES: readonly string[] = ["attachments", "contacts", "draft", "mark_read", "move", "read", "refresh", "search", "send", "trash"];
+const ADVERTISED_CAPABILITIES: readonly string[] = ["attachments", "calendar", "contacts", "draft", "mark_read", "move", "read", "refresh", "search", "send", "trash"];
 const ARGS_SCHEMA_NAME: { [cmd: string]: string } = {
  "status": "StatusArgs",
  "accounts": "AccountsArgs",
@@ -645,7 +731,13 @@ const ARGS_SCHEMA_NAME: { [cmd: string]: string } = {
  "reconcile_draft_discard": "ReconcileDraftDiscardArgs",
  "reconcile_move": "ReconcileMoveArgs",
  "reconcile_trash": "ReconcileTrashArgs",
- "reconcile_mark_read": "ReconcileMarkReadArgs"
+ "reconcile_mark_read": "ReconcileMarkReadArgs",
+ "calendar_list": "CalendarListArgs",
+ "calendar_query": "CalendarQueryArgs",
+ "calendar_read": "CalendarReadArgs",
+ "calendar_create": "CalendarCreateArgs",
+ "calendar_update": "CalendarUpdateArgs",
+ "calendar_delete": "CalendarDeleteArgs"
 };
 const SCHEMA_DEFS: { [name: string]: JsonValue } = {
  "AccountArgs": {
@@ -982,6 +1074,359 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
   ],
   "title": "BridgeErrorCode",
   "type": "string"
+ },
+ "CalendarCreateArgs": {
+  "additionalProperties": false,
+  "properties": {
+   "calendar_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Calendar Id",
+    "type": "string"
+   },
+   "event_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Event Id",
+    "type": "string"
+   },
+   "icalendar": {
+    "maxLength": 200000,
+    "title": "Icalendar",
+    "type": "string"
+   }
+  },
+  "required": [
+   "calendar_id",
+   "event_id",
+   "icalendar"
+  ],
+  "title": "CalendarCreateArgs",
+  "type": "object"
+ },
+ "CalendarDeleteArgs": {
+  "additionalProperties": false,
+  "properties": {
+   "calendar_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Calendar Id",
+    "type": "string"
+   },
+   "event_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Event Id",
+    "type": "string"
+   },
+   "expected_icalendar": {
+    "maxLength": 200000,
+    "title": "Expected Icalendar",
+    "type": "string"
+   }
+  },
+  "required": [
+   "calendar_id",
+   "event_id",
+   "expected_icalendar"
+  ],
+  "title": "CalendarDeleteArgs",
+  "type": "object"
+ },
+ "CalendarInfo": {
+  "additionalProperties": false,
+  "properties": {
+   "disabled": {
+    "title": "Disabled",
+    "type": "boolean"
+   },
+   "fresh_as_of": {
+    "anyOf": [
+     {
+      "maxLength": 40,
+      "type": "string"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null,
+    "title": "Fresh As Of"
+   },
+   "id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Id",
+    "type": "string"
+   },
+   "name": {
+    "maxLength": 2000,
+    "title": "Name",
+    "type": "string"
+   },
+   "read_only": {
+    "title": "Read Only",
+    "type": "boolean"
+   },
+   "type": {
+    "maxLength": 100,
+    "title": "Type",
+    "type": "string"
+   }
+  },
+  "required": [
+   "id",
+   "name",
+   "type",
+   "read_only",
+   "disabled"
+  ],
+  "title": "CalendarInfo",
+  "type": "object"
+ },
+ "CalendarItem": {
+  "additionalProperties": false,
+  "description": "One event, or one occurrence of a series (`recurrence_id` set), as iCalendar text.",
+  "properties": {
+   "icalendar": {
+    "maxLength": 200000,
+    "title": "Icalendar",
+    "type": "string"
+   },
+   "id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Id",
+    "type": "string"
+   },
+   "recurrence_id": {
+    "anyOf": [
+     {
+      "maxLength": 40,
+      "type": "string"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null,
+    "title": "Recurrence Id"
+   }
+  },
+  "required": [
+   "id",
+   "icalendar"
+  ],
+  "title": "CalendarItem",
+  "type": "object"
+ },
+ "CalendarListArgs": {
+  "additionalProperties": false,
+  "properties": {},
+  "title": "CalendarListArgs",
+  "type": "object"
+ },
+ "CalendarListResult": {
+  "additionalProperties": false,
+  "properties": {
+   "calendars": {
+    "items": {
+     "$ref": "#/$defs/CalendarInfo"
+    },
+    "title": "Calendars",
+    "type": "array"
+   }
+  },
+  "required": [
+   "calendars"
+  ],
+  "title": "CalendarListResult",
+  "type": "object"
+ },
+ "CalendarQueryArgs": {
+  "additionalProperties": false,
+  "properties": {
+   "calendar_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Calendar Id",
+    "type": "string"
+   },
+   "end": {
+    "maxLength": 40,
+    "minLength": 10,
+    "title": "End",
+    "type": "string"
+   },
+   "limit": {
+    "maximum": 5000,
+    "minimum": 1,
+    "title": "Limit",
+    "type": "integer"
+   },
+   "start": {
+    "maxLength": 40,
+    "minLength": 10,
+    "title": "Start",
+    "type": "string"
+   }
+  },
+  "required": [
+   "calendar_id",
+   "start",
+   "end",
+   "limit"
+  ],
+  "title": "CalendarQueryArgs",
+  "type": "object"
+ },
+ "CalendarQueryResult": {
+  "additionalProperties": false,
+  "properties": {
+   "complete": {
+    "title": "Complete",
+    "type": "boolean"
+   },
+   "gaps": {
+    "default": [],
+    "items": {
+     "maxLength": 2000,
+     "type": "string"
+    },
+    "title": "Gaps",
+    "type": "array"
+   },
+   "items": {
+    "items": {
+     "$ref": "#/$defs/CalendarItem"
+    },
+    "title": "Items",
+    "type": "array"
+   }
+  },
+  "required": [
+   "items",
+   "complete"
+  ],
+  "title": "CalendarQueryResult",
+  "type": "object"
+ },
+ "CalendarReadArgs": {
+  "additionalProperties": false,
+  "properties": {
+   "calendar_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Calendar Id",
+    "type": "string"
+   },
+   "event_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Event Id",
+    "type": "string"
+   }
+  },
+  "required": [
+   "calendar_id",
+   "event_id"
+  ],
+  "title": "CalendarReadArgs",
+  "type": "object"
+ },
+ "CalendarReadResult": {
+  "additionalProperties": false,
+  "properties": {
+   "item": {
+    "anyOf": [
+     {
+      "$ref": "#/$defs/CalendarItem"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null
+   }
+  },
+  "title": "CalendarReadResult",
+  "type": "object"
+ },
+ "CalendarRef": {
+  "additionalProperties": false,
+  "properties": {
+   "calendar_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Calendar Id",
+    "type": "string"
+   }
+  },
+  "required": [
+   "calendar_id"
+  ],
+  "title": "CalendarRef",
+  "type": "object"
+ },
+ "CalendarUpdateArgs": {
+  "additionalProperties": false,
+  "properties": {
+   "calendar_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Calendar Id",
+    "type": "string"
+   },
+   "event_id": {
+    "maxLength": 1000,
+    "minLength": 1,
+    "title": "Event Id",
+    "type": "string"
+   },
+   "expected_icalendar": {
+    "maxLength": 200000,
+    "title": "Expected Icalendar",
+    "type": "string"
+   },
+   "icalendar": {
+    "maxLength": 200000,
+    "title": "Icalendar",
+    "type": "string"
+   }
+  },
+  "required": [
+   "calendar_id",
+   "event_id",
+   "icalendar",
+   "expected_icalendar"
+  ],
+  "title": "CalendarUpdateArgs",
+  "type": "object"
+ },
+ "CalendarWriteResult": {
+  "additionalProperties": false,
+  "properties": {
+   "item": {
+    "anyOf": [
+     {
+      "$ref": "#/$defs/CalendarItem"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null
+   },
+   "timing_ms": {
+    "additionalProperties": {
+     "type": "integer"
+    },
+    "title": "Timing Ms",
+    "type": "object"
+   }
+  },
+  "title": "CalendarWriteResult",
+  "type": "object"
  },
  "ChunkFrame": {
   "additionalProperties": false,

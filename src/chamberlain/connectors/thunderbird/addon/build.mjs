@@ -6,7 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-export const SOURCES = ["protocol.generated.ts", "util.ts", "reads.ts", "writes.ts", "background.ts"];
+export const SOURCES = ["protocol.generated.ts", "util.ts", "reads.ts", "writes.ts", "calendar.ts", "background.ts"];
 
 export function bundle() {
   return SOURCES.map((name) => stripTypeScriptTypes(readFileSync(path.join(here, "src", name), "utf8"), { mode: "strip" })).join("\n");

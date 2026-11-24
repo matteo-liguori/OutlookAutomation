@@ -59,7 +59,7 @@ FAST = Deadlines(
     client_read=1.5,
     client_write=1.5,
 )
-ALL_CAPS = tuple(sorted(c.value for c in protocol.Capability))
+ALL_CAPS = tuple(sorted(c.value for c in protocol.REQUIRED_CAPABILITIES))
 ID = "req_0123456789"
 
 Handler = Callable[[RequestFrame | ChunkFrame, "Addon"], None]

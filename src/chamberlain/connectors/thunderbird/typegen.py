@@ -140,6 +140,11 @@ def render() -> str:
         + ";"
     )
     out.append(
+        "const ADVERTISED_CAPABILITIES: readonly string[] = "
+        + json.dumps(sorted(c.value for c in protocol.Capability))
+        + ";"
+    )
+    out.append(
         "const ARGS_SCHEMA_NAME: { [cmd: string]: string } = "
         + json.dumps({cmd: model.__name__ for cmd, model in commands.items()}, indent=1)
         + ";"

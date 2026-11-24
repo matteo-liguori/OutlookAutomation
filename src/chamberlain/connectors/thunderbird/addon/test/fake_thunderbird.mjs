@@ -22,9 +22,12 @@ export function createWorld() {
     composers: new Map(),
     lists: new Map(),
     latches: [],
-    faults: { slow: 0, duplicate: 0, stale: false, staleCallback: false, flipReadOnFull: false, hold: 0 },
+    faults: { slow: 0, duplicate: 0, stale: false, staleCallback: false, flipReadOnFull: false, hold: 0, slowCalendar: 0 },
     counters: { move: 0, send: 0, save: 0, update: 0, full: 0 },
     books: [],
+    calendars: new Map(),
+    calendarOffline: false,
+    calendarLog: [],
   };
 
   const folder = (id, accountId, name, specialUse = []) => {
@@ -336,6 +339,86 @@ export function createWorld() {
     },
     tabs: { remove: async (id) => world.composers.delete(id) },
   };
+
+  // --- a scripted calendar provider: events are kept as iCalendar text, as the client's cache does ---
+  const unfold = (text) => String(text).replace(/\r?\n[ \t]/g, "");
+  const field = (text, name) => {
+    const m = new RegExp("^" + name + "[^:\r\n]*:(.*)$", "mi").exec(unfold(text));
+    return m ? m[1].trim() : null;
+  };
+  const stamp = (value) => {
+    if (!value) return NaN;
+    const m = /^(\d{4})(\d{2})(\d{2})(?:T(\d{2})(\d{2})(\d{2})Z?)?$/.exec(value);
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3], +(m[4] ?? 0), +(m[5] ?? 0), +(m[6] ?? 0)) : NaN;
+  };
+  const invitedText = (text) => /^(ATTENDEE|ORGANIZER)[;:]/mi.test(unfold(text));
+  const calendarOf = (id) => {
+    const c = world.calendars.get(id);
+    if (!c || c.disabled) throw new Error("not_found");
+    return c;
+  };
+  const rawItem = (id, text, recurrenceId = null) => ({ id, recurrence_id: recurrenceId, icalendar: text, invited: invitedText(text) });
+  world.addCalendar = (id, { name = "Calendar", type = "owl", readOnly = false, disabled = false } = {}) => {
+    const c = { id, name, type, readOnly, disabled, items: new Map(), occurrences: [] };
+    world.calendars.set(id, c);
+    return c;
+  };
+  const holdCalendar = async () => {
+    if (world.faults.slowCalendar > 0) {
+      world.faults.slowCalendar -= 1;
+      await holdLatch();
+    }
+  };
+  const harnessCalendar = {
+    isOffline: async () => world.calendarOffline,
+    listCalendars: async () => [...world.calendars.values()].map((c) => ({ id: c.id, name: c.name, type: c.type, read_only: c.readOnly, disabled: c.disabled })),
+    queryEvents: async (calendarId, startMs, endMs, limit) => {
+      const c = calendarOf(calendarId);
+      const inside = (text) => stamp(field(text, "DTSTART")) <= endMs && (stamp(field(text, "DTEND")) || stamp(field(text, "DTSTART"))) >= startMs;
+      const found = [];
+      for (const [id, text] of c.items) if (!c.occurrences.some((o) => o.id === id) && inside(text)) found.push(rawItem(id, text));
+      for (const o of c.occurrences) if (inside(o.icalendar)) found.push(rawItem(o.id, o.icalendar, o.recurrence_id));
+      found.sort((a, b) => stamp(field(a.icalendar, "DTSTART")) - stamp(field(b.icalendar, "DTSTART")) || a.id.localeCompare(b.id));
+      return { items: found.slice(0, limit), truncated: found.length > limit };
+    },
+    getEvent: async (calendarId, eventId) => {
+      const text = calendarOf(calendarId).items.get(eventId);
+      return text === undefined ? null : rawItem(eventId, text);
+    },
+    inspectEvent: async (text) => {
+      const events = (unfold(text).match(/^BEGIN:VEVENT/gim) ?? []).length;
+      if (events !== 1) return { ok: false, error: "one_master_event_required" };
+      if (field(text, "RECURRENCE-ID")) return { ok: false, error: "master_event_required" };
+      const start = stamp(field(text, "DTSTART"));
+      const end = stamp(field(text, "DTEND"));
+      if (!field(text, "UID") || !(start < end)) return { ok: false, error: "invalid_event_range" };
+      return { ok: true, id: field(text, "UID"), invited: invitedText(text) };
+    },
+    addEvent: async (calendarId, text) => {
+      const c = calendarOf(calendarId);
+      world.calendarLog.push("add");
+      await holdCalendar();
+      c.items.set(field(text, "UID"), text);
+      return {};
+    },
+    modifyEvent: async (calendarId, eventId, text) => {
+      const c = calendarOf(calendarId);
+      world.calendarLog.push("modify");
+      await holdCalendar();
+      if (!c.items.has(eventId)) throw new Error("not_found");
+      c.items.set(eventId, text);
+      return {};
+    },
+    deleteEvent: async (calendarId, eventId) => {
+      const c = calendarOf(calendarId);
+      world.calendarLog.push("delete");
+      await holdCalendar();
+      if (!c.items.delete(eventId)) throw new Error("not_found");
+      return {};
+    },
+  };
+  messenger.harnessCalendar = harnessCalendar;
+  world.addCalendar("cal1", { name: "Owner calendar" });
 
   world.messenger = messenger;
   world.headerOf = headerOf;

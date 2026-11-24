@@ -16,8 +16,8 @@ function fail(code: BridgeErrorCode, message: string, mutation: "none" | "possib
   throw new BridgeFailure(code, message, mutation);
 }
 
-function check(condition: unknown, code: BridgeErrorCode, message: string): asserts condition {
-  if (!condition) fail(code, message);
+function check(condition: unknown, code: BridgeErrorCode, message: string, mutation: "none" | "possible" = "none"): asserts condition {
+  if (!condition) fail(code, message, mutation);
 }
 
 function clip(value: unknown, limit: number): string {

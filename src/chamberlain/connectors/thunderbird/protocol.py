@@ -46,9 +46,12 @@ class Capability(StrEnum):
     MARK_READ = "mark_read"
     CONTACTS = "contacts"
     REFRESH = "refresh"
+    CALENDAR = "calendar"
+    """Optional: only a client that uses the calendar commands requires it."""
 
 
-REQUIRED_CAPABILITIES: frozenset[Capability] = frozenset(Capability)
+OPTIONAL_CAPABILITIES: frozenset[Capability] = frozenset({Capability.CALENDAR})
+REQUIRED_CAPABILITIES: frozenset[Capability] = frozenset(Capability) - OPTIONAL_CAPABILITIES
 
 
 class Command(StrEnum):
@@ -77,7 +80,24 @@ class Command(StrEnum):
     RECONCILE_MOVE = "reconcile_move"
     RECONCILE_TRASH = "reconcile_trash"
     RECONCILE_MARK_READ = "reconcile_mark_read"
+    CALENDAR_LIST = "calendar_list"
+    CALENDAR_QUERY = "calendar_query"
+    CALENDAR_READ = "calendar_read"
+    CALENDAR_CREATE = "calendar_create"
+    CALENDAR_UPDATE = "calendar_update"
+    CALENDAR_DELETE = "calendar_delete"
 
+
+CALENDAR_COMMANDS: frozenset[Command] = frozenset(
+    {
+        Command.CALENDAR_LIST,
+        Command.CALENDAR_QUERY,
+        Command.CALENDAR_READ,
+        Command.CALENDAR_CREATE,
+        Command.CALENDAR_UPDATE,
+        Command.CALENDAR_DELETE,
+    }
+)
 
 WRITE_COMMANDS: frozenset[Command] = frozenset(
     {
@@ -88,6 +108,9 @@ WRITE_COMMANDS: frozenset[Command] = frozenset(
         Command.MOVE,
         Command.TRASH,
         Command.MARK_READ,
+        Command.CALENDAR_CREATE,
+        Command.CALENDAR_UPDATE,
+        Command.CALENDAR_DELETE,
     }
 )
 
@@ -663,6 +686,79 @@ class ReconcileMarkReadResult(Model):
     refresh_verified: bool
 
 
+# --- calendar (optional capability `calendar`) ----------------------------------------------
+
+
+class CalendarListArgs(Model):
+    pass
+
+
+class CalendarInfo(Model):
+    id: Annotated[str, Field(min_length=1, max_length=1000)]
+    name: Short
+    type: Annotated[str, Field(max_length=100)]
+    read_only: bool
+    disabled: bool
+    fresh_as_of: Annotated[str, Field(max_length=40)] | None = None
+    """ISO time of the last synchronisation, only when the client can say."""
+
+
+class CalendarListResult(Model):
+    calendars: tuple[CalendarInfo, ...]
+
+
+class CalendarItem(Model):
+    """One event, or one occurrence of a series (`recurrence_id` set), as iCalendar text."""
+
+    id: Annotated[str, Field(min_length=1, max_length=1000)]
+    recurrence_id: Annotated[str, Field(max_length=40)] | None = None
+    icalendar: Text
+
+
+class CalendarRef(Model):
+    calendar_id: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class CalendarQueryArgs(CalendarRef):
+    start: Annotated[str, Field(min_length=10, max_length=40)]
+    end: Annotated[str, Field(min_length=10, max_length=40)]
+    limit: Annotated[int, Field(ge=1, le=5000)]
+
+
+class CalendarQueryResult(Model):
+    items: tuple[CalendarItem, ...]
+    complete: bool
+    gaps: tuple[Short, ...] = ()
+
+
+class CalendarReadArgs(CalendarRef):
+    event_id: Annotated[str, Field(min_length=1, max_length=1000)]
+
+
+class CalendarReadResult(Model):
+    item: CalendarItem | None = None
+
+
+class CalendarCreateArgs(CalendarReadArgs):
+    icalendar: Text
+
+
+class CalendarUpdateArgs(CalendarCreateArgs):
+    expected_icalendar: Text
+    """The exact stored text the caller read; the version check (its hash is the etag)."""
+
+
+class CalendarDeleteArgs(CalendarReadArgs):
+    expected_icalendar: Text
+
+
+class CalendarWriteResult(Model):
+    item: CalendarItem | None = None
+    """The read-back; `None` after a delete."""
+    timing_ms: dict[str, int] = Field(default_factory=lambda: {})
+    """Milliseconds since the command began, per stage."""
+
+
 ARGS_MODELS: dict[Command, type[Model]] = {
     Command.STATUS: StatusArgs,
     Command.ACCOUNTS: AccountsArgs,
@@ -687,6 +783,12 @@ ARGS_MODELS: dict[Command, type[Model]] = {
     Command.RECONCILE_MOVE: ReconcileMoveArgs,
     Command.RECONCILE_TRASH: ReconcileTrashArgs,
     Command.RECONCILE_MARK_READ: ReconcileMarkReadArgs,
+    Command.CALENDAR_LIST: CalendarListArgs,
+    Command.CALENDAR_QUERY: CalendarQueryArgs,
+    Command.CALENDAR_READ: CalendarReadArgs,
+    Command.CALENDAR_CREATE: CalendarCreateArgs,
+    Command.CALENDAR_UPDATE: CalendarUpdateArgs,
+    Command.CALENDAR_DELETE: CalendarDeleteArgs,
 }
 
 RESULT_MODELS: dict[Command, type[Model]] = {
@@ -713,6 +815,12 @@ RESULT_MODELS: dict[Command, type[Model]] = {
     Command.RECONCILE_MOVE: ReconcileMoveResult,
     Command.RECONCILE_TRASH: ReconcileMoveResult,
     Command.RECONCILE_MARK_READ: ReconcileMarkReadResult,
+    Command.CALENDAR_LIST: CalendarListResult,
+    Command.CALENDAR_QUERY: CalendarQueryResult,
+    Command.CALENDAR_READ: CalendarReadResult,
+    Command.CALENDAR_CREATE: CalendarWriteResult,
+    Command.CALENDAR_UPDATE: CalendarWriteResult,
+    Command.CALENDAR_DELETE: CalendarWriteResult,
 }
 
 

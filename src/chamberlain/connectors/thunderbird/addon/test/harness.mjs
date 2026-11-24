@@ -6,7 +6,7 @@ import { ACCOUNT, createWorld, OWNER } from "./fake_thunderbird.mjs";
 import { startAddon } from "./loader.mjs";
 
 const [controlPort, readMs, writeMs, assemblyMs] = process.argv.slice(2).map(Number);
-const WRITES = new Set(["send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read"]);
+const WRITES = new Set(["send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read", "calendar_create", "calendar_update", "calendar_delete"]);
 const ROLES = {
   inbox: ACCOUNT + "://INBOX",
   sent: ACCOUNT + "://Sent",
@@ -99,6 +99,8 @@ const controls = {
       faults.busy = 1;
       addon.setBusy(true);
     } else if (fault === "slow") world.faults.slow = 1;
+    else if (fault === "calendar_slow") world.faults.slowCalendar = 1;
+    else if (fault === "calendar_offline") world.calendarOffline = true;
     else if (fault === "duplicate") world.faults.duplicate = 1;
     else if (fault === "stale") world.faults.stale = true;
     else if (fault === "no_sent_copy") world.faults.noSentCopy = true;
@@ -120,6 +122,18 @@ const controls = {
     world.books.push({ book, id, properties: { DisplayName: name, PrimaryEmail: emails[0], SecondEmail: emails[1] } });
     return true;
   },
+  calendar_seed: ({ calendar_id, id, icalendar }) => {
+    world.calendars.get(calendar_id).items.set(id, icalendar);
+    return true;
+  },
+  calendar_occurrence: ({ calendar_id, id, recurrence_id, icalendar }) => {
+    const c = world.calendars.get(calendar_id);
+    c.items.set(id, icalendar);
+    c.occurrences.push({ id, recurrence_id, icalendar });
+    return true;
+  },
+  calendar_count: ({ calendar_id, id }) => (world.calendars.get(calendar_id).items.has(id) ? 1 : 0),
+  calendar_text: ({ calendar_id, id }) => world.calendars.get(calendar_id).items.get(id) ?? null,
   counters: () => ({ ...world.counters }),
   owner: () => OWNER,
 };
