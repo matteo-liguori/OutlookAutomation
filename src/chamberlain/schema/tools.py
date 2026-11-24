@@ -7,7 +7,7 @@ tool; the registry (`schema/registry.py`) pairs them.
 from enum import StrEnum
 from typing import Annotated, Literal, Self
 
-from pydantic import Field, model_validator
+from pydantic import Field, StringConstraints, model_validator
 
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind, EventState
@@ -223,6 +223,8 @@ class OperationView(Model):
     """Handle of what the write produced (a saved draft, a created event)."""
     items_ok: int = 0
     items_failed: int = 0
+    warnings: tuple[Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,40}$")], ...] = ()
+    """Harness-safe warning codes, for example `merged_existing_copy` (R7)."""
     settled_at: Timestamp | None = None
 
 
