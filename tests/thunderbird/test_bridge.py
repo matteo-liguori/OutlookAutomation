@@ -276,10 +276,12 @@ def test_b2_a_command_outside_the_list_is_refused_by_the_host(tmp_path: Path) ->
 
 def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
     gate = threading.Event()
+    arrived = threading.Event()
 
     def hold(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
         if isinstance(frame, RequestFrame):
-            gate.wait(3)
+            arrived.set()
+            gate.wait(10)
             status_handler(frame, addon)
 
     with bridge(tmp_path, hold) as env:
@@ -290,7 +292,7 @@ def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
                 say(connection, hello_frame())
                 assert isinstance(hear(connection), protocol.Welcome)
             say(first, RequestFrame(v=2, id=ID, cmd="status", args={}))
-            threading.Event().wait(0.2)
+            assert arrived.wait(10), "the first request never reached the add-on"
             say(second, RequestFrame(v=2, id=ID, cmd="status", args={}))
             answer = hear(second)
             assert isinstance(answer, Refusal)
