@@ -9,7 +9,7 @@ import hashlib
 import logging
 import os
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -42,7 +42,7 @@ class ReviewSettings:
 
     homes: AgentHomes
     checkout: Path | None
-    every_days: int = 21
+    rule: rounds.RoundRule = field(default_factory=rounds.RoundRule)
 
 
 def checkout_root() -> Path | None:
@@ -197,7 +197,7 @@ def tick_step(settings: ReviewSettings) -> Callable[[Context], None]:
         except Exception:
             log_failure(log, "the transcript scan failed")
         try:
-            rounds.refresh(ctx, settings.every_days)
+            rounds.refresh(ctx, settings.rule)
         except Exception:
             log_failure(log, "the review round check failed")
 

@@ -25,8 +25,10 @@ that is a feature the harness could offer instead.
 
 ## The review
 
-Every `review.every_days` (default 21), and only when the log has a pattern it did not have at the
-last review, the harness raises one item, `harness.review`. It comes after all other work and after
+How often depends on how much is new. Once the log has 5 patterns it did not have at the last
+review (`review.new_patterns`), and at least 3 days have passed (`review.min_days`), the harness
+raises one item, `harness.review`. With fewer new patterns it waits up to 60 days
+(`review.max_days`); with none it never asks. It comes after all other work and after
 the pass report. The assistant opens it, reads the list, and writes what it finds with `keep` (kind
 `finding`): an `idea` (a harness feature that would remove the improvising) or something `worrying`.
 

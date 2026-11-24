@@ -157,8 +157,12 @@ class ReviewConfig(Model):
     """The harness watching how the agent works outside it (docs/review.md). On by default."""
 
     enabled: bool = True
-    every_days: int = Field(default=21, ge=1, le=365)
-    """A review round is raised after this many days, and only when the log has new patterns."""
+    new_patterns: int = Field(default=5, ge=1, le=500)
+    """A review is raised once this many new ways of working outside the tools were logged..."""
+    min_days: int = Field(default=3, ge=0, le=365)
+    """...but not sooner than this many days after the last review..."""
+    max_days: int = Field(default=60, ge=1, le=365)
+    """...and after this many days even for fewer, if anything new was logged at all."""
 
 
 class Connections(Model):

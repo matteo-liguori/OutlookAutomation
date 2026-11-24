@@ -61,7 +61,9 @@ updates:                         # daily check for a newer release tag (reads ta
 
 review:                          # the harness watches how the agent works outside it (docs/review.md)
   enabled: true                  # default true; false stops the transcript scan and the reviews
-  every_days: 21                 # a review is raised this often, and only when something new was logged
+  new_patterns: 5                # a review is raised once this many new workarounds were logged,
+  min_days: 3                    #   but not within this many days of the last review,
+  max_days: 60                   #   and after this many days if anything new was logged at all
 ```
 
 `chamberlain import <old data root>` writes this file from an old installation's profile

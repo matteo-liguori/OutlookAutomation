@@ -284,8 +284,10 @@ crash-mid-sweep, checking after each sweep:
   program and at most one sub-command word from a short list; never an argument, path, quote or
   number). It never reads or keeps outputs, mail text or file contents, and keeps no path,
   session id or project name. Counts are aggregated by pattern. The log is not in the daily report
-  and not on the viewer's front page. Every `review.every_days` days (default 21), and only when
-  the log has patterns added since the last round, the harness opens a round and raises
+  and not on the viewer's front page. How often depends on how much is new: once
+  `review.new_patterns` (default 5) patterns were added since the last round and at least
+  `review.min_days` (3) have passed, or after `review.max_days` (60) if any pattern was added,
+  the harness opens a round and raises
   `harness.review` (07, A-1c). Findings go in with `keep` kind `finding` (02, T-10c). A worrying
   finding appears once as a line in the next pass report; ideas stay in the store for the
   coordinator.

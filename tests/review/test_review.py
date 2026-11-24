@@ -13,6 +13,7 @@ from chamberlain.ports.clock import ManualClock
 from chamberlain.review import claude_guard, findings, normalise
 from chamberlain.review.handlers import access_checks
 from chamberlain.review.homes import AgentHomes
+from chamberlain.review.rounds import RoundRule
 from chamberlain.review.scan import ReviewSettings, scan
 from chamberlain.schema.errors import ChamberlainError
 
@@ -68,7 +69,9 @@ class Rig:
         self.checkout = root / "checkout"
         self.checkout.mkdir()
         self.homes = AgentHomes(root / "home" / ".claude", root / "home" / ".codex")
-        self.settings = ReviewSettings(self.homes, self.checkout, every_days=21)
+        self.settings = ReviewSettings(
+            self.homes, self.checkout, RoundRule(new_patterns=5, min_days=3, max_days=21)
+        )
         self.clock = ManualClock(NOW)
         self.app = build_app(root / "data", clock=self.clock, review=self.settings)
 
@@ -215,6 +218,13 @@ def test_a_review_round_reaches_the_agent_and_only_worrying_reaches_the_owner(ri
     rig.clock.advance(hours=720)
     sid = rig.call("start", {"agent": "t", "purpose": "interactive"})["data"]["session"]
     assert ctx.db.execute("SELECT count(*) FROM review_rounds").fetchone()[0] == 1  # nothing new
+
+    # A burst of new workarounds brings the next review forward: days, not the long wait.
+    burst = ("git log", "npm run", "pip install", "docker ps", "curl", "node")
+    _lines(rig.claude_file("b"), *_claude(inside, *burst))
+    rig.clock.advance(hours=25)
+    rig.call("start", {"agent": "t", "purpose": "interactive"})
+    assert ctx.db.execute("SELECT count(*) FROM review_rounds").fetchone()[0] == 2
 
 
 def test_the_claude_guard_adds_once_keeps_other_rules_and_is_checked_by_doctor(

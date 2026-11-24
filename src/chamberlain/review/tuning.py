@@ -1,7 +1,7 @@
 """Numbers that belong to the review track alone.
 
-Contract: docs/contracts/06-memory.md (M-40). Only the review interval is set by the owner
-(`review.every_days` in the profile); the rest are the track's own.
+Contract: docs/contracts/06-memory.md (M-40). When a review opens is set by the owner (the
+profile's `review` section, `rounds.RoundRule`); the rest are the track's own.
 """
 
 from datetime import timedelta

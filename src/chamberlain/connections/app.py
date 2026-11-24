@@ -15,6 +15,7 @@ from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.calendar_support.secrets import SecretStore
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.review.homes import agent_homes
+from chamberlain.review.rounds import RoundRule
 from chamberlain.review.scan import ReviewSettings, checkout_root
 from chamberlain.runs.models import PassKind
 from chamberlain.runs.schedule import ScheduleSpec, apply_schedules
@@ -46,8 +47,11 @@ def _update_lister(connections: Connections) -> TagLister | None:
 def _review(connections: Connections) -> ReviewSettings | None:
     if not connections.review.enabled:
         return None
+    config = connections.review
     return ReviewSettings(
-        homes=agent_homes(), checkout=checkout_root(), every_days=connections.review.every_days
+        homes=agent_homes(),
+        checkout=checkout_root(),
+        rule=RoundRule(config.new_patterns, config.min_days, config.max_days),
     )
 
 

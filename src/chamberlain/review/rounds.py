@@ -1,11 +1,13 @@
 """Review rounds: when one opens, when it ends, and what the agent reads in it.
 
-Contract: docs/contracts/06-memory.md (M-40), 07-attention.md (A-1c). A round opens when the
-interval has passed and the log holds patterns added since the last round. It ends when the agent
-marks its `harness.review` item handled, or lapses after 14 days. Attention raises the item from
-the open round; the event key is `harness.review:-:<round>`.
+Contract: docs/contracts/06-memory.md (M-40), 07-attention.md (A-1c). How often depends on how
+much is new (owner ruling 2026-11-24): a round opens once enough new patterns were logged since
+the last round (but not within a few days of it), or after a long gap if anything new was logged.
+It ends when the agent marks its `harness.review` item handled, or lapses after 14 days.
+Attention raises the item from the open round; the event key is `harness.review:-:<round>`.
 """
 
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from chamberlain.app.context import Context
@@ -13,6 +15,22 @@ from chamberlain.review import repo
 from chamberlain.review.tuning import BRIEF_ROWS, ROUND_LAPSE
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
+
+
+@dataclass(frozen=True)
+class RoundRule:
+    """When a review round opens; the profile's `review` section."""
+
+    new_patterns: int = 5
+    min_days: int = 3
+    max_days: int = 60
+
+    def due(self, fresh: int, age: timedelta) -> bool:
+        if fresh <= 0:
+            return False
+        if age >= timedelta(days=self.max_days):
+            return True
+        return fresh >= self.new_patterns and age >= timedelta(days=self.min_days)
 
 
 def event_key(round_id: int) -> str:
@@ -23,7 +41,7 @@ def _parse(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def refresh(ctx: Context, every_days: int) -> None:
+def refresh(ctx: Context, rule: RoundRule) -> None:
     """Close rounds that ended, then open one when it is time."""
     now = ctx.clock.now()
     stamped = stamp(ctx.clock)
@@ -37,10 +55,10 @@ def refresh(ctx: Context, every_days: int) -> None:
             return
         latest = repo.latest_round(ctx.db)
         baseline = latest.opened_at if latest else repo.first_added(ctx.db)
-        if baseline is None or now - _parse(baseline) < timedelta(days=every_days):
+        if baseline is None:
             return
         fresh = repo.count_patterns_added_after(ctx.db, latest.opened_at if latest else None)
-        if fresh:
+        if rule.due(fresh, now - _parse(baseline)):
             repo.insert_round(ctx.db, stamped, fresh)
 
 
