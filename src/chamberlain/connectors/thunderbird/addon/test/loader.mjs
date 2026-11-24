@@ -1,17 +1,9 @@
 // Run the real add-on source (type-stripped TypeScript) against a fake Thunderbird.
 import { File } from "node:buffer";
-import { readFileSync } from "node:fs";
-import { stripTypeScriptTypes } from "node:module";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import vm from "node:vm";
+import { bundle } from "../build.mjs";
 
-const here = path.dirname(fileURLToPath(import.meta.url));
-export const SOURCES = ["protocol.generated.ts", "util.ts", "reads.ts", "writes.ts", "background.ts"];
-
-export function addonSource() {
-  return SOURCES.map((name) => stripTypeScriptTypes(readFileSync(path.join(here, "..", "src", name), "utf8"), { mode: "strip" })).join("\n");
-}
+const addonSource = bundle;
 
 /** Boot the add-on. `sink` receives every frame the add-on posts to the native host. */
 export function startAddon(world, { sink, readMs = 30000, writeMs = 45000, assemblyMs = 60000, tuning = {} } = {}) {

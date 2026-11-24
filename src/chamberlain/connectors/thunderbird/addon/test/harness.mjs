@@ -71,10 +71,20 @@ const controls = {
       headerMessageId: id,
       subject,
       body,
+      author: role === "sent" || role === "drafts" ? OWNER : undefined,
       read: !unread,
       attachments: (attachments ?? []).map((a) => ({ name: a.name, contentType: "application/octet-stream", bytes: Uint8Array.from(Buffer.from(a.b64, "base64")) })),
     });
     return { folder_id: m.folderId };
+  },
+  remove: ({ id, folder_id }) => {
+    const bare = String(id).replace(/^<|>$/g, "");
+    world.messages = world.messages.filter((m) => !(m.headerMessageId === bare && (!folder_id || m.folderId === folder_id)));
+    return true;
+  },
+  attachment_sizes: ({ id, folder_id }) => {
+    const m = world.find(id, folder_id);
+    return m ? m.attachments.map((a) => [a.name, a.bytes.length, Buffer.from(a.bytes).toString("base64")]) : [];
   },
   copies: ({ id, folder_id }) => world.copies(id, folder_id),
   unread: ({ folder_id, id }) => {

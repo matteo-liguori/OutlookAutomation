@@ -90,7 +90,11 @@ UTF-8 JSON (one object). `frames.py` is the reference.
   restart Thunderbird"). A request is never sent after a refusal, so a refused
   write is `not_applied`.
 - **B-10** Capabilities are `read search attachments send draft move trash
-  mark_read contacts refresh`. The client requires all of them.
+  mark_read contacts refresh`. The mail client requires all of them. Other
+  capabilities (for example `calendar`, added by the calendars track) are
+  optional: an add-on may advertise them, a client names in `require` only
+  what it needs, and the host checks `require` against the advertised list
+  without knowing what the strings mean.
 
 ## 4. Chunked binary transfer
 
