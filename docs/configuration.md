@@ -21,6 +21,14 @@ sources:                         # id prefix gives the role: mail:, calendar:, c
     kind: google                 # or caldav, owl
     account: you@example.com
     calendar_id: primary
+  calendar:icloud:
+    kind: caldav
+    url: https://caldav.icloud.com/.../calendars/home/
+    username: you@icloud.com
+    credential: icloud           # name in the credential store
+    address: you@icloud.com      # optional; the address invitations are sent from and answered as.
+                                 # Needed only when the username is not an email address.
+                                 # Without any address the calendar sends no invitations.
 
 write_policy: {}                 # optional overrides of the grant rules (G-12a defaults)
 budgets: {}                      # optional storage budgets (M-27 defaults)

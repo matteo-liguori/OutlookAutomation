@@ -18,9 +18,10 @@ from chamberlain.domain.operations import OperationState, Verification
 from chamberlain.limits import (
     ACTION_TITLE_MAX,
     CARD_GOAL_MAX,
-    CARD_POSITION_MAX,
     CARD_RULES_MAX,
     CARD_TITLE_MAX,
+    COMPLEX_POSITION_MAX,
+    COMPLEX_REASON_MAX,
     EVIDENCE_MAX,
     FIND_LIMIT_MAX,
     FIX_MAX,
@@ -198,6 +199,10 @@ class CardView(Model):
     review_at: Timestamp | None = None
     outcome: str | None = Field(default=None, max_length=OUTCOME_MAX)
     actions: tuple[ActionView, ...] = ()
+    context: ArtifactHandle | None = None
+    """Notes carried over from the old system, still stored. Not part of the card's size."""
+    complex: Literal["pending", "approved", "declined"] | None = None
+    """The owner's decision on a larger limit. `approved` raises the caps (M-36)."""
 
 
 class GrantView(Model):
@@ -290,6 +295,8 @@ class CalendarEventView(Model):
     status: Literal["confirmed", "tentative", "cancelled"]
     etag: str
     attendee_count: int = Field(default=0, ge=0)
+    my_response: Literal["needs_action", "accepted", "tentative", "declined"] | None = None
+    """Set when someone else invited this calendar's owner; the owner's answer so far."""
 
 
 class ContactView(Model):
@@ -426,7 +433,8 @@ class CardFields(Model):
 
     title: str | None = Field(default=None, min_length=1, max_length=CARD_TITLE_MAX)
     goal: str | None = Field(default=None, max_length=CARD_GOAL_MAX)
-    position: str | None = Field(default=None, max_length=CARD_POSITION_MAX)
+    position: str | None = Field(default=None, max_length=COMPLEX_POSITION_MAX)
+    """A normal card holds 1,500 characters here; only an approved complex card may use the rest."""
     rules: str | None = Field(default=None, max_length=CARD_RULES_MAX)
 
 
@@ -449,9 +457,20 @@ class CardRequest(ToolRequest):
     fields: CardFields | None = None
     action_fields: ActionFields | None = None
     outcome: str | None = Field(default=None, min_length=1, max_length=OUTCOME_MAX)
+    complex_reason: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=COMPLEX_REASON_MAX,
+        description=(
+            "With op update and no fields: ask the owner for a larger limit on a genuinely "
+            "demanding card. Give a short reason. Nothing changes until the owner agrees."
+        ),
+    )
 
     @model_validator(mode="after")
     def _shape(self) -> Self:
+        if self.complex_reason is not None and (self.op is not CardOp.UPDATE or self.fields):
+            raise ValueError("complex_reason goes with op update and no fields")
         if self.op in _NEEDS_CARD and self.card is None:
             raise ValueError(f"{self.op.value} needs card")
         if self.op in _NEEDS_ACTION and self.action is None:

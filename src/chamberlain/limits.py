@@ -38,6 +38,13 @@ CARD_GOAL_MAX: Final = 400
 CARD_POSITION_MAX: Final = 1_500
 CARD_RULES_MAX: Final = 600
 CARD_MAX_CHARS: Final = 3_000
+COMPLEX_POSITION_MAX: Final = 4_000
+COMPLEX_CARD_MAX_CHARS: Final = 6_000
+COMPLEX_DECLINE_DAYS: Final = 30
+"""After the owner declines a larger limit, the agent may not ask again for that card this long."""
+COMPLEX_REASON_MAX: Final = 240
+IMPORTED_CONTEXT_DAYS: Final = 60
+"""Context carried over from the old harness expires on its own after this many days."""
 CARD_OPEN_ACTIONS_MAX: Final = 7
 ACTION_TITLE_MAX: Final = 160
 NOTE_MAX: Final = 1_000

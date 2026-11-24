@@ -160,3 +160,46 @@ def test_s18_open_store_creates_the_data_root_and_migrates(
         assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
     finally:
         connection.close()
+
+
+def test_m35_migration_0080_keeps_every_artifact_owner_of_a_store_at_0071(
+    clock: ManualClock,
+) -> None:
+    """A live store at 0071 holds real owner rows; the rebuild must carry all of them."""
+    db = connect(MEMORY)
+    upto = [m for m in discover() if m.version <= 71]
+    assert migrate(db, clock, backup_dir=None, migrations=upto)[-1] == 71
+    for n, (kind, owner) in enumerate(
+        [
+            ("action", "act_0000000000000001"),
+            ("operation", "op_0000000000000001"),
+            ("run", "run_00000001"),
+            ("session", "ses_0000000000000001"),
+            ("grant", "grant_0000000000000001"),
+        ]
+    ):
+        db.execute(
+            "INSERT INTO artifacts (handle, kind, media_type, size, sha256, reason, created_at, "
+            "expires_at) VALUES (?, 'text', 'text/plain', 1, ?, 'r', "
+            "'2026-01-01T00:00:00Z', '2026-02-01T00:00:00Z')",
+            (f"art_{n:016d}", f"{n:064d}"),
+        )
+        db.execute(
+            "INSERT INTO artifact_owners (artifact, owner_kind, owner, created_at) "
+            "VALUES (?, ?, ?, '2026-01-01T00:00:00Z')",
+            (f"art_{n:016d}", kind, owner),
+        )
+    db.commit()
+    before = [tuple(r) for r in db.execute("SELECT * FROM artifact_owners ORDER BY artifact")]
+    assert migrate(db, clock, backup_dir=None)[0] == 80
+    after = [tuple(r) for r in db.execute("SELECT * FROM artifact_owners ORDER BY artifact")]
+    assert after == before
+    index = db.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'artifact_owners_owner'"
+    ).fetchone()
+    assert index is not None
+    db.execute(
+        "INSERT INTO artifact_owners (artifact, owner_kind, owner, created_at) "
+        "VALUES ('art_0000000000000000', 'card', 'card_0000000000000001', '2026-01-01T00:00:00Z')"
+    )
+    db.close()

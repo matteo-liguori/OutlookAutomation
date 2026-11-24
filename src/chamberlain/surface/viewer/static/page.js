@@ -1,13 +1,38 @@
 "use strict";
 // The viewer page. It builds every element with textContent and never parses markup, so nothing
-// from a mail, a calendar or a note can become markup. The token comes from the URL fragment, is
-// kept only in this variable, and is removed from the address bar at once. calendar.js adds the
-// calendar page through `window.ChamberlainViewer.register`.
+// from a mail, a calendar or a note can become markup. The token comes from the URL fragment and
+// is removed from the address bar at once. It is kept in this variable and in the tab's
+// sessionStorage, so a reload of the tab works; a new browser session needs the token URL again.
+// calendar.js adds the calendar page through `window.ChamberlainViewer.register`; complex.js adds
+// to the Needs you and Cards pages through `window.ChamberlainViewer.sections`.
 (function () {
+  var TOKEN_KEY = "chamberlain.viewer.token";
   var token = "";
+
+  // --- the token for this tab (kept in sessionStorage; every access may fail) -------------
+  function rememberedToken() {
+    try {
+      return window.sessionStorage.getItem(TOKEN_KEY) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function rememberToken(value) {
+    try {
+      if (value) window.sessionStorage.setItem(TOKEN_KEY, value);
+      else window.sessionStorage.removeItem(TOKEN_KEY);
+    } catch (_) {
+      /* storage may be blocked: the page still works until it is reloaded */
+    }
+  }
+
   var hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
   if (hash.get("token")) {
     token = hash.get("token");
+    rememberToken(token);
+  } else {
+    token = rememberedToken();
   }
   history.replaceState(null, "", window.location.pathname);
 
@@ -42,6 +67,11 @@
         if (!response.ok) {
           var failure = new Error(data.message || "That did not work.");
           failure.status = response.status;
+          if (response.status === 403 && rememberedToken()) {
+            // The viewer was restarted: the saved token is old. Forget it and ask again.
+            rememberToken("");
+            askToken("The saved token no longer works. Paste the current one.");
+          }
           throw failure;
         }
         return data;
@@ -157,6 +187,7 @@
     "calendar.create": "Calendar event created",
     "calendar.update": "Calendar event changed",
     "calendar.delete": "Calendar event deleted",
+    "calendar.respond": "Calendar invitation answered",
   };
 
   function uncertainCard(op) {
@@ -199,9 +230,23 @@
 
   // --- views -----------------------------------------------------------------------------
 
+  // Pieces other scripts add to a page: `sections.needs` and `sections.card` hold functions.
+  var sections = { needs: [], card: [] };
+
+  function runSections(name, node, data) {
+    sections[name].forEach(function (build) {
+      try {
+        build(node, data);
+      } catch (_) {
+        /* one broken section must not take the page down */
+      }
+    });
+  }
+
   function needsView() {
     var box = el("div", {});
     box.appendChild(el("h2", { text: "Waiting for your decision" }));
+    runSections("needs", box);
     box.appendChild(grantsList(["proposed"], "Nothing is waiting for you to confirm."));
     box.appendChild(el("h2", { text: "Operations that may or may not have happened" }));
     uncertainCards(box);
@@ -256,6 +301,7 @@
           if (c.open_actions > c.actions.length) preview.appendChild(el("span", { class: "more", text: "and " + (c.open_actions - c.actions.length) + " more" }));
           card.appendChild(preview);
         }
+        runSections("card", card, c);
         card.appendChild(el("div", { class: "card-date" }, el("span", { text: "Updated " + day(c.updated_at) }), c.review_at ? el("span", { class: "badge", text: "Review " + day(c.review_at) }) : null));
         grid.appendChild(card);
       });
@@ -391,6 +437,9 @@
   window.ChamberlainViewer = {
     el: el,
     api: api,
+    post: post,
+    render: function () { render(); },
+    sections: sections,
     when: when,
     problem: problem,
     empty: empty,
@@ -400,13 +449,24 @@
     },
   };
 
+  function askToken(message) {
+    var input = el("input", { type: "password", "aria-label": "Viewer token" });
+    show(el("div", {}, el("h2", { text: "Viewer token" }),
+      el("p", { class: message ? "warn" : "muted", text: message || "Paste the contents of the viewer.token file from the run folder of your data folder." }),
+      input,
+      el("button", { class: "act primary", text: "Open", onclick: function () {
+        token = input.value.trim();
+        rememberToken(token);
+        tabsBar.textContent = "";
+        start();
+      } })));
+  }
+
   document.addEventListener("DOMContentLoaded", function () {
     if (token) {
       start();
     } else {
-      var input = el("input", { type: "password", "aria-label": "Viewer token" });
-      show(el("div", {}, el("h2", { text: "Viewer token" }), el("p", { class: "muted", text: "Paste the contents of the viewer.token file from the run folder of your data folder." }), input,
-        el("button", { class: "act primary", text: "Open", onclick: function () { token = input.value.trim(); start(); } })));
+      askToken("");
     }
   });
 })();

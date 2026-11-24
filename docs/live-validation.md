@@ -36,6 +36,16 @@ to `live_verified`. Record each result on the board with the date.
 | 2.2 | iCloud CalDAV: `credential`, `check`, `register`; read-only query of real calendars; `<C:expand>` for series | owner's iCloud (read-only) |
 | 2.3 | Owl add-on: `calendar_api.js` loads (module paths), occurrence `icalString` is the occurrence, add/modify/delete complete with prompt read-back, etag stable across a restart, any `fresh_as_of` source | KCL calendar: read-only, plus one self-created test event deleted afterwards |
 
+### 2b. Invitations (the harness cannot see delivery; these are checked by eye or by the live suite)
+
+| # | Check | Calendar |
+| --- | --- | --- |
+| 2.4 | Google: invite the owner's other address; the invitation arrives in that account's calendar and mail; accept it there with `calendar.respond`; the organiser's copy shows the answer; change the time (answer resets); cancel (the copy shows cancelled) | test account to the owner's second Google account |
+| 2.5 | Google: `events.insert` with a client-chosen `id` (32 hex characters) is accepted, `sendUpdates=all` sends the mail, a repeat id answers 409, `iCalUID` becomes `<id>@google.com` | test account |
+| 2.6 | iCloud: invite the owner's other address; whether iCloud delivers it into the calendar or the inbox; whether it rewrites ATTENDEE parameters (SCHEDULE-STATUS) so the etag moves after the write; accept it as the invitee and see the organiser's copy change; delete as organiser sends a cancellation | owner's iCloud to another account |
+| 2.7 | iCloud: the address the account sends as (`calendar-user-address-set`) equals the configured `address` | owner's iCloud (read-only) |
+| 2.8 | Owl: a write with attendees refuses at propose with `invitations-not-supported` and changes nothing | KCL calendar (nothing written) |
+
 ## 3. Harness behaviour
 
 | # | Check |

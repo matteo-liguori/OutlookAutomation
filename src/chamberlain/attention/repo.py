@@ -12,6 +12,7 @@ from chamberlain.attention.models import (
     ActionRow,
     BudgetRow,
     CardRow,
+    ComplexDecision,
     DueRun,
     EventAttrs,
     EventDraft,
@@ -318,11 +319,33 @@ def due_actions(db: sqlite3.Connection, now: str) -> list[ActionRow]:
 
 def cards_needing_review(db: sqlite3.Connection, now: str) -> list[CardRow]:
     rows = db.execute(
-        "SELECT handle, title, review_at, over_cap FROM cards WHERE state = 'open' "
-        "AND (over_cap = 1 OR (review_at IS NOT NULL AND review_at <= ?))",
-        (now,),
+        "SELECT c.handle, c.title, c.review_at, c.over_cap, EXISTS ("
+        "SELECT 1 FROM imported_context i JOIN artifacts a ON a.handle = i.artifact "
+        "JOIN artifact_owners o ON o.artifact = a.handle AND o.owner_kind = 'card' "
+        "AND o.owner = c.handle WHERE i.card = c.handle AND a.state = 'live' "
+        "AND a.expires_at > ?) AS has_context FROM cards c WHERE c.state = 'open' "
+        "AND (c.over_cap = 1 OR (c.review_at IS NOT NULL AND c.review_at <= ?))",
+        (now, now),
     )
-    return [CardRow(r["handle"], r["title"], r["review_at"], bool(r["over_cap"])) for r in rows]
+    return [
+        CardRow(
+            r["handle"], r["title"], r["review_at"], bool(r["over_cap"]), bool(r["has_context"])
+        )
+        for r in rows
+    ]
+
+
+def complex_decisions(db: sqlite3.Connection, since: str) -> list[ComplexDecision]:
+    """Answers the owner gave to a larger-limit request since `since`, for open cards."""
+    rows = db.execute(
+        "SELECT x.card, x.state, x.decided_at, x.blocked_until FROM complex_cards x "
+        "JOIN cards c ON c.handle = x.card WHERE c.state = 'open' "
+        "AND x.state IN ('approved', 'declined') AND x.decided_at >= ? ORDER BY x.card",
+        (since,),
+    )
+    return [
+        ComplexDecision(r["card"], r["state"], r["decided_at"], r["blocked_until"]) for r in rows
+    ]
 
 
 def open_cards(db: sqlite3.Connection) -> list[CardRow]:

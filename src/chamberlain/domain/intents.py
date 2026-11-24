@@ -32,6 +32,7 @@ class IntentKind(StrEnum):
     CALENDAR_CREATE = "calendar.create"
     CALENDAR_UPDATE = "calendar.update"
     CALENDAR_DELETE = "calendar.delete"
+    CALENDAR_RESPOND = "calendar.respond"
 
 
 Subject = Annotated[str, Field(max_length=500, pattern=r"^[^\r\n]*$")]
@@ -140,6 +141,18 @@ class CalendarDelete(Model):
     expected_etag: str = Field(min_length=1)
 
 
+class CalendarRespond(Model):
+    """Answer an invitation received: change only this calendar owner's own answer."""
+
+    kind: Literal[IntentKind.CALENDAR_RESPOND] = IntentKind.CALENDAR_RESPOND
+    source: SourceId
+    event_ref: CalendarEventHandle
+    expected_etag: str = Field(min_length=1)
+    response: Literal["accepted", "tentative", "declined"]
+    organiser: EmailAddress | None = None
+    """Who gets the answer. Completed by the harness from the stored event (W-1)."""
+
+
 MailIntent = (
     MailSend
     | MailDraftSave
@@ -149,8 +162,10 @@ MailIntent = (
     | MailTrash
     | MailMarkRead
 )
-CalendarIntent = CalendarCreate | CalendarUpdate | CalendarDelete
+CalendarIntent = CalendarCreate | CalendarUpdate | CalendarDelete | CalendarRespond
 WriteIntent = Annotated[MailIntent | CalendarIntent, Field(discriminator="kind")]
 
-HARNESS_COMPLETED_FIELDS = frozenset({"message_id", "uid", "internet_message_id", "from_folder"})
+HARNESS_COMPLETED_FIELDS = frozenset(
+    {"message_id", "uid", "internet_message_id", "from_folder", "organiser"}
+)
 """Fields the agent leaves empty; the harness fills them before hashing (W-1, W-2)."""

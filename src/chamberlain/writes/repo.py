@@ -5,6 +5,7 @@ plain strings; timestamps are the stored D-7 text. Nothing here decides
 anything: rules live in `authorise.py`, `grants.py` and `engine.py`.
 """
 
+import contextlib
 import json
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
@@ -16,6 +17,8 @@ from chamberlain.domain.grant_rules import format_ts, parse_ts
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import RELEASING_STATES, OperationState
+from chamberlain.domain.senders import AuthorisedSenders
+from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, get_state
 from chamberlain.writes.models import GrantRow, OperationRow
 
 _RELEASING = tuple(state.value for state in RELEASING_STATES)
@@ -185,25 +188,44 @@ def delete_compacted_grants(db: sqlite3.Connection, before: str) -> int:
 # --- known recipients -------------------------------------------------------------
 
 
-def own_addresses(db: sqlite3.Connection, source_id: str) -> frozenset[str]:
-    """The mailbox address(es) a source is bound to: always known recipients."""
-    row = db.execute("SELECT binding_json FROM sources WHERE id = ?", (source_id,)).fetchone()
-    if row is None:
-        return frozenset()
+_ADDRESS_KEYS = ("mailbox", "address", "addresses", "account", "username")
+"""Binding keys that may hold the address a source belongs to."""
+
+
+def _binding_addresses(binding_json: str) -> frozenset[str]:
     try:
-        binding = json.loads(str(row["binding_json"]))
+        binding = json.loads(binding_json)
     except ValueError:
         return frozenset()
     found: set[str] = set()
     if isinstance(binding, dict):
         values = cast(dict[str, object], binding)
-        for key in ("mailbox", "address", "addresses"):
+        for key in _ADDRESS_KEYS:
             value = values.get(key)
             if isinstance(value, str):
                 found.add(value.strip().lower())
             elif isinstance(value, list):
                 found.update(str(v).strip().lower() for v in cast(list[object], value))
     return frozenset(a for a in found if "@" in a)
+
+
+def own_addresses(db: sqlite3.Connection, source_id: str) -> frozenset[str]:
+    """The mailbox address(es) a source is bound to: always known recipients."""
+    row = db.execute("SELECT binding_json FROM sources WHERE id = ?", (source_id,)).fetchone()
+    return frozenset() if row is None else _binding_addresses(str(row["binding_json"]))
+
+
+def owner_addresses(db: sqlite3.Connection) -> frozenset[str]:
+    """Every address that is the owner's: any configured source's own address, and the
+    `owner` list of `authorised_senders` (G-12b). Lower-cased."""
+    found: set[str] = set()
+    for row in db.execute("SELECT binding_json FROM sources").fetchall():
+        found |= _binding_addresses(str(row["binding_json"]))
+    raw = get_state(db, AUTHORISED_SENDERS_KEY)
+    if raw is not None:
+        with contextlib.suppress(ValueError):
+            found.update(AuthorisedSenders.model_validate_json(raw).owner)
+    return frozenset(found)
 
 
 def known_recipients(db: sqlite3.Connection, source_id: str) -> frozenset[str]:

@@ -48,6 +48,10 @@ class Usage:
     known_recipients: frozenset[str] = frozenset()
     event_has_attendees: bool = False
     """The stored event an update or delete acts on has attendees (read at propose)."""
+    event_attendees: frozenset[str] = frozenset()
+    """Who those attendees are; empty while `event_has_attendees` is true means not known."""
+    owner_addresses: frozenset[str] = frozenset()
+    """The owner's own addresses: every source's address and `authorised_senders.owner`."""
 
 
 @dataclass(frozen=True)
@@ -72,6 +76,8 @@ def requirement_needed(intent: WriteIntent, usage: Usage, policy: WritePolicy) -
         send_known=policy.send_known,
         other=policy.other,
         existing_attendees=usage.event_has_attendees,
+        stored_attendees=usage.event_attendees,
+        owner_addresses=usage.owner_addresses,
     )
 
 

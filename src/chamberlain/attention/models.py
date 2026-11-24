@@ -89,6 +89,18 @@ class CardRow:
     title: str
     review_at: str | None
     over_cap: bool
+    has_context: bool = False
+    """The card still holds notes carried over from the old system (M-35)."""
+
+
+@dataclass(frozen=True)
+class ComplexDecision:
+    """The owner's recent answer to a request for a larger card limit."""
+
+    card: str
+    state: str
+    decided_at: str
+    blocked_until: str | None
 
 
 @dataclass(frozen=True)
@@ -172,6 +184,7 @@ class DetectorInput:
     actions: tuple[ActionRow, ...] = ()
     cards: tuple[CardRow, ...] = ()
     open_cards: tuple[CardRow, ...] = ()
+    complex_decisions: tuple[ComplexDecision, ...] = ()
     linked_ids: frozenset[str] = frozenset()
     """Handles and Message-IDs already linked to a card."""
     linked_cards: dict[str, str] = field(default_factory=lambda: {})

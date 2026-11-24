@@ -177,9 +177,15 @@ class ArtifactService:
             idle_edge=minus(now, hours=SESSION_IDLE_HOURS),
         )
 
-    def require_owner(self, owner: str) -> OwnerKind:
-        """The owner's kind, or `artifact.no_owner` / `artifact.owner_ended` (M-4)."""
+    def require_owner(self, owner: str, *, internal: bool = False) -> OwnerKind:
+        """The owner's kind, or `artifact.no_owner` / `artifact.owner_ended` (M-4).
+
+        A card may own an item only for the harness itself (`internal`, M-35): the agent keeps
+        things under actions, never directly under a card.
+        """
         kind = owner_kind_of(owner)
+        if kind is OwnerKind.CARD and not internal:
+            kind = None
         if kind is None or not repo.owner_exists(self._db, kind.value, owner):
             raise ChamberlainError(
                 ErrorCode.ARTIFACT_NO_OWNER,
@@ -204,9 +210,10 @@ class ArtifactService:
         filename: str | None = None,
         media_type: str | None = None,
         expires_in_hours: int | None = None,
+        internal: bool = False,
     ) -> Kept:
         """Store bytes under a live owner. No owner, no storage (M-4)."""
-        owner_kind = self.require_owner(owner)
+        owner_kind = self.require_owner(owner, internal=internal)
         sha = sha256_bytes(data)
         self._check_budget(owner, owner_kind, len(data), sha)
         write_blob(self._root, data, sha)
@@ -247,8 +254,8 @@ class ArtifactService:
         added = 0 if already else size
         if repo.total_stored_bytes(self._db) + added > self._budgets.total_bytes:
             raise self._over_budget("The store is full.")
-        if kind is OwnerKind.ACTION:
-            card = repo.card_of_action(self._db, owner)
+        if kind in (OwnerKind.ACTION, OwnerKind.CARD):
+            card = owner if kind is OwnerKind.CARD else repo.card_of_action(self._db, owner)
             if card and repo.card_live_bytes(self._db, card) + size > self._budgets.per_card_bytes:
                 raise self._over_budget("This card holds as much as it may.")
 

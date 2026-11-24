@@ -68,6 +68,8 @@ class CalDavSource(_Source):
     username: str = Field(min_length=1)
     credential: str = Field(min_length=1)
     """The name of the password in the credential store, never the password."""
+    address: str | None = Field(default=None, pattern=r"^[^@\s]+@[^@\s]+$")
+    """The address invitations are sent from. Optional when the username is an address."""
 
 
 class DemoSource(_Source):

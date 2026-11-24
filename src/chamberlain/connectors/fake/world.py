@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 
-from chamberlain.domain.calendar import EventFields, EventStatus
+from chamberlain.domain.calendar import EventFields, EventStatus, Response
 from chamberlain.domain.capabilities import HealthState, SourceHealth
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.mail import Address, AttachmentMeta, Folder, FolderRole
@@ -61,6 +61,14 @@ class StoredEvent:
     status: EventStatus
     fields: EventFields
     updated: datetime
+    organiser: str | None = None
+    """Who invited this calendar's owner, on an invitee's copy; None on one's own events."""
+    my_response: Response | None = None
+    """The owner's answer on an invitee's copy."""
+    participants: dict[str, Response] = field(default_factory=lambda: {})
+    """Each invitee's answer, as the organiser's copy (and the invitee's copy) holds them."""
+    invite_of: tuple[str, str] | None = None
+    """On an invitee's copy: (organiser's source, event id on that calendar)."""
 
     @property
     def etag(self) -> str:
@@ -93,6 +101,14 @@ class FakeWorld:
         self.mail: dict[str, list[StoredMail]] = {}
         self.folders: dict[str, list[Folder]] = {}
         self.events: dict[str, dict[str, StoredEvent]] = {}
+        self.addresses: dict[str, str] = {}
+        """Calendar source to its owner's address (invitations are delivered by address)."""
+        self.invitations: dict[str, bool] = {}
+        """Calendar source to whether it declares `calendar.invite`."""
+        self.undelivered: dict[str, list[tuple[str, str]]] = {}
+        """`(uid, address)` of invitees outside every fake calendar, per organiser's source."""
+        self.responses_sent: dict[str, list[tuple[str, str, Response]]] = {}
+        """`(uid, organiser, response)` of answers to an organiser outside every fake calendar."""
         self.contacts: dict[str, list[StoredContact]] = {}
         self.health_override: dict[str, HealthState] = {}
         self.dispatch_log: list[DispatchRecord] = []

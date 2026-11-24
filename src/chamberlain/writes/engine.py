@@ -45,6 +45,7 @@ from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
+    CalendarRespond,
     CalendarUpdate,
     IntentKind,
     MailDraftSave,
@@ -95,7 +96,14 @@ from chamberlain.writes.grants import GrantService
 from chamberlain.writes.imported import advice_for, parse_summary, repeats, summary_of_intent
 from chamberlain.writes.imported_match import found_live
 from chamberlain.writes.models import GrantRow, OperationRow, StoredReceipt, WritePolicy
-from chamberlain.writes.render import describe_intent, describe_scope, grant_summary, grant_title
+from chamberlain.writes.render import (
+    EVENT_ATTENDEES_REF,
+    EVENT_ORGANISER_REF,
+    describe_intent,
+    describe_scope,
+    grant_summary,
+    grant_title,
+)
 from chamberlain.writes.transitions import build_receipt, move_operation
 
 log = logging.getLogger("chamberlain.writes")
@@ -123,8 +131,7 @@ CALENDAR_SETTLE_ATTEMPTS: Final = 7
 CALENDAR_SETTLE_WINDOW_SECONDS: Final = 60
 ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
 """Reserved key in the `refs` mapping given to `prepare` (board R3)."""
-EVENT_ATTENDEES_REF: Final = "_event_attendees"
-"""Reserved key in the stored refs: the event an update or delete acts on has attendees."""
+INVITATIONS_UNSUPPORTED: Final = "invitations-not-supported"
 
 _INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
 _CAPABILITY: dict[IntentKind, CapabilityName] = {
@@ -138,10 +145,17 @@ _CAPABILITY: dict[IntentKind, CapabilityName] = {
     IntentKind.CALENDAR_CREATE: CapabilityName.CALENDAR_WRITE,
     IntentKind.CALENDAR_UPDATE: CapabilityName.CALENDAR_WRITE,
     IntentKind.CALENDAR_DELETE: CapabilityName.CALENDAR_WRITE,
+    IntentKind.CALENDAR_RESPOND: CapabilityName.CALENDAR_WRITE,
 }
 _CALENDAR_KINDS = frozenset(
-    {IntentKind.CALENDAR_CREATE, IntentKind.CALENDAR_UPDATE, IntentKind.CALENDAR_DELETE}
+    {
+        IntentKind.CALENDAR_CREATE,
+        IntentKind.CALENDAR_UPDATE,
+        IntentKind.CALENDAR_DELETE,
+        IntentKind.CALENDAR_RESPOND,
+    }
 )
+_CALENDAR_INTENTS = (CalendarCreate, CalendarUpdate, CalendarDelete, CalendarRespond)
 _PROCESS_TOKEN: list[str] = []
 
 
@@ -267,6 +281,7 @@ class Engine:
         """Store a complete intent and report the authority it needs (W-1, W-18, W-19)."""
         capability = self._capability(intent)
         refs = self._locate(intent)
+        self._require_invitations(intent, refs)
         completed = self._complete(intent, refs)
         self._check_limits(completed, capability)
         sha = intent_hash(completed)
@@ -322,7 +337,7 @@ class Engine:
         for item in evidence:
             self.ctx.services.evidence.link(item, handle)
         op = self.get(handle)
-        text, cut = describe_intent(completed)
+        text, cut = describe_intent(completed, refs=refs)
         return Proposal(
             operation=op,
             grant=grant,
@@ -366,7 +381,10 @@ class Engine:
                 if kind in _CALENDAR_KINDS
                 else self.ctx.sources.mail_port(scope.source).capabilities(scope.source)
             )
-            if port_caps.get(capability) is None:
+            if port_caps.get(capability) is None or (
+                kind is IntentKind.CALENDAR_RESPOND
+                and port_caps.get(CapabilityName.CALENDAR_INVITE) is None
+            ):
                 raise ChamberlainError(
                     ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
                 )
@@ -443,7 +461,7 @@ class Engine:
                 grant = repo.get_grant(self.db, decision.grant)
             else:
                 requirement = decision.requirement
-        text, cut = describe_intent(intent)
+        text, cut = describe_intent(intent, refs=self._refs(op))
         return Proposal(
             operation=op,
             grant=grant,
@@ -511,11 +529,54 @@ class Engine:
                     ErrorCode.REQUEST_INVALID, "A handle belongs to a different source."
                 )
             located[handle] = locator
-        if isinstance(intent, CalendarUpdate | CalendarDelete):
+        if isinstance(intent, CalendarUpdate | CalendarDelete | CalendarRespond):
             port = self.ctx.sources.calendar_port(intent.source)
-            if port.read(intent.source, located[intent.event_ref]).fields.attendees:
-                located[EVENT_ATTENDEES_REF] = "1"
+            event = port.read(intent.source, located[intent.event_ref])
+            if isinstance(intent, CalendarRespond):
+                if event.organiser is None or event.my_response is None:
+                    raise ChamberlainError(
+                        ErrorCode.REQUEST_INVALID,
+                        "That event is not an invitation to this calendar's owner.",
+                        fix="Only an event someone else invited the owner to can be answered.",
+                        field="event_ref",
+                    )
+                located[EVENT_ORGANISER_REF] = event.organiser
+            else:
+                if event.my_response is not None:
+                    raise ChamberlainError(
+                        ErrorCode.CAPABILITY_UNSUPPORTED,
+                        "This is someone else's invitation; only its organiser can change it.",
+                        fix="Answer it with calendar.respond instead.",
+                        detail="invitee-copy",
+                    )
+                if event.fields.attendees:
+                    located[EVENT_ATTENDEES_REF] = ",".join(sorted(event.fields.attendees))
         return located
+
+    def _require_invitations(self, intent: WriteIntent, refs: Mapping[str, str]) -> None:
+        """A write that reaches other people needs a source that can send invitations (P-2).
+
+        Checked at propose so the owner is never asked to confirm what cannot happen.
+        """
+        if not isinstance(intent, _CALENDAR_INTENTS):
+            return
+        reaches = (
+            isinstance(intent, CalendarRespond)
+            or EVENT_ATTENDEES_REF in refs
+            or (
+                isinstance(intent, CalendarCreate | CalendarUpdate) and bool(intent.event.attendees)
+            )
+        )
+        if not reaches:
+            return
+        caps = self.ctx.sources.calendar_port(intent.source).capabilities(intent.source)
+        if caps.get(CapabilityName.CALENDAR_INVITE) is None:
+            raise ChamberlainError(
+                ErrorCode.CAPABILITY_UNSUPPORTED,
+                "This calendar cannot send or answer invitations.",
+                fix="Use a calendar that can, or write the event without other people.",
+                detail=INVITATIONS_UNSUPPORTED,
+            )
 
     def _complete(self, intent: WriteIntent, refs: Mapping[str, str]) -> WriteIntent:
         """Fill the harness-completed fields and drop agent-supplied tokens (W-1, R1)."""
@@ -529,6 +590,8 @@ class Engine:
             )
             blank["internet_message_id"] = seen.internet_message_id
             blank["from_folder"] = seen.folder_id
+        if isinstance(intent, CalendarRespond):
+            blank["organiser"] = refs[EVENT_ORGANISER_REF]
         completed = intent.model_copy(update=blank)
         for attachment in getattr(completed, "attachments", ()):
             info = self.ctx.services.artifacts.info(attachment.artifact)
@@ -577,6 +640,8 @@ class Engine:
             ),
             known_recipients=repo.known_recipients(self.db, intent.source),
             event_has_attendees=EVENT_ATTENDEES_REF in refs,
+            event_attendees=_attendees_in(refs),
+            owner_addresses=repo.owner_addresses(self.db),
         )
 
     def _active_grants(self, source: str, reserved: str | None) -> list[GrantRow]:
@@ -1293,26 +1358,32 @@ class Engine:
     # --- connector calls (the only ones) --------------------------------------------
 
     def _port_prepare(self, intent: WriteIntent, refs: Mapping[str, str]) -> Prepared:
-        if isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete):
+        if isinstance(intent, _CALENDAR_INTENTS):
             return self.ctx.sources.calendar_port(intent.source).prepare(intent, refs)
         return self.ctx.sources.mail_port(intent.source).prepare(intent, refs)
 
     def _port_dispatch(
         self, intent: WriteIntent, prepared: Prepared, key: str, payloads: Mapping[str, bytes]
     ) -> DispatchResult:
-        if isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete):
+        if isinstance(intent, _CALENDAR_INTENTS):
             return self.ctx.sources.calendar_port(intent.source).dispatch(prepared, key)
         return self.ctx.sources.mail_port(intent.source).dispatch(prepared, key, payloads)
 
     def _port_reconcile(self, intent: WriteIntent, prepared: Prepared, key: str) -> ReconcileResult:
         """Read-only. Any failure is `unknown`, never a reason to resend."""
         try:
-            if isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete):
+            if isinstance(intent, _CALENDAR_INTENTS):
                 return self.ctx.sources.calendar_port(intent.source).reconcile(prepared, key)
             return self.ctx.sources.mail_port(intent.source).reconcile(prepared, key)
         except Exception:
             log_failure(log, "reconcile failed")
             return ReconcileResult(status=ReconcileStatus.UNKNOWN)
+
+
+def _attendees_in(refs: Mapping[str, str]) -> frozenset[str]:
+    """The stored event's attendees noted at propose; empty when unknown (an older `1`)."""
+    listed = refs.get(EVENT_ATTENDEES_REF, "")
+    return frozenset(a for a in listed.split(",") if "@" in a)
 
 
 def _with_token(intent: WriteIntent, key: str) -> tuple[WriteIntent, str | None]:

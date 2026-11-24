@@ -27,10 +27,16 @@ def _reply(status: int, body: Json | None = None) -> HttpReply:
 
 class FakeGoogleApi:
     def __init__(
-        self, clock: ManualClock, calendar_id: str = "cal@group.calendar.google.com"
+        self,
+        clock: ManualClock,
+        calendar_id: str = "cal@group.calendar.google.com",
+        owner: str = "me@example.test",
     ) -> None:
         self.clock = clock
         self.calendar_id = calendar_id
+        self.owner = owner
+        self.params: list[tuple[str, str, dict[str, str]]] = []
+        """Every request's method, path and query, so a test can assert `sendUpdates`."""
         self.events: dict[str, Json] = {}
         self.calls: list[tuple[str, str]] = []
         self.bodies: list[Json] = []
@@ -91,6 +97,7 @@ class FakeGoogleApi:
         if not headers.get("Authorization", "").startswith("Bearer "):
             return _reply(401, {"error": "unauthenticated"})
         params = {k: v[0] for k, v in parse_qs(parts.query).items()}
+        self.params.append((method, path, params))
         data: Json | None = json.loads(body) if body else None
         if data is not None:
             self.bodies.append(data)
@@ -170,8 +177,51 @@ class FakeGoogleApi:
             body["nextPageToken"] = str(offset + size)
         return _reply(200, body)
 
+    def _insert(self, data: Json) -> HttpReply:
+        """`events.insert`: the client may choose the id; a repeat is 409. Guests make the
+        calendar's owner the organiser, listed among the attendees as Google does."""
+        self._serial += 1
+        item = copy.deepcopy(data)
+        event_id = item.setdefault("id", f"g{self._serial}")
+        if event_id in self.events:
+            return _reply(409, {"error": "identifier already exists"})
+        item.update(status="confirmed", iCalUID=f"{event_id}@google.com")
+        if item.get("attendees"):
+            item["organizer"] = {"email": self.owner, "self": True}
+            item["attendees"] = [
+                {
+                    "email": self.owner,
+                    "organizer": True,
+                    "self": True,
+                    "responseStatus": "accepted",
+                },
+                *({"responseStatus": "needsAction", **a} for a in item["attendees"]),
+            ]
+        self._touch(item)
+        self.events[event_id] = item
+        return _reply(200, item)
+
+    def _patch(self, found: Json, data: Json) -> HttpReply:
+        """A guest may change only their own answer."""
+        item = copy.deepcopy(found)
+        if "attendees" in data and not found.get("organizer", {}).get("self"):
+            old = {a["email"]: a for a in found.get("attendees", [])}
+            for entry in data["attendees"]:
+                before = old.get(entry["email"])
+                if before is None or (
+                    not before.get("self")
+                    and before.get("responseStatus") != entry.get("responseStatus")
+                ):
+                    return _reply(403, {"error": "forbidden"})
+        item.update(copy.deepcopy(data))
+        self._touch(item)
+        self.events[found["id"]] = item
+        return _reply(200, item)
+
     def _mutate(self, method: str, path: str, data: Json | None, if_match: str | None) -> HttpReply:
         base = self._events_path()
+        if method == "POST" and path == base and data is not None:
+            return self._insert(data)
         if method == "POST" and path == base + "/import" and data is not None:
             if self.live(data.get("iCalUID", "")):
                 return _reply(409, {"error": "duplicate"})
@@ -191,9 +241,13 @@ class FakeGoogleApi:
             item = copy.deepcopy(data)
             item.update(id=found["id"], status=data.get("status", "confirmed"))
             item.setdefault("iCalUID", found["iCalUID"])
+            if "organizer" in found:
+                item["organizer"] = found["organizer"]
             self._touch(item)
             self.events[found["id"]] = item
             return _reply(200, item)
+        if method == "PATCH" and data is not None:
+            return self._patch(found, data)
         if method == "DELETE":
             found["status"] = "cancelled"
             self._touch(found)

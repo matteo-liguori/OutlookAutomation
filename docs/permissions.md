@@ -6,11 +6,15 @@ permission is quiet; a few things always need you. This page says exactly which.
 
 ## When a click is needed
 
-You click in the viewer (`chamberlain viewer`) only for these three things:
+You click in the viewer (`chamberlain viewer`) only for these three things (plus one
+housekeeping choice, [larger cards](#larger-cards), below):
 
 1. **A standing permission.** "Always do this kind of thing" is yours to grant, never the assistant's.
 2. **A send to someone new.** Any recipient who is not on your known list (below).
-3. **A calendar change on an event with other people on it.** Creating, changing or deleting one.
+3. **A calendar change that tells someone other than you.** Inviting, changing or cancelling an
+   event with guests, or answering an invitation from someone who is not you. A guest who is
+   one of your own addresses (the address of any account you set up, or one you list as yours
+   under `authorised_senders: owner`) does not count: inviting yourself needs only your words.
 
 Everything else, such as sending to a known person, drafting, filing, marking read
 or changing your own calendar, needs only your words: you tell the assistant in chat
@@ -19,13 +23,32 @@ or changing your own calendar, needs only your words: you tell the assistant in 
 Each click shows exactly what will happen (the recipients, subject, body, times)
 and approves only that. If the assistant changes one word, the permission no longer matches.
 
+## Larger cards
+
+A card has a size limit so it stays easy to read: a position of 1,500 characters and 3,000
+for the whole card. If a matter is genuinely demanding, the assistant may ask for a larger
+card and give a short reason. **Nothing changes until you agree.**
+
+- **Where.** The request shows at the top of "Needs you" in the viewer, with its reason.
+  One click on **Approve** or **Decline**.
+- **What you allow.** That one card may then hold a position of 4,000 characters and 6,000
+  in all. Its other limits stay the same.
+- **No quota.** Approve as many as you like; your click is the control.
+- **If you decline,** the assistant is told and may not ask again for that card for 30 days.
+- **Taking it back.** The Cards page marks each larger card and why. **Take the larger limit
+  back** returns it to the normal limits straight away. If the card is then too big, nothing
+  is cut: it is marked for trimming and the assistant shortens it.
+- The assistant has no way to approve its own request. Every request and every answer is
+  written to the audit log.
+
 ## Standing permissions
 
 A standing permission lets the assistant repeat one kind of change without asking each time.
 
 - **Scope.** It names the account, the kind of action, and who it covers (exact addresses
   or domains), plus folders for filing. It never covers anything outside that.
-  Sends always need a daily limit.
+  Sends always need a daily limit. For invitations and answers it covers only the exact
+  addresses you list, never a domain.
 - **Limits.** A daily count, and never more than 20 sends an hour per mailbox. It never covers
   changing or deleting a calendar event.
 - **Monthly review.** Each month, on the day you granted it, the viewer asks "keep this?".
