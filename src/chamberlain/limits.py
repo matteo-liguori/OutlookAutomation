@@ -70,7 +70,10 @@ CARD_OUTCOME_DAYS: Final = 365
 ACTION_OUTCOME_DAYS: Final = 90
 OPERATION_COMPACT_DAYS: Final = 30
 UNCERTAIN_ABANDON_DAYS: Final = 14
-"""An uncertain operation nothing can resend is closed unsettled after this many days."""
+"""An uncertain operation nothing can resend is closed unsettled after this many days.
+Never applies to a send the harness holds the text of (W-40)."""
+UNCERTAIN_SEND_RECHECK_HOURS: Final = 24
+"""An uncertain mail send is looked for once more after this long (W-37)."""
 OPERATION_OWNER_GRACE_HOURS: Final = 24
 GRANT_COMPACT_DAYS: Final = 90
 AUDIT_DAYS: Final = 730

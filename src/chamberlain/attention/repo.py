@@ -5,8 +5,10 @@ Only `sessions`, `events`, `guidance_deliveries`, `source_health`, `mail_waterma
 `mail_seen` are written.
 """
 
+import json
 import sqlite3
 from dataclasses import dataclass
+from typing import cast
 
 from chamberlain.attention.models import (
     ActionRow,
@@ -21,10 +23,12 @@ from chamberlain.attention.models import (
     MailBatch,
     OpenNote,
     OperationRow,
+    SendRow,
     SessionRow,
 )
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind, EventState
+from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.limits import TOTAL_ARTIFACT_BYTES
 
 _EVENT_COLUMNS = (
@@ -386,10 +390,12 @@ def grants_for_review(db: sqlite3.Connection, now: str) -> list[GrantRow]:
 
 
 _NO_RESEND = (
-    "(o.intent_json IS NULL OR o.grant IS NULL OR EXISTS (SELECT 1 FROM grants g "
+    "((o.intent_json IS NULL OR o.grant IS NULL OR EXISTS (SELECT 1 FROM grants g "
     "WHERE g.handle = o.grant "
     "AND g.state IN ('spent', 'expired', 'revoked', 'lapsed', 'declined')))"
+    " AND NOT (o.kind = 'mail.send' AND o.intent_json IS NOT NULL))"
 )
+_RECHECKED = "(o.kind = 'mail.send' AND o.state = 'uncertain' AND o.recheck_result IS NOT NULL)"
 _TOLD = (
     "SELECT max(e.delivered_at) FROM events e "
     "WHERE e.kind = 'operation.uncertain' AND e.subject = o.handle AND e.delivered_at IS NOT NULL"
@@ -406,9 +412,48 @@ def uncertain_operations(db: sqlite3.Connection) -> list[OperationRow]:
         "SELECT o.handle, o.kind, o.state FROM operations o "
         "WHERE o.state IN ('uncertain', 'reconciling') AND NOT (o.state = 'uncertain' "
         f"AND {_NO_RESEND} AND ({_TOLD}) IS NOT NULL "
-        f"AND (o.redo_at IS NULL OR o.redo_at <= ({_TOLD})))"
+        f"AND (o.redo_at IS NULL OR o.redo_at <= ({_TOLD}))) AND NOT {_RECHECKED}"
     )
     return [OperationRow(r["handle"], r["kind"], r["state"]) for r in rows]
+
+
+def rechecked_sends(db: sqlite3.Connection) -> list[SendRow]:
+    """Uncertain sends whose 24-hour look found them missing or queued: the agent decides.
+
+    They stay in this list until a person or the agent settles them; nothing closes them.
+    """
+    rows = db.execute(
+        "SELECT o.handle, o.recheck_result, o.card, o.source_id, o.intent_json, o.dispatched_at, "
+        "o.created_at FROM operations o WHERE "
+        f"{_RECHECKED} AND o.recheck_result IN ('missing', 'queued') "
+        "ORDER BY o.created_at, o.handle"
+    ).fetchall()
+    found: list[SendRow] = []
+    for r in rows:
+        try:
+            parsed: object = json.loads(r["intent_json"] or "{}")
+        except ValueError:
+            parsed = {}
+        intent: dict[str, object] = (
+            cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
+        )
+        to: list[str] = []
+        for part in ("to", "cc", "bcc"):
+            listed = intent.get(part)
+            if isinstance(listed, list):
+                to.extend(str(a) for a in cast(list[object], listed) if isinstance(a, str))
+        found.append(
+            SendRow(
+                r["handle"],
+                r["recheck_result"],
+                r["card"],
+                tuple(to),
+                str(intent.get("subject", "")),
+                parse_ts(r["dispatched_at"] or r["created_at"]),
+                r["source_id"],
+            )
+        )
+    return found
 
 
 def _system(db: sqlite3.Connection, key: str) -> str | None:

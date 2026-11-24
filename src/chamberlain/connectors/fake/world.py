@@ -31,6 +31,9 @@ class Fault(StrEnum):
     """The call outlasts its deadline. A dispatch applies late, after the answer."""
     STALE = "stale"
     """Reads report incomplete coverage; health is stale."""
+    QUEUE_INSTEAD_OF_SEND = "queue_instead_of_send"
+    """A send is held in the client's Outbox: `dispatch` returns `unknown`, nothing is in Sent,
+    and `reconcile` says `queued` until the test empties the Outbox."""
 
 
 @dataclass
@@ -112,6 +115,8 @@ class FakeWorld:
         self.contacts: dict[str, list[StoredContact]] = {}
         self.health_override: dict[str, HealthState] = {}
         self.dispatch_log: list[DispatchRecord] = []
+        self.outbox: dict[str, set[str]] = {}
+        """Per mail source, the Message-ID tokens of sends held in the client's Outbox."""
         self._armed: dict[Fault, int] = {}
         self._late: list[tuple[datetime, Callable[[], None]]] = []
         self._uid = 0

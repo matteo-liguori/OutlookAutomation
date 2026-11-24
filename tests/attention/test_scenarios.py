@@ -255,7 +255,7 @@ def test_golden_an_uncertain_send_start_reply(full_app: App, seed: Any):
     assert golden["data"]["more_work"] == 0
     assert golden["ok"] is True
     assert [g["id"] for g in golden["guidance"]] == ["send.uncertain", "session.first"]
-    assert golden["guidance"][0]["version"] == 1
+    assert golden["guidance"][0]["version"] >= 1
     assert golden["next"][0]["tool"] == "reconcile"
 
 

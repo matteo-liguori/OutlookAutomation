@@ -27,6 +27,7 @@ class MaintenanceReport:
     rows_removed: int = 0
     audit_pruned: int = 0
     abandoned: int = 0
+    rechecked: int = 0
 
 
 def compact_operations(ctx: Context, now: datetime | None = None) -> int:
@@ -45,7 +46,9 @@ def compact_operations(ctx: Context, now: datetime | None = None) -> int:
 
 
 def abandon_stale(ctx: Context, policy: WritePolicy | None = None) -> int:
-    """Close unsettled operations nobody can resend after 14 days. Frees nothing."""
+    """Close unsettled operations nobody can resend after 14 days. Frees nothing.
+
+    A mail send the harness holds the text of is never closed this way (W-40)."""
     cutoff = format_ts(ctx.clock.now() - timedelta(days=UNCERTAIN_ABANDON_DAYS))
     engine = Engine(ctx, policy)
     closed = 0
@@ -58,6 +61,7 @@ def maintain(ctx: Context, policy: WritePolicy | None = None) -> MaintenanceRepo
     """One pass: crash recovery, grant timers, compaction, then the audit window."""
     engine = Engine(ctx, policy)
     recovered = engine.recover()
+    rechecked = engine.recheck_sends()
     changed = engine.grants.sweep()
     compacted = compact_operations(ctx)
     abandoned = abandon_stale(ctx, policy)
@@ -66,7 +70,7 @@ def maintain(ctx: Context, policy: WritePolicy | None = None) -> MaintenanceRepo
         removed = repo.delete_compacted_operations(ctx.db, before)
         removed += repo.delete_compacted_grants(ctx.db, before)
     pruned = prune(ctx.db, ctx.clock, AuditChain(ctx.db, ctx.clock))
-    return MaintenanceReport(recovered, changed, compacted, removed, pruned, abandoned)
+    return MaintenanceReport(recovered, changed, compacted, removed, pruned, abandoned, rechecked)
 
 
 def recover_operations(ctx: Context) -> None:

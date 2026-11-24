@@ -190,6 +190,15 @@
     "calendar.respond": "Calendar invitation answered",
   };
 
+  // What the one look after a day found, and the resend that replaced or will replace the send.
+  function resendLines(op) {
+    var lines = [];
+    if (op.recheck) lines.push(el("p", { text: "Looked again at " + when(op.rechecked_at) + ": " + op.recheck + "." }));
+    if (op.redo_of) lines.push(el("p", { class: "muted", text: "This is a second try of " + op.redo_of + "." }));
+    if (op.resend) lines.push(el("p", { class: "muted", text: "Sending it again is in hand: " + op.resend.handle + " (" + op.resend.state + ")." }));
+    return lines;
+  }
+
   function uncertainCard(op) {
     var s = op.summary || {};
     var title = s.title || KIND_NAMES[op.kind] || op.kind;
@@ -208,7 +217,8 @@
     }
     if (op.rendered) card.appendChild(el("pre", { text: op.rendered }));
     card.appendChild(el("p", { class: "advice", text: op.advice }));
-    card.appendChild(el("p", { class: "muted", text: "The assistant looks for it itself and closes it if nothing can send it again. You can settle it now:" }));
+    resendLines(op).forEach(function (line) { card.appendChild(line); });
+    card.appendChild(el("p", { class: "muted", text: op.kind === "mail.send" && !op.imported ? "The assistant decides whether to send it again, and tells you. You can settle it now:" : "The assistant looks for it itself and closes it if nothing can send it again. You can settle it now:" }));
     [["happened", "It happened"], ["did_not_happen", "It did not happen"]].forEach(function (pair) {
       card.appendChild(
         el("button", {

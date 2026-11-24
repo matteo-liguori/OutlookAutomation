@@ -1,0 +1,11 @@
+id: send.stuck
+version: 1
+title: A send is stuck in the Outbox
+when: {event: send.missing, reason: outbox}
+text: >
+  This send is waiting in the mail client's Outbox, not lost. Do not send it
+  again. Tell the user so they can check the client, and mention it in your
+  report.
+max_chars: 200
+once_per: operation
+priority: 96

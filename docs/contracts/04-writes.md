@@ -4,7 +4,8 @@ Binding for the writes track and every connector. Code:
 `src/chamberlain/domain/intents.py`, `src/chamberlain/domain/operations.py`,
 `src/chamberlain/writes/`.
 
-Rule zero: **no write without verifiable authority, and no blind resend.**
+Rule zero: **no write without verifiable authority, and no blind resend.** A resend is not
+blind when the harness has looked for the first send and found it missing (W-37, W-38).
 
 ## Intents
 
@@ -70,6 +71,8 @@ proposed -> authorised -> prepared -> dispatched -> confirmed
 | `reconciling` | A read-only reconcile is running. | no | reserved |
 | `confirmed_absent` | Reconcile proved the write did not happen. | yes | released |
 | `cancelled` | Withdrawn before dispatch, or the proposal lapsed. | yes | released |
+| `abandoned` | An uncertain operation nothing can resend, closed unsettled (W-13a). | yes | kept |
+| `superseded` | An uncertain send that the agent sent again after it was found missing (W-38). | yes | passed to the resend |
 
 `proposed` and `cancelled` extend the plan's diagram: the plan starts at
 `authorised`, and something has to hold the intent while the grant is being
@@ -78,14 +81,16 @@ obtained.
 - **W-6** The legal transitions are exactly the arrows above
   (`domain.operations.TRANSITIONS`), plus `uncertain -> confirmed |
   confirmed_absent` taken only by the user's resolution in the viewer
-  (W-13). Any other transition is a defect and raises before touching the
-  store.
+  (W-13), `uncertain -> abandoned` taken only by the tick (W-13a) and
+  `uncertain -> superseded` taken only when a resend is authorised (W-38). Any other
+  transition is a defect and raises before touching the store.
 - **W-7** Every transition is one SQLite transaction that updates the
   operation row and appends the audit row (G-20). The transition to
   `dispatched` MUST commit before the connector's `dispatch` is called.
 - **W-8** **No path re-dispatches.** `dispatch` is called at most once per
   operation, ever. `uncertain` is left only through `reconciling`, which
-  calls only the connector's read-only `reconcile`.
+  calls only the connector's read-only `reconcile`. A resend (W-38) is a NEW operation with
+  its own one dispatch.
 - **W-9** A crash is treated as the worst case. On start-up, and on every
   tick (even a throttled one, before detection), any operation found in
   `dispatched` or `reconciling` whose dispatch lease has expired moves to
@@ -122,7 +127,8 @@ obtained.
   `confirmed` with `happened` plus its own session evidence, never "did not happen": only a
   connector's proof of absence or the viewer click frees a grant. An `uncertain` operation with
   no possible resend (no intent, no grant, or a grant spent, expired or revoked) is closed
-  `abandoned` by the tick after 14 days unsettled; the state is terminal, frees nothing and
+  `abandoned` by the tick after 14 days unsettled, except a mail send whose text the harness
+  holds (W-40); the state is terminal, frees nothing and
   claims nothing. Attention tells the agent about such an operation once, and again only when
   `redo_at` (a later proposal of the same write) is newer than that notice.
 - **W-14** An `applied` receipt carries a `Verification`:
@@ -259,3 +265,56 @@ and reconcile over the fake provider with random faults, checking:
   only `agent_evidence` (G-12a). For `update` and `delete`, `propose` reads the
   stored event and keeps the attendee fact in the stored refs
   (`_event_attendees`).
+
+## An uncertain send is never lost (owner ruling 2026-11-24, W-37 to W-41)
+
+The first 24 hours keep the strict rule: an uncertain send is never sent again, in any form.
+After that the harness looks once, and the agent decides.
+
+- **W-37** The one look. The tick looks again at every `mail.send` that has been `uncertain` for
+  `UNCERTAIN_SEND_RECHECK_HOURS` (24, counted from `dispatched_at`). It reads through the same
+  `reconcile` path as always: the connector's Sent, Outbox and Drafts of the sending mailbox, then,
+  for each recipient that is an owner address of another configured source, that source's Inbox
+  (a read-only search; a copy counts as found when its Message-ID matches, or when subject, sender,
+  time and text all match). Never `confirmed_absent`: the tick has no authority to free a grant.
+  - Found in Sent or a recipient's Inbox: settles `confirmed`, as `reconcile` would.
+  - Still waiting in the Outbox or Drafts: stored as `queued`.
+  - Found nowhere: stored as `missing`, with where it looked (`recheck_json`, place names only).
+  - The connector could not say (`unknown`): nothing is stored and the next tick looks again.
+  The result is on the operation (`rechecked_at`, `recheck_result`, `recheck_json`), shown on
+  `OperationView.recheck`, and audited as `operation.rechecked`. A later `reconcile` by the agent
+  of a re-checked send updates `queued` and `missing` in the same way.
+- **W-38** The resend. `propose` with `redo_of: <operation>` makes a NEW operation from the
+  original's stored text (the agent supplies no content), linked by `redo_of`. It is refused
+  unless the original is `uncertain`, a mail send with stored text, past its re-check, itself not a
+  resend, and a fresh read-only look still says `missing` (found: it is settled `confirmed` and
+  the resend is refused; `queued`: refused, the message is stuck, not lost; unreadable: refused).
+  It is authorised only by the ORIGINAL's grant, with no new evidence: the grant must still
+  authorise it (a one-off that merely timed out while unspent still does; a revoked, declined or
+  suspended one, an exhausted limit or a changed scope does not, and the error tells the agent to
+  ask the owner). The same checks run again at `do`. The resend takes the duplicate scan of W-27.
+  - `do` on the resend, in the transaction that reserves it, moves the original to `superseded`.
+    `superseded` is terminal, releases the grant use and passes it to the resend, so the grant is
+    still used once. The original stays `uncertain` and visible until then (a proposal that is
+    never run changes nothing).
+  - One resend per original: a unique index on `redo_of` (cancelled proposals aside) and an
+    existing resend is returned by a repeat `propose`. A second `propose` of the same text returns
+    the resend too (W-18). A resend is never itself resent; a second one needs the owner's word.
+  - Both operations are audited (`operation.proposed` with the link, `operation.superseded`).
+  - If the resend then fails clean (for example the client is down), the original is already
+    `superseded` and nothing was sent; the agent is told so, and proposes the write again, which a
+    still-active grant allows.
+- **W-39** Telling the agent. A re-checked send leaves `operation.uncertain` and raises ONE
+  `send.missing` event (priority 94, never closes on its own, only when the send is settled or
+  superseded), `reason` `missing` or `outbox`. Its text names recipient, subject and age; the card is
+  an attribute; `open` on the operation shows `recheck`, `redo_of` and `redone_by`. The rules
+  `send.missing` and `send.stuck` carry the judgement: weigh urgency against the small cost of a
+  duplicate, resend or ask the owner, and say which in the report. `send.uncertain` keeps the strict
+  wording for the first 24 hours.
+- **W-40** No quiet closing of a send. `abandon_stale` and attention's "told once, then quiet"
+  rule skip a `mail.send` whose text the harness holds. It stays visible until the agent resends it,
+  the agent settles it `happened` with evidence, or the owner resolves it in the viewer (W-13).
+  Calendar writes, other mail writes and sends imported from an old journal (no text, never
+  resendable) keep the 14-day close of W-13a.
+- **W-41** The owner's viewer lists each uncertain operation with the re-check result, when it
+  looked and where, and any resend.

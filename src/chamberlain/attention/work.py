@@ -22,6 +22,18 @@ def next_step(event: EventRow) -> NextStep:
             args={"operation": subject},
             why="Read what happened. Never send again.",
         )
+    if kind is EventKind.SEND_MISSING and subject is not None:
+        if event.attrs.reason == "missing":
+            return NextStep(
+                tool=ToolName.PROPOSE,
+                args={"redo_of": subject},
+                why="Weigh it first. Make this call only if you decide it should go again.",
+            )
+        return NextStep(
+            tool=ToolName.OPEN,
+            args={"handle": subject, "part": "summary"},
+            why="Read where it is. Do not send it again.",
+        )
     if kind in (EventKind.SOURCE_STALE, EventKind.SOURCE_SIGN_IN_NEEDED):
         return NextStep(
             tool=ToolName.DOCTOR,

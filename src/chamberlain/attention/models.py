@@ -119,6 +119,20 @@ class OperationRow:
 
 
 @dataclass(frozen=True)
+class SendRow:
+    """An uncertain mail send whose one 24-hour look found it missing or stuck (W-37)."""
+
+    handle: str
+    result: str
+    """`missing` or `queued` (waiting in the Outbox or Drafts)."""
+    card: str | None
+    recipients: tuple[str, ...]
+    subject: str
+    dispatched_at: datetime
+    source: str
+
+
+@dataclass(frozen=True)
 class BudgetRow:
     """`scope` is a card handle or None for the global total."""
 
@@ -192,6 +206,7 @@ class DetectorInput:
     grants: tuple[GrantRow, ...] = ()
     review_grants: tuple[GrantRow, ...] = ()
     operations: tuple[OperationRow, ...] = ()
+    sends: tuple[SendRow, ...] = ()
     budgets: tuple[BudgetRow, ...] = ()
     orphan_batch: str | None = None
     """`found_at` of the latest held quarantine batch, if any."""

@@ -104,6 +104,7 @@ def collect(ctx: Context) -> Collected:
         grants=tuple(repo.grants_awaiting_human(ctx.db)),
         review_grants=tuple(repo.grants_for_review(ctx.db, now)),
         operations=tuple(repo.uncertain_operations(ctx.db)),
+        sends=tuple(repo.rechecked_sends(ctx.db)),
         budgets=tuple(repo.over_budget(ctx.db)),
         orphan_batch=scan,
         orphan_count=orphans,

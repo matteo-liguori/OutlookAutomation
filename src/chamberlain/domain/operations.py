@@ -4,6 +4,7 @@ Contract: docs/contracts/04-writes.md (States, W-6, W-10) and
 docs/contracts/08-ports.md (P-9 to P-12).
 """
 
+import json
 from enum import StrEnum
 from typing import Self
 
@@ -26,6 +27,7 @@ class OperationState(StrEnum):
     CONFIRMED_ABSENT = "confirmed_absent"
     CANCELLED = "cancelled"
     ABANDONED = "abandoned"
+    SUPERSEDED = "superseded"
 
 
 _S = OperationState
@@ -35,13 +37,16 @@ TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
     _S.AUTHORISED: frozenset({_S.PREPARED, _S.FAILED_CLEAN, _S.CANCELLED}),
     _S.PREPARED: frozenset({_S.DISPATCHED, _S.FAILED_CLEAN}),
     _S.DISPATCHED: frozenset({_S.CONFIRMED, _S.FAILED_CLEAN, _S.UNCERTAIN}),
-    _S.UNCERTAIN: frozenset({_S.RECONCILING, _S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.ABANDONED}),
+    _S.UNCERTAIN: frozenset(
+        {_S.RECONCILING, _S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.ABANDONED, _S.SUPERSEDED}
+    ),
     _S.RECONCILING: frozenset({_S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.UNCERTAIN}),
     _S.CONFIRMED: frozenset(),
     _S.FAILED_CLEAN: frozenset(),
     _S.CONFIRMED_ABSENT: frozenset(),
     _S.CANCELLED: frozenset(),
     _S.ABANDONED: frozenset(),
+    _S.SUPERSEDED: frozenset(),
 }
 """Exactly the arrows of the state diagram (W-6).
 
@@ -51,11 +56,25 @@ in the viewer (W-13); the engine itself always goes through `reconciling`.
 
 TERMINAL_STATES = frozenset(state for state, targets in TRANSITIONS.items() if not targets)
 
-RELEASING_STATES = frozenset({_S.FAILED_CLEAN, _S.CONFIRMED_ABSENT, _S.CANCELLED})
-"""States that free the grant use (G-11). `proposed` never reserved one."""
+RELEASING_STATES = frozenset({_S.FAILED_CLEAN, _S.CONFIRMED_ABSENT, _S.CANCELLED, _S.SUPERSEDED})
+"""States that free the grant use (G-11). `proposed` never reserved one. `superseded` frees it
+because the resend that replaces the send takes it over in the same transaction (W-38)."""
 
 MAY_HAVE_HAPPENED_STATES = frozenset({_S.DISPATCHED, _S.UNCERTAIN, _S.RECONCILING})
 """`do` in these states fails with `operation.needs_reconcile` (W-17)."""
+
+
+def recheck_text(result: str | None, looked_json: str | None) -> str | None:
+    """What an uncertain send's one 24-hour look found, in one line (W-37)."""
+    if result is None:
+        return None
+    try:
+        parsed = json.loads(looked_json or "{}")
+        looked = [str(item) for item in parsed.get("looked", [])]
+    except (ValueError, AttributeError):
+        looked = []
+    where = "; ".join(looked).replace(chr(10), " ")[:300]
+    return f"{result} (looked in {where})" if where else result
 
 
 def check_transition(current: OperationState, target: OperationState) -> None:

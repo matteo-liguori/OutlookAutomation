@@ -21,6 +21,7 @@ DETECTORS: dict[EventKind, Detector] = {
     EventKind.GRANT_NEEDED: grants.grant_needed,
     EventKind.GRANT_REVIEW_DUE: grants.grant_review_due,
     EventKind.OPERATION_UNCERTAIN: operations.operation_uncertain,
+    EventKind.SEND_MISSING: operations.send_missing,
     EventKind.SOURCE_STALE: sources.source_stale,
     EventKind.SOURCE_SIGN_IN_NEEDED: sources.source_sign_in_needed,
     EventKind.CALENDAR_CONFLICT: wave2.calendar_conflict,

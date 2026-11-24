@@ -20,7 +20,7 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from typing import Final
 
@@ -37,6 +37,7 @@ from chamberlain.domain.grant_rules import (
 )
 from chamberlain.domain.grants import (
     ConfirmedVia,
+    GrantKind,
     GrantState,
     Requirement,
     StandingScope,
@@ -66,6 +67,7 @@ from chamberlain.domain.operations import (
     ReconcileResult,
     ReconcileStatus,
     Verification,
+    recheck_text,
 )
 from chamberlain.domain.senders import parse_instruction_ref
 from chamberlain.limits import (
@@ -74,6 +76,7 @@ from chamberlain.limits import (
     REPEAT_WINDOW_HOURS,
     SETTLE_AFTER_MINUTES,
     UNCERTAIN_ABANDON_DAYS,
+    UNCERTAIN_SEND_RECHECK_HOURS,
 )
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -96,6 +99,7 @@ from chamberlain.writes.grants import GrantService
 from chamberlain.writes.imported import advice_for, parse_summary, repeats, summary_of_intent
 from chamberlain.writes.imported_match import found_live
 from chamberlain.writes.models import GrantRow, OperationRow, StoredReceipt, WritePolicy
+from chamberlain.writes.recheck import look_in_recipient_mailboxes, sender_places
 from chamberlain.writes.render import (
     EVENT_ATTENDEES_REF,
     EVENT_ORGANISER_REF,
@@ -201,6 +205,8 @@ class Reading:
     present: ProviderReceipt | None
     absent_proof: bool
     queued: bool
+    absent: bool = False
+    """The connector looked and found nothing (with or without proof)."""
 
 
 def read_reconcile(result: ReconcileResult) -> Reading:
@@ -208,7 +214,9 @@ def read_reconcile(result: ReconcileResult) -> Reading:
     status = result.status.value
     if status == "present" and result.receipt is not None:
         return Reading(result.receipt, False, False)
-    return Reading(None, status == "absent" and result.proof, status == "queued")
+    return Reading(
+        None, status == "absent" and result.proof, status == "queued", status == "absent"
+    )
 
 
 class Engine:
@@ -455,7 +463,14 @@ class Engine:
             OperationState.AUTHORISED,
             OperationState.PREPARED,
         ):
-            decision = self._decide(intent, op.handle, op.intent_sha256, op.card, op.grant)
+            original = self._original_of(op)
+            if op.redo_of is not None and original is None:
+                # The send it would replace has settled: nothing can authorise this any more.
+                decision: Decision = Deny(ErrorCode.OPERATION_ALREADY_SETTLED, Requirement.NONE)
+            else:
+                decision = self._decide(
+                    intent, op.handle, op.intent_sha256, op.card, op.grant, redo=original
+                )
             if isinstance(decision, Allow):
                 ready = True
                 grant = repo.get_grant(self.db, decision.grant)
@@ -623,17 +638,19 @@ class Engine:
         handle: str,
         reserved: str | None,
         refs: Mapping[str, str] | None = None,
+        redo: OperationRow | None = None,
     ) -> Usage:
         now = self.ctx.clock.now()
         if refs is None:
             stored = repo.get_operation(self.db, handle)
             refs = {} if stored is None else self._refs(stored)
-        grants = self._active_grants(intent.source, reserved)
+        grants = self._grants_for(intent.source, reserved, redo)
         names = [g.handle for g in grants]
+        skip: str | tuple[str, ...] = handle if redo is None else (handle, redo.handle)
         return Usage(
-            live_uses=repo.live_uses(self.db, names, handle),
+            live_uses=repo.live_uses(self.db, names, skip),
             recent_uses=repo.recent_uses(
-                self.db, names, format_ts(now - timedelta(hours=24)), handle
+                self.db, names, format_ts(now - timedelta(hours=24)), skip
             ),
             source_sends_last_hour=repo.sends_since(
                 self.db, intent.source, format_ts(now - timedelta(hours=1)), handle
@@ -652,6 +669,27 @@ class Engine:
                 grants.append(held)
         return grants
 
+    def _grants_for(
+        self, source: str, reserved: str | None, redo: OperationRow | None
+    ) -> list[GrantRow]:
+        """The grants that may authorise: for a resend, only the original send's grant (W-38).
+
+        A one-off grant that timed out while its send was uncertain still stands for that one
+        message, because the owner approved exactly this text and it has not been spent.
+        """
+        if redo is None:
+            return self._active_grants(source, reserved)
+        held = None if redo.grant is None else repo.get_grant(self.db, redo.grant)
+        if held is None:
+            return []
+        if held.kind is GrantKind.ONE_OFF and held.state is GrantState.EXPIRED:
+            held = replace(
+                held,
+                state=GrantState.ACTIVE,
+                expires_at=self.ctx.clock.now() + timedelta(minutes=1),
+            )
+        return [held]
+
     def _decide(
         self,
         intent: WriteIntent,
@@ -660,12 +698,14 @@ class Engine:
         card: str | None,
         reserved: str | None,
         refs: Mapping[str, str] | None = None,
+        redo: OperationRow | None = None,
     ) -> Decision:
+        pinned = reserved if redo is None else redo.grant
         return authorise(
             intent,
-            OperationFacts(handle, sha, card, reserved),
-            self._active_grants(intent.source, reserved),
-            self._usage(intent, handle, reserved, refs),
+            OperationFacts(handle, sha, card, pinned),
+            self._grants_for(intent.source, reserved, redo),
+            self._usage(intent, handle, reserved, refs, redo),
             self.policy,
             self.ctx.clock.now(),
         )
@@ -685,6 +725,8 @@ class Engine:
             if op.state in MAY_HAVE_HAPPENED_STATES:
                 raise self.needs_reconcile(handle)
         intent = self.intent_of(op)
+        if op.redo_of is not None and op.state is OperationState.PROPOSED:
+            self._guard_resend(op.redo_of)
         op = self._reserve(op, intent)
         op = self._prepare(op)
         final = self._dispatch(op)
@@ -738,8 +780,22 @@ class Engine:
                 raise ChamberlainError(
                     ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed."
                 )
+            original = self._original_of(current)
+            if current.redo_of is not None and current.state is OperationState.PROPOSED:
+                if original is None:
+                    raise ChamberlainError(
+                        ErrorCode.OPERATION_ALREADY_SETTLED,
+                        "The send this one replaces has settled. Nothing needs sending again.",
+                    )
+            else:
+                original = None
             decision = self._decide(
-                intent, current.handle, current.intent_sha256, current.card, current.grant
+                intent,
+                current.handle,
+                current.intent_sha256,
+                current.card,
+                current.grant,
+                redo=original,
             )
             if isinstance(decision, Deny):
                 denied = ChamberlainError(decision.code)
@@ -752,6 +808,8 @@ class Engine:
                 seed = f"{decision.grant}:{current.intent_sha256}"
                 key = sha256_text(seed if attempt == 0 else f"{seed}:{attempt}")
                 completed, token = _with_token(intent, key)
+                if original is not None:
+                    self._supersede(original, current.handle)
                 reserved = move_operation(
                     self.db,
                     self.ctx.clock,
@@ -771,7 +829,37 @@ class Engine:
             raise denied
         if reserved is None:
             raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
+        if reserved.redo_of is not None:
+            replaced = repo.get_operation(self.db, reserved.redo_of)
+            if replaced is not None:
+                self._release_attachments(replaced)
         return reserved
+
+    def _original_of(self, op: OperationRow) -> OperationRow | None:
+        """The still-uncertain send that a resend replaces; None once it has settled."""
+        if op.redo_of is None:
+            return None
+        original = repo.get_operation(self.db, op.redo_of)
+        if original is None or original.state is not OperationState.UNCERTAIN:
+            return None
+        return original
+
+    def _supersede(self, original: OperationRow, resend: str) -> None:
+        """The send ends `superseded`; its grant use passes to the resend (W-38)."""
+        moved = move_operation(
+            self.db,
+            self.ctx.clock,
+            self._audit,
+            original,
+            OperationState.SUPERSEDED,
+            actor=self.actor(),
+            summary=f"Sent again as {resend}; the grant use passed to it.",
+            receipt_json=build_receipt(original, OperationState.SUPERSEDED, self._now()),
+        )
+        if moved is None:
+            raise ChamberlainError(
+                ErrorCode.OPERATION_ALREADY_SETTLED, "The send this one replaces just changed."
+            )
 
     def _fail_clean(
         self, op: OperationRow, code: ErrorCode, *, expected_lease: str | bool | None = False
@@ -1066,14 +1154,16 @@ class Engine:
             return CALENDAR_SETTLE_ATTEMPTS, CALENDAR_SETTLE_WINDOW_SECONDS
         return MAIL_SETTLE_ATTEMPTS, MAIL_SETTLE_WINDOW_SECONDS
 
-    def _enter_reconciling(self, op: OperationRow, *, summary: str) -> OperationRow | None:
+    def _enter_reconciling(
+        self, op: OperationRow, *, summary: str, actor: str | None = None
+    ) -> OperationRow | None:
         return move_operation(
             self.db,
             self.ctx.clock,
             self._audit,
             op,
             OperationState.RECONCILING,
-            actor=self.actor(),
+            actor=actor or self.actor(),
             summary=summary,
             lease_owner=self.worker,
             lease_expires_at=format_ts(self.ctx.clock.now() + timedelta(seconds=LEASE_SECONDS)),
@@ -1100,25 +1190,35 @@ class Engine:
         self, op: OperationRow, *, window: tuple[int, int], allow_absent: bool
     ) -> OperationRow:
         """`uncertain -> reconciling -> confirmed | confirmed_absent | uncertain` (W-8, W-12)."""
+        return self._reconcile_reading(op, window=window, allow_absent=allow_absent)[0]
+
+    def _reconcile_reading(
+        self,
+        op: OperationRow,
+        *,
+        window: tuple[int, int],
+        allow_absent: bool,
+        actor: str | None = None,
+    ) -> tuple[OperationRow, Reading | None]:
+        """`_reconcile`, and what the connector said (None when no read was made)."""
+        who = actor or self.actor()
         intent = self.intent_of(op)
         if op.prepared_json is None:
-            return op
+            return op, None
         prepared = Prepared.model_validate_json(op.prepared_json)
-        held = self._enter_reconciling(op, summary="Read-only reconcile started.")
+        held = self._enter_reconciling(op, summary="Read-only reconcile started.", actor=who)
         if held is None:
-            return self.get(op.handle)
+            return self.get(op.handle), None
         reading = self._reconcile_loop(held, intent, prepared, window)
         if reading.present is not None:
             confirmed = self._confirm(
                 held,
                 reading.present,
                 expected_lease=self.worker,
-                actor=self.actor(),
+                actor=who,
                 summary="Reconcile found the write.",
             )
-            if confirmed is not None:
-                return confirmed
-            return self.get(op.handle)
+            return (confirmed or self.get(op.handle)), reading
         if allow_absent and reading.absent_proof and self._absence_proven(held, intent):
             absent = move_operation(
                 self.db,
@@ -1126,7 +1226,7 @@ class Engine:
                 self._audit,
                 held,
                 OperationState.CONFIRMED_ABSENT,
-                actor=self.actor(),
+                actor=who,
                 summary="Reconcile proved the write did not happen; grant use released.",
                 expected_lease=self.worker,
                 receipt_json=build_receipt(held, OperationState.CONFIRMED_ABSENT, self._now()),
@@ -1135,22 +1235,22 @@ class Engine:
             )
             if absent is not None:
                 self._release_attachments(absent)
-                return absent
-            return self.get(op.handle)
+                return absent, reading
+            return self.get(op.handle), reading
         back = move_operation(
             self.db,
             self.ctx.clock,
             self._audit,
             held,
             OperationState.UNCERTAIN,
-            actor=self.actor(),
+            actor=who,
             summary="Still uncertain after a read-only reconcile."
             + (" An exact copy is queued." if reading.queued else ""),
             expected_lease=self.worker,
             lease_owner=None,
             lease_expires_at=None,
         )
-        return back or self.get(op.handle)
+        return (back or self.get(op.handle)), reading
 
     def _absence_proven(self, op: OperationRow, intent: WriteIntent) -> bool:
         """`absent` frees the grant only with proof, capability and settled time (W-12)."""
@@ -1187,6 +1287,11 @@ class Engine:
             return self._settle_happened(
                 before, happened_evidence, "The agent recorded evidence that it happened."
             )
+        if before.rechecked_at is not None:
+            after, _ = self._look_for_send(
+                before, actor=self.actor(), record=True, allow_absent=True
+            )
+            return after, after.state is not before.state
         after = self._reconcile(before, window=(1, 0), allow_absent=True)
         return after, after.state is not before.state
 
@@ -1253,6 +1358,215 @@ class Engine:
         if moved is not None:
             self._release_attachments(moved)
         return moved
+
+    # --- the 24-hour look for an uncertain send, and the resend (W-37 to W-41) -------------
+
+    def recheck_sends(self) -> int:
+        """The tick's step: each uncertain send old enough gets one more look. Never raises."""
+        cutoff = self.ctx.clock.now() - timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS)
+        looked = 0
+        for op in repo.sends_due_recheck(self.db, format_ts(cutoff)):
+            try:
+                _, outcome = self._look_for_send(op, actor="system:tick", record=True)
+            except Exception:
+                log_failure(log, "re-check failed for %s", op.handle)
+                continue
+            looked += 1 if outcome is not None else 0
+        return looked
+
+    def _look_for_send(
+        self, op: OperationRow, *, actor: str, record: bool, allow_absent: bool = False
+    ) -> tuple[OperationRow, str | None]:
+        """Read Sent, Outbox and Drafts (the connector's reconcile), then any recipient Inbox.
+
+        Returns the operation and `found` (settled confirmed), `queued`, `missing`, or None when
+        nothing could be concluded (the read failed, or the operation is no longer uncertain).
+        With `record`, a `queued` or `missing` answer is stored on the operation and audited.
+        """
+        before = self.get(op.handle)
+        if before.state is not OperationState.UNCERTAIN or before.intent_json is None:
+            return before, None
+        intent = self.intent_of(before)
+        row, reading = self._reconcile_reading(
+            before, window=(1, 0), allow_absent=allow_absent, actor=actor
+        )
+        if row.state is OperationState.CONFIRMED:
+            return row, "found"
+        if (
+            row.state is not OperationState.UNCERTAIN
+            or reading is None
+            or not isinstance(intent, MailSend)
+        ):
+            return row, None
+        looked = [sender_places(row.source_id)]
+        if reading.queued:
+            outcome = "queued"
+        elif reading.absent:
+            nearby = look_in_recipient_mailboxes(self.ctx, row, intent)
+            if nearby.receipt is not None:
+                done = self._confirm(
+                    row,
+                    nearby.receipt,
+                    expected_lease=False,
+                    actor=actor,
+                    summary="The re-check found it in a recipient's own mailbox.",
+                )
+                return (done or self.get(row.handle)), "found"
+            looked.extend(nearby.looked)
+            outcome = "missing"
+        else:
+            return row, None
+        if record:
+            self._record_recheck(row, outcome, looked, actor)
+        return row, outcome
+
+    def _record_recheck(
+        self, op: OperationRow, outcome: str, looked: list[str], actor: str
+    ) -> None:
+        age = self.ctx.clock.now() - (op.dispatched_at or op.created_at)
+        with transaction(self.db):
+            stored = repo.record_recheck(
+                self.db,
+                op.handle,
+                result=outcome,
+                looked_json=json.dumps({"looked": looked}),
+                at=self._now(),
+            )
+            if stored:
+                self._audit.append(
+                    actor=actor,
+                    kind="operation.rechecked",
+                    subject=op.handle,
+                    summary=f"Looked again after {int(age.total_seconds() // 3600)} hours: "
+                    f"{outcome}. Looked in {'; '.join(looked)}.",
+                    payload_sha256=op.intent_sha256,
+                )
+
+    def propose_redo(
+        self,
+        original: str,
+        *,
+        card: str | None = None,
+        evidence: tuple[str, ...] = (),
+    ) -> Proposal:
+        """Send an uncertain, missing send again, on its original authority (W-38).
+
+        Only after the harness's 24-hour look found it missing. The text is the original's, never
+        the agent's. The original ends `superseded` only when `do` runs the resend.
+        """
+        old = self.get(original)
+        intent = self._resendable(old)
+        existing = repo.resend_of(self.db, old.handle)
+        if existing is not None:
+            return self._proposal_for(existing, intent)
+        self._guard_resend(old.handle)
+        old = self.get(old.handle)
+        for attachment in getattr(intent, "attachments", ()):
+            if not self.ctx.services.artifacts.info(attachment.artifact).live:
+                raise ChamberlainError(ErrorCode.ARTIFACT_EXPIRED, "An attachment has expired.")
+        completed = intent.model_copy(update={"message_id": None})
+        sha = intent_hash(completed)
+        refs = self._refs(old)
+        handle = new_handle(HandleKind.OPERATION)
+        decision = self._decide(completed, handle, sha, card or old.card, None, refs, redo=old)
+        if isinstance(decision, Deny):
+            raise ChamberlainError(
+                decision.code,
+                "The permission behind the first send no longer covers sending it again.",
+                fix="Ask the owner, in chat, whether to send it again.",
+            )
+        self._scan_before_storing(completed, handle, refs, decision)
+        with transaction(self.db):
+            repo.insert_operation(
+                self.db,
+                handle=handle,
+                idempotency_key=sha256_text("proposed:" + handle),
+                kind=IntentKind(completed.kind),
+                source_id=completed.source,
+                card=card or old.card,
+                session=self.ctx.session,
+                intent_sha256=sha,
+                intent_json=completed.model_dump_json(exclude_none=True),
+                refs_json=json.dumps(refs, sort_keys=True),
+                at=self._now(),
+                redo_of=old.handle,
+            )
+            self._audit.append(
+                actor=self.actor(),
+                kind="operation.proposed",
+                subject=handle,
+                summary=f"{completed.kind} proposed on {completed.source} as a resend of "
+                f"{old.handle}.",
+                payload_sha256=sha,
+            )
+        for attachment in getattr(completed, "attachments", ()):
+            self.ctx.services.artifacts.add_owner(attachment.artifact, handle)
+        for item in evidence:
+            self.ctx.services.evidence.link(item, handle)
+        return self._proposal_for(self.get(handle), completed)
+
+    def _resendable(self, old: OperationRow) -> MailSend:
+        """Refuse, with a plain reason, anything that is not an uncertain send awaiting a resend."""
+        if old.kind is not IntentKind.MAIL_SEND or old.intent_json is None:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_WRONG_KIND,
+                "Only a mail send the harness holds the text of can be sent again.",
+                field="redo_of",
+            )
+        intent = self.intent_of(old)
+        assert isinstance(intent, MailSend)
+        if repo.resend_of(self.db, old.handle) is not None:
+            return intent
+        if old.redo_of is not None:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "That send was already a resend. A second resend needs the owner's word.",
+                fix="Ask the owner, in chat, whether to send it again.",
+                field="redo_of",
+            )
+        self.recover()
+        old = self.get(old.handle)
+        if old.state is not OperationState.UNCERTAIN:
+            raise ChamberlainError(
+                ErrorCode.OPERATION_ALREADY_SETTLED,
+                f"That send is {old.state.value}; there is nothing to send again.",
+            )
+        if old.rechecked_at is None:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "Too early. A send is not sent again before the harness has looked for it "
+                f"after {UNCERTAIN_SEND_RECHECK_HOURS} hours.",
+                fix="Wait for the report that it is missing. Until then do not send it again.",
+                field="redo_of",
+            )
+        return intent
+
+    def _guard_resend(self, original: str) -> None:
+        """One last read-only look just before a resend. Anything but `missing` stops it."""
+        old = self.get(original)
+        if old.state is not OperationState.UNCERTAIN:
+            raise ChamberlainError(
+                ErrorCode.OPERATION_ALREADY_SETTLED,
+                f"That send is {old.state.value}; there is nothing to send again.",
+            )
+        row, outcome = self._look_for_send(old, actor=self.actor(), record=True)
+        if row.state is OperationState.CONFIRMED:
+            raise ChamberlainError(
+                ErrorCode.OPERATION_ALREADY_SETTLED,
+                "It turned up, so it was sent. Nothing needs sending again.",
+            )
+        if outcome == "queued":
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "It is waiting in the mail client's Outbox. Sending again would make two.",
+                fix="Tell the owner it is stuck in the Outbox; do not send it again.",
+                field="redo_of",
+            )
+        if outcome != "missing":
+            raise ChamberlainError(
+                ErrorCode.SOURCE_UNAVAILABLE,
+                "The mailbox could not be read just now, so it is not known to be missing.",
+            )
 
     def _check_seen(self, evidence: str) -> None:
         """Evidence that it happened is something this session recorded. It frees nothing."""
@@ -1331,6 +1645,7 @@ class Engine:
     # --- views --------------------------------------------------------------------
 
     def view(self, op: OperationRow) -> OperationView:
+        resent = repo.resend_of(self.db, op.handle)
         stored = StoredReceipt.model_validate_json(op.receipt_json) if op.receipt_json else None
         code: ErrorCode | None
         try:
@@ -1353,6 +1668,9 @@ class Engine:
             items_failed=0 if stored is None else stored.summary.items_failed,
             warnings=() if stored is None else stored.warnings,
             settled_at=op.settled_at,
+            recheck=recheck_text(op.recheck_result, op.recheck_json),
+            redo_of=op.redo_of,
+            redone_by=None if resent is None else resent.handle,
         )
 
     # --- connector calls (the only ones) --------------------------------------------

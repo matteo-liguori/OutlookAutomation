@@ -12,7 +12,12 @@ from chamberlain.domain.grants import GrantKind, GrantState, Requirement
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.mail import FolderRole, Message
-from chamberlain.domain.operations import MAY_HAVE_HAPPENED_STATES, OperationState, Verification
+from chamberlain.domain.operations import (
+    MAY_HAVE_HAPPENED_STATES,
+    OperationState,
+    Verification,
+    recheck_text,
+)
 from chamberlain.memory import refs, repo
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
@@ -193,6 +198,9 @@ def _operation(ctx: Context, handle: str) -> OpenResponse:
         may_have_happened=state in MAY_HAVE_HAPPENED_STATES,
         error_code=None if row["error_code"] is None else ErrorCode(str(row["error_code"])),
         settled_at=None if row["settled_at"] is None else parse(str(row["settled_at"])),
+        recheck=recheck_text(row["recheck_result"], row["recheck_json"]),
+        redo_of=None if row["redo_of"] is None else str(row["redo_of"]),
+        redone_by=repo.resend_handle(ctx.db, handle),
     )
     return OpenResponse(handle=handle, view=view)
 

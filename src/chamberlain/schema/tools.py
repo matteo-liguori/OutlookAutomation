@@ -238,6 +238,17 @@ class OperationView(Model):
     warnings: tuple[Annotated[str, StringConstraints(pattern=r"^[a-z_]{1,40}$")], ...] = ()
     """Harness-safe warning codes, for example `merged_existing_copy` (R7)."""
     settled_at: Timestamp | None = None
+    recheck: (
+        Annotated[
+            str, StringConstraints(pattern=r"^(found|queued|missing)( \(looked in .{1,300}\))?$")
+        ]
+        | None
+    ) = None
+    """For an uncertain send: what the harness's one 24-hour look found and where it looked."""
+    redo_of: OperationHandle | None = None
+    """On a resend: the send it replaces."""
+    redone_by: OperationHandle | None = None
+    """On a send that was sent again: its resend."""
 
 
 class EventView(Model):
@@ -498,14 +509,18 @@ class ProposeRequest(ToolRequest):
     standing: StandingScope | None = None
     operation: OperationHandle | None = None
     approval_evidence: EvidenceHandle | None = None
+    redo_of: OperationHandle | None = None
+    """Send an uncertain send again after the harness reported it missing (W-38)."""
     card: CardHandle | None = None
     evidence: tuple[EvidenceHandle, ...] = ()
 
     @model_validator(mode="after")
     def _one_mode(self) -> Self:
-        modes = [v for v in (self.intent, self.standing, self.operation) if v is not None]
+        modes = [
+            v for v in (self.intent, self.standing, self.operation, self.redo_of) if v is not None
+        ]
         if len(modes) != 1:
-            raise ValueError("give exactly one of intent, standing or operation")
+            raise ValueError("give exactly one of intent, standing, operation or redo_of")
         if (self.operation is None) != (self.approval_evidence is None):
             raise ValueError("operation and approval_evidence go together")
         return self

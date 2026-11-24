@@ -11,6 +11,7 @@ from chamberlain.domain.events import EventKind
 
 PRIORITY: Final[dict[EventKind, int]] = {
     EventKind.OPERATION_UNCERTAIN: 95,
+    EventKind.SEND_MISSING: 94,
     EventKind.GRANT_NEEDED: 85,
     EventKind.SOURCE_SIGN_IN_NEEDED: 80,
     EventKind.ACTION_DUE: 75,

@@ -18,7 +18,7 @@ Kinds (closed enumeration `EventKind`):
 
 `mail.new_for_card`, `mail.new_unmatched`, `action.due`, `reminder.due`,
 `card.review_due`, `grant.needed`, `grant.review_due`,
-`operation.uncertain`, `source.stale`, `source.sign_in_needed`,
+`operation.uncertain`, `send.missing`, `source.stale`, `source.sign_in_needed`,
 `calendar.conflict`, `user.note`, `storage.over_budget`, `storage.orphans`,
 `update.available`, `schedule.pass_due`.
 
@@ -36,8 +36,12 @@ States: `new -> delivered -> handled`, and `new | delivered -> expired`.
   until the condition has been false once, or its kind's re-raise interval
   passes (`operation.uncertain`: 24 hours; `grant.review_due`: 7 days;
   others: never).
-- **A-4** `operation.uncertain` and `source.sign_in_needed` cannot be marked
+- **A-4** `operation.uncertain`, `send.missing` and `source.sign_in_needed` cannot be marked
   handled by the agent; they close only when the condition ends.
+- **A-4a** `send.missing` (priority 94) is raised for an uncertain mail send once the harness's
+  24-hour look (04-writes.md W-37) found it missing (`reason: missing`) or waiting in the Outbox
+  (`reason: outbox`); the operation then no longer raises `operation.uncertain`. A change of
+  answer is a new event (the discriminator is the result). It stays until the send is settled.
 
 ## Detectors
 

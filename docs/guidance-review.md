@@ -4,15 +4,27 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-38 rules, about 6,970 characters in total (budget 12,000).
+40 rules, about 7,500 characters in total (budget 12,000).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
+## send.missing: A send is missing after a day
+
+- Trigger: `{'event': 'send.missing', 'reason': 'missing'}`; shown operation; priority 96; cap 320 chars
+
+> The harness looked again after a day and this send is nowhere it should be. Weigh how urgent the message was and how much a duplicate would matter (usually little). Send it again if you judge that right, or ask the user if unsure. Say which you did in your report.
+
+## send.stuck: A send is stuck in the Outbox
+
+- Trigger: `{'event': 'send.missing', 'reason': 'outbox'}`; shown operation; priority 96; cap 200 chars
+
+> This send is waiting in the mail client's Outbox, not lost. Do not send it again. Tell the user so they can check the client, and mention it in your report.
+
 ## send.uncertain: A send may have gone out
 
-- Trigger: `{'event': 'operation.uncertain', 'intent_kind': 'mail.send'}`; shown operation; priority 95; cap 200 chars
+- Trigger: `{'event': 'operation.uncertain', 'intent_kind': 'mail.send'}`; shown operation; priority 95; cap 260 chars
 
-> This send may have gone out. Do not send it again, in any form. Read what happened with reconcile. If it stays uncertain, tell the user plainly what is known and what is not, and leave it open.
+> This send may have gone out. For now do not send it again, in any form. Read what happened with reconcile. The harness looks once more after a day and tells you if it is missing. Until then tell the user plainly what is known.
 
 ## write.attempted: An attempt with no proof
 
@@ -76,9 +88,9 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 ## reconcile.read: Settling an uncertain change
 
-- Trigger: `{'tool': 'reconcile'}`; shown operation; priority 70; cap 200 chars
+- Trigger: `{'tool': 'reconcile'}`; shown operation; priority 70; cap 300 chars
 
-> Reconcile only reads. If it still cannot tell whether the change happened, leave it open and tell the user exactly what is known. Never work around it by sending or changing again.
+> Reconcile only reads. If it still cannot tell whether the change happened, leave it open and tell the user exactly what is known. Do not work around it by sending or changing again. The one exception is a send the harness reports missing after a day.
 
 ## session.first: Working through the items
 
