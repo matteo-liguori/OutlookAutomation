@@ -49,6 +49,8 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "evidence_refs": (_D.EVIDENCE, _T.MEMORY),
     "artifacts": (_D.WORKING_SET, _T.MEMORY),
     "artifact_owners": (_D.WORKING_SET, _T.MEMORY),
+    "imported_context": (_D.RECORDS, _T.MEMORY),
+    "complex_cards": (_D.RECORDS, _T.MEMORY),
     "refs": (_D.WORKING_SET, _T.MEMORY),
     "leases": (_D.EPHEMERAL, _T.MEMORY),
     "cursors": (_D.EPHEMERAL, _T.MEMORY),

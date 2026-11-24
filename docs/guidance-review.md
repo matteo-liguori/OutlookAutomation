@@ -4,7 +4,7 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-35 rules, 6418 characters in total (budget 12,000).
+37 rules, 6847 characters in total (budget 12,000).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
@@ -152,6 +152,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 > A snoozed action is back. Check whether anything changed, then act or snooze it again to a time that suits the user. A reminder lives on the card and surfaces in a normal check; set up nothing separate unless the user asks.
 
+## card.context: Notes from the old system
+
+- Trigger: `{'result': 'data.view.context != null'}`; shown session; priority 52; cap 220 chars
+
+> This card still holds notes carried over from the old system. Read them, fold what still matters into the position (within its limit), then forget them. Left alone they expire after 60 days.
+
 ## calendar.checks: Offering or accepting a time
 
 - Trigger: `{'tool': 'find', 'scope': 'calendar'}`; shown session; priority 50; cap 200 chars
@@ -169,6 +175,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'tool': 'find', 'scope': 'mail'}`; shown session; priority 50; cap 110 chars
 
 > Reading mail leaves it unread. Never mark mail read, move or delete it unless a grant covers exactly that.
+
+## card.complex: A card that needs more room
+
+- Trigger: `{'error': 'card.over_cap'}`; shown session; priority 48; cap 230 chars
+
+> A card hit its size limit. Shorten it first. If the matter is genuinely demanding, you may ask the owner for a larger card with a short reason; the owner decides, and only three can exist.
 
 ## card.upkeep: Keeping a card
 

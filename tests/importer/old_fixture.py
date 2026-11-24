@@ -46,6 +46,8 @@ class MemorySecrets:
         return self.items.pop((service, name), None) is not None
 
 
+BIG_CONTEXT = "c" * 6000
+
 HASH_A = "a" * 64
 HASH_B = "b" * 64
 HASH_C = "c" * 64
@@ -105,7 +107,7 @@ def customisations() -> dict[str, Any]:
 def _case(
     cursor: sqlite3.Cursor, cid: str, title: str, position: str, status: str, **extra: Any
 ) -> None:
-    details = {"purpose": extra.pop("purpose", title), "context": "old context", **extra}
+    details = {"purpose": extra.pop("purpose", title), "context": "", **extra}
     cursor.execute(
         "INSERT INTO cases VALUES(?,?,?,?,?,?,?)",
         (
@@ -167,8 +169,16 @@ def build_old_root(root: Path) -> Path:
         "x" * 2000,
         "open",
         card_reviewed_at="2026-01-04T09:00:00+00:00",
+        context=BIG_CONTEXT,
     )
-    _case(cur, "case-done", "Finished matter", "Resolved by phone on the 2nd.", "closed")
+    _case(
+        cur,
+        "case-done",
+        "Finished matter",
+        "Resolved by phone on the 2nd.",
+        "closed",
+        context="History nobody needs now.",
+    )
     _action(cur, "act-1", "case-alpha", "needs-user", "2026-01-06T09:00:00+00:00")
     _action(
         cur,

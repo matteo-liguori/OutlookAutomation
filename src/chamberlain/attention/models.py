@@ -92,6 +92,16 @@ class CardRow:
 
 
 @dataclass(frozen=True)
+class ComplexDecision:
+    """The owner's recent answer to a request for a larger card limit."""
+
+    card: str
+    state: str
+    decided_at: str
+    blocked_until: str | None
+
+
+@dataclass(frozen=True)
 class GrantRow:
     handle: str
     state: str
@@ -172,6 +182,7 @@ class DetectorInput:
     actions: tuple[ActionRow, ...] = ()
     cards: tuple[CardRow, ...] = ()
     open_cards: tuple[CardRow, ...] = ()
+    complex_decisions: tuple[ComplexDecision, ...] = ()
     linked_ids: frozenset[str] = frozenset()
     """Handles and Message-IDs already linked to a card."""
     linked_cards: dict[str, str] = field(default_factory=lambda: {})

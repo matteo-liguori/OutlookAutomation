@@ -46,6 +46,7 @@ def reminder_due(data: DetectorInput) -> Iterable[EventDraft]:
 
 
 def card_review_due(data: DetectorInput) -> Iterable[EventDraft]:
+    yield from _complex_decided(data)
     for card in data.cards:
         if card.over_cap:
             yield EventDraft(
@@ -65,3 +66,26 @@ def card_review_due(data: DetectorInput) -> Iterable[EventDraft]:
                 PRIORITY[EventKind.CARD_REVIEW_DUE],
                 EventAttrs(card=card.handle, reason="review"),
             )
+
+
+def _complex_decided(data: DetectorInput) -> Iterable[EventDraft]:
+    """Tell the agent how the owner answered a request for a larger card limit (M-36)."""
+    for decision in data.complex_decisions:
+        if decision.state == "approved":
+            summary = f"The owner approved a larger limit for card {decision.card}."
+            reason = "complex_approved"
+        else:
+            until = (decision.blocked_until or "")[:10]
+            summary = (
+                f"The owner declined a larger limit for card {decision.card}; "
+                f"ask again after {until}."
+            )
+            reason = "complex_declined"
+        yield EventDraft(
+            EventKind.CARD_REVIEW_DUE,
+            decision.card,
+            summary,
+            PRIORITY[EventKind.CARD_REVIEW_DUE] + 3,
+            EventAttrs(card=decision.card, reason=reason),
+            discriminator=f"{reason}:{decision.decided_at}",
+        )

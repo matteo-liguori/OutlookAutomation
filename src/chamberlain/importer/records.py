@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
+from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.domain.cards import card_over_cap
 from chamberlain.importer.convert import add_days, derive, norm_ts, shorten
 from chamberlain.importer.old import Json, OldAction, OldCase, OldInstallation
@@ -26,15 +27,21 @@ from chamberlain.limits import (
     CARD_TITLE_MAX,
     EVIDENCE_MAX,
     EVIDENCE_PER_OPEN_CARD_TARGET,
+    IMPORTED_CONTEXT_DAYS,
     OUTCOME_MAX,
 )
 from chamberlain.memory import repo as memory
+from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.schema.tools import ActionView, CardView
 
 OPEN_ACTION = frozenset({"needs-user", "waiting", "watch"})
 DEFAULT_REVIEW_DAYS = 7
 CLOSED_KEEP_DAYS = 30
 """A closed card imported near its purge date is kept at least this long."""
+CONTEXT_FILENAME = "context-from-old-harness.txt"
+CONTEXT_REASON = (
+    "Context from the old harness. Fold what still matters into the position, then forget this."
+)
 
 
 @dataclass
@@ -153,12 +160,47 @@ def _over_cap(fields: tuple[str, str, str, str], actions: list[ActionView], hand
     return card_over_cap(view)
 
 
+def import_context(
+    db: sqlite3.Connection,
+    artifacts: ArtifactService,
+    case: OldCase,
+    handle: str,
+    now: str,
+    report: ImportReport,
+) -> None:
+    """Keep the old free-text context under the card, once, and make the card due for review.
+
+    Safe to repeat: the ledger row (`imported_context`) outlives the stored item, so a second
+    import never adds it again, even after the agent folded it into the position and forgot it.
+    """
+    text = _text(case.details.get("context"))
+    if not text or case.status == "closed" or memory.imported_context_done(db, case.id):
+        return
+    card = memory.get_card(db, handle)
+    if card is None or str(card["state"]) != "open":
+        return
+    kept = artifacts.keep_bytes(
+        data=text.encode("utf-8"),
+        kind=ArtifactKind.TEXT,
+        owner=handle,
+        reason=CONTEXT_REASON,
+        filename=CONTEXT_FILENAME,
+        media_type="text/plain",
+        expires_in_hours=IMPORTED_CONTEXT_DAYS * 24,
+        internal=True,
+    )
+    memory.record_imported_context(db, case.id, handle, kept.handle, now)
+    memory.set_card_review(db, handle, now, bool(card["over_cap"]))
+    report.count("context_artifacts", new=True)
+
+
 def import_cards(
     db: sqlite3.Connection,
     old: OldInstallation,
     zone: ZoneInfo,
     now: str,
     report: ImportReport,
+    artifacts: ArtifactService,
 ) -> Imported:
     imported = Imported()
     by_case: dict[str, list[OldAction]] = {}
@@ -171,6 +213,7 @@ def import_cards(
         imported.cards[case.id] = handle
         if memory.get_card(db, handle) is not None:
             report.count("cards", new=False)
+            import_context(db, artifacts, case, handle, now, report)
             continue
         report.count("cards", new=True)
         if case.status == "closed":
@@ -207,6 +250,7 @@ def import_cards(
             report.over_cap_cards.append(f"{handle} (old {case.id})")
         for action in actions:
             _import_action(db, action, handle, zone, now, report)
+        import_context(db, artifacts, case, handle, now, report)
         wanted = _evidence_ids(case, actions)
         if len(wanted) > EVIDENCE_PER_OPEN_CARD_TARGET:
             key = f"evidence beyond {EVIDENCE_PER_OPEN_CARD_TARGET} per open card"

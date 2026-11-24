@@ -18,6 +18,16 @@
         "title": "Offering or accepting a time"
       },
       {
+        "id": "card.complex",
+        "version": 1,
+        "title": "A card that needs more room"
+      },
+      {
+        "id": "card.context",
+        "version": 1,
+        "title": "Notes from the old system"
+      },
+      {
         "id": "card.over_cap",
         "version": 1,
         "title": "A card is too big"
@@ -116,23 +126,13 @@
         "id": "reconcile.read",
         "version": 1,
         "title": "Settling an uncertain change"
-      },
-      {
-        "id": "reminder.back",
-        "version": 1,
-        "title": "A snoozed action is back"
-      },
-      {
-        "id": "report.summary",
-        "version": 1,
-        "title": "Writing a report"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 35,
+    "total": 37,
     "cursor": "ZzI1",
     "gaps": []
   },

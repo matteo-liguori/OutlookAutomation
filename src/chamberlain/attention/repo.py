@@ -12,6 +12,7 @@ from chamberlain.attention.models import (
     ActionRow,
     BudgetRow,
     CardRow,
+    ComplexDecision,
     DueRun,
     EventAttrs,
     EventDraft,
@@ -323,6 +324,19 @@ def cards_needing_review(db: sqlite3.Connection, now: str) -> list[CardRow]:
         (now,),
     )
     return [CardRow(r["handle"], r["title"], r["review_at"], bool(r["over_cap"])) for r in rows]
+
+
+def complex_decisions(db: sqlite3.Connection, since: str) -> list[ComplexDecision]:
+    """Answers the owner gave to a larger-limit request since `since`, for open cards."""
+    rows = db.execute(
+        "SELECT x.card, x.state, x.decided_at, x.blocked_until FROM complex_cards x "
+        "JOIN cards c ON c.handle = x.card WHERE c.state = 'open' "
+        "AND x.state IN ('approved', 'declined') AND x.decided_at >= ? ORDER BY x.card",
+        (since,),
+    )
+    return [
+        ComplexDecision(r["card"], r["state"], r["decided_at"], r["blocked_until"]) for r in rows
+    ]
 
 
 def open_cards(db: sqlite3.Connection) -> list[CardRow]:

@@ -131,12 +131,19 @@ Request: `op` (`create` | `update` | `close` | `reopen` | `add_action` |
 `update_action` | `finish_action`), `card?`, `action?`, `expected_version?`,
 `fields? {title, goal, position, rules}`, `action_fields? {title, due_at,
 snooze_until}`, `outcome?` (240 chars, required for `close` and
-`finish_action`).
+`finish_action`), `complex_reason?` (240 chars; only with `op: update` and no
+`fields`: asks the owner for a larger limit, M-36). `CardView` also carries
+`context?` (the handle of notes carried over from the old harness, M-35) and
+`complex?` (`pending`, `approved` or `declined`); neither counts against the
+card's size.
 Response: `card` (`CardView` with its open actions and `version`).
 
 - **T-12** Updates replace fields. There is no append (M-14). An update that
   exceeds a cap is refused with `card.over_cap` and a `fix` naming the field
-  and its limit.
+  and its limit. The caps are the normal ones unless the owner has approved a
+  larger limit for that card (M-36 to M-38). A request that cannot be made (a
+  fourth complex card, or a card declined in the last 30 days) is refused with
+  `request.invalid` and a message naming why.
 
 ### propose
 

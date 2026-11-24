@@ -35,8 +35,12 @@ def evidence_owner_kind(handle: str) -> EvidenceOwnerKind | None:
 
 def card_size(card: CardView) -> int:
     """Characters of the serialised card with its open actions (M-12)."""
-    return len(card.model_dump_json(exclude_none=True))
+    return len(card.model_dump_json(exclude_none=True, exclude=_NOT_COUNTED))
 
 
-def card_over_cap(card: CardView) -> bool:
-    return card_size(card) > CARD_MAX_CHARS
+_NOT_COUNTED = {"context", "complex"}
+"""Fields that describe the card's surroundings; they never count against its size."""
+
+
+def card_over_cap(card: CardView, limit: int = CARD_MAX_CHARS) -> bool:
+    return card_size(card) > limit
