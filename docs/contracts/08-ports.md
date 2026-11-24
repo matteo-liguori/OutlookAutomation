@@ -121,8 +121,9 @@ bytes, which the engine reads from the artifact store.
 - **P-16** Calendar update and delete use optimistic concurrency
   (`expected_etag`); a mismatch at `prepare` is `remote.changed`. Create
   uses the `uid` from the intent; a second create with the same `uid` is
-  `not_applied` plus a `present` reconcile, never a duplicate event. A
-  cancelled event is reported as cancelled, not as missing.
+  `not_applied` plus a `present` reconcile, never a duplicate event. After
+  a delete the event reads as cancelled or as gone (`request.unknown_handle`),
+  never as live; reconciling the delete is `present` either way.
 - **P-17** Time limits: every port call takes its deadline from the
   connector's configuration, and a call that exceeds it raises
   `source.unavailable` for reads and returns `unknown` for `dispatch`.
