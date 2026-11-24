@@ -8,6 +8,7 @@ Contract: docs/contracts/08-ports.md (P-16).
 """
 
 from collections.abc import Mapping
+from datetime import datetime, timedelta
 
 from pydantic import JsonValue
 
@@ -44,6 +45,7 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
     Verification,
 )
+from chamberlain.domain.recurrence import expand, occurrence_id, parse_occurrence_id
 from chamberlain.ports.page import Gap, Page
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -80,17 +82,24 @@ class FakeCalendar:
     # --- seeding (tests only) -------------------------------------------------
 
     def add_source(
-        self, source: str, address: str | None = None, *, invitations: bool = True
+        self,
+        source: str,
+        address: str | None = None,
+        *,
+        invitations: bool = True,
+        recurrence: bool = True,
     ) -> None:
         """Add a calendar. `address` is its owner's: invitations are delivered by address.
 
         With `invitations=False` the calendar declines to send or answer invitations, as an
-        Owl calendar does.
+        Owl calendar does. With `recurrence=False` it reads the occurrences of a series but
+        declines to write one, as an Owl calendar does.
         """
         world = self._world
         world.events.setdefault(source, {})
         world.addresses.setdefault(source, f"{source.split(':')[-1]}@fake.example")
         world.invitations[source] = invitations
+        world.recurrence[source] = recurrence
         if address is not None:
             world.addresses[source] = address.lower()
 
@@ -167,6 +176,21 @@ class FakeCalendar:
                         if self._world.invitations.get(source, True)
                         else []
                     ),
+                    *(
+                        [
+                            Capability(
+                                name=name,
+                                level=VerificationLevel.IMPLEMENTED,
+                                absence_provable=_PROVABLE,
+                            )
+                            for name in (
+                                CapabilityName.CALENDAR_RECURRENCE,
+                                CapabilityName.CALENDAR_OCCURRENCE,
+                            )
+                        ]
+                        if self._world.recurrence.get(source, True)
+                        else []
+                    ),
                 ],
             }
         )
@@ -187,15 +211,14 @@ class FakeCalendar:
             raise ChamberlainError(
                 ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid."
             ) from None
-        matches = [e for e in self._world.events[source].values() if self._matches(e, query)]
-        matches.sort(key=lambda e: (e.fields.start, e.id))
+        matches = self._window(source, query)
         window = matches[offset : offset + query.limit]
         more = offset + query.limit < len(matches)
         gaps: tuple[Gap, ...] = ()
         if self._world.take(Fault.STALE):
             gaps = (Gap.model_validate({"source": source, "reason": "The calendar is stale."}),)
         return Page[CalendarEvent](
-            items=tuple(self._event(source, e) for e in window),
+            items=tuple(window),
             cursor=str(offset + query.limit) if more else None,
             complete=not more and not gaps,
             gaps=gaps,
@@ -203,7 +226,16 @@ class FakeCalendar:
 
     def read(self, source: str, locator: str) -> CalendarEvent:
         self._begin_read(source)
-        return self._event(source, self._one(source, locator))
+        base, occurrence = _split(locator)
+        stored = self._one(source, base)
+        if occurrence is None:
+            return self._event(source, stored)
+        slot = self._slot(stored, occurrence)
+        if slot is None:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_UNKNOWN_HANDLE, "That occurrence is not there."
+            )
+        return self._occurrence(source, stored, *slot)
 
     # --- port: writing --------------------------------------------------------
 
@@ -219,20 +251,25 @@ class FakeCalendar:
                     raise ChamberlainError(
                         ErrorCode.REQUEST_INVALID, "The event has no uid.", field="uid"
                     )
+                self._check_scope(source, None, "", intent.event)
                 token = intent.uid
                 data = {"fields": intent.event.model_dump(mode="json")}
             case CalendarUpdate():
-                stored = self._current(source, refs[intent.event_ref], intent.expected_etag)
+                locator = refs[intent.event_ref]
+                self._check_scope(source, intent.scope, locator, intent.event)
+                stored = self._current(source, _split(locator)[0], intent.expected_etag)
                 self._own_event(stored)
                 data = {
-                    "locator": stored.id,
+                    "locator": locator,
                     "expected_etag": intent.expected_etag,
                     "fields": intent.event.model_dump(mode="json"),
                 }
             case CalendarDelete():
-                stored = self._current(source, refs[intent.event_ref], intent.expected_etag)
+                locator = refs[intent.event_ref]
+                self._check_scope(source, intent.scope, locator, None)
+                stored = self._current(source, _split(locator)[0], intent.expected_etag)
                 self._own_event(stored)
-                data = {"locator": stored.id, "expected_etag": intent.expected_etag}
+                data = {"locator": locator, "expected_etag": intent.expected_etag}
             case CalendarRespond():
                 stored = self._current(source, refs[intent.event_ref], intent.expected_etag)
                 if stored.my_response is None or stored.organiser is None:
@@ -301,7 +338,9 @@ class FakeCalendar:
         if prepared.intent_kind is _K.CALENDAR_CREATE:
             found = [e for e in world.events[source].values() if e.uid == prepared.reconcile_token]
             return self._present(found[0]) if found else absent
-        stored = world.events[source].get(_text(data, "locator"))
+        locator = _text(data, "locator")
+        base, occurrence = _split(locator)
+        stored = world.events[source].get(base)
         if stored is None:
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: event missing")
         unchanged = stored.etag == _text(data, "expected_etag")
@@ -312,14 +351,25 @@ class FakeCalendar:
                 return self._present(stored)
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: changed otherwise")
         if prepared.intent_kind is _K.CALENDAR_DELETE:
-            if stored.status is EventStatus.CANCELLED:
-                return self._present(stored)
+            gone = (
+                occurrence in stored.overrides and stored.overrides[occurrence] is None
+                if occurrence is not None
+                else stored.status is EventStatus.CANCELLED
+            )
+            if gone:
+                return self._present(stored, locator)
             return absent if unchanged else ReconcileResult(status=ReconcileStatus.UNKNOWN)
         if unchanged:
             return absent
         wanted = EventFields.model_validate(data["fields"])
-        if stored.fields == wanted and stored.status is not EventStatus.CANCELLED:
-            return self._present(stored)
+        if occurrence is not None:
+            same = stored.overrides.get(occurrence) == wanted.model_copy(
+                update={"recurrence": None}
+            )
+        else:
+            same = stored.fields == _series_fields(stored, wanted)
+        if same and stored.status is not EventStatus.CANCELLED:
+            return self._present(stored, locator)
         return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: changed otherwise")
 
     # --- helpers --------------------------------------------------------------
@@ -334,19 +384,30 @@ class FakeCalendar:
             stored = self._create(source, EventFields.model_validate(data["fields"]), uid)
             self._invite(source, stored)
             return ProviderReceipt(locator=stored.id, etag=stored.etag, verification=_VERIFIED)
-        stored = self._current(source, _text(data, "locator"), _text(data, "expected_etag"))
+        locator = _text(data, "locator")
+        base, occurrence = _split(locator)
+        stored = self._current(source, base, _text(data, "expected_etag"))
         if prepared.intent_kind is _K.CALENDAR_RESPOND:
             self._answer(source, stored, _ANSWERS[_text(data, "response")])
+        elif occurrence is not None:
+            if self._slot(stored, occurrence) is None:
+                raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "That occurrence is gone.")
+            if prepared.intent_kind is _K.CALENDAR_DELETE:
+                stored.overrides[occurrence] = None
+            else:
+                wanted = EventFields.model_validate(data["fields"])
+                stored.overrides[occurrence] = wanted.model_copy(update={"recurrence": None})
         elif prepared.intent_kind is _K.CALENDAR_DELETE:
             stored.status = EventStatus.CANCELLED
             self._cancel_copies(source, stored, stored.participants)
         else:
             before = stored.fields
-            stored.fields = EventFields.model_validate(data["fields"])
-            self._reinvite(source, stored, before)
+            stored.fields = _series_fields(stored, EventFields.model_validate(data["fields"]))
+            if before.recurrence is None:
+                self._reinvite(source, stored, before)
         stored.sequence += 1
         stored.updated = self._world.clock.now()
-        return ProviderReceipt(locator=stored.id, etag=stored.etag, verification=_VERIFIED)
+        return ProviderReceipt(locator=locator, etag=stored.etag, verification=_VERIFIED)
 
     def _create(self, source: str, fields: EventFields, uid: str | None) -> StoredEvent:
         event_id = self._world.next_event_id()
@@ -486,12 +547,15 @@ class FakeCalendar:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event changed since it was read.")
         return stored
 
-    def _present(self, stored: StoredEvent) -> ReconcileResult:
-        receipt = ProviderReceipt(locator=stored.id, etag=stored.etag, verification=_VERIFIED)
+    def _present(self, stored: StoredEvent, locator: str | None = None) -> ReconcileResult:
+        receipt = ProviderReceipt(
+            locator=locator or stored.id, etag=stored.etag, verification=_VERIFIED
+        )
         return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=receipt)
 
     @staticmethod
     def _event(source: str, stored: StoredEvent) -> CalendarEvent:
+        """A stored event as read: a series is its first occurrence plus the rule."""
         return CalendarEvent.model_validate(
             {
                 "source": source,
@@ -506,16 +570,125 @@ class FakeCalendar:
                 "participants": tuple(
                     Participant(address=a, response=r) for a, r in stored.participants.items()
                 ),
+                "series_locator": stored.id if stored.fields.recurrence is not None else None,
             }
         )
 
+    # --- repeating events -----------------------------------------------------
+
+    def _check_scope(
+        self, source: str, scope: str | None, locator: str, fields: EventFields | None
+    ) -> None:
+        """What the connector checks itself: it says what it cannot do, never fakes it (P-26)."""
+        occurrence = _split(locator)[1]
+        repeats = scope is not None or (fields is not None and fields.recurrence is not None)
+        if repeats and not self._world.recurrence.get(source, True):
+            raise ChamberlainError(
+                ErrorCode.CAPABILITY_UNSUPPORTED,
+                "This calendar cannot write repeating events.",
+                detail="recurrence-not-supported",
+            )
+        if scope is not None and (scope == "occurrence") != (occurrence is not None):
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID, "The scope does not fit that handle.", field="scope"
+            )
+        if scope == "occurrence" and fields is not None and fields.recurrence is not None:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID, "One occurrence takes no repeat rule.", field="event"
+            )
+
     @staticmethod
-    def _matches(stored: StoredEvent, query: CalendarQuery) -> bool:
-        if stored.status is EventStatus.CANCELLED and not query.include_cancelled:
-            return False
-        if stored.fields.end < query.start or stored.fields.start > query.end:
-            return False
-        if query.text:
-            haystack = f"{stored.fields.title}\n{stored.fields.description}".casefold()
-            return query.text.casefold() in haystack
-        return True
+    def _slot(stored: StoredEvent, occurrence: str) -> tuple[datetime, datetime] | None:
+        """The original start and end of the occurrence an id names, or None."""
+        rule = stored.fields.recurrence
+        parsed = parse_occurrence_id(occurrence)
+        if rule is None or parsed is None:
+            return None
+        moment = parsed[0]
+        for begin, finish in expand(
+            rule,
+            stored.fields.start,
+            stored.fields.end,
+            all_day=stored.fields.all_day,
+            window_start=moment,
+            window_end=moment,
+        ):
+            if begin == moment:
+                return begin, finish
+        return None
+
+    @staticmethod
+    def _occurrence(
+        source: str, stored: StoredEvent, begin: datetime, finish: datetime
+    ) -> CalendarEvent:
+        """One occurrence as read: the series' fields, or what it was changed to."""
+        name = occurrence_id(begin, all_day=stored.fields.all_day)
+        changed = stored.overrides.get(name)
+        cancelled = name in stored.overrides and changed is None
+        fields = changed or stored.fields.model_copy(
+            update={"start": begin, "end": finish, "recurrence": None}
+        )
+        status = EventStatus.CANCELLED if cancelled else stored.status
+        return CalendarEvent.model_validate(
+            {
+                "source": source,
+                "locator": f"{stored.id}#{name}",
+                "uid": stored.uid,
+                "etag": stored.etag,
+                "status": status,
+                "fields": fields,
+                "updated": stored.updated,
+                "series_locator": stored.id,
+            }
+        )
+
+    def _window(self, source: str, query: CalendarQuery) -> list[CalendarEvent]:
+        """Every event or occurrence overlapping the window, in time order."""
+        found: list[CalendarEvent] = []
+        pad = timedelta(days=30)  # a moved occurrence may start away from its original slot
+        for stored in self._world.events[source].values():
+            rule = stored.fields.recurrence
+            if rule is None:
+                event = self._event(source, stored)
+                if _matches(event, query):
+                    found.append(event)
+                continue
+            if stored.status is EventStatus.CANCELLED:
+                continue
+            for begin, finish in expand(
+                rule,
+                stored.fields.start,
+                stored.fields.end,
+                all_day=stored.fields.all_day,
+                window_start=query.start - pad,
+                window_end=query.end + pad,
+            ):
+                event = self._occurrence(source, stored, begin, finish)
+                if _matches(event, query):
+                    found.append(event)
+        found.sort(key=lambda e: (e.fields.start, e.locator))
+        return found
+
+
+def _split(locator: str) -> tuple[str, str | None]:
+    base, _, occurrence = locator.partition("#")
+    return base, occurrence or None
+
+
+def _series_fields(stored: StoredEvent, wanted: EventFields) -> EventFields:
+    """A series update that gives no rule keeps the one the series has (P-25)."""
+    if wanted.recurrence is None and stored.fields.recurrence is not None:
+        return wanted.model_copy(update={"recurrence": stored.fields.recurrence})
+    return wanted
+
+
+def _matches(event: CalendarEvent, query: CalendarQuery) -> bool:
+    if event.status is EventStatus.CANCELLED and not query.include_cancelled:
+        return False
+    fields = event.fields
+    if fields.end < query.start or fields.start > query.end:
+        return False
+    if query.text:
+        haystack = f"{fields.title}\n{fields.description}".casefold()
+        return query.text.casefold() in haystack
+    return True
