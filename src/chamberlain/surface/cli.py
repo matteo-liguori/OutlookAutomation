@@ -8,6 +8,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain tick                    run one tick for the operating system scheduler
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
     chamberlain config validate|show    check or print config/connections.yaml (no secrets)
+    chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain <tool> --json '{...}'   call a tool and print the envelope
 """
 
@@ -27,6 +28,7 @@ from chamberlain.connections import (
     open_app,
     render_redacted,
 )
+from chamberlain.importer.run import run_import
 from chamberlain.ports.clock import SystemClock
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Reply, error_reply
@@ -66,6 +68,10 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("prompt", help="print the standing prompt")
     config = commands.add_parser("config", help="check or print the connection profile")
     config.add_argument("action", choices=["validate", "show"])
+    importing = commands.add_parser(
+        "import", help="import the old harness's data (the old folder is only read)"
+    )
+    importing.add_argument("old_root", help="the old data root (use a copy)")
     commands.add_parser(
         "tick", help="run one tick (exit status 10: events wait and no session is active)"
     )
@@ -198,6 +204,23 @@ def _config(args: argparse.Namespace, out: TextIO) -> int:
         return EXIT_FAILED
 
 
+def _import(args: argparse.Namespace, out: TextIO) -> int:
+    data = args.data or os.environ.get(DATA_ENV)
+    try:
+        if not data:
+            raise ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                "No data root is set.",
+                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
+            )
+        report = run_import(Path(args.old_root), Path(data))
+    except ChamberlainError as error:
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
+    _print(out, report.summary())
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = out or sys.stdout
     args = _parser().parse_args(argv)
@@ -219,6 +242,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _tick(args, stream)
     if args.command == "config":
         return _config(args, stream)
+    if args.command == "import":
+        return _import(args, stream)
     return _call_tool(args, stream)
 
 
