@@ -97,7 +97,18 @@ Request: `handle`, `part` (`summary` | `body` | `headers` | `attachments` |
 Response: `handle`, `view` (a record view discriminated by `kind`: `card`,
 `action`, `grant`, `operation`, `event`, `evidence`, `artifact`, `message`,
 `calendar_event`, `contact`), `content?`, `range? {offset, length, total}`,
-`attachments[]`, `lease? {path, expires_at}`.
+`attachments[]`, `lease? {path, expires_at}`, `text_info?`.
+
+- **T-9a** `open` with a message handle, `part: body` and `attachment` reads that
+  attachment's text, paged like a body (`content.kind` is `attachment.text`, so it
+  is untrusted like a body). PDF (text layer), Word `.docx` and plain text are
+  read; the kind is found from the bytes, not the name. `text_info` says in
+  numbers which PDF pages had no text (for example a scan) and whether a limit
+  (`ATTACHMENT_TEXT_MAX_*`) cut the reading short. The file is read live in
+  memory, never written to disk, never cached unless `keep` is used, and never
+  marks the mail read. Anything else (`.doc`, `.rtf`, images, other binaries,
+  files over the byte limit, encrypted PDFs) is refused with a plain error.
+  A cached attachment artifact opens the same way.
 
 ### keep
 

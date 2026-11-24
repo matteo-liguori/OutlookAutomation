@@ -371,9 +371,27 @@ class OpenPart(StrEnum):
 class OpenRequest(ToolRequest):
     handle: Handle
     part: OpenPart = OpenPart.SUMMARY
+    attachment: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    """With a message handle and `part: body`: read this attachment's text instead."""
     offset: int = Field(default=0, ge=0)
     length: int = Field(default=PAGE_CHARS, ge=1, le=PAGE_CHARS)
     lease: bool = False
+
+
+class TextInfo(Model):
+    """What the harness knows about text it pulled out of an attachment.
+
+    Numbers and flags only, so it can never carry remote text (E-7, E-8).
+    """
+
+    format: Literal["pdf", "docx", "text"]
+    pages: int | None = Field(default=None, ge=0)
+    """PDF only: pages in the file."""
+    pages_read: int | None = Field(default=None, ge=0)
+    pages_without_text: tuple[int, ...] = Field(default=(), max_length=20)
+    """PDF only: page numbers (from 1) with no text layer, for example a scan."""
+    cut_short: bool = False
+    """True when a page, size or character limit stopped the reading early."""
 
 
 class OpenResponse(Model):
@@ -381,6 +399,7 @@ class OpenResponse(Model):
     view: View
     content: Content | None = None
     range: Range | None = None
+    text_info: TextInfo | None = None
     attachments: tuple[AttachmentInfo, ...] = ()
     lease: Lease | None = None
 

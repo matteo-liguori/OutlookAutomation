@@ -54,6 +54,12 @@ EVIDENCE_PER_OPEN_CARD_TARGET: Final = 15
 OUTCOME_MAX: Final = 240
 REASON_MAX: Final = 120
 
+ATTACHMENT_TEXT_MAX_BYTES: Final = 10 * 1024 * 1024
+"""The largest attachment `open` will read for text; bigger ones can be leased as a file."""
+ATTACHMENT_TEXT_MAX_PAGES: Final = 100
+"""PDF pages read for text. A longer file is cut short and says so."""
+ATTACHMENT_TEXT_MAX_CHARS: Final = 400_000
+"""Characters of extracted text kept per attachment; the rest is cut and the reply says so."""
 ARTIFACT_DEFAULT_DAYS: Final = 30
 ARTIFACT_MAX_DAYS: Final = 180
 SESSION_ARTIFACT_HOURS: Final = 24
