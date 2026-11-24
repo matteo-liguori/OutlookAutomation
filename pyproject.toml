@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chamberlain"
+version = "2.0.0a0"
+description = "A local mail and calendar harness for AI agents: typed tools, verified writes, bounded memory."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "pydantic>=2.12,<3",
+  "PyYAML>=6.0.2",
+]
+
+[project.optional-dependencies]
+dev = [
+  "hypothesis>=6.150",
+  "pyright>=1.1.410",
+  "pytest>=8.4",
+  "ruff>=0.14",
+  "types-PyYAML",
+]
+
+[project.scripts]
+chamberlain = "chamberlain.surface.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+chamberlain = ["py.typed", "store/migrations/*.sql", "guidance/*.yaml"]
+
+# --- ruff: formatter and linter -------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "C4", "PT", "DTZ", "TID", "RUF"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["chamberlain"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"datetime.datetime.now".msg = "Take the time from the Clock port (contract D-8)."
+"datetime.datetime.utcnow".msg = "Take the time from the Clock port (contract D-8)."
+"datetime.date.today".msg = "Take the time from the Clock port (contract D-8)."
+"time.time".msg = "Take the time from the Clock port (contract D-8)."
+
+[tool.ruff.lint.per-file-ignores]
+"src/chamberlain/ports/clock.py" = ["TID251"]
+
+# --- pyright ----------------------------------------------------------------
+[tool.pyright]
+include = ["src", "tests"]
+strict = ["src"]
+pythonVersion = "3.12"
+typeCheckingMode = "standard"
+venvPath = "."
+venv = ".venv"
+reportMissingTypeStubs = false
+
+# --- pytest -----------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+addopts = "-q --strict-markers --strict-config --import-mode=importlib -p no:cacheprovider"
+markers = [
+  "live: needs a real, disposable account; never runs in the gate",
+]
+filterwarnings = ["error"]
