@@ -99,11 +99,16 @@ class CalendarPortContract:
         delete = CalendarDelete(source=rig.source, event_ref=handle, expected_etag=etag)
         prepared = rig.port.prepare(delete, {handle: locator})
         assert rig.port.dispatch(prepared, "k-delete").outcome is DispatchOutcome.APPLIED
+        after = None
+        gone: ChamberlainError | None = None
         try:
             after = rig.port.read(rig.source, locator)
-        except ChamberlainError as gone:
+        except ChamberlainError as error:
+            gone = error
+        if gone is not None:
             assert gone.code is ErrorCode.REQUEST_UNKNOWN_HANDLE
         else:
+            assert after is not None
             assert after.status is EventStatus.CANCELLED
         assert not rig.port.events(rig.source, _window()).items
         query = _window().model_copy(update={"include_cancelled": True})
