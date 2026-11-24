@@ -123,6 +123,12 @@ Response: `handle`, `kind`, `size`, `sha256`, `expires_at?`.
   title. It stores a row in `event_labels` (06, M-39), not an artifact, and the
   calendar itself is never changed. A repeat replaces the earlier label.
   A pass report is an ordinary `kind: artifact` kept under the run (M-39).
+- **T-10c** `kind: finding` records what the agent found in a harness review. `owner` is the
+  `evt_` handle of a `harness.review` item whose round is open, and `text` is `idea` or `worrying`,
+  a bar, and one plain sentence (400 characters). It stores a row in `review_findings` (06, M-40),
+  not an artifact. Only a `worrying` finding reaches the owner. `open` on a `harness.review` item
+  with `part: body` returns the list the agent reads (tool names and short command summaries with
+  counts, never outputs or text).
 
 ### forget
 
@@ -178,7 +184,7 @@ Request: `operation`. Response: `operation` (`OperationView`), `changed`.
 ### doctor
 
 Request: `check` (`all` | `sources` | `storage` | `guidance` | `audit` |
-`schema`), `metrics` (bool).
+`schema` | `access`), `metrics` (bool).
 Response: `checks[] {id, status, summary, fix?}`, `metrics?`
 (all sixteen keys of `10-targets.md`; `chamberlain doctor --metrics`).
 

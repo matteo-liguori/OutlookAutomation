@@ -49,6 +49,9 @@ Every table and every file under the data root belongs to exactly one class.
 | Pass report, harness part (`run_reports`) | with its run, 35 days after the run's day | Deleted with the run row (cascade) |
 | Local event (`local_events`) | 365 days after it ends | Deleted (`local_events_trimmed`) |
 | Event label (`event_labels`) | 365 days after the event ends | Deleted (`event_labels_trimmed`) |
+| Improvisation pattern (`improv_patterns`) | 365 days after last seen; at most 500 kept | Oldest-seen dropped (`review_pruned`, M-40) |
+| Transcript position (`improv_files`) | 120 days after last seen | Deleted (`review_pruned`) |
+| Review round and its findings | 365 days after the round opened | Deleted, findings with it (`review_pruned`) |
 | User note | 7 days open, 14 days kept | Stops raising `user.note` after 7 days; deleted after 14 (`notes_trimmed`) |
 | Event | condition true | `expired` when false; row deleted 14 days after terminal |
 | Operation | 30 days after terminal | Compacted (W-25) |
@@ -270,6 +273,22 @@ crash-mid-sweep, checking after each sweep:
   handle as `context`, and the rule `card.context` tells the agent to fold what
   still matters into the position (within the cap) and then `forget` it. The
   import report counts them as `context_artifacts`.
+
+### The improvisation log and the harness review (track r-review)
+
+- **M-40** After each scheduled pass, and otherwise at most once a day, the harness reads the
+  agent's own session transcripts (Claude `projects/*/*.jsonl`, Codex `sessions/**/*.jsonl`; the
+  folders come from `review/homes.py`, never guessed in tests) for sessions that ran in this
+  installation's checkout or called a Chamberlain tool. For every call that is not a Chamberlain
+  tool it records ONLY the tool name and, for a shell command, a short normalised summary (the
+  program and at most one sub-command word from a short list; never an argument, path, quote or
+  number). It never reads or keeps outputs, mail text or file contents, and keeps no path,
+  session id or project name. Counts are aggregated by pattern. The log is not in the daily report
+  and not on the viewer's front page. Every `review.every_days` days (default 21), and only when
+  the log has patterns added since the last round, the harness opens a round and raises
+  `harness.review` (07, A-1c). Findings go in with `keep` kind `finding` (02, T-10c). A worrying
+  finding appears once as a line in the next pass report; ideas stay in the store for the
+  coordinator.
 
 ### The pass report (track d-dashboard)
 

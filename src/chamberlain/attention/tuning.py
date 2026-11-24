@@ -29,6 +29,7 @@ PRIORITY: Final[dict[EventKind, int]] = {
     EventKind.UPDATE_AVAILABLE: 10,
     EventKind.SCHEDULE_PASS_DUE: 70,
     EventKind.REPORT_DUE: 5,
+    EventKind.HARNESS_REVIEW: 4,
 }
 
 RERAISE: Final[dict[EventKind, timedelta]] = {

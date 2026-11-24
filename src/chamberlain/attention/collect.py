@@ -132,5 +132,6 @@ def collect(ctx: Context) -> Collected:
         runs_due=tuple(repo.due_runs(ctx.db)),
         notes=tuple(repo.open_notes(ctx.db, stamp_before(ctx, NOTE_OPEN))),
         update_tag=repo.update_tag(ctx.db),
+        reviews=tuple(repo.open_reviews(ctx.db)),
     )
     return Collected(data, frozenset(unreadable))

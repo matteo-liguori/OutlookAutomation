@@ -1,0 +1,12 @@
+id: harness.review
+version: 1
+title: Reviewing how you work
+when: {event: harness.review}
+text: >
+  Do this after the other work. The list is what you ran outside these tools.
+  Judge which repeated workarounds a harness feature should replace, and
+  whether anything worries you. Keep each as a finding: idea or worrying, a
+  bar, one sentence. Then mark the item handled. Leave it out of every report.
+max_chars: 320
+once_per: event
+priority: 30

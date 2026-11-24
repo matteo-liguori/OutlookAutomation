@@ -153,6 +153,14 @@ class UpdatesConfig(Model):
     remote: str = Field(default="origin", min_length=1)
 
 
+class ReviewConfig(Model):
+    """The harness watching how the agent works outside it (docs/review.md). On by default."""
+
+    enabled: bool = True
+    every_days: int = Field(default=21, ge=1, le=365)
+    """A review round is raised after this many days, and only when the log has new patterns."""
+
+
 class Connections(Model):
     version: Literal[1] = PROFILE_VERSION
     timezone: str = "UTC"
@@ -163,6 +171,7 @@ class Connections(Model):
     schedules: tuple[ScheduleConfig, ...] = ()
     mail_sync: MailSyncConfig = MailSyncConfig()
     updates: UpdatesConfig = UpdatesConfig()
+    review: ReviewConfig = ReviewConfig()
     authorised_senders: AuthorisedSenders = AuthorisedSenders()
     live_test: LiveTestConfig = LiveTestConfig()
     """Which sources `chamberlain live-test` may use (docs/live-test.md). Off by default."""

@@ -58,6 +58,10 @@ authorised_senders:              # who may instruct by email (see docs/permissio
 updates:                         # daily check for a newer release tag (reads tag names only)
   enabled: false
   remote: origin
+
+review:                          # the harness watches how the agent works outside it (docs/review.md)
+  enabled: true                  # default true; false stops the transcript scan and the reviews
+  every_days: 21                 # a review is raised this often, and only when something new was logged
 ```
 
 `chamberlain import <old data root>` writes this file from an old installation's profile

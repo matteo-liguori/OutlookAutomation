@@ -64,6 +64,12 @@ def next_step(event: EventRow) -> NextStep:
             args={"handle": subject, "part": "body"},
             why="Read what to write, then keep the report under the run.",
         )
+    if kind is EventKind.HARNESS_REVIEW:
+        return NextStep(
+            tool=ToolName.OPEN,
+            args={"handle": event.handle, "part": "body"},
+            why="Read the list, then keep what you find. Leave it out of any report.",
+        )
     if kind is EventKind.USER_NOTE:
         return NextStep(
             tool=ToolName.NEXT,

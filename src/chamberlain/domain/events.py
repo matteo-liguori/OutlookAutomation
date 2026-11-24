@@ -25,6 +25,7 @@ class EventKind(StrEnum):
     UPDATE_AVAILABLE = "update.available"
     SCHEDULE_PASS_DUE = "schedule.pass_due"
     REPORT_DUE = "report.due"
+    HARNESS_REVIEW = "harness.review"
 
 
 class EventState(StrEnum):

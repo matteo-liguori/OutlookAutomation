@@ -113,6 +113,11 @@
         "title": "A standing grant is due for review"
       },
       {
+        "id": "harness.review",
+        "version": 1,
+        "title": "Reviewing how you work"
+      },
+      {
         "id": "keep.owner",
         "version": 2,
         "title": "Storing things"
@@ -121,18 +126,13 @@
         "id": "mail.older",
         "version": 1,
         "title": "Older mail was not read"
-      },
-      {
-        "id": "mail.read_state",
-        "version": 2,
-        "title": "Reading mail"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 44,
+    "total": 45,
     "cursor": "ZzI1",
     "gaps": []
   },
