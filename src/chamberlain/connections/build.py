@@ -9,9 +9,11 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from chamberlain.app.context import SourceRouter
+from chamberlain.connections.demo import demo_provider
 from chamberlain.connections.model import (
     CalDavSource,
     Connections,
+    DemoSource,
     GoogleCalendarSource,
     OwlCalendarSource,
     ThunderbirdContactsSource,
@@ -36,6 +38,8 @@ from chamberlain.connectors.thunderbird.mail import ThunderbirdBinding, Thunderb
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import Clock
+from chamberlain.ports.contacts import ContactsPort
+from chamberlain.ports.mail import MailPort
 from chamberlain.writes.models import WritePolicy
 
 BRIDGE_DIR_NAME = "bridge"
@@ -79,8 +83,8 @@ def build_router(
     google_sources = connections.of_kind(GoogleCalendarSource)
     caldav_sources = connections.of_kind(CalDavSource)
 
-    mail: dict[str, ThunderbirdMail] = {}
-    contacts: dict[str, ThunderbirdContacts] = {}
+    mail: dict[str, MailPort] = {}
+    contacts: dict[str, ContactsPort] = {}
     calendar: dict[str, CalendarPort] = {}
 
     client = BridgeClient(RuntimeConnector(bridge_directory(connections, data_root)))
@@ -141,7 +145,19 @@ def build_router(
         )
         calendar.update(dict.fromkeys(caldav_sources, dav))
 
-    return SourceRouter(mail=mail, calendar=calendar, contacts=contacts)
+    demo_ids = sorted(connections.of_kind(DemoSource))
+    if demo_ids:
+        provider = demo_provider(demo_ids, clock)
+        for sid in demo_ids:
+            role = sid.partition(":")[0]
+            if role == "mail":
+                mail[sid] = provider.mail
+            elif role == "calendar":
+                calendar[sid] = provider.calendar
+            else:
+                contacts[sid] = provider.contacts
+
+    return SourceRouter(mail=mail, calendar=calendar, contacts=contacts, demo=frozenset(demo_ids))
 
 
 def policy_of(connections: Connections) -> WritePolicy:

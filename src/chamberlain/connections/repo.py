@@ -10,6 +10,7 @@ _CONNECTOR = {
     "owl": "thunderbird",
     "google": "google_calendar",
     "caldav": "caldav",
+    "demo": "demo",
 }
 
 

@@ -68,12 +68,23 @@ class CalDavSource(_Source):
     """The name of the password in the credential store, never the password."""
 
 
+class DemoSource(_Source):
+    """Synthetic data held in memory: a mailbox, calendar or address book to try Chamberlain.
+
+    The role comes from the source id (`mail:demo`, `calendar:demo`, `contacts:demo`). Every
+    demo source is built on the fake provider, so nothing it does leaves the process.
+    """
+
+    kind: Literal["demo"] = "demo"
+
+
 SourceConfig = Annotated[
     ThunderbirdMailSource
     | ThunderbirdContactsSource
     | OwlCalendarSource
     | GoogleCalendarSource
-    | CalDavSource,
+    | CalDavSource
+    | DemoSource,
     Field(discriminator="kind"),
 ]
 
@@ -83,7 +94,11 @@ ROLE_OF_KIND: dict[str, str] = {
     "owl": "calendar",
     "google": "calendar",
     "caldav": "calendar",
+    "demo": "mail",
 }
+
+DEMO_ROLES = frozenset({"mail", "calendar", "contacts"})
+"""A demo source may fill any role; the source id says which."""
 
 
 class WritePolicyConfig(Model):
@@ -135,7 +150,10 @@ class Connections(Model):
     def _role_matches_kind(self) -> Self:
         for source_id, source in self.sources.items():
             role = source_id.partition(":")[0]
-            if ROLE_OF_KIND[source.kind] != role:
+            if source.kind == "demo":
+                if role not in DEMO_ROLES:
+                    raise ValueError(f"{source_id}: a demo source is mail, calendar or contacts")
+            elif ROLE_OF_KIND[source.kind] != role:
                 raise ValueError(f"{source_id}: a {source.kind} source cannot be a {role} source")
         return self
 
