@@ -18,7 +18,9 @@ This is the rebuild. The old harness stays as the fallback until you cut over.
 ## Getting started
 
 Use a new, empty data root for Chamberlain, never the old one. Pass it with
-`--data <folder>` or set `CHAMBERLAIN_DATA`. Commands below use the Windows path to
+`--data <folder>` or set `CHAMBERLAIN_DATA`. The folder must be outside the code checkout:
+Chamberlain refuses to start when the data root is inside the folder that holds the code or
+inside its Git work tree, so private mail can never be committed by accident. Commands below use the Windows path to
 Python; on macOS or Linux use `.venv/bin/python`.
 
 1. Install. Python 3.12 or later, and Node 22.13 or later for the Thunderbird add-on.
@@ -102,6 +104,35 @@ the front page; earlier ones are one click below it, and the Calendar page shows
   itself when it is due. Hold the button for five seconds (pointer, Space or Enter) to acknowledge
   it. That finishes the reminder and the audit log records you, not the assistant.
 
+## Live test
+
+`chamberlain live-test` checks the whole harness against your real mailboxes and calendars,
+using the same tools an agent uses. It is off until you switch it on and list the sources in
+`live_test` (see [docs/configuration.md](docs/configuration.md)). Full facts:
+[docs/live-test.md](docs/live-test.md).
+
+```
+chamberlain live-test grant                  # once, then confirm the grants in the viewer
+chamberlain live-test run                    # everything that can run
+chamberlain live-test run --dry-run          # show the plan; touch nothing
+chamberlain live-test run --approve-calendar-edits
+chamberlain live-test sweep                  # remove marked items left by an earlier run
+```
+
+- **What it does.** Sends marked mail between accounts you own, files, marks and trashes it,
+  saves drafts, makes marked calendar events, removes everything it made, and gives a score.
+  It sends only to the addresses you list.
+- **The marker.** Every message subject and event title it makes starts with
+  `CHAMBERLAIN LIVE TEST <run id>`. Cleanup and `sweep` touch only items with that marker.
+- **One run an hour at most.** A mailbox may send 20 messages an hour and one run sends about
+  14 from each mailbox. If the limit is reached, the scenario is skipped and says so.
+- **Calendar edits.** A standing grant cannot cover them. Pass `--approve-calendar-edits` for one
+  run, or set `live_test.approve_calendar_edits: true` in `connections.yaml`. Without either,
+  the calendar scenarios are skipped and say why.
+- **The report.** Each run writes `logs/live-test/<run id>.json` and `.md` in the data root (handles,
+  error codes, counts and timings; never subjects, bodies or addresses). `chamberlain live-test
+  report` prints the latest again, and the viewer lists recent runs.
+
 ## Development setup
 
 The type checker (pyright) fetches its engine through Node the first time it
@@ -125,7 +156,7 @@ It runs the format check, the linter, the type checker and the tests.
 chamberlain tools                      # the twelve tools
 chamberlain schema propose             # a tool's request and response schema
 chamberlain prompt                     # the standing prompt an agent is given
-chamberlain --data ./scratch-data doctor
+chamberlain --data ../chamberlain-scratch doctor
 ```
 
 ## Try it without real accounts
@@ -134,14 +165,14 @@ The demo source is a small synthetic mailbox, calendar and address book held in 
 (`example.invalid` addresses, every item marked `[DEMO]`). Nothing it does leaves the process.
 
 ```
-.venv/Scripts/python -m chamberlain.surface.cli demo init ./demo-data
-.venv/Scripts/python -m chamberlain.surface.cli --data ./demo-data start
+.venv/Scripts/python -m chamberlain.surface.cli demo init ../chamberlain-demo
+.venv/Scripts/python -m chamberlain.surface.cli --data ../chamberlain-demo start
 ```
 
 `demo init` refuses a folder that is not empty. Replies from a demo installation carry
 `"demo": true` in `coverage`, and `doctor` warns if demo and real sources are mixed.
-Use `--data ./demo-data` for any tool, or point an agent's MCP server at it
-(`python -m chamberlain.surface.mcp_server --data ./demo-data`).
+Use `--data ../chamberlain-demo` for any tool, or point an agent's MCP server at it
+(`python -m chamberlain.surface.mcp_server --data ../chamberlain-demo`).
 
 ## Layout
 

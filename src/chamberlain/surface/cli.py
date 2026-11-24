@@ -38,6 +38,7 @@ from chamberlain.connections import (
 )
 from chamberlain.connections.demo import demo_document
 from chamberlain.connections.load import profile_path
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.importer.run import run_import
 from chamberlain.livetest.commands import main as live_test_main
 from chamberlain.livetest.runner import RunOptions
@@ -385,6 +386,20 @@ def _viewer(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _refused_data_root(args: argparse.Namespace, out: TextIO) -> int | None:
+    """Stop before anything is written when the data root is inside the code checkout."""
+    data = getattr(args, "root", None) if args.command == "demo" else None
+    data = data or args.data or os.environ.get(DATA_ENV)
+    if not data:
+        return None
+    try:
+        refuse_inside_checkout(data)
+    except ChamberlainError as error:
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
+    return None
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     console: TextIO = sys.stdout
     reconfigure: Any = getattr(console, "reconfigure", None)
@@ -407,6 +422,9 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     if args.command == "prompt":
         stream.write(STANDING_PROMPT + "\n")
         return EXIT_OK
+    refused = _refused_data_root(args, stream)
+    if refused is not None:
+        return refused
     if args.command == "tick":
         return _tick(args, stream)
     if args.command == "config":

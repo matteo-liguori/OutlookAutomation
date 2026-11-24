@@ -14,6 +14,7 @@ import yaml
 from pydantic import ValidationError
 
 from chamberlain.connections.model import Connections
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 CONFIG_DIR = "config"
@@ -54,6 +55,7 @@ def parse_connections(raw: object) -> Connections:
 
 def load_connections(data_root: Path) -> Connections:
     """The profile under a data root. Missing file: no sources."""
+    refuse_inside_checkout(data_root)
     path = profile_path(data_root)
     if not path.is_file():
         return Connections()

@@ -28,6 +28,7 @@ from chamberlain.connectors.calendar_support.http import (
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
 from chamberlain.connectors.google_calendar import auth
 from chamberlain.connectors.google_calendar.pages import write_pages
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -146,7 +147,7 @@ def _store(data: str | None) -> SecretStore:
             "Give the data root with --data or CHAMBERLAIN_DATA.",
             field="data",
         )
-    return default_store(Path(root))
+    return default_store(refuse_inside_checkout(root))
 
 
 def main(argv: list[str] | None = None, *, say: Say = print) -> int:

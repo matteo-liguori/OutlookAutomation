@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Final
 
 from chamberlain.connectors.thunderbird.native_host import private_directory
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 HOST_NAME: Final = "chamberlain_thunderbird_bridge"
@@ -176,11 +177,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--manifest-dir", type=Path, required=True)
     parser.add_argument("--replace-host-path", type=Path)
     args = parser.parse_args(argv)
-    done = prepare(
-        args.bridge_dir.resolve(),
-        args.manifest_dir.resolve(),
-        replace_host_path=args.replace_host_path,
-    )
+    try:
+        refuse_inside_checkout(args.bridge_dir)
+        done = prepare(
+            args.bridge_dir.resolve(),
+            args.manifest_dir.resolve(),
+            replace_host_path=args.replace_host_path,
+        )
+    except ChamberlainError as error:
+        sys.stderr.write(f"{error.message} {error.fix}\n")
+        return 2
     sys.stdout.write(json.dumps(done, indent=2) + "\n")
     return 0
 

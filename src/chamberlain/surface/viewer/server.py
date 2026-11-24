@@ -19,6 +19,7 @@ from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from chamberlain.app.core import App
 from chamberlain.connections import load_connections, open_app, policy_of
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.ports.clock import Clock
 from chamberlain.surface.viewer.app import ViewerApp
 from chamberlain.writes.confirm import create_token
@@ -137,6 +138,7 @@ def launch(
     The app is built by `connections.open_app`, so the viewer runs on the configured write
     policy, schedules and update check. Without `policy` the profile's own is used.
     """
+    refuse_inside_checkout(data_root)
     if policy is None and app_factory is None:
         policy = policy_of(load_connections(data_root))
     server = _bind(port)

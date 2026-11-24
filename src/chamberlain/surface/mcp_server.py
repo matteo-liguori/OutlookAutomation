@@ -20,6 +20,7 @@ from typing import Any, TextIO
 
 from chamberlain import __version__
 from chamberlain.connections import open_app
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.schema.base import Model
 from chamberlain.schema.envelope import Reply, error_reply
 from chamberlain.schema.errors import ChamberlainError
@@ -120,6 +121,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     data = args.data or os.environ.get(DATA_ENV)
     if not data:
         sys.stderr.write(f"No data root: set {DATA_ENV} or pass --data.\n")
+        return 2
+    try:
+        refuse_inside_checkout(data)
+    except ChamberlainError as error:
+        sys.stderr.write(f"{error.message} {error.fix}\n")
         return 2
     serve(sys.stdin, sys.stdout, configured_caller(Path(data)))
     return 0
