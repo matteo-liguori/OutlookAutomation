@@ -69,8 +69,10 @@ harness does not sync them. Outbox is not part of the mailbox."""
 SYNC_FRESH: Final = timedelta(minutes=10)
 """A folder synced longer ago than this is synced again before the scan or the agent reads it
 (A-24). The owner can change it in the profile (`mail_sync.fresh_minutes`)."""
-SYNC_LIMIT: Final = timedelta(seconds=180)
+SYNC_LIMIT: Final = timedelta(seconds=300)
 """The whole sync of one source gives up after this long and goes on with the folders that
-finished (A-25). Profile: `mail_sync.time_limit_seconds`."""
+finished (A-25). Profile: `mail_sync.time_limit_seconds`. Measured on the owner's mailboxes
+(2026-11-24): a whole mailbox normally syncs in 2 to 19 s, one slowdown took 132 s; a sync that
+finishes returns at once, so this only bounds a stuck folder."""
 SESSIONS_KEEP_ENDED: Final = timedelta(hours=24)
 GUIDE_PAGE: Final = 25

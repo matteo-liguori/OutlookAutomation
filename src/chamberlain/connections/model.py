@@ -141,7 +141,7 @@ class MailSyncConfig(Model):
     fresh_minutes: float = Field(default=10, gt=0, le=1440)
     """A folder last synced longer ago than this is synced again when the scan or the agent
     is about to read it."""
-    time_limit_seconds: float = Field(default=180, ge=10, le=3600)
+    time_limit_seconds: float = Field(default=300, ge=10, le=3600)
     """One sync of one source gives up after this long and goes on with the folders that
     finished."""
 

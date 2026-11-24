@@ -147,7 +147,7 @@ harness syncs every folder the scan reads and waits (owner ruling 2026-11-24 nig
   were last in sync (`mail_sync.complete_at`: the oldest folder's sync time, set only when every
   folder has synced and none is failing).
 - **A-25** A folder that will not sync never blocks the scan for long and is never silent. One
-  sync of one source stops at `mail_sync.time_limit_seconds` (default 180). The scan then reads on
+  sync of one source stops at `mail_sync.time_limit_seconds` (default 300). The scan then reads on
   with what it has, and one `source.stale` event (reason `sync`, discriminator `sync`) names how
   many folders did not sync and their roles. Folder names are remote text (E-8), so the names go
   to `doctor sources` (`sources.sync`, counts) and to the pass report, which says "Partially

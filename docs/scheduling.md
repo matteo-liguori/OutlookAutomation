@@ -12,7 +12,7 @@ This page is for the person setting up Chamberlain on their own computer. The co
    Five minutes before a pass is due (`presync_minutes`, set per schedule) that tick also asks
    Thunderbird to sync every mail folder the scan reads and waits for it, so the agent's pass finds
    them fresh. The scheduler should therefore tick at least that often. A folder that will not sync
-   within the time limit (`mail_sync.time_limit_seconds`, default 3 minutes) is left out, named in
+   within the time limit (`mail_sync.time_limit_seconds`, default 5 minutes) is left out, named in
    the report ("Partially verified") and tried again at the next tick; a tick waits for one mail
    source about that long at most. When the agent starts, any folder last synced more than
    `mail_sync.fresh_minutes` (default 10) ago is synced again first.
