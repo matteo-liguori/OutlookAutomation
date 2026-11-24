@@ -112,6 +112,15 @@ class MemoryRefResolver:
         self.known[handle] = (source, locator)
         return handle
 
+    def repoint(
+        self, old_locator: str, new_locator: str, *, source: str | None = None
+    ) -> str | None:
+        for handle, (known_source, locator) in list(self.known.items()):
+            if locator == old_locator and source in (None, known_source):
+                self.known[handle] = (known_source, new_locator)
+                return handle
+        return None
+
 
 @dataclass
 class RecordingWriteControl:

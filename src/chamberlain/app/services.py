@@ -88,6 +88,15 @@ class RefResolver(Protocol):
         """Record a remote item and return its deterministic handle (D-6)."""
         ...
 
+    def repoint(
+        self, old_locator: str, new_locator: str, *, source: str | None = None
+    ) -> str | None:
+        """Keep a handle alive after a move or draft update changed the locator (R4).
+
+        Returns the surviving handle, or None if the old locator was unknown.
+        """
+        ...
+
 
 class WriteControl(Protocol):
     """Implemented by writes; lets `forget` reach grants and operations (T-11)."""

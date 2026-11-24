@@ -89,6 +89,10 @@ class ProviderReceipt(Model):
     remote_sha256: Sha256 | None = None
     verification: Verification = Verification()
     items: tuple[ItemResult, ...] = ()
+    read_state_preserved: bool | None = None
+    """False when a merge into an existing copy could not keep the flag (R7)."""
+    warnings: tuple[str, ...] = ()
+    """Harness-safe warning codes such as `merged_existing_copy` (R7)."""
 
 
 class Prepared(Model):
@@ -122,6 +126,9 @@ class DispatchResult(Model):
 class ReconcileStatus(StrEnum):
     PRESENT = "present"
     ABSENT = "absent"
+    QUEUED = "queued"
+    """An exact copy sits in Outbox or Drafts awaiting submission. Keeps the
+    operation uncertain and never releases the grant (board R2)."""
     UNKNOWN = "unknown"
 
 
@@ -134,6 +141,8 @@ class ReconcileResult(Model):
 
     @model_validator(mode="after")
     def _consistent(self) -> Self:
+        if self.status is ReconcileStatus.QUEUED and self.proof:
+            raise ValueError("a queued copy is never proof of absence")
         if (self.status is ReconcileStatus.PRESENT) != (self.receipt is not None):
             raise ValueError("a receipt accompanies exactly the present status")
         if self.proof and self.status is not ReconcileStatus.ABSENT:

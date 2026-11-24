@@ -73,6 +73,8 @@ class StandingScope(Model):
     calendar: SourceId | None = None
     allow_mark_read: bool = False
     allow_repeat: bool = False
+    allow_duplicate: bool = False
+    """Let a send through the duplicate scan of `prepare` (board R3)."""
     card: CardHandle | None = None
     max_per_day: int | None = Field(default=None, ge=1, le=500)
 

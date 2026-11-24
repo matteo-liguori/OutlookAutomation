@@ -11,6 +11,7 @@ requires-python = ">=3.12"
 dependencies = [
   "pydantic>=2.12,<3",
   "PyYAML>=6.0.2",
+  "tzdata>=2025.2; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
