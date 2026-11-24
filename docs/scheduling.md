@@ -18,13 +18,19 @@ This page is for the person setting up Chamberlain on their own computer. The co
 4. The agent starts with `purpose: scheduled` and `scheduled_day: <day>`. A scheduled start for
    a day that is not today, or a scheduled session from an earlier day, is stopped by every
    tool with `session.stale` (R10). A late wake therefore never works a stale day.
-5. The agent keeps its written report with `keep` (kind `artifact`, `owner` the run handle named
-   in the work item). The run owns that report; it finishes when a report exists, is
-   `incomplete` when its session ended without one (the harness then stores a short note saying
-   so), and `missed` when its day ended first.
-6. A report is an artifact with a lifetime (30 days unless the agent asks for less; 14 days for
-   a note the harness writes). The sweeper removes it, and the run row goes 35 days after its
-   day. Reports are read in the viewer, under **Runs and reports**.
+5. While the agent works the pass, the harness keeps an outline under the run (which sections are
+   the agent's, in the owner's words). The last work item of the pass is `report.due`: it points at
+   the outline, and the rule `report.write` rides with it. The agent keeps its written part with
+   `keep` (kind `artifact`, `owner` the run handle named in the work item). The run owns that
+   report; it finishes when a report exists, is `incomplete` when its session ended without one
+   (the harness then stores a short note saying so), and `missed` when its day ended first.
+6. When the pass ends the harness writes its own sections (access problems, important
+   appointments, permission reviews, verification) from its records and keeps them with the run
+   (35 days). The agent's text is a stored item with a lifetime (30 days unless the agent asks for
+   less; 14 days for a note the harness writes). The sweeper removes it, and the run row goes 35
+   days after its day. The report is the viewer's front page; every run is also listed under
+   **Runs and reports**. The layout is `config/report-template.yaml` (see the README, "The
+   report").
 
 ## The wake adapter
 

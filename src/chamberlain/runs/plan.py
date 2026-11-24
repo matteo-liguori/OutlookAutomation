@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 from chamberlain.app.context import Context
 from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.limits import SESSION_IDLE_HOURS
-from chamberlain.runs import repo
+from chamberlain.runs import compose, repo
 from chamberlain.runs.models import RunRow, RunState, ScheduleRow
 from chamberlain.runs.reports import store_report
 from chamberlain.runs.tuning import MAX_LATE
@@ -113,15 +113,20 @@ def _attach_sessions(ctx: Context) -> None:
             )
 
 
-def _settle_running(ctx: Context, now: datetime) -> list[RunRow]:
-    """Finish runs that have a report; end running ones whose session is gone (returned)."""
+def _settle_running(ctx: Context, now: datetime) -> tuple[list[RunRow], list[RunRow]]:
+    """Finish runs that have a report; end running ones whose session is gone.
+
+    Returns `(finished, ended)`: the runs that just got a report, and those that ended without.
+    """
     idle_edge = _utc(now - timedelta(hours=SESSION_IDLE_HOURS))
+    finished: list[RunRow] = []
     ended: list[RunRow] = []
     for run in repo.runs_in_states(ctx.db, (RunState.DUE.value, RunState.RUNNING.value)):
         if repo.report_handles(ctx.db, run.handle):
             repo.set_run_state(
                 ctx.db, run.handle, RunState.FINISHED.value, finished_at=stamp(ctx.clock)
             )
+            finished.append(run)
         elif run.state is RunState.RUNNING and (
             run.session is None or repo.session_has_ended(ctx.db, run.session, idle_edge)
         ):
@@ -129,7 +134,13 @@ def _settle_running(ctx: Context, now: datetime) -> list[RunRow]:
                 ctx.db, run.handle, RunState.INCOMPLETE.value, finished_at=stamp(ctx.clock)
             )
             ended.append(run)
-    return ended
+    return finished, ended
+
+
+def _keep_outlines(ctx: Context) -> None:
+    """Every pass being worked gets the outline of what its report should hold."""
+    for run in repo.runs_in_states(ctx.db, (RunState.RUNNING.value,)):
+        compose.ensure_outline(ctx, run)
 
 
 def plan_runs(ctx: Context) -> None:
@@ -139,12 +150,21 @@ def plan_runs(ctx: Context) -> None:
         _create_due(ctx, now)
         _attach_sessions(ctx)
         _close_old_days(ctx)
-        ended = _settle_running(ctx, now)
+        finished, ended = _settle_running(ctx, now)
     for run in ended:
         try:
             store_report(ctx, run.handle, INCOMPLETE_REPORT)
         except Exception:
             log_failure(log, "storing the report of %s failed", run.handle)
+    for run in [*finished, *ended]:
+        try:
+            compose.settle_snapshot(ctx, run)
+        except Exception:
+            log_failure(log, "composing the report of %s failed", run.handle)
+    try:
+        _keep_outlines(ctx)
+    except Exception:
+        log_failure(log, "keeping a report outline failed")
 
 
 def due_passes(ctx: Context) -> list[dict[str, str]]:

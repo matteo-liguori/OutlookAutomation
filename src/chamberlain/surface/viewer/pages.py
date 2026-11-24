@@ -13,16 +13,33 @@ from zoneinfo import ZoneInfo
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
 from chamberlain.limits import CARD_POSITION_MAX
+from chamberlain.memory import repo as memory_repo
+from chamberlain.memory.labels import event_identity
+from chamberlain.runs import appointments, compose
 from chamberlain.runs import repo as runs_repo
-from chamberlain.runs.reports import read_reports
+from chamberlain.runs import report_repo as local_repo
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.surface.viewer import repo
+from chamberlain.surface.viewer.report_api import due_appointments
 
 WINDOW_MAX_DAYS = 45
 PAGES_PER_SOURCE = 4
 REPORT_DAYS = 60
 TONES = 8
 """How many calendar colours the stylesheet has."""
+CATEGORIES: tuple[tuple[str, str], ...] = (
+    ("work", "Work and study"),
+    ("personal", "Personal admin"),
+    ("social", "Social"),
+    ("travel", "Travel"),
+    ("health", "Health"),
+    ("occasion", "Occasions"),
+    ("home", "Home"),
+)
+"""The words an event can be given (`memory.labels.CATEGORIES`) and what the legend calls them."""
+LOCAL_SOURCE = "local"
+LOCAL_NAME = "Local (kept only in this viewer)"
+MARK_WINDOW_DAYS = 120
 TIMELINE_DAYS_MAX = 31
 TIMELINE_LIMIT = 400
 CARD_LIMIT = 60
@@ -56,7 +73,14 @@ def _stored_to_local(stamp: str, tz: ZoneInfo) -> datetime:
 # --- calendar -----------------------------------------------------------------------------------
 
 
-def _event_row(event: CalendarEvent, source: str, tone: int, tz: ZoneInfo) -> dict[str, Any]:
+def _link(location: str) -> str:
+    """The location when it is a web link the page may offer, else nothing."""
+    return location if location.startswith(("https://", "http://")) else ""
+
+
+def _event_row(
+    event: CalendarEvent, source: str, tone: int, tz: ZoneInfo, labels: dict[str, tuple[str, str]]
+) -> dict[str, Any]:
     fields = event.fields
     if fields.all_day:
         first = fields.start.astimezone(_UTC).date()
@@ -68,17 +92,49 @@ def _event_row(event: CalendarEvent, source: str, tone: int, tz: ZoneInfo) -> di
         first = begin.date()
         last = (finish - timedelta(seconds=1)).date() if finish > begin else begin.date()
         times = (begin.strftime("%H:%M"), finish.strftime("%H:%M"))
+    category, short = labels.get(event_identity(fields), ("", ""))
     return {
         "source": source,
         "tone": tone,
         "title": fields.title[:200],
+        "display_title": short,
+        "category": category,
         "location": fields.location[:200],
+        "url": _link(fields.location[:200]),
         "all_day": fields.all_day,
         "first_day": first.isoformat(),
         "last_day": last.isoformat(),
         "start_time": times[0],
         "end_time": times[1],
         "start": _stored(fields.start),
+        "local": False,
+    }
+
+
+def _local_row(row: local_repo.LocalEventRow, tz: ZoneInfo) -> dict[str, Any]:
+    start = datetime.strptime(row.start_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_UTC)
+    end = datetime.strptime(row.end_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_UTC)
+    times = (
+        ("", "")
+        if row.all_day
+        else (start.astimezone(tz).strftime("%H:%M"), end.astimezone(tz).strftime("%H:%M"))
+    )
+    return {
+        "source": LOCAL_SOURCE,
+        "tone": 0,
+        "id": row.id,
+        "title": row.title,
+        "display_title": "",
+        "category": "",
+        "location": row.location,
+        "url": _link(row.location),
+        "all_day": row.all_day,
+        "first_day": row.start_day,
+        "last_day": row.end_day,
+        "start_time": times[0],
+        "end_time": times[1],
+        "start": row.start_at,
+        "local": True,
     }
 
 
@@ -117,9 +173,16 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
     window = CalendarQuery(
         start=_local_midnight(first, tz), end=_local_midnight(last, tz), limit=250
     )
-    labels = repo.source_labels(ctx.db)
+    labels = {**repo.source_labels(ctx.db), LOCAL_SOURCE: LOCAL_NAME}
+    given = {
+        str(r["identity"]): (str(r["category"]), str(r["title"]))
+        for r in memory_repo.event_labels_since(ctx.db, first.isoformat())
+    }
     sources: list[dict[str, Any]] = []
-    rows: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]] = [
+        _local_row(r, tz)
+        for r in local_repo.local_events_between(ctx.db, first.isoformat(), last.isoformat())
+    ]
     for index, source in enumerate(sorted(ctx.sources.calendar)):
         tone = index % TONES
         note = ""
@@ -129,7 +192,7 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
             cursor: str | None = None
             for _ in range(PAGES_PER_SOURCE):
                 page = port.events(source, window, cursor)
-                rows.extend(_event_row(e, source, tone, tz) for e in page.items)
+                rows.extend(_event_row(e, source, tone, tz, given) for e in page.items)
                 complete = page.complete
                 cursor = page.cursor
                 if cursor is None:
@@ -148,7 +211,22 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
                 "note": note,
             }
         )
+    everything = appointments.upcoming(ctx)
+    wanted = [a for a in everything if _stored(window.start) <= a.start < _stored(window.end)]
+    important_handles = {a.action for a in everything}
     marks = [
+        {
+            "action": a.action,
+            "day": _stored_to_local(a.start, tz).date().isoformat(),
+            "start": a.start,
+            "title": a.title,
+            "card": a.card,
+            "card_title": a.card_title,
+            "due": a.due,
+        }
+        for a in wanted
+    ]
+    dated = [
         {
             "action": a.handle,
             "day": _stored_to_local(a.due_at, tz).date().isoformat(),
@@ -158,7 +236,7 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
             "due": a.due_at <= _stored(ctx.clock.now()),
         }
         for a in repo.dated_actions(ctx.db, _stored(window.start), _stored(window.end), 200)
-        if a.due_at is not None
+        if a.due_at is not None and a.handle not in important_handles
     ]
     return {
         "timezone": zone,
@@ -166,8 +244,11 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
         "start": first.isoformat(),
         "until": last.isoformat(),
         "sources": sources,
+        "categories": [{"id": key, "label": name} for key, name in CATEGORIES],
         "events": _merge(rows, labels),
         "important": marks,
+        "appointments_due": due_appointments(ctx),
+        "dated": dated,
         "report_days": report_days(ctx),
     }
 
@@ -179,7 +260,10 @@ def report_days(ctx: Context) -> list[str]:
     """Days (newest first) that have at least one stored report."""
     found: list[str] = []
     for run in runs_repo.recent_runs(ctx.db, REPORT_DAYS):
-        if run.day not in found and runs_repo.report_handles(ctx.db, run.handle):
+        if run.day not in found and (
+            runs_repo.report_handles(ctx.db, run.handle)
+            or compose.stored_snapshot(ctx, run.handle) is not None
+        ):
             found.append(run.day)
     return sorted(found, reverse=True)
 
@@ -201,7 +285,7 @@ def reports_of_day(ctx: Context, day: str) -> dict[str, Any]:
                 "kind": kinds.get(r.schedule, ""),
                 "state": r.state.value,
                 "started_at": r.started_at,
-                "reports": [x.text for x in read_reports(ctx, r.handle)],
+                "report": compose.read_composed(ctx, r),
             }
             for r in runs
         ],
