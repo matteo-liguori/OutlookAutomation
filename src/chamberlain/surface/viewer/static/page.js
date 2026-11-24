@@ -130,6 +130,9 @@
       box.appendChild(
         el("p", { class: "muted", text: grant.kind + ", " + grant.state + ", needs " + grant.requirement + ", source " + grant.source })
       );
+      if (grant.why_a_click) {
+        box.appendChild(el("p", { class: "muted", text: "A click is needed for: " + grant.why_a_click + "." }));
+      }
       box.appendChild(el("p", { text: "This is exactly what you would be allowing:" }));
       box.appendChild(el("pre", { text: grant.rendered || "(nothing to show: do not confirm)" }));
       box.appendChild(el("p", { class: "muted" }, "Content fingerprint: ", el("code", { text: grant.content_sha256 })));

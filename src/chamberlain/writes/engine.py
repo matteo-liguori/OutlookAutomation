@@ -33,7 +33,6 @@ from chamberlain.domain.capabilities import Capability, CapabilityName
 from chamberlain.domain.grant_rules import (
     format_ts,
     intent_hash,
-    recipients_of,
     scope_mismatch,
 )
 from chamberlain.domain.grants import (
@@ -70,6 +69,7 @@ from chamberlain.domain.operations import (
     Verification,
     recheck_text,
 )
+from chamberlain.domain.permissions import recipients_of
 from chamberlain.domain.recurrence import describe
 from chamberlain.domain.senders import parse_instruction_ref
 from chamberlain.limits import (
@@ -750,7 +750,6 @@ class Engine:
                 self.db, intent.source, format_ts(now - timedelta(hours=1)), handle
             ),
             known_recipients=repo.known_recipients(self.db, intent.source),
-            event_has_attendees=EVENT_ATTENDEES_REF in refs,
             event_attendees=_attendees_in(refs),
             owner_addresses=repo.owner_addresses(self.db),
         )

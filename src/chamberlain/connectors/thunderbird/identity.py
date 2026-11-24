@@ -11,7 +11,6 @@ from dataclasses import dataclass
 from email.utils import parseaddr
 from typing import cast
 
-from chamberlain.domain.canonical import sha256_text
 from chamberlain.domain.mail import Address
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -105,10 +104,6 @@ def _unknown_contact(detail: str) -> ChamberlainError:
 def normalise_body(text: str) -> str:
     """CRLF to LF, ASCII whitespace trimmed; identical to `normaliseBody` in the add-on."""
     return text.replace("\r\n", "\n").replace("\r", "\n").strip(_ASCII_SPACE)
-
-
-def body_digest(text: str) -> str:
-    return sha256_text(normalise_body(text))
 
 
 def parse_address(value: str) -> Address:

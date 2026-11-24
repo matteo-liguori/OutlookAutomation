@@ -101,10 +101,5 @@ def apply_schedules(ctx: Context, specs: Sequence[ScheduleSpec]) -> list[Schedul
     return repo.schedules(ctx.db)
 
 
-def remove_schedule(ctx: Context, name: str) -> bool:
-    with transaction(ctx.db):
-        return repo.delete_schedule(ctx.db, name) > 0
-
-
 def list_schedules(ctx: Context) -> list[ScheduleRow]:
     return repo.schedules(ctx.db)

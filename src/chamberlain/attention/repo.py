@@ -126,11 +126,6 @@ def any_active_session(db: sqlite3.Connection) -> bool:
     return row is not None
 
 
-def session_is_active(db: sqlite3.Connection, handle: str) -> bool:
-    row = db.execute("SELECT 1 FROM sessions WHERE handle = ? AND ended_at IS NULL", (handle,))
-    return row.fetchone() is not None
-
-
 # --- guidance ledger --------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""Invitations end to end on the fake world: send, change, cancel and answer (G-12b, W-33)."""
+"""Invitations end to end on the fake world: send, change, cancel and answer (G-12a, W-33)."""
 
 from datetime import UTC, datetime
 

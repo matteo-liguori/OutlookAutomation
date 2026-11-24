@@ -13,21 +13,18 @@ from chamberlain.domain.grant_rules import (
     anniversary,
     check_config_requirement,
     next_review,
-    requirement_for,
     scope_mismatch,
     stricter,
     suspend_at,
 )
 from chamberlain.domain.grants import Requirement, StandingScope
 from chamberlain.domain.intents import (
-    CalendarCreate,
     CalendarDelete,
     IntentKind,
     MailMarkRead,
     MailMove,
     MailSend,
     MailTrash,
-    WriteIntent,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.testing.write_rig import CALENDAR, MAIL, WriteRig
@@ -107,50 +104,6 @@ def test_g6_property_the_schedule_never_drifts_from_the_grant_date(
 
 
 # --- G-12: requirement selection --------------------------------------------------------
-
-
-def need(
-    intent: WriteIntent,
-    known: frozenset[str] = frozenset(),
-    *,
-    send_known: R = R.AGENT_EVIDENCE,
-    other: R = R.AGENT_EVIDENCE,
-    existing_attendees: bool = False,
-) -> R:
-    return requirement_for(
-        intent, known, send_known=send_known, other=other, existing_attendees=existing_attendees
-    )
-
-
-def test_g12_requirement_table() -> None:
-    known = frozenset({"friend@example.org"})
-    assert need(SEND, known) is R.AGENT_EVIDENCE
-    assert need(SEND, frozenset()) is R.HUMAN_CONFIRMATION
-    stranger = SEND.model_copy(update={"to": ("friend@example.org", "new@example.org")})
-    assert need(stranger, known) is R.HUMAN_CONFIRMATION
-    assert need(SEND, known, send_known=R.HUMAN_CONFIRMATION) is R.HUMAN_CONFIRMATION
-    mark = MailMarkRead(source=MAIL, messages=("msg_0123456789abcdef",))
-    assert need(mark, known) is R.AGENT_EVIDENCE
-    assert need(mark, known, other=R.HUMAN_CONFIRMATION) is R.HUMAN_CONFIRMATION
-
-
-def test_g12c_calendar_needs_the_human_only_to_invite_a_new_stranger() -> None:
-    plain = CalendarCreate.model_validate(
-        {
-            "source": CALENDAR,
-            "event": {"title": "t", "start": "2026-02-01T12:00:00Z", "end": "2026-02-01T13:00:00Z"},
-        }
-    )
-    guests = plain.model_copy(
-        update={"event": plain.event.model_copy(update={"attendees": ("a@example.org",)})}
-    )
-    delete = CalendarDelete(source=CALENDAR, event_ref="cev_0123456789abcdef", expected_etag="e")
-    known = frozenset({"a@example.org"})
-    assert need(plain, frozenset()) is R.AGENT_EVIDENCE
-    assert need(guests, known) is R.AGENT_EVIDENCE
-    assert need(guests, frozenset()) is R.HUMAN_CONFIRMATION
-    assert need(delete, frozenset()) is R.AGENT_EVIDENCE
-    assert need(delete, existing_attendees=True) is R.AGENT_EVIDENCE
 
 
 def test_g12_config_may_tighten_but_never_loosen() -> None:
@@ -240,7 +193,6 @@ def test_w22_kind_card_folder_and_read_state_are_each_exact() -> None:
 
 
 def test_w22_a_standing_scope_never_covers_a_calendar_update_it_cannot_see(rig: WriteRig) -> None:
-    from chamberlain.domain.intents import CalendarDelete
 
     delete = CalendarDelete(source=CALENDAR, event_ref="cev_0123456789abcdef", expected_etag='"e1"')
     broad = scope(

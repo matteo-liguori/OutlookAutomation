@@ -76,16 +76,6 @@ class Deadlines:
                 "Bridge deadlines must nest: add-on, then host, then client.",
             )
 
-    def scaled(self, factor: float) -> "Deadlines":
-        return Deadlines(
-            self.addon_read * factor,
-            self.addon_write * factor,
-            self.host_read * factor,
-            self.host_write * factor,
-            self.client_read * factor,
-            self.client_write * factor,
-        )
-
 
 class LiveFault:
     """A one-shot, safe fault for `chamberlain live-test`: lose one response after dispatch.
