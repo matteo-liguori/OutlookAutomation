@@ -14,6 +14,17 @@ from chamberlain.store.db import MEMORY, connect
 from chamberlain.store.migrate import migrate
 
 
+@pytest.fixture(autouse=True)
+def _agent_home_is_empty(  # pyright: ignore[reportUnusedFunction]
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No test may read the real `~/.claude` or `~/.codex` (the review track reads transcripts).
+
+    Every path to them goes through `chamberlain.review.homes`, which honours this variable.
+    """
+    monkeypatch.setenv("CHAMBERLAIN_AGENT_HOME", str(tmp_path_factory.mktemp("agent_home")))
+
+
 @pytest.fixture
 def clock() -> ManualClock:
     """A clock that moves only when a test moves it."""

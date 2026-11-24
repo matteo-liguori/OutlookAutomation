@@ -234,6 +234,14 @@ class CalendarSlot:
 
 
 @dataclass(frozen=True)
+class OpenReview:
+    """A review round waiting for the agent (the `review_rounds` table, review track)."""
+
+    id: int
+    new_patterns: int
+
+
+@dataclass(frozen=True)
 class DetectorInput:
     """Everything detectors may look at (A-5). Built once per tick."""
 
@@ -265,3 +273,5 @@ class DetectorInput:
     """The owner's timed events from now on that are neither cancelled nor declined (A-26)."""
     update_tag: str | None = None
     """The newer release tag the update checker recorded, if any."""
+    reviews: tuple[OpenReview, ...] = ()
+    """Open review rounds: how the agent has been working outside the harness (review track)."""

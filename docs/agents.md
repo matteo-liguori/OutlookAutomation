@@ -50,6 +50,12 @@ chamberlain prompt                              # the standing instructions
 Every call prints one JSON reply. The exit code is 0 when it worked, 2 for a
 bad request, 3 when the answer is uncertain, and 1 otherwise.
 
+## Keeping Claude Code out of the data root
+
+`python -m chamberlain.review.claude_guard add --data <data-root>` adds deny rules so Claude Code's
+file tools cannot read or edit the data root. It does not stop a shell, and Codex has no equivalent.
+See [review.md](review.md).
+
 ## Checking it works
 
 Run `chamberlain --data <data-root> config validate`, then ask the agent to

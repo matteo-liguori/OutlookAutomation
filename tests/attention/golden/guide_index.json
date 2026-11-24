@@ -19,7 +19,7 @@
       },
       {
         "id": "calendar.conflict",
-        "version": 1,
+        "version": 2,
         "title": "Two events overlap"
       },
       {
@@ -118,21 +118,21 @@
         "title": "A standing grant is due for review"
       },
       {
+        "id": "harness.review",
+        "version": 2,
+        "title": "Reviewing how you work"
+      },
+      {
         "id": "keep.owner",
         "version": 2,
         "title": "Storing things"
-      },
-      {
-        "id": "mail.older",
-        "version": 1,
-        "title": "Older mail was not read"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 45,
+    "total": 46,
     "cursor": "ZzI1",
     "gaps": []
   },

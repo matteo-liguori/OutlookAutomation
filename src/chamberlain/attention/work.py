@@ -75,6 +75,12 @@ def next_step(event: EventRow) -> NextStep:
             },
             why="List what is on every calendar then; open both events before deciding.",
         )
+    if kind is EventKind.HARNESS_REVIEW:
+        return NextStep(
+            tool=ToolName.OPEN,
+            args={"handle": event.handle, "part": "body"},
+            why="Read the list, then keep what you find. Leave it out of any report.",
+        )
     if kind is EventKind.USER_NOTE:
         return NextStep(
             tool=ToolName.NEXT,

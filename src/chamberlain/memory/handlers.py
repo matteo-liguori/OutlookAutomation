@@ -23,6 +23,7 @@ from chamberlain.memory.find import find
 from chamberlain.memory.labels import keep_label
 from chamberlain.memory.reading import open_handle
 from chamberlain.memory.timeutil import parse, ts
+from chamberlain.review.findings import keep_finding
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import (
@@ -50,6 +51,8 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
     """Store a note, evidence, a label or an artifact under an owner (T-10, M-4)."""
     if request.kind is KeepKind.LABEL:
         return keep_label(ctx, request)
+    if request.kind is KeepKind.FINDING:
+        return keep_finding(ctx, request)
     if request.kind is KeepKind.NOTE:
         assert request.text is not None
         handle = CardService(ctx.db, ctx.clock).add_note(request.owner, request.text)

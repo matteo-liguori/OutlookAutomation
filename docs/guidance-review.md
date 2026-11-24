@@ -4,7 +4,7 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-45 rules, about 8,800 characters in total (budget 12,000).
+46 rules, about 9,000 characters in total (budget 12,000).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
@@ -198,7 +198,7 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 - Trigger: `{'event': 'calendar.conflict'}`; shown event; priority 55; cap 260 chars (new). The harness raises it when two of the owner's timed events overlap in the next 14 days.
 
-> Two of the owner's events overlap. Open both and see if one is a copy of the other or if either can really be attended. Tell the owner plainly in your report. Move or cancel nothing unless they ask.
+> Two of the owner's events overlap. Open both: is one a copy, or can both be attended? Tell the owner in your report. Change nothing unless asked.
 
 ## card.review: A card is due for review
 
@@ -265,6 +265,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'event': 'report.due'}`; shown event; priority 70; cap 380 chars (new). The event is the last item of a scheduled pass, so this is the moment the report is due.
 
 > The work is done, so write the report now. Open the item to see which sections are yours: the harness fills sources, newest times, filing counts, appointments and reviews itself. Say what the owner must do next, then what changed, and plainly what you could not cover. Keep it under the named run.
+
+## harness.review: Reviewing how you work
+
+- Trigger: `{'event': 'harness.review'}`; shown event; priority 30; cap 320 chars (new). Raised every few weeks, only when the harness logged a new way of working outside its tools. It comes after all other items and the pass report.
+
+> Do this last. The list is what you ran outside these tools. Which repeated workarounds should a harness feature replace? Does anything worry you? Keep each as a finding: idea or worrying, a bar, one sentence. Then mark it handled. Leave it out of every report.
 
 ## report.summary: Writing a report
 

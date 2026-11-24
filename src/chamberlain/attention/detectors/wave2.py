@@ -115,3 +115,19 @@ def report_due(data: DetectorInput) -> Iterable[EventDraft]:
                 PRIORITY[EventKind.REPORT_DUE],
                 EventAttrs(reason=run.kind),
             )
+
+
+def harness_review(data: DetectorInput) -> Iterable[EventDraft]:
+    """One event per open review round; the round ends when the agent handles it (review track).
+
+    It comes after every pass item, so it never delays the work or the report.
+    """
+    for review in data.reviews:
+        yield EventDraft(
+            EventKind.HARNESS_REVIEW,
+            None,
+            "Review how the harness is being used. Open this item for the list to read.",
+            PRIORITY[EventKind.HARNESS_REVIEW],
+            EventAttrs(),
+            discriminator=str(review.id),
+        )

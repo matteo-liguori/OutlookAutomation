@@ -66,6 +66,10 @@ Binding for every track that touches SQLite. Code:
 | `run_reports` | Records | runs | What the harness wrote into a pass's report when the pass settled (M-39) |
 | `local_events` | Records | runs | Events the owner adds in the viewer; no calendar holds them (M-39) |
 | `event_labels` | Records | memory | The category and short title the agent gave a calendar event (T-10b, M-39) |
+| `improv_patterns` | Records | review | Tools the agent used outside Chamberlain, a short command summary, count and times (M-40) |
+| `improv_files` | Ephemeral | review | How far each agent transcript file has been read (a hash of its path, a byte position) |
+| `review_rounds` | Records | review | One row per harness review: open, done or lapsed |
+| `review_findings` | Records | review | What the agent found in a round: an idea, or something worrying (T-10c) |
 
 Cross-track needs that are not a plain read go through the service
 protocols in `src/chamberlain/app/services.py` (`AuditLog` and

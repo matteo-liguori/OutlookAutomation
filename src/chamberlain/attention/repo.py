@@ -22,6 +22,7 @@ from chamberlain.attention.models import (
     GrantRow,
     MailBatch,
     OpenNote,
+    OpenReview,
     OperationRow,
     SendRow,
     SessionRow,
@@ -524,6 +525,11 @@ def open_notes(db: sqlite3.Connection, since: str) -> list[OpenNote]:
         (since,),
     )
     return [OpenNote(int(r["id"]), r["text"]) for r in rows]
+
+
+def open_reviews(db: sqlite3.Connection) -> list[OpenReview]:
+    rows = db.execute("SELECT id, new_patterns FROM review_rounds WHERE state = 'open' ORDER BY id")
+    return [OpenReview(int(r["id"]), int(r["new_patterns"])) for r in rows]
 
 
 def update_tag(db: sqlite3.Connection) -> str | None:

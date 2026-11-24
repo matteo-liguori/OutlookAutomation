@@ -27,6 +27,7 @@ class Track(StrEnum):
     ATTENTION = "attention"
     WRITES = "writes"
     RUNS = "runs"
+    REVIEW = "review"
     ANY = "any"
 
 
@@ -69,6 +70,10 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "run_reports": (_D.RECORDS, _T.RUNS),
     "local_events": (_D.RECORDS, _T.RUNS),
     "event_labels": (_D.RECORDS, _T.MEMORY),
+    "improv_patterns": (_D.RECORDS, _T.REVIEW),
+    "improv_files": (_D.EPHEMERAL, _T.REVIEW),
+    "review_rounds": (_D.RECORDS, _T.REVIEW),
+    "review_findings": (_D.RECORDS, _T.REVIEW),
 }
 
 TABLE_CLASSES: dict[str, DataClass] = {name: pair[0] for name, pair in TABLES.items()}
@@ -92,6 +97,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "importer.last_import",
         "runs.update_tag",
         "runs.update_checked_at",
+        "review.last_scan_at",
     }
 )
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""
