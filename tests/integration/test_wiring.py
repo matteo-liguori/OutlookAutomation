@@ -37,7 +37,7 @@ def test_building_a_second_app_replaces_the_tick_steps_rather_than_stacking_them
     first = build_stack(tmp_path / "one")
     second = build_stack(tmp_path / "two")
     try:
-        assert len(attention_tick.ALWAYS_STEPS) == 1
+        assert len(attention_tick.ALWAYS_STEPS) == 2
         assert len(attention_tick.EXTRA_STEPS) == 2
     finally:
         first.app.close()
@@ -48,7 +48,8 @@ def test_the_tick_recovers_operations_then_sweeps_and_maintains(stack: Stack) ->
     stack.start()
     names = [getattr(step, "__name__", "") for step in attention_tick.EXTRA_STEPS]
     assert names == ["sweep_everything", "maintain_writes"]
-    assert attention_tick.ALWAYS_STEPS[0].__name__ == "recover_operations"
+    always = [step.__name__ for step in attention_tick.ALWAYS_STEPS]
+    assert always == ["recover_operations", "plan_runs"]
     stack.clock.advance(minutes=2)
     stack.ok("doctor")
     row = stack.app.context.db.execute(

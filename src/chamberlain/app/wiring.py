@@ -8,7 +8,7 @@ Each track exposes, in its own `handlers.py`:
 and attention additionally exposes `HOOKS: Hooks | None`. Tracks never edit
 this file. Here the real `Services` are built (memory first, then writes with
 memory's artifact store), the write handlers get the configured policy, and the
-tick's steps are installed: crash recovery on every call (`ALWAYS_STEPS`) and the
+tick's steps are installed: crash recovery and run planning on every call (`ALWAYS_STEPS`) and the
 sweeper plus write maintenance after the inbox is reconciled (`EXTRA_STEPS`).
 """
 
@@ -26,6 +26,10 @@ from chamberlain.memory import services as memory_services
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.memory.sweeper import Compactor, sweep
 from chamberlain.ports.clock import Clock, SystemClock
+from chamberlain.runs import maintenance as run_maintenance
+from chamberlain.runs import plan as run_plan
+from chamberlain.runs import updates as run_updates
+from chamberlain.runs.updates import TagLister
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.registry import BY_NAME
 from chamberlain.schema.tools import DoctorCheck
@@ -44,10 +48,14 @@ TRACK_MODULES: tuple[str, ...] = (
 WRITES_MODULE = "chamberlain.writes.handlers"
 """Its handlers depend on the configured policy, so they come from `make_handlers`."""
 
-COMPACTORS: tuple[tuple[str, Compactor], ...] = tuple(write_maintenance.COMPACTORS)
+COMPACTORS: tuple[tuple[str, Compactor], ...] = (
+    *write_maintenance.COMPACTORS,
+    *run_maintenance.COMPACTORS,
+)
 """Other tracks' lifetime rules for their own tables, run inside the sweeper's records step.
 
-Attention trims its own events and sessions inside its tick, so it supplies none."""
+Attention trims its own events and sessions inside its tick, so it supplies none. The runs
+track trims its run rows and notes."""
 
 
 def load_tracks(
@@ -88,7 +96,7 @@ def build_services(
 
 
 def tick_steps(
-    policy: WritePolicy | None, budgets: Budgets | None
+    policy: WritePolicy | None, budgets: Budgets | None, update_lister: TagLister | None = None
 ) -> tuple[list[Callable[[Context], None]], list[Callable[[Context], None]]]:
     """`(always, extra)`: what the tick runs on every call, and what it runs when due."""
 
@@ -98,12 +106,23 @@ def tick_steps(
     def maintain_writes(ctx: Context) -> None:
         write_maintenance.maintain(ctx, policy)
 
-    return [write_maintenance.recover_operations], [sweep_everything, maintain_writes]
+    always: list[Callable[[Context], None]] = [
+        write_maintenance.recover_operations,
+        run_plan.plan_runs,
+    ]
+    extra: list[Callable[[Context], None]] = [sweep_everything, maintain_writes]
+    if update_lister is not None:
+        extra.append(run_updates.tick_step(update_lister))
+    return always, extra
 
 
-def install_tick_steps(policy: WritePolicy | None = None, budgets: Budgets | None = None) -> None:
+def install_tick_steps(
+    policy: WritePolicy | None = None,
+    budgets: Budgets | None = None,
+    update_lister: TagLister | None = None,
+) -> None:
     """Fill attention's step lists in place. Idempotent: the last built app's settings win."""
-    always, extra = tick_steps(policy, budgets)
+    always, extra = tick_steps(policy, budgets, update_lister)
     attention_tick.ALWAYS_STEPS[:] = always
     attention_tick.EXTRA_STEPS[:] = extra
 
@@ -116,11 +135,13 @@ def build_app(
     services: Services | None = None,
     policy: WritePolicy | None = None,
     budgets: Budgets | None = None,
+    update_lister: TagLister | None = None,
 ) -> App:
     """Open the store under `data_root` and assemble the app (S-18).
 
     `services` replaces the real ones (tests); `sources` is the connector router, which
-    the configuration step fills (wave 2).
+    the configuration step fills (wave 2). `update_lister` turns the daily tag
+    check on (`runs.updates`); without it no tick ever touches the network.
     """
     the_clock = clock or SystemClock()
     db = open_store(data_root, the_clock)
@@ -133,7 +154,7 @@ def build_app(
         or build_services(db, the_clock, data_root, policy=policy, budgets=budgets),
     )
     handlers, hooks = load_tracks(policy)
-    install_tick_steps(policy, budgets)
+    install_tick_steps(policy, budgets, update_lister)
     return App(context, handlers, hooks)
 
 
