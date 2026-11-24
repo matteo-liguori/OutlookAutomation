@@ -24,7 +24,6 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 HOST_NAME: Final = "chamberlain_thunderbird_bridge"
 EXTENSION_ID: Final = "chamberlain-bridge@chamberlain.local"
 ADDON_DIR: Final = Path(__file__).parent / "addon"
-_PACKAGE_FILES: Final = ("experiment/api.js", "experiment/schema.json")
 _FIXED_TIME: Final = (2026, 1, 1, 0, 0, 0)
 _SHELL_CHARS: Final = '"%\r\n\x00^&|<>!'
 
@@ -32,6 +31,16 @@ _SHELL_CHARS: Final = '"%\r\n\x00^&|<>!'
 def addon_version() -> str:
     manifest = json.loads((ADDON_DIR / "manifest.json").read_text(encoding="utf-8"))
     return str(manifest["version"])
+
+
+def package_files() -> tuple[str, ...]:
+    """Every experiment file the manifest names, so the package can never miss one."""
+    manifest = json.loads((ADDON_DIR / "manifest.json").read_text(encoding="utf-8"))
+    names: set[str] = set()
+    for api in manifest.get("experiment_apis", {}).values():
+        names.add(str(api["schema"]))
+        names.add(str(api["parent"]["script"]))
+    return tuple(sorted(names))
 
 
 def build_addon_script(output: Path, *, node: str | None = None) -> Path:
@@ -68,7 +77,7 @@ def build_package(bridge_dir: Path, *, node: str | None = None) -> Path:
     entries = {
         "manifest.json": (ADDON_DIR / "manifest.json").read_bytes(),
         "background.js": script.read_bytes(),
-        **{name: (ADDON_DIR / name).read_bytes() for name in _PACKAGE_FILES},
+        **{name: (ADDON_DIR / name).read_bytes() for name in package_files()},
     }
     with zipfile.ZipFile(package, "w", zipfile.ZIP_DEFLATED) as archive:
         for name in sorted(entries):

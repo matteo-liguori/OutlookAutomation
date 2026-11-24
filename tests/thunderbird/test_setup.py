@@ -31,12 +31,13 @@ def test_b10_the_package_is_reproducible_and_complete(tmp_path: Path) -> None:
     assert first == second
     package = tmp_path / "one" / f"chamberlain-bridge-{setup.addon_version()}.xpi"
     with zipfile.ZipFile(package) as archive:
-        assert sorted(archive.namelist()) == [
-            "background.js",
-            "experiment/api.js",
-            "experiment/schema.json",
-            "manifest.json",
-        ]
+        # Every file the manifest names must ship: a missing one makes Thunderbird
+        # call the whole package corrupt (found in live validation).
+        assert sorted(archive.namelist()) == sorted(
+            ["background.js", "manifest.json", *setup.package_files()]
+        )
+        assert "experiment/calendar_api.js" in archive.namelist()
+        assert "experiment/calendar_schema.json" in archive.namelist()
         script = archive.read("background.js").decode()
     assert "function cmdMove" in script
     assert ": string" not in script  # types were stripped
