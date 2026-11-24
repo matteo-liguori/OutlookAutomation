@@ -1,0 +1,129 @@
+/* The calendar page: colour ribbons per calendar, bands for multi-day events, and the gold,
+   pulsing border of an important date. Ported from the old dashboard; nothing is inline. */
+.calendar-page { --important-outline: #bd8a42; }
+.calendar-heading, .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
+.calendar-heading { justify-content: space-between; gap: 0.85rem; margin-bottom: 0.9rem; }
+.calendar-heading h2 { margin: 0; }
+.controls :is(button, input, select), #reports {
+  min-height: 2.5rem;
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 0.35rem 0.7rem;
+}
+#range { font-size: 1.1rem; font-weight: 650; margin-bottom: 0.65rem; }
+#calendar { border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; background: var(--panel); }
+#calendar.four { --columns: 4; }
+#calendar.week { --columns: 7; }
+.calendar-week + .calendar-week { border-top: 1px solid var(--line); }
+.week-grid { display: grid; grid-template-columns: repeat(var(--columns), minmax(0, 1fr)); }
+.calendar-date, .calendar-day { padding: 0.6rem; border-right: 1px solid var(--line); min-width: 0; }
+.calendar-date:last-child, .calendar-day:last-child { border-right: 0; }
+.calendar-day { min-height: 7rem; }
+.calendar-date { border-bottom: 1px solid var(--line); }
+.calendar-date h3 { font-size: 0.87rem; }
+.calendar-date button { all: unset; cursor: pointer; font-weight: 600; font-size: 0.87rem; }
+.calendar-date button:hover { text-decoration: underline; }
+.calendar-date[aria-current="date"] { color: var(--selected); box-shadow: inset 0 3px currentColor; }
+.has-report::after { content: " \25A4"; color: var(--muted); font-size: 0.75rem; }
+.unchecked { background: var(--soft); }
+.day-note, .coverage { color: var(--muted); font-size: 0.82rem; }
+.coverage { margin: 0.65rem 0 1rem; }
+
+.tone-0 { --event-colour: #315aaf; }
+.tone-1 { --event-colour: #187b77; }
+.tone-2 { --event-colour: #7751a5; }
+.tone-3 { --event-colour: #a04d24; }
+.tone-4 { --event-colour: #a93d64; }
+.tone-5 { --event-colour: #875b14; }
+.tone-6 { --event-colour: #416e3a; }
+.tone-7 { --event-colour: #596767; }
+.colour-key { display: flex; flex-wrap: wrap; gap: 0.3rem 0.85rem; margin: 0 0 0.65rem; padding: 0; list-style: none; font-size: 0.8rem; color: var(--muted); }
+.colour-key li { display: inline-flex; align-items: center; gap: 0.3rem; }
+.colour-key li::before { content: ""; width: 0.75em; height: 0.75em; background: var(--event-colour, transparent); border-radius: 2px; }
+.colour-key .importance-key::before { border: 2px solid var(--important-outline); background: none; }
+
+.calendar-event {
+  border-inline-start: 3px solid var(--event-colour);
+  padding: 0.3rem 0.4rem;
+  margin: 0.25rem 0;
+  background: color-mix(in srgb, var(--event-colour) 13%, var(--panel));
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+  font-size: 0.82rem;
+}
+.event-time { color: var(--muted); font-size: 0.74rem; }
+.calendar-bands { row-gap: 3px; }
+.calendar-bands:not(:empty) { padding-block: 5px; background: var(--soft); }
+.event-band {
+  margin-inline: 3px;
+  border-radius: 5px;
+  min-height: 1.2rem;
+  min-width: 0;
+  padding: 0.05rem 0.42rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: var(--event-colour);
+  color: #fff;
+  font-size: 0.79rem;
+  font-weight: 650;
+  line-height: 1.25;
+}
+.event-band.timed-band { background: transparent; color: var(--ink); border: 1px dashed var(--event-colour); }
+.milestone {
+  width: 100%;
+  margin: 0.25rem 0;
+  padding: 0.35rem 0.45rem;
+  text-align: left;
+  border: 2px solid #ae6230;
+  border-radius: 6px;
+  background: color-mix(in srgb, #ffbf77 24%, var(--panel));
+  font-weight: 650;
+  font-size: 0.79rem;
+  overflow-wrap: anywhere;
+}
+.important-event {
+  --pulse-period: 5.2s;
+  --pulse-peak: 0.62;
+  position: relative;
+  isolation: isolate;
+  outline: 1px solid var(--important-outline);
+  outline-offset: -1px;
+}
+.important-event.important-near { --pulse-period: 4.6s; --pulse-peak: 0.76; }
+.important-event.important-now { --pulse-period: 4s; --pulse-peak: 0.9; }
+.important-event::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--important-outline) 12%, transparent);
+  box-shadow: 0 0 3px 1px #e8ab5499, 0 0 11px 2px #e6a94c55, inset 0 0 8px 1px #e9ad535e;
+  opacity: 0.2;
+}
+.milestone.important-event::after { inset: -2px; }
+@media (prefers-reduced-motion: no-preference) {
+  .important-event::after { animation: appointment-glow var(--pulse-period) ease-in-out infinite; }
+}
+@keyframes appointment-glow { 50% { opacity: var(--pulse-peak); } }
+
+.report-panel { background: var(--panel); border: 1px solid var(--line); padding: clamp(0.85rem, 2vw, 1.6rem); border-radius: 12px; margin: 1.3rem 0; box-shadow: var(--shadow); }
+.report-content { line-height: 1.62; overflow-x: auto; }
+.report-content + .report-content { margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--line); }
+.report-content :is(h1, h2, h3, p, ul, ol, table) { margin: 0.5rem 0 0.8rem; }
+.report-content h1 { font-size: 1.4rem; }
+.report-content h2 { font-size: 1.2rem; margin-top: 1rem; }
+.report-time { color: var(--muted); font-size: 0.9rem; }
+.error { background: var(--panel); border: 1px solid var(--warn); color: var(--warn); padding: 1rem; border-radius: 9px; margin-bottom: 1rem; }
+dialog { color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 15px; width: min(32rem, calc(100vw - 2rem)); padding: 1.2rem; }
+dialog::backdrop { background: #0006; }
+.appointment-kicker { color: var(--ink); border-left: 4px solid #b44336; background: color-mix(in srgb, #dd7858 21%, var(--panel)); padding: 0.4rem 0.65rem; font-size: 0.85rem; font-weight: 750; margin-bottom: 0.8rem; }
+
+@media (max-width: 700px) {
+  #calendar.four .calendar-week { min-width: 28rem; }
+  #calendar.week .calendar-week { min-width: 49rem; }
+}

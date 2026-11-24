@@ -18,6 +18,7 @@ from chamberlain.writes.engine import Engine, Proposal
 from chamberlain.writes.models import WritePolicy
 
 MAIL = "mail:test"
+CALENDAR = "calendar:test"
 ORIGIN = "http://127.0.0.1:5555"
 HOST = "127.0.0.1:5555"
 
@@ -27,9 +28,14 @@ class Rig:
         self.clock = ManualClock(datetime(2026, 1, 5, 9, 0, tzinfo=UTC))
         self.fake = FakeProvider(self.clock)
         self.fake.mail.add_source(MAIL)
+        self.fake.calendar.add_source(CALENDAR)
         self.policy = WritePolicy()
         self.app: App = build_app(
-            root, clock=self.clock, sources=SourceRouter(mail={MAIL: self.fake.mail})
+            root,
+            clock=self.clock,
+            sources=SourceRouter(
+                mail={MAIL: self.fake.mail}, calendar={CALENDAR: self.fake.calendar}
+            ),
         )
         self.token = create_token(root)
         self.viewer = ViewerApp(

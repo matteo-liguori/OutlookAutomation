@@ -23,6 +23,7 @@ from chamberlain.store.migrate import stamp
 from chamberlain.surface.viewer import repo
 from chamberlain.writes import repo as write_repo
 from chamberlain.writes.engine import Engine
+from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.render import describe_intent
 
 LIST_LIMIT = 50
@@ -96,21 +97,36 @@ def work(ctx: Context) -> dict[str, Any]:
     }
 
 
+def _iso(moment: datetime | None) -> str | None:
+    return None if moment is None else _stored(moment)
+
+
 def uncertain(ctx: Context) -> dict[str, Any]:
-    """Operations that may or may not have happened, with the exact text of each."""
+    """Operations that may or may not have happened: what each was, when, and how to check.
+
+    An operation imported from an old journal has no stored text (it can never be sent); it shows
+    the title, time and calendar or recipients its journal gave, and the time the old journal says
+    it was tried (or, when that is unknown, only the time it was imported, labelled as such).
+    """
     found: list[dict[str, Any]] = []
     states = (OperationState.UNCERTAIN, OperationState.RECONCILING)
     for op in write_repo.operations_in_states(ctx.db, states):
+        imported = op.intent_json is None
         rendered: str | None = None
-        if op.intent_json is not None:
+        if not imported:
             rendered = describe_intent(Engine.intent_of(op), limit=None)[0]
+        summary = parse_summary(op.summary_json)
         found.append(
             {
                 "handle": op.handle,
                 "kind": op.kind.value,
                 "state": op.state.value,
                 "source": op.source_id,
-                "dispatched_at": None if op.dispatched_at is None else op.dispatched_at.isoformat(),
+                "imported": imported,
+                "attempted_at": _iso(op.attempted_at if imported else op.dispatched_at),
+                "imported_at": _iso(op.created_at) if imported else None,
+                "summary": None if summary is None else summary.model_dump(exclude_none=True),
+                "advice": advice_for(op.kind),
                 "rendered": rendered,
             }
         )

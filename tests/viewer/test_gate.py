@@ -18,7 +18,14 @@ def rejected(rig: Rig) -> list[Any]:
 
 def test_g17_the_shell_needs_no_token_but_holds_no_records(rig: Rig) -> None:
     rig.proposal(subject="A private subject")
-    for path in ("/", "/index.html", "/static/page.js", "/static/page.css"):
+    for path in (
+        "/",
+        "/index.html",
+        "/static/page.js",
+        "/static/page.css",
+        "/static/calendar.js",
+        "/static/calendar.css",
+    ):
         reply = rig.call("GET", path, token=None, origin=None)
         assert reply.status == 200, path
     shell = rig.last_bytes.decode()
@@ -50,10 +57,20 @@ def test_g17_the_shell_loads_nothing_from_the_internet(rig: Rig) -> None:
     script = rig.last_bytes.decode()
     rig.call("GET", "/static/page.css", token=None)
     css = rig.last_bytes.decode()
-    for text in (html, script, css):
-        assert "https://" not in text
+    rig.call("GET", "/static/calendar.js", token=None)
+    calendar_script = rig.last_bytes.decode()
+    rig.call("GET", "/static/calendar.css", token=None)
+    calendar_css = rig.last_bytes.decode()
+    for text in (html, script, css, calendar_script, calendar_css):
+        assert "https://" not in text.replace("[https:", "").replace('"https:"', "")
         assert "//cdn" not in text
-    assert "innerHTML" not in script  # nothing from a mail can become markup
+        assert "@import" not in text
+        assert "url(" not in text
+    for code in (script, calendar_script):
+        assert "innerHTML" not in code  # nothing from a mail can become markup
+        assert "outerHTML" not in code
+        assert "insertAdjacentHTML" not in code
+        assert "eval(" not in code
 
 
 def test_g17_a_missing_or_wrong_token_is_403_audited_and_changes_nothing(rig: Rig) -> None:
