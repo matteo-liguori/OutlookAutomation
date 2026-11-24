@@ -128,6 +128,8 @@ def _grant_title(approval: OldApproval) -> str:
 def _grant_source(ctx: Context, approval: OldApproval) -> str:
     message = _mapping(approval.details.get("message"))
     scope = _mapping(approval.details.get("scope"))
+    if _text(scope.get("operation")).startswith("calendar"):
+        return _source_for(ctx, scope.get("calendar_id"), calendar=True)
     return _source_for(ctx, message.get("sender"), scope.get("mailbox"), scope.get("store"))
 
 
@@ -153,6 +155,7 @@ def import_grants(ctx: Context) -> dict[str, str]:
             key = "approvals already revoked or withdrawn"
             ctx.report.left_behind[key] = ctx.report.left_behind.get(key, 0) + 1
             continue
+        ctx.report.where = f"approval {approval.id}"
         handle = derive("grant", approval.kind, approval.id)
         handles[approval.id] = handle
         if writes.get_grant(ctx.db, handle) is not None:
@@ -262,6 +265,7 @@ def _evidence_for_standing(ctx: Context, approval: OldApproval, grant: str) -> s
 def import_journals(ctx: Context, grants: dict[str, str]) -> None:
     for journal in sorted(ctx.old.journals, key=lambda j: j.key):
         operation, approval = parse_key(journal.key)
+        ctx.report.where = f"journal {journal.key}"
         handle = derive("op", journal.key)
         if writes.get_operation(ctx.db, handle) is not None:
             ctx.report.count("operations", new=False)

@@ -166,6 +166,7 @@ def import_cards(
         if action.status in OPEN_ACTION:
             by_case.setdefault(action.case_id, []).append(action)
     for case in sorted(old.cases, key=lambda c: c.id):
+        report.where = f"case {case.id}"
         handle = derive("card", case.id)
         imported.cards[case.id] = handle
         if memory.get_card(db, handle) is not None:

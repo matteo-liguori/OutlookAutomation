@@ -9,6 +9,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from old_fixture import MemorySecrets, build_old_root
 
+from chamberlain.importer.report import ImportReport
+from chamberlain.importer.run import run_import
+from chamberlain.ports.clock import ManualClock
+
 
 @pytest.fixture
 def old_root(tmp_path: Path) -> Path:
@@ -18,3 +22,10 @@ def old_root(tmp_path: Path) -> Path:
 @pytest.fixture
 def secrets() -> MemorySecrets:
     return MemorySecrets()
+
+
+@pytest.fixture
+def imported(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> ImportReport:
+    return run_import(old_root, data_root, clock=clock, secrets=secrets)

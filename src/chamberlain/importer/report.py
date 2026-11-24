@@ -25,6 +25,8 @@ class ImportReport:
     next_steps: list[str] = field(default_factory=list[str])
     config_written: str = ""
     """`created`, `already identical` or `kept existing (differs)`."""
+    where: str = ""
+    """The old record being read now, so a failure can name it. Not part of the document."""
 
     def count(self, kind: str, *, new: bool) -> None:
         target = self.counts if new else self.already_there

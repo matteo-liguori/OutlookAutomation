@@ -27,8 +27,8 @@ holds the old private guidance text). Running the import again changes nothing.
 - Google and iCloud secrets are copied into the operating system credential store. The old
   files stay where they are. An existing secret is never replaced.
 - iCloud arrives as a disabled CalDAV source: run
-  `python -m chamberlain.connectors.caldav.setup register` to find the calendar collection,
-  then enable it.
+  `python -m chamberlain.connectors.caldav.setup register` to find the calendar collection;
+  it writes the source enabled.
 - Sources the old profile bound to Outlook COM or native Outlook, or that lack a folder id,
   are listed as skipped. Bind them in Thunderbird and add them to the profile by hand.
 

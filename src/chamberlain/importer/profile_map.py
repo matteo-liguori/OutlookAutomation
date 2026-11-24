@@ -24,6 +24,7 @@ from chamberlain.connectors.caldav.credentials import credential_name
 from chamberlain.domain.grants import Requirement
 from chamberlain.importer.old import Json, OldInstallation
 from chamberlain.importer.report import ImportReport
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 ICLOUD_ROOT_URL = "https://caldav.icloud.com/"
 DEFAULT_ZONE = "Europe/London"
@@ -126,10 +127,22 @@ def map_profile(
     backend, bindings = _bindings(profile)
     sources: dict[str, SourceConfig] = {}
     mapped = MappedProfile(connections=Connections())
+    origin: dict[str, str] = {}
+
+    def claim(sid: str, name: str) -> None:
+        if sid in origin and origin[sid] != name:
+            raise ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                f"The old sources {origin[sid]} and {name} would both become {sid}.",
+                fix="Rename one of them in the old profile copy, then import again.",
+            )
+        origin[sid] = name
 
     mail = profile.get("mail")
     for name, address in sorted(cast(Json, mail).items() if isinstance(mail, dict) else []):
         sid = new_source_id(name)
+        claim(sid, name)
+        report.where = f"source {name}"
         binding = bindings.get(name, {})
         if not isinstance(address, str) or not _is_thunderbird(binding, backend):
             report.skipped_sources.append(
@@ -157,6 +170,7 @@ def map_profile(
         names = [b for b in books if isinstance(b, str) and b]
         if names and len(names) == len(books) and len(set(names)) == len(names):
             cid = "contacts:" + sid.partition(":")[2]
+            claim(cid, f"{name} (address books)")
             sources[cid] = ThunderbirdContactsSource(label=name, address_book_ids=tuple(names))
             report.sources[cid] = f"Thunderbird address books ({len(names)})"
 
@@ -167,6 +181,8 @@ def map_profile(
     calendars = profile.get("calendars")
     for name in cast(list[str], calendars) if isinstance(calendars, list) else []:
         sid = new_source_id(name)
+        claim(sid, name)
+        report.where = f"source {name}"
         binding = bindings.get(name, {})
         provider = providers.get(name)
         calendar_id = _text(binding, "calendar_id")

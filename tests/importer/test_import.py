@@ -46,13 +46,6 @@ def dump_store(data_root: Path) -> dict[str, list[tuple[Any, ...]]]:
         db.close()
 
 
-@pytest.fixture
-def imported(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> ImportReport:
-    return run_import(old_root, data_root, clock=clock, secrets=secrets)
-
-
 def rows(data_root: Path, sql: str, *args: object) -> list[sqlite3.Row]:
     db = connect(data_root / "chamberlain.sqlite3")
     try:

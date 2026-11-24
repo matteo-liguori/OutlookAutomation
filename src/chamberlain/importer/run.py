@@ -6,12 +6,17 @@ run finds every derived handle already there and writes nothing.
 """
 
 import json
+import sqlite3
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from pydantic import ValidationError
+
 from chamberlain.app.wiring import build_services
 from chamberlain.connections.load import dump_connections, profile_path
+from chamberlain.connections.model import GoogleCalendarSource
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
+from chamberlain.connectors.google_calendar import auth
 from chamberlain.importer import authority, records
 from chamberlain.importer.credentials import icloud_credential, move_secrets
 from chamberlain.importer.old import SKIPPED_TABLES, OldInstallation, read_installation
@@ -69,6 +74,36 @@ def _write_profile(data_root: Path, mapped: MappedProfile, report: ImportReport)
         report.warnings.append("config/connections.yaml already exists and was not changed.")
 
 
+def _check_google_accounts(mapped: MappedProfile, store: SecretStore, report: ImportReport) -> None:
+    linked = set(auth.accounts(store))
+    for source_id, source in sorted(mapped.connections.sources.items()):
+        if isinstance(source, GoogleCalendarSource) and source.account.lower() not in linked:
+            report.warnings.append(
+                f"{source_id}: no Google sign-in is saved for {source.account}; "
+                "run the Google calendar setup (client, then link)."
+            )
+
+
+def _import_all(
+    old: OldInstallation,
+    old_root: Path,
+    data_root: Path,
+    the_clock: Clock,
+    secrets: SecretStore | None,
+    report: ImportReport,
+) -> None:
+    icloud = icloud_credential(old_root)
+    mapped = map_profile(old, report, icloud[0] if icloud else None)
+    zone = ZoneInfo(mapped.connections.timezone)
+    _private_guidance(old, report)
+
+    store = secrets or default_store(data_root)
+    move_secrets(old_root, store, report)
+    _check_google_accounts(mapped, store, report)
+    _write_profile(data_root, mapped, report)
+    _write_rows(old, mapped, zone, data_root, the_clock, report)
+
+
 def run_import(
     old_root: Path,
     data_root: Path,
@@ -86,15 +121,39 @@ def run_import(
     report.left_behind = {t: n for t, n in report.left_behind.items() if n}
     report.next_steps = list(NEXT_STEPS)
 
-    icloud = icloud_credential(old_root)
-    mapped = map_profile(old, report, icloud[0] if icloud else None)
-    zone = ZoneInfo(mapped.connections.timezone)
-    _private_guidance(old, report)
+    try:
+        _import_all(old, old_root, data_root, the_clock, secrets, report)
+    except ChamberlainError:
+        raise
+    except (sqlite3.Error, ValidationError, ValueError, KeyError, TypeError) as error:
+        raise ChamberlainError(
+            ErrorCode.CONFIG_INVALID,
+            f"The import stopped at {report.where or 'the old profile'}; nothing was imported "
+            f"from the database ({type(error).__name__}).",
+            fix="Fix or remove that record in the copy of the old folder, then import again.",
+            detail=str(error)[:300],
+        ) from None
 
-    store = secrets or default_store(data_root)
-    move_secrets(old_root, store, report)
-    _write_profile(data_root, mapped, report)
+    _write_report(data_root, report)
+    return report
 
+
+def _write_report(data_root: Path, report: ImportReport) -> None:
+    target = data_root / REPORT_RELATIVE
+    document = json.dumps(report.document(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    if report.changed or not target.is_file():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(document, encoding="utf-8")
+
+
+def _write_rows(
+    old: OldInstallation,
+    mapped: MappedProfile,
+    zone: ZoneInfo,
+    data_root: Path,
+    the_clock: Clock,
+    report: ImportReport,
+) -> None:
     db = open_store(data_root, the_clock)
     try:
         now = stamp(the_clock)
@@ -125,10 +184,3 @@ def run_import(
                     set_state(db, the_clock, STATE_KEY, counts)
     finally:
         db.close()
-
-    target = data_root / REPORT_RELATIVE
-    document = json.dumps(report.document(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
-    if report.changed or not target.is_file():
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(document, encoding="utf-8")
-    return report
