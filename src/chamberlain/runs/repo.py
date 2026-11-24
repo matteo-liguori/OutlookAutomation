@@ -19,6 +19,7 @@ def _schedule(row: sqlite3.Row) -> ScheduleRow:
         weekdays=frozenset(int(day) for day in str(row["weekdays"]).split(",")),
         zone=row["zone"],
         enabled=bool(row["enabled"]),
+        presync_minutes=int(row["presync_minutes"]),
     )
 
 
@@ -51,14 +52,16 @@ def upsert_schedule(
     weekdays: str,
     zone: str,
     enabled: bool,
+    presync_minutes: int,
     now: str,
 ) -> None:
     db.execute(
-        "INSERT INTO schedules (name, kind, at_local, weekdays, zone, enabled, created_at, "
-        "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE SET "
-        "kind = excluded.kind, at_local = excluded.at_local, weekdays = excluded.weekdays, "
-        "zone = excluded.zone, enabled = excluded.enabled, updated_at = excluded.updated_at",
-        (name, kind, at_local, weekdays, zone, int(enabled), now, now),
+        "INSERT INTO schedules (name, kind, at_local, weekdays, zone, enabled, presync_minutes, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (name) DO UPDATE "
+        "SET kind = excluded.kind, at_local = excluded.at_local, weekdays = excluded.weekdays, "
+        "zone = excluded.zone, enabled = excluded.enabled, "
+        "presync_minutes = excluded.presync_minutes, updated_at = excluded.updated_at",
+        (name, kind, at_local, weekdays, zone, int(enabled), presync_minutes, now, now),
     )
 
 

@@ -130,6 +130,20 @@ class ScheduleConfig(Model):
     """Defaults to the profile's `timezone`."""
     weekdays: tuple[int, ...] = Field(default=(1, 2, 3, 4, 5, 6, 7), min_length=1)
     enabled: bool = True
+    presync_minutes: int = Field(default=5, ge=0, le=120)
+    """Minutes before the pass that the tick syncs mail folders, so the pass finds them fresh.
+    0 turns it off. Keep it at least as long as the time between two ticks."""
+
+
+class MailSyncConfig(Model):
+    """How the harness keeps Thunderbird's mail folders fresh (07-attention.md A-24, A-25)."""
+
+    fresh_minutes: float = Field(default=10, gt=0, le=1440)
+    """A folder last synced longer ago than this is synced again when the scan or the agent
+    is about to read it."""
+    time_limit_seconds: float = Field(default=180, ge=10, le=3600)
+    """One sync of one source gives up after this long and goes on with the folders that
+    finished."""
 
 
 class UpdatesConfig(Model):
@@ -147,6 +161,7 @@ class Connections(Model):
     bridge_dir: str | None = None
     """Where the Thunderbird bridge keeps its runtime file; default `<data root>/bridge`."""
     schedules: tuple[ScheduleConfig, ...] = ()
+    mail_sync: MailSyncConfig = MailSyncConfig()
     updates: UpdatesConfig = UpdatesConfig()
     authorised_senders: AuthorisedSenders = AuthorisedSenders()
     live_test: LiveTestConfig = LiveTestConfig()

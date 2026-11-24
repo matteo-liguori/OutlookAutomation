@@ -17,6 +17,7 @@ class Rig:
     def __init__(self, root: Path) -> None:
         self.clock = ManualClock(datetime(2026, 1, 5, 6, 0, tzinfo=UTC))
         fake = FakeProvider(self.clock)
+        self.fake = fake
         fake.mail.add_source(MAIL)
         self.app: App = build_app(
             root, clock=self.clock, sources=SourceRouter(mail={MAIL: fake.mail})

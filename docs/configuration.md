@@ -40,6 +40,12 @@ schedules:                       # scheduled passes; applied at every start
     zone: Europe/London          # optional, defaults to `timezone`
     weekdays: [1, 2, 3, 4, 5]    # 1 = Monday ... 7 = Sunday; default every day
     enabled: true
+    presync_minutes: 5           # sync mail folders this long before the pass (default 5, 0 = off);
+                                 # keep it at least as long as the time between two ticks
+
+mail_sync:                       # how fresh Thunderbird's folders must be when mail is read
+  fresh_minutes: 10              # a folder last synced longer ago is synced again (default 10)
+  time_limit_seconds: 180        # one sync gives up after this long and goes on (default 180)
 
 authorised_senders:              # who may instruct by email (see docs/permissions.md)
   owner: [you@example.com]       # a verified email from these counts like chat
@@ -58,7 +64,10 @@ updates:                         # daily check for a newer release tag (reads ta
 the first time and never overwrites it afterwards. The old `schedule.morning` and each
 `schedule.continuations` time (`HH:MM` or minutes after midnight) become daily `mail` passes, and
 `updates.enabled` and `updates.remote` carry over; other old settings are listed as unmapped in
-the import report. The scheduler side is described in
+the import report. Before the scan reads a mail source, and when an agent starts, the harness asks
+Thunderbird to sync every folder the scan reads and waits (`mail_sync`). A folder that will not
+sync within the time limit is named in the pass report ("Partially verified"), raised as a
+`source.stale` event, and tried again at the next tick. The scheduler side is described in
 [scheduling](scheduling.md); cutover in [cutover](cutover.md).
 
 ## `live_test`: what `chamberlain live-test` may touch

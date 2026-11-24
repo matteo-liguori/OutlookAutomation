@@ -8,7 +8,7 @@ from collections.abc import Callable
 from datetime import datetime
 
 from chamberlain.app.context import Context
-from chamberlain.attention import inbox, repo, sessions
+from chamberlain.attention import inbox, repo, sessions, sync
 from chamberlain.attention.collect import collect
 from chamberlain.attention.detectors import DETECTORS
 from chamberlain.attention.models import EventDraft
@@ -60,6 +60,10 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
     try:
         if not force and not _due(ctx):
             return False
+        try:
+            sync.presync(ctx)
+        except Exception:
+            log_failure(log, "the sync before a scheduled pass failed")
         collected = collect(ctx)
         drafts: list[EventDraft] = []
         evaluated: set[EventKind] = set()

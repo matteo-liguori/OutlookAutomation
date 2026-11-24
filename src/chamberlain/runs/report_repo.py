@@ -70,6 +70,16 @@ def source_facts(db: sqlite3.Connection) -> list[SourceFact]:
     ]
 
 
+def sync_failures(db: sqlite3.Connection) -> dict[str, list[str]]:
+    """Mail folders that would not sync at the last try, by source (attention's table)."""
+    found: dict[str, list[str]] = {}
+    for r in db.execute(
+        "SELECT source_id, name FROM mail_sync_folders WHERE failure <> '' ORDER BY source_id, name"
+    ):
+        found.setdefault(r["source_id"], []).append(r["name"])
+    return found
+
+
 @dataclass(frozen=True)
 class FilingFact:
     source: str

@@ -8,6 +8,7 @@ from datetime import timedelta
 from typing import Final
 
 from chamberlain.domain.events import EventKind
+from chamberlain.domain.mail import FolderRole
 
 PRIORITY: Final[dict[EventKind, int]] = {
     EventKind.OPERATION_UNCERTAIN: 95,
@@ -62,5 +63,14 @@ MAIL_SENT_PRIORITY: Final = 25
 MAIL_HEADER_READS: Final = 20
 """Messages per source and tick that may be read in full to get their reply headers."""
 MAIL_CORRESPONDENT_LOOKUPS: Final = 30
+MAIL_SKIPPED_ROLES: Final = frozenset({FolderRole.TRASH, FolderRole.JUNK, FolderRole.DRAFTS})
+"""Folders whose mail the owner does not want triaged, so the scan does not read them and the
+harness does not sync them. Outbox is not part of the mailbox."""
+SYNC_FRESH: Final = timedelta(minutes=10)
+"""A folder synced longer ago than this is synced again before the scan or the agent reads it
+(A-24). The owner can change it in the profile (`mail_sync.fresh_minutes`)."""
+SYNC_LIMIT: Final = timedelta(seconds=180)
+"""The whole sync of one source gives up after this long and goes on with the folders that
+finished (A-25). Profile: `mail_sync.time_limit_seconds`."""
 SESSIONS_KEEP_ENDED: Final = timedelta(hours=24)
 GUIDE_PAGE: Final = 25

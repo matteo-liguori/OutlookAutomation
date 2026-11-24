@@ -54,6 +54,9 @@ class StoredMail:
     authentication_results: tuple[str, ...] = ()
     in_reply_to: str = ""
     references: tuple[str, ...] = ()
+    unsynced: bool = False
+    """Arrived at the server but not in the client's local index yet: searches do not see it
+    until its folder is synced (`FakeMail.sync_folders`)."""
 
 
 @dataclass
@@ -114,6 +117,10 @@ class FakeWorld:
         """`(uid, organiser, response)` of answers to an organiser outside every fake calendar."""
         self.contacts: dict[str, list[StoredContact]] = {}
         self.health_override: dict[str, HealthState] = {}
+        self.stuck_folders: dict[str, set[str]] = {}
+        """Per mail source, folders whose sync never finishes (a stuck client)."""
+        self.sync_log: list[tuple[str, tuple[str, ...]]] = []
+        """Every `sync_folders` call: the source and the folders asked, in order."""
         self.dispatch_log: list[DispatchRecord] = []
         self.outbox: dict[str, set[str]] = {}
         """Per mail source, the Message-ID tokens of sends held in the client's Outbox."""

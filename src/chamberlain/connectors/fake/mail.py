@@ -6,9 +6,9 @@ locators (`<folder id>/<Message-ID>`) that do not.
 Contract: docs/contracts/08-ports.md.
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import cast
 
 from pydantic import JsonValue
@@ -54,6 +54,7 @@ from chamberlain.domain.operations import (
     Verification,
 )
 from chamberlain.ports.page import Gap, Page
+from chamberlain.ports.sync import FOLDER_SECONDS, FolderOutcome, SyncReport, run_sync
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 _K = IntentKind
@@ -129,8 +130,12 @@ class FakeMail:
         attachments: tuple[tuple[str, bytes], ...] = (),
         in_reply_to: str = "",
         references: tuple[str, ...] = (),
+        unsynced: bool = False,
     ) -> str:
-        """Store one physical copy and return its stable locator."""
+        """Store one physical copy and return its stable locator.
+
+        `unsynced` models a client that has not synced the folder yet: the message exists but
+        no search sees it until `sync_folders` has finished that folder."""
         world = self._world
         stored = StoredMail(
             uid=world.next_uid(),
@@ -147,6 +152,7 @@ class FakeMail:
             authentication_results=authentication_results,
             in_reply_to=in_reply_to,
             references=references,
+            unsynced=unsynced,
             attachments=[
                 (
                     AttachmentMeta(
@@ -162,6 +168,14 @@ class FakeMail:
         )
         world.mail[source].append(stored)
         return self._locator(stored)
+
+    def stick_folder(self, source: str, folder_id: str, stuck: bool = True) -> None:
+        """Make a folder's sync never finish (or finish again)."""
+        folders = self._world.stuck_folders.setdefault(source, set())
+        if stuck:
+            folders.add(folder_id)
+        else:
+            folders.discard(folder_id)
 
     def copies(self, source: str, internet_message_id: str, folder_id: str | None = None) -> int:
         """How many physical copies exist, optionally in one folder."""
@@ -201,6 +215,39 @@ class FakeMail:
         self._world.require_source(self._world.mail, source)
         return self._world.health(source)
 
+    # --- port: FolderSync -----------------------------------------------------
+
+    def sync_folders(
+        self,
+        source: str,
+        folder_ids: Sequence[str],
+        time_limit: timedelta,
+        retry: Collection[str] = frozenset(),
+    ) -> SyncReport:
+        self._world.require_source(self._world.mail, source)
+        self._world.sync_log.append((source, tuple(folder_ids)))
+
+        def attempt(group: Sequence[str]) -> list[FolderOutcome]:
+            stuck = self._world.stuck_folders.get(source, set())
+            outcomes: list[FolderOutcome] = []
+            for folder_id in group:
+                if folder_id in stuck:
+                    self._world.clock.advance(seconds=FOLDER_SECONDS)
+                    outcomes.append(self._outcome(folder_id, False, "sync-callback-timeout"))
+                    continue
+                for stored in self._world.mail[source]:
+                    if stored.folder_id == folder_id:
+                        stored.unsynced = False
+                outcomes.append(self._outcome(folder_id, True, ""))
+            return outcomes
+
+        return run_sync(attempt, folder_ids, self._world.clock, time_limit, retry)
+
+    def _outcome(self, folder_id: str, synced: bool, code: str) -> FolderOutcome:
+        return FolderOutcome(
+            folder_id=folder_id, synced=synced, code=code, at=self._world.clock.now()
+        )
+
     # --- port: reading --------------------------------------------------------
 
     def folders(self, source: str) -> list[Folder]:
@@ -217,7 +264,9 @@ class FakeMail:
             raise ChamberlainError(
                 ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid."
             ) from None
-        matches = [m for m in self._world.mail[source] if self._matches(m, query)]
+        matches = [
+            m for m in self._world.mail[source] if not m.unsynced and self._matches(m, query)
+        ]
         matches.sort(key=lambda m: (m.date, m.uid), reverse=True)
         window = matches[offset : offset + query.limit]
         more = offset + query.limit < len(matches)

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from chamberlain.app.context import Context
 from chamberlain.runs import repo
 from chamberlain.runs.models import PassKind, ScheduleRow
-from chamberlain.runs.tuning import WEEKDAYS_ALL
+from chamberlain.runs.tuning import PRESYNC_MAX_MINUTES, SYNC_PRESYNC_MINUTES, WEEKDAYS_ALL
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
@@ -32,6 +32,8 @@ class ScheduleSpec:
     zone: str
     weekdays: frozenset[int] = frozenset(range(1, 8))
     enabled: bool = True
+    presync_minutes: int = SYNC_PRESYNC_MINUTES
+    """Minutes before `at_local` that the tick syncs mail folders for this pass (0: not at all)."""
 
 
 def _invalid(message: str, field: str) -> ChamberlainError:
@@ -46,6 +48,11 @@ def validate(spec: ScheduleSpec) -> ScheduleSpec:
         raise _invalid("A schedule time is HH:MM on a 24-hour clock.", "at_local")
     if not spec.weekdays or not spec.weekdays <= frozenset(range(1, 8)):
         raise _invalid("Weekdays are numbers 1 (Monday) to 7 (Sunday).", "weekdays")
+    if not 0 <= spec.presync_minutes <= PRESYNC_MAX_MINUTES:
+        raise _invalid(
+            f"The sync before a pass is 0 to {PRESYNC_MAX_MINUTES} minutes (0 turns it off).",
+            "presync_minutes",
+        )
     try:
         ZoneInfo(spec.zone)
     except (ZoneInfoNotFoundError, ValueError, OSError):
@@ -69,6 +76,7 @@ def set_schedule(ctx: Context, spec: ScheduleSpec) -> ScheduleRow:
             weekdays=_weekdays_text(valid.weekdays),
             zone=valid.zone,
             enabled=valid.enabled,
+            presync_minutes=valid.presync_minutes,
             now=stamp(ctx.clock),
         )
     return next(row for row in repo.schedules(ctx.db) if row.name == valid.name)

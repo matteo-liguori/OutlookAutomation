@@ -1,11 +1,13 @@
 """Sources that are out of date, unreachable or need the user to sign in (P-5)."""
 
+from collections import Counter
 from collections.abc import Iterable
 
 from chamberlain.attention.models import DetectorInput, EventAttrs, EventDraft
 from chamberlain.attention.tuning import PRIORITY
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind
+from chamberlain.limits import SUMMARY_MAX
 
 
 def _span(stamp: str) -> str:
@@ -39,8 +41,28 @@ def _held_events(data: DetectorInput) -> Iterable[EventDraft]:
         )
 
 
+SYNC = "sync"
+"""`attrs.reason` of the event that names folders the mail client would not sync (A-25)."""
+
+
+def _sync_events(data: DetectorInput) -> Iterable[EventDraft]:
+    for gap in data.sync_gaps:
+        counts = Counter(gap.roles)
+        what = ", ".join(f"{n} {role}" for role, n in sorted(counts.items()))
+        yield EventDraft(
+            EventKind.SOURCE_STALE,
+            gap.source,
+            f"{gap.source}: {len(gap.roles)} folder(s) did not sync ({what}); "
+            "mail there may be missing or late."[:SUMMARY_MAX],
+            PRIORITY[EventKind.SOURCE_STALE],
+            EventAttrs(source=gap.source, reason=SYNC),
+            discriminator=SYNC,
+        )
+
+
 def source_stale(data: DetectorInput) -> Iterable[EventDraft]:
     yield from _held_events(data)
+    yield from _sync_events(data)
     gaps = {gap.source: gap for gap in data.mail_gaps}
     for source in data.sources:
         gap = gaps.get(source.id)

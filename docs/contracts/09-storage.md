@@ -58,6 +58,8 @@ Binding for every track that touches SQLite. Code:
 | `audit_log` | System | writes | Hash-chained audit rows |
 | `mail_watermarks` | Records | attention | Per source: mail covered through a time, an in-progress oldest-first scan, the uncovered span, and the older span held for the owner's answer (A-23) |
 | `mail_seen` | Records | attention | One row per message (message key, whatever folders hold copies): time, suggested card, sent or received; the batch awaiting triage |
+| `mail_sync` | Records | attention | Per source: when every folder the scan reads was last in sync, and the last try (A-24) |
+| `mail_sync_folders` | Records | attention | Per source and folder: name, role, last sync, last failure and where an on-its-own catch-up read starts (A-25, A-27) |
 | `schedules` | Records | runs | The schedule record: which passes are due, when |
 | `runs` | Records | runs | One row per scheduled pass and day; owns its report artifacts |
 | `user_notes` | Ephemeral | runs | Short notes from the viewer, raised as `user.note` |

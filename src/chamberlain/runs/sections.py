@@ -54,6 +54,7 @@ class Facts:
         self.since = run.started_at or run.due_at
         self.sources = repo.source_facts(ctx.db)
         self.filing = repo.filing_facts(ctx.db, self.since)
+        self.unsynced = repo.sync_failures(ctx.db)
         self.uncertain = repo.count_uncertain_operations(ctx.db)
         self.gaps: list[str] = []
         """Reasons the pass is only partly verified, filled by the builders."""
@@ -83,6 +84,14 @@ def access_problems(facts: Facts) -> str:
                 f"{when(source.gap_to, facts.zone)} has not been read."
             )
             facts.gaps.append(f"{source.id} has a gap in the mail read")
+        folders = facts.unsynced.get(source.id)
+        if folders:
+            lines.append(
+                f"- {who}: {len(folders)} folder(s) did not sync, so mail in them may be late or "
+                f"missing: {', '.join(_cell(name) for name in folders)}. They are tried again "
+                "at every check."
+            )
+            facts.gaps.append(f"{source.id} had folders that did not sync")
     if facts.uncertain:
         lines.append(
             f"- {facts.uncertain} change(s) may or may not have happened. Settle them in the "
@@ -165,6 +174,9 @@ def verification(facts: Facts) -> str:
             )
             if source.covered_through is None:
                 facts.gaps.append(f"{source.id} has not been read")
+            if facts.unsynced.get(source.id):
+                state += f", {len(facts.unsynced[source.id])} folder(s) not synced"
+                facts.gaps.append(f"{source.id} had folders that did not sync")
         else:
             newest = f"fresh as of {when(source.fresh_as_of, facts.zone)}"
             through = f"checked {when(source.checked_at, facts.zone)}"

@@ -16,3 +16,6 @@ UPDATE_CHECK_EVERY: Final = timedelta(hours=24)
 UPDATE_RETRY_AFTER: Final = timedelta(hours=1)
 TAG_PREFIX: Final = "chamberlain/v"
 WEEKDAYS_ALL: Final = "1,2,3,4,5,6,7"
+SYNC_PRESYNC_MINUTES: Final = 5
+"""Default lead of the mail folder sync before a scheduled pass (07-attention.md A-26)."""
+PRESYNC_MAX_MINUTES: Final = 120
