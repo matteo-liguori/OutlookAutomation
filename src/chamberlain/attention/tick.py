@@ -72,6 +72,9 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
             drafts,
             evaluated=frozenset(evaluated),
             unreadable_sources=collected.unreadable,
+            hold=frozenset({EventKind.CALENDAR_CONFLICT})
+            if collected.unreadable_calendars
+            else frozenset(),
         )
         with transaction(ctx.db):
             set_state(ctx.db, ctx.clock, "attention.last_tick_at", _stamp(ctx))

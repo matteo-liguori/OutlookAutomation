@@ -24,7 +24,10 @@ class EventAttrs(Model):
     card: CardHandle | None = None
     health: HealthState | None = None
     since: str | None = None
-    """Mail batches: the oldest received time, so the next call can list them."""
+    """Mail batches: the oldest received time, so the next call can list them. A calendar
+    conflict: when the overlap starts."""
+    until: str | None = None
+    """A calendar conflict: when the overlap ends."""
 
 
 @dataclass(frozen=True)
@@ -216,6 +219,21 @@ class OpenNote:
 
 
 @dataclass(frozen=True)
+class CalendarSlot:
+    """One of the owner's events in the scanned window: where and when, never its text (E-8).
+
+    `fingerprint` is a hash of the title and times, so a copy of one event held by two
+    calendars can be told from two different events."""
+
+    source: str
+    locator: str
+    uid: str
+    start: datetime
+    end: datetime
+    fingerprint: str
+
+
+@dataclass(frozen=True)
 class DetectorInput:
     """Everything detectors may look at (A-5). Built once per tick."""
 
@@ -243,5 +261,7 @@ class DetectorInput:
     orphan_count: int = 0
     runs_due: tuple[DueRun, ...] = ()
     notes: tuple[OpenNote, ...] = ()
+    calendar_slots: tuple[CalendarSlot, ...] = ()
+    """The owner's timed events from now on that are neither cancelled nor declined (A-26)."""
     update_tag: str | None = None
     """The newer release tag the update checker recorded, if any."""

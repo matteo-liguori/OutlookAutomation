@@ -1,23 +1,68 @@
-"""Detectors fed by the viewer and runs track (wave 2), plus the calendar one still empty.
+"""Detectors fed by the viewer and runs track (wave 2), and the calendar conflict.
 
-`calendar.conflict` still needs calendar deltas. `user.note` comes from the viewer's notes,
+`calendar.conflict` reads the owner's events collected from every calendar. `user.note` comes
+from the viewer's notes,
 `update.available` from the update checker's recorded tag and `schedule.pass_due` from the
 schedule record (the runs track's tables, read through `collect`). A detector only reads
 `DetectorInput` (A-5).
 """
 
+import hashlib
 from collections.abc import Iterable
+from datetime import datetime
 
-from chamberlain.attention.models import DetectorInput, EventAttrs, EventDraft
-from chamberlain.attention.tuning import PRIORITY
+from chamberlain.attention.models import CalendarSlot, DetectorInput, EventAttrs, EventDraft
+from chamberlain.attention.tuning import CONFLICT_MAX, PRIORITY
 from chamberlain.domain.events import EventKind
 from chamberlain.limits import SUMMARY_MAX
 
 NOTE_PREFIX = "Note from the user: "
 
 
+def _stored(moment: datetime) -> str:
+    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _one_each(slots: Iterable[CalendarSlot]) -> list[CalendarSlot]:
+    """Sorted by start, with a copy of an event held by two calendars counted once."""
+    seen: set[tuple[str, datetime] | str] = set()
+    unique: list[CalendarSlot] = []
+    for slot in sorted(slots, key=lambda s: (s.start, s.source, s.locator)):
+        if (slot.uid, slot.start) in seen or slot.fingerprint in seen:
+            continue
+        seen.update({(slot.uid, slot.start), slot.fingerprint})
+        unique.append(slot)
+    return unique
+
+
 def calendar_conflict(data: DetectorInput) -> Iterable[EventDraft]:
-    return ()
+    """One event for each pair of the owner's events that overlap, the earliest few (A-26).
+
+    The line names the time and the calendars, never the titles: those are remote text."""
+    slots = _one_each(data.calendar_slots)
+    found: list[tuple[CalendarSlot, CalendarSlot]] = []
+    for index, first in enumerate(slots):
+        for second in slots[index + 1 :]:
+            if second.start >= first.end:
+                break
+            found.append((first, second))
+    for first, second in found[:CONFLICT_MAX]:
+        begins, ends = second.start, min(first.end, second.end)
+        key = f"{first.source}|{first.locator}|{first.start}|{second.source}|{second.locator}"
+        where = (
+            first.source if first.source == second.source else f"{first.source}, {second.source}"
+        )
+        yield EventDraft(
+            EventKind.CALENDAR_CONFLICT,
+            None,
+            (
+                f"Two events overlap on {begins:%Y-%m-%d} from {begins:%H:%M} to {ends:%H:%M} UTC "
+                f"({where})."
+            )[:SUMMARY_MAX],
+            PRIORITY[EventKind.CALENDAR_CONFLICT],
+            EventAttrs(source=first.source, since=_stored(begins), until=_stored(ends)),
+            discriminator=hashlib.sha256(f"{key}|{second.start}".encode()).hexdigest()[:12],
+        )
 
 
 def user_note(data: DetectorInput) -> Iterable[EventDraft]:
