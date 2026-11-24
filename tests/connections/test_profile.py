@@ -233,3 +233,42 @@ def test_s16_an_owl_source_is_unavailable_not_a_crash(
         assert health.state.value == "unavailable"
     finally:
         app.close()
+
+
+def test_authorised_senders_in_the_profile_reach_the_store_at_start(data_root: Path) -> None:
+    from chamberlain.connections import open_app
+    from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, get_state
+
+    write_profile(
+        data_root,
+        {
+            "version": 1,
+            "authorised_senders": {
+                "owner": ["Me@Example.org"],
+                "others": [{"address": "pa@example.org", "scope": ["ask_only"], "note": "PA"}],
+            },
+        },
+    )
+    app = open_app(data_root)
+    try:
+        stored = get_state(app.context.db, AUTHORISED_SENDERS_KEY)
+    finally:
+        app.close()
+    assert stored is not None
+    assert "me@example.org" in stored
+    assert "pa@example.org" in stored
+
+
+def test_a_bad_authorised_sender_scope_is_config_invalid(data_root: Path) -> None:
+    write_profile(
+        data_root,
+        {
+            "version": 1,
+            "authorised_senders": {
+                "others": [{"address": "a@example.org", "scope": ["everything"]}]
+            },
+        },
+    )
+    with pytest.raises(ChamberlainError) as raised:
+        load_connections(data_root)
+    assert raised.value.code is ErrorCode.CONFIG_INVALID

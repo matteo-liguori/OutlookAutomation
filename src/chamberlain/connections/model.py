@@ -11,6 +11,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from chamberlain.domain.grants import Requirement
+from chamberlain.domain.senders import AuthorisedSenders
 from chamberlain.limits import CARD_ARTIFACT_BYTES, SENDS_PER_HOUR, TOTAL_ARTIFACT_BYTES
 from chamberlain.schema.base import Model, SourceId
 
@@ -144,6 +145,7 @@ class Connections(Model):
     """Where the Thunderbird bridge keeps its runtime file; default `<data root>/bridge`."""
     schedules: tuple[ScheduleConfig, ...] = ()
     updates: UpdatesConfig = UpdatesConfig()
+    authorised_senders: AuthorisedSenders = AuthorisedSenders()
     sources: dict[SourceId, SourceConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")

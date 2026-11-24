@@ -375,8 +375,12 @@ class KeepRequest(ToolRequest):
         given = [v for v in (self.text, self.from_handle, self.import_path) if v is not None]
         if len(given) != 1:
             raise ValueError("give exactly one of text, from_handle or import_path")
-        if self.kind is not KeepKind.ARTIFACT and self.text is None:
-            raise ValueError("notes and evidence are given as text")
+        if self.kind is KeepKind.NOTE and self.text is None:
+            raise ValueError("notes are given as text")
+        if self.kind is KeepKind.EVIDENCE and (
+            self.import_path is not None or self.attachment is not None
+        ):
+            raise ValueError("evidence is given as text, or from an email handle")
         if self.attachment is not None and self.from_handle is None:
             raise ValueError("attachment names a part of from_handle")
         return self

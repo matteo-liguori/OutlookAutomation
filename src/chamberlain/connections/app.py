@@ -19,6 +19,7 @@ from chamberlain.runs.schedule import ScheduleSpec, apply_schedules
 from chamberlain.runs.updates import TagLister, git_tag_lister
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
+from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, set_state
 
 
 def _specs(connections: Connections) -> list[ScheduleSpec]:
@@ -61,6 +62,12 @@ def open_app(
     try:
         with transaction(app.context.db) as db:
             sync_sources(db, connections, stamp(the_clock))
+            set_state(
+                db,
+                the_clock,
+                AUTHORISED_SENDERS_KEY,
+                connections.authorised_senders.model_dump_json(),
+            )
         apply_schedules(app.context, _specs(connections))
     except BaseException:
         app.close()

@@ -105,6 +105,13 @@ message body or attachment; with `attachment` naming which) or
 `import_path`; optional `filename`, `media_type`, `expires_in_hours`.
 Response: `handle`, `kind`, `size`, `sha256`, `expires_at?`.
 
+- **T-10a** `kind: evidence` with `from_handle` (a message) is the only way an
+  email becomes an instruction (docs/permissions.md). The harness reads the
+  message itself and accepts it only from an authorised sender whose domain the
+  provider verified (`domain/senders.py`); it stores a fixed statement, never
+  the email's text, with `ref = instruction:<owner|other>:<kinds>:<msg>`, which
+  no text evidence can carry. Refusals and acceptances are audited
+  (`instruction.refused`, `instruction.accepted`).
 - **T-10** No owner, no storage (M-4). A note's owner MUST be an open
   action. Evidence owners are cards, actions, grants and operations.
 
