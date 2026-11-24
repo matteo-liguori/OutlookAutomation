@@ -8,7 +8,6 @@ from pathlib import Path
 from tests.integration.conftest import Stack, build_stack
 
 from chamberlain.app.doubles import RecordingAuditLog
-from chamberlain.attention import tick as attention_tick
 from chamberlain.limits import MAX_REPLY_CHARS
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.evidence import EvidenceService
@@ -31,14 +30,14 @@ def test_the_wired_services_are_the_real_ones_not_the_doubles(stack: Stack) -> N
     assert isinstance(services.refs, RefService)
 
 
-def test_building_a_second_app_replaces_the_tick_steps_rather_than_stacking_them(
-    tmp_path: Path,
-) -> None:
+def test_each_app_carries_its_own_tick_steps(tmp_path: Path) -> None:
     first = build_stack(tmp_path / "one")
     second = build_stack(tmp_path / "two")
     try:
-        assert len(attention_tick.ALWAYS_STEPS) == 2
-        assert len(attention_tick.EXTRA_STEPS) == 2
+        one, two = first.app.context.tick_steps, second.app.context.tick_steps
+        assert len(one.always) == len(two.always) == 2
+        assert len(one.extra) == len(two.extra) == 2
+        assert one.extra[0] is not two.extra[0]
     finally:
         first.app.close()
         second.app.close()
@@ -46,9 +45,10 @@ def test_building_a_second_app_replaces_the_tick_steps_rather_than_stacking_them
 
 def test_the_tick_recovers_operations_then_sweeps_and_maintains(stack: Stack) -> None:
     stack.start()
-    names = [getattr(step, "__name__", "") for step in attention_tick.EXTRA_STEPS]
+    steps = stack.app.context.tick_steps
+    names = [getattr(step, "__name__", "") for step in steps.extra]
     assert names == ["sweep_everything", "maintain_writes"]
-    always = [step.__name__ for step in attention_tick.ALWAYS_STEPS]
+    always = [step.__name__ for step in steps.always]
     assert always == ["recover_operations", "plan_runs"]
     stack.clock.advance(minutes=2)
     stack.ok("doctor")

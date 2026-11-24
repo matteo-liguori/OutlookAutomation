@@ -34,11 +34,13 @@ def reconcile(
     *,
     evaluated: frozenset[EventKind],
     unreadable_sources: frozenset[str] = frozenset(),
+    hold: frozenset[EventKind] = frozenset(),
 ) -> None:
     """Make the inbox match what the detectors report (A-1, A-2, A-3).
 
     Only kinds in `evaluated` are touched: a detector that failed leaves its
-    events alone. Mail events of a source that could not be read are kept.
+    events alone. Mail events of a source that could not be read are kept, and so are events of the
+    kinds in `hold` (their data was not fully read, so silence proves nothing).
     """
     now = clock.now()
     stamped = stamp(clock)
@@ -62,7 +64,7 @@ def reconcile(
             ):
                 repo.refresh_event(db, existing.handle, draft)
         for key, event in live.items():
-            if key in reported or event.kind not in evaluated:
+            if key in reported or event.kind not in evaluated or event.kind in hold:
                 continue
             if event.kind in _MAIL_KINDS and event.attrs.source in unreadable_sources:
                 continue

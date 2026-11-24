@@ -64,6 +64,17 @@ def next_step(event: EventRow) -> NextStep:
             args={"handle": subject, "part": "body"},
             why="Read what to write, then keep the report under the run.",
         )
+    if kind is EventKind.CALENDAR_CONFLICT and event.attrs.since and event.attrs.until:
+        return NextStep(
+            tool=ToolName.FIND,
+            args={
+                "scope": "calendar",
+                "since": event.attrs.since,
+                "until": event.attrs.until,
+                "limit": 10,
+            },
+            why="List what is on every calendar then; open both events before deciding.",
+        )
     if kind is EventKind.USER_NOTE:
         return NextStep(
             tool=ToolName.NEXT,

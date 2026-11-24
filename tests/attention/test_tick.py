@@ -1,11 +1,12 @@
 # pyright: reportAttributeAccessIssue=false, reportOptionalMemberAccess=false, reportArgumentType=false, reportUnknownMemberType=false
 """The tick and the detectors: docs/contracts/07-attention.md (A-2 to A-8)."""
 
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
-from chamberlain.app.context import Context
+from chamberlain.app.context import Context, TickSteps
 from chamberlain.app.core import App
 from chamberlain.attention import repo, tick
 from chamberlain.attention.detectors import DETECTORS
@@ -170,20 +171,25 @@ def test_a6_a_tick_within_a_minute_is_skipped(ctx: Context, seed: Any, clock: Ma
 
 def test_w9_recovery_steps_run_even_on_a_skipped_tick(ctx: Context, clock: ManualClock):
     calls: list[str] = []
-    tick.ALWAYS_STEPS.append(lambda c: calls.append("recover"))
-    tick.EXTRA_STEPS.append(lambda c: calls.append("sweep"))
+    steps = TickSteps(
+        always=(lambda c: calls.append("recover"),), extra=(lambda c: calls.append("sweep"),)
+    )
+    ctx = replace(ctx, tick_steps=steps)
     tick.tick(ctx)
     clock.advance(seconds=5)
     tick.tick(ctx)
     assert calls == ["recover", "sweep", "recover"]
+    other: list[str] = []
+    tick.tick(replace(ctx, tick_steps=TickSteps(always=(lambda c: other.append("x"),))))
+    assert calls == ["recover", "sweep", "recover"]
+    assert other == ["x"]
 
 
 def test_a7_a_failing_step_is_logged_and_the_tick_goes_on(ctx: Context, seed: Any):
     def boom(c: Context) -> None:
         raise RuntimeError("step failed")
 
-    tick.ALWAYS_STEPS.append(boom)
-    tick.EXTRA_STEPS.append(boom)
+    ctx = replace(ctx, tick_steps=TickSteps(always=(boom,), extra=(boom,)))
     seed.operation()
     assert tick.tick(ctx) is True
     assert kinds(ctx) == ["operation.uncertain"]

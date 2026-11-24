@@ -41,6 +41,7 @@ from chamberlain.connectors.thunderbird.protocol import (
     ResponseFrame,
     Welcome,
 )
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.schema.base import Model
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -523,6 +524,7 @@ def serve(bridge_dir: Path) -> int:
         msvcrt = importlib.import_module("msvcrt")  # Windows only: binary stdio
         msvcrt.setmode(sys.stdin.fileno(), os.O_BINARY)
         msvcrt.setmode(sys.stdout.fileno(), os.O_BINARY)
+    refuse_inside_checkout(bridge_dir)
     private_directory(bridge_dir)
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.bind(("127.0.0.1", 0))

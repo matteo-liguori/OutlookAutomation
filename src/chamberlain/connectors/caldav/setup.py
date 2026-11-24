@@ -36,6 +36,7 @@ from chamberlain.connectors.calendar_support.http import (
     require_secure,
 )
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -220,7 +221,7 @@ def _data_root(data: str | None) -> Path:
             "Give the data root with --data or CHAMBERLAIN_DATA.",
             field="data",
         )
-    return Path(root)
+    return refuse_inside_checkout(root)
 
 
 def main(argv: list[str] | None = None, *, say: Say = print) -> int:

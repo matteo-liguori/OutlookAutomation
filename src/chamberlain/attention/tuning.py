@@ -74,5 +74,13 @@ SYNC_LIMIT: Final = timedelta(seconds=300)
 finished (A-25). Profile: `mail_sync.time_limit_seconds`. Measured on the owner's mailboxes
 (2026-11-24): a whole mailbox normally syncs in 2 to 19 s, one slowdown took 132 s; a sync that
 finishes returns at once, so this only bounds a stuck folder."""
+CONFLICT_WINDOW: Final = timedelta(days=14)
+"""How far ahead the tick looks for two of the owner's events that overlap (A-26)."""
+CONFLICT_PAGES: Final = 4
+CONFLICT_PAGE_LIMIT: Final = 250
+"""Bounds one calendar's read in one tick; a calendar with more events than this in the window
+counts as not fully read, so its conflicts are neither raised nor cleared."""
+CONFLICT_MAX: Final = 10
+"""At most this many overlaps are reported at once, the earliest first."""
 SESSIONS_KEEP_ENDED: Final = timedelta(hours=24)
 GUIDE_PAGE: Final = 25

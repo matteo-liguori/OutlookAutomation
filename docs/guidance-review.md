@@ -4,7 +4,7 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-44 rules, about 8,500 characters in total (budget 12,000).
+45 rules, about 8,800 characters in total (budget 12,000).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
@@ -193,6 +193,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'tool': 'find', 'scope': 'calendar'}`; shown session; priority 45; cap 200 chars
 
 > An event with guests, or an answer to an invitation, sends a message to other people. Add guests only when the user named them, and say who will be told.
+
+## calendar.conflict: Two events overlap
+
+- Trigger: `{'event': 'calendar.conflict'}`; shown event; priority 55; cap 260 chars (new). The harness raises it when two of the owner's timed events overlap in the next 14 days.
+
+> Two of the owner's events overlap. Open both and see if one is a copy of the other or if either can really be attended. Tell the owner plainly in your report. Move or cancel nothing unless they ask.
 
 ## card.review: A card is due for review
 

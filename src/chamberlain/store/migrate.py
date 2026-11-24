@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import DB_NAME, connect, table_names, transaction
@@ -164,6 +165,7 @@ def stamp(clock: Clock) -> str:
 
 def open_store(data_root: Path, clock: Clock) -> sqlite3.Connection:
     """Open (creating if needed) and migrate the store under a data root (S-18)."""
+    refuse_inside_checkout(data_root)
     data_root.mkdir(parents=True, exist_ok=True)
     connection = connect(data_root / DB_NAME)
     try:

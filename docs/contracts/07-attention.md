@@ -61,10 +61,11 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   `attention/detectors/__init__.py`.
 - **A-6** A tick: collect connector deltas (bounded, read-only, P-3), run
   all detectors, reconcile the inbox (A-1, A-2), run the sweeper (M-21), then
-  write maintenance. Crashed-operation recovery (W-9) is an `ALWAYS_STEPS`
-  entry: it runs on every call, even a skipped tick, and BEFORE detection, so a
+  write maintenance. Crashed-operation recovery (W-9) is an `always` step
+  (`Context.tick_steps`, built with the app, never a module global): it runs on every call, even a skipped tick, and BEFORE
+  detection, so a
   recovered operation raises `operation.uncertain` in the same call. The sweeper
-  and `writes.maintenance.maintain` are `EXTRA_STEPS` run after the inbox is
+  and `writes.maintenance.maintain` are `extra` steps run after the inbox is
   reconciled, at most once per interval; `app/wiring.py` installs all three. A
   tick runs at the start of every tool call and when the scheduler calls
   `chamberlain tick` (forced; exit status 10 when events wait and no session is
@@ -131,6 +132,19 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   refused for a question that is not an old-mail question or whose span has changed. A second
   long gap while a span is held extends it from its start and asks again. The first look back
   of a never-watched source is not held. Rows are not pruned inside a held span.
+
+### Calendar conflicts
+
+- **A-26** `calendar.conflict` is raised for each pair of the owner's events that overlap in
+  the next 14 days (`CONFLICT_WINDOW`), earliest first, at most 10 at once. The tick reads every
+  healthy calendar read-only (up to 4 pages of 250). Not counted: cancelled events, all-day
+  events, events the owner declined, events that only touch, and a copy of one event held by
+  two calendars (same uid and start, or same title and times). The summary gives the time and
+  the calendars, never the titles (E-8); the key is the pair, so a moved event is a new
+  conflict. Its next call is a `find` of the calendars for the overlap; the rule
+  `calendar.conflict` rides with it. A calendar that is not healthy, or not read to the end,
+  leaves existing conflict events as they are (silence proves nothing). The agent may mark it
+  handled; it does not come back while the pair still overlaps.
 
 ### Folder sync (before any read of a mail source)
 

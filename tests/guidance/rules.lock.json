@@ -11,6 +11,10 @@
   "hash": "d1331ef8f64933810d530b0e204f1307ff42914dbe2e50cd4457a798fbcab7e3",
   "version": 1
  },
+ "calendar.conflict": {
+  "hash": "b9a80a8d877bedf6ad231d7a38757b6d4a95654035c8ace17d9a48842a3b1e16",
+  "version": 1
+ },
  "calendar.invite": {
   "hash": "75308f999151dda3062b983650d3a32a142d285b6798d868052b2d1015b3a336",
   "version": 1

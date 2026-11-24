@@ -4,6 +4,7 @@ Contract: docs/contracts/07-attention.md (A-6, A-7, A-8) and 08-ports.md (P-3, P
 A source that raises is logged and becomes a coverage gap, never a failed call.
 """
 
+import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import timedelta
@@ -11,6 +12,7 @@ from datetime import timedelta
 from chamberlain.app.context import Context
 from chamberlain.attention import repo
 from chamberlain.attention.models import (
+    CalendarSlot,
     DetectorInput,
     HeldMail,
     MailGap,
@@ -18,8 +20,14 @@ from chamberlain.attention.models import (
     SyncGap,
 )
 from chamberlain.attention.suggest import Suggester
-from chamberlain.attention.tuning import NOTE_OPEN
+from chamberlain.attention.tuning import (
+    CONFLICT_PAGE_LIMIT,
+    CONFLICT_PAGES,
+    CONFLICT_WINDOW,
+    NOTE_OPEN,
+)
 from chamberlain.attention.watermark import scan
+from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, Response
 from chamberlain.domain.capabilities import HealthState, SourceHealth
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.migrate import stamp
@@ -32,6 +40,8 @@ class Collected:
     data: DetectorInput
     unreadable: frozenset[str]
     """Sources whose mail could not be fully read this tick."""
+    unreadable_calendars: frozenset[str] = frozenset()
+    """Calendars that could not be fully read this tick; their conflicts are left as they are."""
 
 
 def source_health(ctx: Context, source: str) -> SourceHealth | None:
@@ -80,6 +90,68 @@ def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> set[str]:
     return unreadable
 
 
+def _slot(event: CalendarEvent) -> CalendarSlot | None:
+    """The event as a time slot, or None when it cannot clash with anything."""
+    fields = event.fields
+    if fields.all_day or fields.end <= fields.start or event.my_response is Response.DECLINED:
+        return None
+    key = f"{fields.title}|{fields.start.isoformat()}|{fields.end.isoformat()}"
+    return CalendarSlot(
+        event.source,
+        event.locator,
+        event.uid,
+        fields.start,
+        fields.end,
+        hashlib.sha256(key.encode()).hexdigest()[:16],
+    )
+
+
+def _read_calendar(ctx: Context, source: str) -> list[CalendarSlot] | None:
+    """Every timed event of one calendar from now on, or None when it was not fully read."""
+    port = ctx.sources.calendar_port(source)
+    now = ctx.clock.now()
+    query = CalendarQuery(
+        start=now, end=now + CONFLICT_WINDOW, limit=CONFLICT_PAGE_LIMIT, include_cancelled=False
+    )
+    slots: list[CalendarSlot] = []
+    cursor: str | None = None
+    for _ in range(CONFLICT_PAGES):
+        page = port.events(source, query, cursor)
+        for event in page.items:
+            slot = _slot(event)
+            if slot is not None:
+                slots.append(slot)
+        if page.gaps:
+            return None
+        if page.cursor is None:
+            return slots if page.complete else None
+        cursor = page.cursor
+    return None
+
+
+def _calendars(
+    ctx: Context, snapshots: tuple[SourceSnapshot, ...]
+) -> tuple[tuple[CalendarSlot, ...], set[str]]:
+    """The owner's timed events across every calendar, and the calendars not fully read."""
+    states = {s.id: s.state for s in snapshots}
+    slots: list[CalendarSlot] = []
+    unreadable: set[str] = set()
+    for source in sorted(ctx.sources.calendar):
+        if states.get(source) is not HealthState.OK:
+            unreadable.add(source)
+            continue
+        try:
+            read = _read_calendar(ctx, source)
+        except Exception:
+            log_failure(log, "calendar read failed for %s", source)
+            read = None
+        if read is None:
+            unreadable.add(source)
+        else:
+            slots.extend(read)
+    return tuple(slots), unreadable
+
+
 def _sync_gaps(ctx: Context) -> tuple[SyncGap, ...]:
     by_source: dict[str, list[repo.SyncFolder]] = {}
     for source, folder in repo.sync_failures(ctx.db):
@@ -104,6 +176,7 @@ def collect(ctx: Context) -> Collected:
     now = stamp(ctx.clock)
     snapshots = _health(ctx)
     unreadable = _mail(ctx, snapshots)
+    slots, unreadable_calendars = _calendars(ctx, snapshots)
     scan, orphans = repo.orphan_batch(ctx.db)
     links = repo.card_links(ctx.db)
     data = DetectorInput(
@@ -131,6 +204,7 @@ def collect(ctx: Context) -> Collected:
         orphan_count=orphans,
         runs_due=tuple(repo.due_runs(ctx.db)),
         notes=tuple(repo.open_notes(ctx.db, stamp_before(ctx, NOTE_OPEN))),
+        calendar_slots=slots,
         update_tag=repo.update_tag(ctx.db),
     )
-    return Collected(data, frozenset(unreadable))
+    return Collected(data, frozenset(unreadable), frozenset(unreadable_calendars))

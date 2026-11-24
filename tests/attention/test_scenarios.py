@@ -5,13 +5,19 @@ Contract: docs/contracts/07-attention.md (A-9, A-15, A-16, A-19) and 02-tools.md
 """
 
 import re
+from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 import pytest
 
-from chamberlain.app.context import Context, Result
+from chamberlain.app.context import Context, Result, SourceRouter
 from chamberlain.app.core import App
+from chamberlain.attention import repo, tick
 from chamberlain.attention.handlers import HANDLERS, HOOKS
+from chamberlain.connectors.fake import FakeProvider
+from chamberlain.domain.calendar import EventFields, Response
+from chamberlain.domain.capabilities import HealthState
 from chamberlain.limits import MAX_REPLY_CHARS
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.base import Model, ToolName
@@ -297,3 +303,61 @@ def test_golden_next_shows_a_new_event_as_one_exact_call(full_app: App, seed: An
         "remaining": 0,
     }
     assert ids(reply) == ["write.uncertain"]
+
+
+def test_a26_two_events_that_overlap_are_raised_with_their_rule_and_clear_when_apart(
+    full_app: App, ctx: Context, fake: FakeProvider, clock: ManualClock, seed: Any
+):
+    day = clock.now() + timedelta(days=2)
+
+    def fields(title: str, start_hour: int, hours: int = 1, **more: Any) -> EventFields:
+        start = day.replace(hour=start_hour, minute=0, second=0, microsecond=0)
+        return EventFields(title=title, start=start, end=start + timedelta(hours=hours), **more)
+
+    calendar = fake.calendar
+    calendar.add_source("calendar:second")
+    seed.source("calendar:second")
+    ctx = replace(
+        ctx,
+        sources=SourceRouter(
+            mail=ctx.sources.mail,
+            calendar={"calendar:test": calendar, "calendar:second": calendar},
+            contacts=ctx.sources.contacts,
+        ),
+    )
+    app = App(ctx, HANDLERS, HOOKS)
+    # Things that look like clashes and are not: a copy held by two calendars, an all-day
+    # entry, a declined invitation, an event that only touches the next one.
+    calendar.add_event("calendar:test", fields("Standup", 9), uid="same")
+    calendar.add_event("calendar:second", fields("Standup", 9), uid="same")
+    calendar.add_event("calendar:test", fields("Holiday", 0, 24, all_day=True))
+    calendar.add_event(
+        "calendar:test",
+        fields("Declined", 9),
+        organiser="boss@x.example",
+        my_response=Response.DECLINED,
+    )
+    calendar.add_event("calendar:test", fields("Before", 8))
+    assert app.call("start", {}).data.work == ()
+
+    # A real clash across two calendars.
+    late = calendar.add_event("calendar:second", fields("Dentist", 9, 2))
+    clock.advance(minutes=2)
+    reply = app.call("start", {})
+    work = reply.data.work
+    assert [w.kind.value for w in work] == ["calendar.conflict"]
+    assert work[0].next.tool is ToolName.FIND
+    assert work[0].next.args["scope"] == "calendar"
+    assert "Dentist" not in work[0].summary
+    assert "calendar.conflict" in ids(reply)
+
+    # A calendar that cannot be read says nothing, so the event stays.
+    fake.world.health_override["calendar:second"] = HealthState.UNAVAILABLE
+    tick.tick(ctx, force=True)
+    assert "calendar.conflict" in [e.kind.value for e in repo.live_events(ctx.db)]
+    del fake.world.health_override["calendar:second"]
+
+    # Moving it away clears the event on the next tick.
+    fake.world.events["calendar:second"][late].fields = fields("Dentist", 14)
+    tick.tick(ctx, force=True)
+    assert [e.kind.value for e in repo.live_events(ctx.db)] == []

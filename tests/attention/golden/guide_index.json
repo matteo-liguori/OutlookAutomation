@@ -18,6 +18,11 @@
         "title": "Offering or accepting a time"
       },
       {
+        "id": "calendar.conflict",
+        "version": 1,
+        "title": "Two events overlap"
+      },
+      {
         "id": "calendar.invite",
         "version": 1,
         "title": "Guests and answers reach other people"
@@ -121,18 +126,13 @@
         "id": "mail.older",
         "version": 1,
         "title": "Older mail was not read"
-      },
-      {
-        "id": "mail.read_state",
-        "version": 2,
-        "title": "Reading mail"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 44,
+    "total": 45,
     "cursor": "ZzI1",
     "gaps": []
   },
