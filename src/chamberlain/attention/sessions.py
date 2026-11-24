@@ -33,10 +33,15 @@ def is_stale_scheduled(session: SessionRow, clock: Clock) -> bool:
     return _local_day(started) != _local_day(clock.now())
 
 
+def is_stale_day(scheduled_day: str, clock: Clock) -> bool:
+    """A scheduled start meant for a day that is not today."""
+    return scheduled_day != _local_day(clock.now()).isoformat()
+
+
 def stop_error() -> ChamberlainError:
-    """The stop decision for a stale scheduled run. Reuses `session.required`."""
+    """The stop decision for a stale scheduled run."""
     return ChamberlainError(
-        ErrorCode.SESSION_REQUIRED,
+        ErrorCode.SESSION_STALE,
         "This scheduled run belongs to an earlier day and no user is present. Stop now.",
         fix="Stop. Do not do this run's work. Only a live user turn may start a new session.",
     )

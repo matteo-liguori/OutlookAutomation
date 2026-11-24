@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import cast
 
 from chamberlain.app.context import Context
-from chamberlain.attention import inbox, repo, tick
+from chamberlain.attention import inbox, repo, sessions, tick
 from chamberlain.attention.models import EventRow
 from chamberlain.attention.overrides import apply_overrides
 from chamberlain.attention.rules import load_rules
@@ -20,7 +20,7 @@ from chamberlain.limits import MAX_REPLY_CHARS, NEXT_STEPS_MAX, NOTICE_PRIORITY,
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import GuidanceItem, NextStep, Notice, Reply
 from chamberlain.schema.registry import ToolSpec
-from chamberlain.schema.tools import ToolRequest
+from chamberlain.schema.tools import StartRequest, ToolRequest
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 
@@ -52,6 +52,23 @@ def _named_subjects(request: dict[str, object]) -> list[str]:
 
 class AttentionHooks:
     """Implements `app.context.Hooks`."""
+
+    def guard(self, ctx: Context, spec: ToolSpec, request: ToolRequest) -> None:
+        """Stop any tool for a stale scheduled run (R10, the old wrong-day guard).
+
+        A scheduled start counts only when the wake adapter says which day it was
+        meant for; without that it is treated as a live chat.
+        """
+        if isinstance(request, StartRequest):
+            day = request.scheduled_day
+            if request.purpose == "scheduled" and day and sessions.is_stale_day(day, ctx.clock):
+                raise sessions.stop_error()
+            return
+        if request.session is None:
+            return
+        row = repo.get_session(ctx.db, request.session)
+        if row is not None and sessions.is_stale_scheduled(row, ctx.clock):
+            raise sessions.stop_error()
 
     def tick(self, ctx: Context) -> None:
         tick.tick(ctx)
