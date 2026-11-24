@@ -76,7 +76,7 @@ def open_handle(ctx: Context, request: OpenRequest) -> Result:
                     view=ContactView(handle=request.handle, source=source),
                 )
             )
-        case HandleKind.NOTE | HandleKind.SESSION:
+        case HandleKind.NOTE | HandleKind.SESSION | HandleKind.RUN:
             raise ChamberlainError(
                 ErrorCode.REQUEST_WRONG_KIND,
                 "That handle has no view of its own.",
