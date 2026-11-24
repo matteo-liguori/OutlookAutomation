@@ -394,6 +394,23 @@ def test_g12_owner_updating_or_deleting_an_event_with_attendees_needs_the_human(
             rig.agent_approves(proposal)
 
 
+def test_r3_propose_runs_the_connector_scan_before_the_operation_is_stored(
+    rig: WriteRig,
+) -> None:
+    rig.know("friend@example.org")
+
+    def duplicate() -> None:
+        raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "A related message is already in Sent.")
+
+    rig.mail.after_prepare = duplicate
+    with fails(ErrorCode.REMOTE_CHANGED):
+        rig.engine().propose_intent(rig.send())
+    assert repo.count_operations(rig.db) == 0
+    rig.mail.after_prepare = None
+    assert rig.engine().propose_intent(rig.send()).operation is not None
+    assert rig.mail.last_refs.get("_allow_duplicate") is None
+
+
 def test_t11_cancel_only_before_prepare_and_never_after_dispatch(rig: WriteRig) -> None:
     op = rig.ready_send()
     cancelled = rig.engine().cancel(op.handle, actor="agent:x")

@@ -251,6 +251,8 @@ class Engine:
             return self._proposal_for(existing, completed)
         handle = new_handle(HandleKind.OPERATION)
         decision = self._decide(completed, handle, sha, card, reserved=None, refs=refs)
+        if isinstance(completed, MailSend):
+            self._scan_before_storing(completed, handle, refs, decision)
         with transaction(self.db):
             repo.insert_operation(
                 self.db,
@@ -306,6 +308,28 @@ class Engine:
             truncated=cut,
             origin=handle,
         )
+
+    def _scan_before_storing(
+        self, intent: MailSend, handle: str, refs: Mapping[str, str], decision: Decision
+    ) -> None:
+        """Run the connector's read-only `prepare` so its duplicate scan fails early (R3).
+
+        Nothing is stored yet, so a conflict leaves no operation behind. The token is a
+        throwaway: the real one is derived from the idempotency key when `do` reserves.
+        """
+        scan_refs = dict(refs)
+        scan, _ = _with_token(intent, sha256_text("scan:" + handle))
+        if isinstance(decision, Allow) and decision.allow_duplicate:
+            scan_refs[ALLOW_DUPLICATE_REF] = "1"
+        try:
+            self._port_prepare(scan, scan_refs)
+        except ChamberlainError:
+            raise
+        except Exception as error:
+            log.exception("prepare failed while proposing a send")
+            raise ChamberlainError(
+                ErrorCode.SOURCE_UNAVAILABLE, "The source could not check the send."
+            ) from error
 
     def propose_standing(self, scope: StandingScope, *, card: str | None = None) -> Proposal:
         """Ask for a standing grant. Only the viewer can activate it (G-12, G-14)."""
