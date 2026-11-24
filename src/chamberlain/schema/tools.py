@@ -503,6 +503,15 @@ class DoResponse(Model):
 
 class ReconcileRequest(ToolRequest):
     operation: OperationHandle
+    happened: Literal[True] | None = None
+    """Say it happened, with `evidence` you recorded. Never say it did not."""
+    evidence: EvidenceHandle | None = None
+
+    @model_validator(mode="after")
+    def _both_or_neither(self) -> Self:
+        if (self.happened is None) != (self.evidence is None):
+            raise ValueError("happened and evidence go together")
+        return self
 
 
 class ReconcileResponse(Model):

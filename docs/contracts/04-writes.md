@@ -113,6 +113,17 @@ obtained.
   `operation.uncertain` stays open. The only exit other than reconcile is the
   user resolving it in the viewer (`human:viewer` marks it `confirmed` or
   `confirmed_absent`, audited).
+- **W-13a** (owner ruling: the owner is not asked what the harness or agent can settle.)
+  An operation imported from an old journal keeps `summary_json` (title, time, calendar or
+  recipients; never a body) and `attempted_at`, beside a NULL intent: display and matching only,
+  never dispatchable. `reconcile` reads the live source and settles `confirmed` on a match
+  (calendar create or update, mail send; never deletes or moves). The agent may settle
+  `confirmed` with `happened` plus its own session evidence, never "did not happen": only a
+  connector's proof of absence or the viewer click frees a grant. An `uncertain` operation with
+  no possible resend (no intent, no grant, or a grant spent, expired or revoked) is closed
+  `abandoned` by the tick after 14 days unsettled; the state is terminal, frees nothing and
+  claims nothing. Attention tells the agent about such an operation once, and again only when
+  `redo_at` (a later proposal of the same write) is newer than that notice.
 - **W-14** An `applied` receipt carries a `Verification`:
   `client_verified` (the local client reports the result) and
   `server_verified` (read back from the server). The agent-facing text for a

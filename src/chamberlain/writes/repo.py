@@ -157,7 +157,8 @@ def compactable_grants(db: sqlite3.Connection, before: str) -> list[str]:
         "AND state IN ('spent', 'revoked', 'expired', 'declined', 'lapsed') "
         "AND ended_at IS NOT NULL AND ended_at <= ? "
         "AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.grant = grants.handle "
-        "AND o.state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', 'cancelled'))",
+        "AND o.state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', 'cancelled', "
+        "'abandoned'))",
         (before,),
     ).fetchall()
     return [row["handle"] for row in rows]
@@ -228,6 +229,10 @@ def _operation(row: sqlite3.Row) -> OperationRow:
         dispatched_at=_ts(row["dispatched_at"]),
         settled_at=_ts(row["settled_at"]),
         compacted_at=_ts(row["compacted_at"]),
+        updated_at=parse_ts(row["updated_at"]),
+        summary_json=row["summary_json"],
+        attempted_at=_ts(row["attempted_at"]),
+        redo_at=_ts(row["redo_at"]),
     )
 
 
@@ -263,6 +268,24 @@ def insert_operation(
             at,
         ),
     )
+
+
+def set_operation_summary(
+    db: sqlite3.Connection, handle: str, summary_json: str, attempted_at: str | None
+) -> bool:
+    """Give an imported operation its display summary once. False when it already has one."""
+    return (
+        db.execute(
+            "UPDATE operations SET summary_json = ?, attempted_at = ? "
+            "WHERE handle = ? AND summary_json IS NULL AND intent_json IS NULL",
+            (summary_json, attempted_at, handle),
+        ).rowcount
+        == 1
+    )
+
+
+def mark_redo(db: sqlite3.Connection, handle: str, at: str) -> None:
+    db.execute("UPDATE operations SET redo_at = ? WHERE handle = ?", (at, handle))
 
 
 def get_operation(db: sqlite3.Connection, handle: str) -> OperationRow | None:
@@ -388,11 +411,23 @@ def live_by_hash(db: sqlite3.Connection, source_id: str, intent_sha256: str) -> 
     return [_operation(row) for row in rows]
 
 
+def stale_uncertain(db: sqlite3.Connection, before: str) -> list[OperationRow]:
+    """Uncertain since `before` with no way left to send them again (owner ruling)."""
+    rows = db.execute(
+        "SELECT o.* FROM operations o LEFT JOIN grants g ON g.handle = o.grant "
+        "WHERE o.state = 'uncertain' AND o.updated_at <= ? AND (o.intent_json IS NULL "
+        "OR o.grant IS NULL OR g.state IN ('spent', 'expired', 'revoked', 'lapsed', 'declined')) "
+        "ORDER BY o.created_at, o.handle",
+        (before,),
+    ).fetchall()
+    return [_operation(row) for row in rows]
+
+
 def compactable_operations(db: sqlite3.Connection, before: str) -> list[OperationRow]:
     rows = db.execute(
         "SELECT * FROM operations WHERE compacted_at IS NULL AND settled_at IS NOT NULL "
         "AND settled_at <= ? AND state IN ('confirmed', 'failed_clean', 'confirmed_absent', "
-        "'cancelled')",
+        "'cancelled', 'abandoned')",
         (before,),
     ).fetchall()
     return [_operation(row) for row in rows]

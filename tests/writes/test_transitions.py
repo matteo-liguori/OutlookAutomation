@@ -32,6 +32,7 @@ ARROWS = {
     (S.UNCERTAIN, S.RECONCILING),
     (S.UNCERTAIN, S.CONFIRMED),
     (S.UNCERTAIN, S.CONFIRMED_ABSENT),
+    (S.UNCERTAIN, S.ABANDONED),
     (S.RECONCILING, S.CONFIRMED),
     (S.RECONCILING, S.CONFIRMED_ABSENT),
     (S.RECONCILING, S.UNCERTAIN),
@@ -41,7 +42,13 @@ ARROWS = {
 def test_w6_the_legal_transitions_are_exactly_the_arrows_of_the_diagram() -> None:
     legal = {(a, b) for a, targets in TRANSITIONS.items() for b in targets}
     assert legal == ARROWS
-    assert {S.CONFIRMED, S.FAILED_CLEAN, S.CONFIRMED_ABSENT, S.CANCELLED} == TERMINAL_STATES
+    assert {
+        S.CONFIRMED,
+        S.FAILED_CLEAN,
+        S.CONFIRMED_ABSENT,
+        S.CANCELLED,
+        S.ABANDONED,
+    } == TERMINAL_STATES
 
 
 def _make(rig: WriteRig, state: OperationState) -> str:

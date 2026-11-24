@@ -359,9 +359,28 @@ def grants_for_review(db: sqlite3.Connection, now: str) -> list[GrantRow]:
     return [GrantRow(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
 
 
+_NO_RESEND = (
+    "(o.intent_json IS NULL OR o.grant IS NULL OR EXISTS (SELECT 1 FROM grants g "
+    "WHERE g.handle = o.grant "
+    "AND g.state IN ('spent', 'expired', 'revoked', 'lapsed', 'declined')))"
+)
+_TOLD = (
+    "SELECT max(e.delivered_at) FROM events e "
+    "WHERE e.kind = 'operation.uncertain' AND e.subject = o.handle AND e.delivered_at IS NOT NULL"
+)
+
+
 def uncertain_operations(db: sqlite3.Connection) -> list[OperationRow]:
+    """Operations that may have happened. One nothing can resend is told to the agent once.
+
+    It is raised again only if something tried to do the same write after that notice
+    (`redo_at`); otherwise it waits quietly to be closed (owner ruling).
+    """
     rows = db.execute(
-        "SELECT handle, kind, state FROM operations WHERE state IN ('uncertain', 'reconciling')"
+        "SELECT o.handle, o.kind, o.state FROM operations o "
+        "WHERE o.state IN ('uncertain', 'reconciling') AND NOT (o.state = 'uncertain' "
+        f"AND {_NO_RESEND} AND ({_TOLD}) IS NOT NULL "
+        f"AND (o.redo_at IS NULL OR o.redo_at <= ({_TOLD})))"
     )
     return [OperationRow(r["handle"], r["kind"], r["state"]) for r in rows]
 

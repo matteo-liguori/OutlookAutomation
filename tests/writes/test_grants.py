@@ -221,7 +221,7 @@ def test_g10_expiry_does_not_release_an_uncertain_operation_and_it_is_not_compac
     with pytest.raises(ChamberlainError):
         rig.engine().do(op.handle)
     handle = rig.engine().get(op.handle).grant or ""
-    rig.clock.advance(hours=24 * 400)
+    rig.clock.advance(hours=24 * 10)
     maintain(rig.ctx, rig.policy)
     assert grant_of(rig, handle).state is GrantState.EXPIRED
     assert grant_of(rig, handle).compacted_at is None

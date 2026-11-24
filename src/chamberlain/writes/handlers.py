@@ -80,7 +80,7 @@ def make_handlers(
 
     def reconcile(ctx: Context, request: ReconcileRequest) -> Result:
         eng = engine(ctx)
-        op, changed = eng.reconcile(request.operation)
+        op, changed = eng.reconcile(request.operation, happened_evidence=request.evidence)
         return Result(ReconcileResponse(operation=eng.view(op), changed=changed))
 
     return {

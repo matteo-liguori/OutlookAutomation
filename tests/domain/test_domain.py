@@ -122,6 +122,7 @@ def test_w6_the_transition_table_is_total_and_terminal_states_are_final() -> Non
         OperationState.FAILED_CLEAN,
         OperationState.CONFIRMED_ABSENT,
         OperationState.CANCELLED,
+        OperationState.ABANDONED,
     } == TERMINAL_STATES
     assert RELEASING_STATES < TERMINAL_STATES
     assert not MAY_HAVE_HAPPENED_STATES & TERMINAL_STATES

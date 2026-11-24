@@ -71,6 +71,7 @@ from chamberlain.limits import (
     CONNECTOR_DEADLINE_SECONDS,
     REPEAT_WINDOW_HOURS,
     SETTLE_AFTER_MINUTES,
+    UNCERTAIN_ABANDON_DAYS,
 )
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -90,6 +91,8 @@ from chamberlain.writes.authorise import (
 )
 from chamberlain.writes.control import cancel_operation
 from chamberlain.writes.grants import GrantService
+from chamberlain.writes.imported import advice_for, parse_summary, repeats, summary_of_intent
+from chamberlain.writes.imported_match import found_live
 from chamberlain.writes.models import GrantRow, OperationRow, StoredReceipt, WritePolicy
 from chamberlain.writes.render import describe_intent, describe_scope, grant_summary, grant_title
 from chamberlain.writes.transitions import build_receipt, move_operation
@@ -268,7 +271,9 @@ class Engine:
         sha = intent_hash(completed)
         existing = self._existing(completed, sha)
         if existing is not None:
+            self._note_redo(existing)
             return self._proposal_for(existing, completed)
+        self._note_repeat_of_imported(completed)
         handle = new_handle(HandleKind.OPERATION)
         decision = self._decide(completed, handle, sha, card, reserved=None, refs=refs)
         if isinstance(completed, MailSend):
@@ -440,6 +445,27 @@ class Engine:
             truncated=cut,
             origin=op.handle,
         )
+
+    def _note_redo(self, op: OperationRow) -> None:
+        """Something asked to do an unsettled write again: attention may speak about it again."""
+        if op.state in MAY_HAVE_HAPPENED_STATES:
+            repo.mark_redo(self.db, op.handle, stamp(self.ctx.clock))
+
+    def _note_repeat_of_imported(self, intent: WriteIntent) -> None:
+        """A new write that looks like an uncertain imported one marks that one as redone."""
+        new = summary_of_intent(intent)
+        if new is None:
+            return
+        for op in repo.operations_in_states(self.db, (OperationState.UNCERTAIN,)):
+            old = parse_summary(op.summary_json)
+            if (
+                op.intent_json is None
+                and op.source_id == intent.source
+                and op.kind.value == intent.kind
+                and old is not None
+                and repeats(old, new)
+            ):
+                self._note_redo(op)
 
     def _existing(self, intent: WriteIntent, sha: str) -> OperationRow | None:
         """An identical live operation, or a recent one that may not repeat (W-18, W-19)."""
@@ -1068,21 +1094,100 @@ class Engine:
             return False
         return op.kind.value in capability.absence_provable
 
-    def reconcile(self, handle: str) -> tuple[OperationRow, bool]:
-        """Settle an uncertain operation by reading, never by resending (T-13)."""
+    def reconcile(
+        self, handle: str, *, happened_evidence: str | None = None
+    ) -> tuple[OperationRow, bool]:
+        """Settle an uncertain operation by reading, never by resending (T-13).
+
+        `happened_evidence` is the agent's own record that the write did happen (the safe
+        direction). That it did not happen is never settled here without a connector's proof.
+        """
         self.recover()
         before = self.get(handle)
         if before.state is not OperationState.UNCERTAIN:
             return before, False
         if before.intent_json is None:
-            raise ChamberlainError(
-                ErrorCode.OPERATION_UNCERTAIN,
-                "This send or write came from the old harness in an unknown state. "
-                "It will never be retried automatically. Check the Sent folder or "
-                "the calendar yourself, then resolve it in the viewer.",
+            return self._reconcile_imported(before, happened_evidence)
+        if happened_evidence is not None:
+            return self._settle_happened(
+                before, happened_evidence, "The agent recorded evidence that it happened."
             )
         after = self._reconcile(before, window=(1, 0), allow_absent=True)
         return after, after.state is not before.state
+
+    def _reconcile_imported(
+        self, op: OperationRow, evidence: str | None
+    ) -> tuple[OperationRow, bool]:
+        """An old journal's operation: found on the live source settles it, nothing else does.
+
+        It has no intent, so nothing here can send it. Not found is not proof of absence.
+        """
+        if evidence is not None:
+            return self._settle_happened(
+                op, evidence, "The agent recorded evidence that it happened."
+            )
+        summary = parse_summary(op.summary_json)
+        if summary is not None and found_live(self.ctx, op, summary):
+            return self._settle_happened(op, None, "Reconcile found the item on the live source.")
+        raise ChamberlainError(
+            ErrorCode.OPERATION_UNCERTAIN,
+            "This write came from the old harness and could not be found on the live source. "
+            f"It will never be retried. {advice_for(op.kind)} If you can see it, call reconcile "
+            "again with happened and your evidence; otherwise leave it: the harness closes it, "
+            "and the owner can also resolve it in the viewer.",
+        )
+
+    def _settle_happened(
+        self, op: OperationRow, evidence: str | None, summary: str
+    ) -> tuple[OperationRow, bool]:
+        if evidence is not None:
+            self._check_seen(evidence)
+        with transaction(self.db):
+            moved = move_operation(
+                self.db,
+                self.ctx.clock,
+                self._audit,
+                op,
+                OperationState.CONFIRMED,
+                actor=self.actor(),
+                summary=summary,
+                receipt_json=build_receipt(op, OperationState.CONFIRMED, self._now()),
+            )
+            if moved is None:
+                raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That changed.")
+            if evidence is not None:
+                self.ctx.services.evidence.link(evidence, moved.handle)
+            if moved.grant is not None:
+                self.grants.mark_spent(moved.grant, actor=self.actor())
+        self._release_attachments(moved)
+        return moved, True
+
+    def abandon(self, op: OperationRow) -> OperationRow | None:
+        """Close an uncertain operation nothing can resend. It frees no grant and claims nothing."""
+        moved = move_operation(
+            self.db,
+            self.ctx.clock,
+            self._audit,
+            op,
+            OperationState.ABANDONED,
+            actor="system:tick",
+            summary="Closed unsettled after "
+            f"{UNCERTAIN_ABANDON_DAYS} days; nothing can send it again; no grant was freed.",
+            receipt_json=build_receipt(op, OperationState.ABANDONED, self._now()),
+        )
+        if moved is not None:
+            self._release_attachments(moved)
+        return moved
+
+    def _check_seen(self, evidence: str) -> None:
+        """Evidence that it happened is something this session recorded. It frees nothing."""
+        session = self.ctx.session
+        if session is None or not self.ctx.services.evidence.created_in_session(evidence, session):
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "Give evidence recorded in this session of what you saw.",
+                field="evidence",
+            )
 
     def recover(self) -> int:
         """Move operations whose lease has expired to `uncertain` (W-9, R5)."""
