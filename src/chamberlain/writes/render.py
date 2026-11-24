@@ -4,10 +4,13 @@ Titles and summaries never carry remote text (E-8). The preview of an intent
 carries the agent's own draft text, so it travels as `Content` (E-7).
 """
 
+from collections.abc import Mapping
+
 from chamberlain.domain.grants import StandingScope
 from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
+    CalendarRespond,
     CalendarUpdate,
     IntentKind,
     MailDraftDiscard,
@@ -21,6 +24,11 @@ from chamberlain.domain.intents import (
 )
 
 PREVIEW_CHARS = 1_500
+EVENT_ATTENDEES_REF = "_event_attendees"
+"""Key in the stored refs: the stored event an update or delete acts on has attendees. The value
+lists their addresses, comma separated; an older store holds `1` (not known)."""
+EVENT_ORGANISER_REF = "_event_organiser"
+"""Key in the stored refs: who organised the event a response answers (W-1)."""
 
 _VERB = {
     IntentKind.MAIL_SEND: "Send a message",
@@ -33,6 +41,7 @@ _VERB = {
     IntentKind.CALENDAR_CREATE: "Create a calendar event",
     IntentKind.CALENDAR_UPDATE: "Change a calendar event",
     IntentKind.CALENDAR_DELETE: "Delete a calendar event",
+    IntentKind.CALENDAR_RESPOND: "Answer a calendar invitation",
 }
 
 
@@ -49,8 +58,18 @@ def grant_summary(intent: WriteIntent) -> str:
     return f"{_VERB[IntentKind(intent.kind)]} on {intent.source}, exactly as previewed."
 
 
-def describe_intent(intent: WriteIntent, *, limit: int | None = PREVIEW_CHARS) -> tuple[str, bool]:
-    """The write as the harness will perform it, and whether it was cut short."""
+def describe_intent(
+    intent: WriteIntent,
+    *,
+    limit: int | None = PREVIEW_CHARS,
+    refs: Mapping[str, str] | None = None,
+) -> tuple[str, bool]:
+    """The write as the harness will perform it, and whether it was cut short.
+
+    `refs` are the operation's stored refs: they say who an update or delete of an existing
+    event will also notify.
+    """
+    stored = refs or {}
     lines: list[str] = [f"{_VERB[IntentKind(intent.kind)]} ({intent.source})"]
     body = ""
     if isinstance(intent, MailSend | MailDraftSave | MailDraftUpdate):
@@ -76,9 +95,18 @@ def describe_intent(intent: WriteIntent, *, limit: int | None = PREVIEW_CHARS) -
         lines.append(f"Title: {event.title}")
         lines.append(f"When: {event.start.isoformat()} to {event.end.isoformat()}")
         if event.attendees:
-            lines.append("Attendees: " + ", ".join(event.attendees))
+            lines.append("Attendees (invited by the calendar): " + ", ".join(event.attendees))
+        if isinstance(intent, CalendarUpdate) and stored.get(EVENT_ATTENDEES_REF, "1") != "1":
+            lines.append(
+                "Also told of the change: " + stored[EVENT_ATTENDEES_REF].replace(",", ", ")
+            )
     elif isinstance(intent, CalendarDelete):
         lines.append("Event: " + intent.event_ref)
+        if stored.get(EVENT_ATTENDEES_REF, "1") != "1":
+            lines.append("Cancellation sent to: " + stored[EVENT_ATTENDEES_REF].replace(",", ", "))
+    elif isinstance(intent, CalendarRespond):
+        lines.append(f"Answer: {intent.response}")
+        lines.append("Sent to the organiser: " + (intent.organiser or "(unknown)"))
     text = "\n".join(lines) + (("\n\n" + body) if body else "")
     if limit is not None and len(text) > limit:
         return text[:limit], True

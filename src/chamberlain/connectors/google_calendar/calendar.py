@@ -14,6 +14,7 @@ from urllib.parse import quote, urlencode
 
 from pydantic import JsonValue
 
+from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.calendar_support.http import (
     HttpReply,
     HttpTransport,
@@ -36,6 +37,7 @@ from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
     CalendarIntent,
+    CalendarRespond,
     CalendarUpdate,
     IntentKind,
 )
@@ -203,6 +205,8 @@ class GoogleCalendar:
             case CalendarDelete():
                 before = self._current(binding, refs, intent.event_ref, intent.expected_etag)
                 data = {"locator": str(before["id"]), "expected_etag": intent.expected_etag}
+            case CalendarRespond():
+                raise ics.no_invitations()
         return Prepared.model_validate(
             {
                 "source": intent.source,

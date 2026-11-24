@@ -81,9 +81,10 @@ proposed -> active -> spent        (one_off, its operation confirmed)
 | --- | --- |
 | Any standing grant | `human_confirmation` (mandatory) |
 | `mail.send` with any recipient not in `known_recipients` for that source | `human_confirmation` (mandatory) |
-| `calendar.create`, `update` or `delete` on an event with attendees | `human_confirmation` (mandatory) |
+| `calendar.create`, `update` or `delete` that reaches anyone other than the owner (G-12b) | `human_confirmation` (mandatory) |
+| `calendar.respond` to an organiser who is not the owner | `human_confirmation` (mandatory) |
 | `mail.send` to known recipients only | config `grants.send_known`, default `agent_evidence` (owner decision 2026-11-24) |
-| `mail.draft_*`, `mail.move`, `mail.trash`, `mail.mark_read`, `calendar.create`, `update` or `delete` on an event without attendees | config `grants.other`, default `agent_evidence` |
+| `mail.draft_*`, `mail.move`, `mail.trash`, `mail.mark_read`, `calendar.create`, `update`, `delete` or `respond` that reaches only the owner (G-12b) | config `grants.other`, default `agent_evidence` |
 
 - **G-12a** (owner ruling 2026-11-24) The human is required only for standing
   grants, sends to unknown recipients and calendar writes on events with
@@ -92,6 +93,16 @@ proposed -> active -> spent        (one_off, its operation confirmed)
   (`_event_attendees`); an update that lists attendees counts too. The etag in
   the intent makes the fact binding: an event that gained attendees since the
   read no longer matches. A standing grant never covers an update or delete.
+- **G-12b** (owner ruling 2026-11-24, invitations) An invitation reaches only the owner when every
+  address it reaches is the owner's: the attendees of a create or update, plus the stored event's
+  attendees for an update or delete (cancellations go to them). An owner address is the address of
+  any configured source (a mailbox, a Google account, a CalDAV address) or any address in
+  `authorised_senders.owner`. Then the requirement is `grants.other`, default `agent_evidence`. Any
+  other attendee, or a stored attendee list the harness cannot read (a store written before this
+  rule), needs `human_confirmation`. `calendar.respond` reaches the organiser: an owner address
+  gives `agent_evidence`, anyone else `human_confirmation`. A standing grant may cover
+  `calendar.create` and `calendar.respond` only when every address is in its exact `recipients`;
+  `recipient_domains` never count, and no standing grant covers an update or delete (G-12a).
 - **G-12** Config may tighten any row to `human_confirmation`. It MUST NOT
   loosen a mandatory row; a config that tries is `config.invalid`.
 - **G-13** `agent_evidence`: the agent calls `propose` with the operation

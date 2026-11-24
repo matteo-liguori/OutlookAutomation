@@ -140,6 +140,15 @@ def master_of(text: str) -> ParsedEvent:
     return masters[0]
 
 
+def no_invitations() -> ChamberlainError:
+    """The clean refusal of a write that would reach other people, for a connector that cannot."""
+    return ChamberlainError(
+        ErrorCode.CAPABILITY_UNSUPPORTED,
+        "This calendar cannot send or answer invitations.",
+        detail="invitations-not-supported",
+    )
+
+
 def refuse_invitations(parsed: ParsedEvent | None, wanted: EventFields | None = None) -> None:
     """Nothing here sends invitations, so events with other people are never written."""
     if (parsed is not None and (parsed.fields.attendees or parsed.organiser)) or (

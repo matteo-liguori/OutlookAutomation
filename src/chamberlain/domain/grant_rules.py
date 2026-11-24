@@ -14,6 +14,7 @@ from chamberlain.domain.grants import Requirement, StandingScope
 from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
+    CalendarRespond,
     CalendarUpdate,
     IntentKind,
     MailMarkRead,
@@ -60,6 +61,8 @@ def recipients_of(intent: WriteIntent) -> frozenset[str]:
             return frozenset((*intent.to, *intent.cc, *intent.bcc))
         case CalendarCreate() | CalendarUpdate():
             return frozenset(intent.event.attendees)
+        case CalendarRespond():
+            return frozenset() if intent.organiser is None else frozenset({intent.organiser})
         case _:
             return frozenset()
 
@@ -84,21 +87,32 @@ def requirement_for(
     send_known: Requirement,
     other: Requirement,
     existing_attendees: bool = False,
+    stored_attendees: frozenset[str] = frozenset(),
+    owner_addresses: frozenset[str] = frozenset(),
 ) -> Requirement:
     """The G-12 table: what it takes to activate a one-off grant for this intent.
 
     `send_known` and `other` come from config and may only tighten a row. Calendar writes
-    need the human only when the event has attendees (owner ruling 2026-11-24):
-    `existing_attendees` says the stored event, which an update or delete acts on, has some.
+    need the human only when the event reaches someone other than the owner (owner rulings
+    2026-11-24): `existing_attendees` says the stored event an update or delete acts on has
+    attendees and `stored_attendees` names them (empty while `existing_attendees` is true
+    means they are not known, so the human decides). An answer to an invitation reaches the
+    organiser only (G-12b).
     """
     if isinstance(intent, MailSend):
         if recipients_of(intent) <= known_recipients:
             return stricter(send_known, Requirement.AGENT_EVIDENCE)
         return Requirement.HUMAN_CONFIRMATION
-    if isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete) and (
-        existing_attendees or recipients_of(intent)
-    ):
+    if isinstance(intent, CalendarRespond):
+        if intent.organiser is not None and intent.organiser in owner_addresses:
+            return stricter(other, Requirement.AGENT_EVIDENCE)
         return Requirement.HUMAN_CONFIRMATION
+    if isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete):
+        if existing_attendees and not stored_attendees:
+            return Requirement.HUMAN_CONFIRMATION
+        reached = recipients_of(intent) | stored_attendees
+        if reached and not reached <= owner_addresses:
+            return Requirement.HUMAN_CONFIRMATION
     return stricter(other, Requirement.AGENT_EVIDENCE)
 
 
@@ -125,9 +139,16 @@ def scope_mismatch(scope: StandingScope, intent: WriteIntent, card: str | None) 
         return True
     if scope.calendar is not None and scope.calendar != intent.source:
         return True
+    if isinstance(intent, CalendarRespond) and intent.organiser is None:
+        return True
     addresses = recipients_of(intent)
     if addresses:
-        covered = scope.recipients | {a for a in addresses if _domain(a) in scope.recipient_domains}
+        if isinstance(intent, CalendarCreate | CalendarRespond):
+            covered = scope.recipients
+        else:
+            covered = scope.recipients | {
+                a for a in addresses if _domain(a) in scope.recipient_domains
+            }
         if not addresses <= covered:
             return True
     if may_reach_attendees(intent):

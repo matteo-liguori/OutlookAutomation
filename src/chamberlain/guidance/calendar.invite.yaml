@@ -1,0 +1,11 @@
+id: calendar.invite
+version: 1
+title: Guests and answers reach other people
+when: {tool: find, scope: calendar}
+text: >
+  An event with guests, or an answer to an invitation, sends a message to
+  other people. Add guests only when the user named them, and say who will
+  be told.
+max_chars: 200
+once_per: session
+priority: 45

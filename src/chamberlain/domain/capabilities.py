@@ -21,6 +21,8 @@ class CapabilityName(StrEnum):
     MAIL_MARK_READ = "mail.mark_read"
     CALENDAR_READ = "calendar.read"
     CALENDAR_WRITE = "calendar.write"
+    CALENDAR_INVITE = "calendar.invite"
+    """Send, change and cancel invitations, and answer invitations received."""
     CONTACTS_SEARCH = "contacts.search"
 
 

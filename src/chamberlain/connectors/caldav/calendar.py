@@ -40,6 +40,7 @@ from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
     CalendarIntent,
+    CalendarRespond,
     CalendarUpdate,
     IntentKind,
 )
@@ -234,6 +235,8 @@ class CalDavCalendar:
                     binding, refs, intent.event_ref, intent.expected_etag, None
                 )
                 data = {"name": name, "expected_etag": intent.expected_etag}
+            case CalendarRespond():
+                raise ics.no_invitations()
         return Prepared.model_validate(
             {
                 "source": intent.source,
