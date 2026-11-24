@@ -256,7 +256,9 @@ crash-mid-sweep, checking after each sweep:
   each open old case's free-text `context` (up to 6,000 characters in the old
   harness) as one text artifact owned by the new card. Its `reason` says what it
   is ("Context from the old harness...") and its name is `context-from-old-harness.txt`.
-  The card is made due for review now. A repeat import adds the item to cards that
+  The card is made due for review now; while it holds the item its review event has
+  reason `context` (not `review`), so the agent is not nudged to close it before
+  the notes are used. A repeat import adds the item to cards that
   already exist and lack it, never twice: the `imported_context` table records each
   old case once, so it also stays gone after the agent has forgotten it. Cards the
   owner has closed since get nothing. The item expires 60 days after import

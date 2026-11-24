@@ -89,6 +89,8 @@ class CardRow:
     title: str
     review_at: str | None
     over_cap: bool
+    has_context: bool = False
+    """The card still holds notes carried over from the old system (M-35)."""
 
 
 @dataclass(frozen=True)

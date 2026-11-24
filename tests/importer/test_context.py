@@ -265,3 +265,43 @@ def test_m35_the_import_report_names_the_count(
     assert report.document()["counts"]["context_artifacts"] == 2
     saved = json.loads((data_root / "import" / "report.json").read_text(encoding="utf-8"))
     assert saved["counts"]["context_artifacts"] == 2
+
+
+def test_m35_a_card_with_old_context_is_not_offered_for_closing(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    """The review event says `context`, so `card.review` ("close it unless...") stays silent."""
+    from chamberlain.attention.collect import collect
+    from chamberlain.attention.detectors.due import card_review_due
+    from chamberlain.attention.rules import load_rules
+
+    run_import(old_root, data_root, clock=clock, secrets=secrets)
+    app = open_app(data_root, clock=clock, secrets=secrets)
+    try:
+        by_title = {
+            r["handle"]: r["title"]
+            for r in app.context.db.execute("SELECT handle, title FROM cards")
+        }
+        events = {by_title[e.subject or ""]: e for e in card_review_due(collect(app.context).data)}
+        assert events["Solicitor matter"].attrs.reason == "context"
+        assert "old system" in events["Solicitor matter"].summary
+        assert events["Oversized card"].attrs.reason == "over_cap"  # trimming comes first
+        review = next(r for r in load_rules() if r.id == "card.review")
+        assert review.trigger is not None
+        assert ("reason", ("review",)) in review.trigger.filters
+        # once the agent has forgotten the notes, the ordinary review comes back
+        session = _start(app)
+        card = next(h for h, t in by_title.items() if t == "Solicitor matter")
+        item = repo_item(app, card)
+        assert app.call("forget", {"handle": item, "session": session}).ok
+        after = {by_title[e.subject or ""]: e for e in card_review_due(collect(app.context).data)}
+        assert after["Solicitor matter"].attrs.reason == "review"
+    finally:
+        app.close()
+
+
+def repo_item(app: App, card: str) -> str:
+    row = app.context.db.execute(
+        "SELECT artifact FROM imported_context WHERE card = ?", (card,)
+    ).fetchone()
+    return str(row[0])

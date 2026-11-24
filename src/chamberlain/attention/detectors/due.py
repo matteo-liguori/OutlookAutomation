@@ -59,12 +59,16 @@ def card_review_due(data: DetectorInput) -> Iterable[EventDraft]:
             continue
         review = _at(card.review_at)
         if review is not None and review <= data.now:
+            # A card holding notes from the old system is not judged for closing: the agent
+            # first folds the notes into it (rule card.context, shown when it opens the card).
             yield EventDraft(
                 EventKind.CARD_REVIEW_DUE,
                 card.handle,
-                f"Card {card.handle} is due for review.",
+                f"Card {card.handle} is due for review and still holds notes from the old system."
+                if card.has_context
+                else f"Card {card.handle} is due for review.",
                 PRIORITY[EventKind.CARD_REVIEW_DUE],
-                EventAttrs(card=card.handle, reason="review"),
+                EventAttrs(card=card.handle, reason="context" if card.has_context else "review"),
             )
 
 
