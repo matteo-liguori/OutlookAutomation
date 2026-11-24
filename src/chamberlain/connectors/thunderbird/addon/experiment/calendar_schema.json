@@ -1,6 +1,6 @@
 [
   {
-    "namespace": "harnessCalendar",
+    "namespace": "chamberlainCalendar",
     "functions": [
       { "name": "isOffline", "type": "function", "async": true, "parameters": [] },
       { "name": "listCalendars", "type": "function", "async": true, "parameters": [] },

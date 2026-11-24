@@ -1,6 +1,6 @@
 [
   {
-    "namespace": "harnessMail",
+    "namespace": "chamberlainMail",
     "functions": [
       {
         "name": "syncFolders",

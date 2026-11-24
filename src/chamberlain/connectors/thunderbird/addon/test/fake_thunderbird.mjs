@@ -313,7 +313,7 @@ export function createWorld() {
     addressBooks: {
       get: async (id) => ({ id, contacts: world.books.filter((c) => c.book === id).map((c) => ({ id: c.id, properties: c.properties })) }),
     },
-    harnessMail: {
+    chamberlainMail: {
       syncFolders: async (accountId, mailbox, folderIds) => ({
         folders: folderIds.map((id) => ({ folder_id: id, success: !world.faults.stale, ...(world.faults.stale ? { code: "sync-callback-timeout" } : {}) })),
       }),
@@ -369,7 +369,7 @@ export function createWorld() {
       await holdLatch();
     }
   };
-  const harnessCalendar = {
+  const chamberlainCalendar = {
     isOffline: async () => world.calendarOffline,
     listCalendars: async () => [...world.calendars.values()].map((c) => ({ id: c.id, name: c.name, type: c.type, read_only: c.readOnly, disabled: c.disabled })),
     queryEvents: async (calendarId, startMs, endMs, limit) => {
@@ -417,7 +417,7 @@ export function createWorld() {
       return {};
     },
   };
-  messenger.harnessCalendar = harnessCalendar;
+  messenger.chamberlainCalendar = chamberlainCalendar;
   world.addCalendar("cal1", { name: "Owner calendar" });
 
   world.messenger = messenger;

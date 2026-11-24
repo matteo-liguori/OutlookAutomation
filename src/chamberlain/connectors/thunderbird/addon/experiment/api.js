@@ -49,10 +49,10 @@ function composeWindow(context, tabId) {
   return context.extension.tabManager.get(tabId).nativeTab;
 }
 
-var harnessMail = class extends ExtensionCommon.ExtensionAPI {
+var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
   getAPI(context) {
     return {
-      harnessMail: {
+      chamberlainMail: {
         async syncFolders(accountId, mailbox, folderIds, timeoutMs) {
           ownerAccount(accountId, mailbox);
           need(!Services.io.offline, "client_offline");

@@ -148,7 +148,7 @@ async function verifyComposer(tabId: number, r: ComposeArgs, identityId: string,
 
 async function closeQuietly(tabId: number, a: Bound): Promise<void> {
   try {
-    await messenger.harnessMail?.closeComposer(tabId, a.account_id, a.mailbox);
+    await messenger.chamberlainMail?.closeComposer(tabId, a.account_id, a.mailbox);
   } catch {
     // Best effort: a composer that cannot be closed is reported by the next reconcile.
   }
@@ -161,7 +161,7 @@ async function mailRaw(id: number): Promise<string> {
 async function cmdCompose(a: ComposeArgs, ctx: Ctx, kind: "send" | "draft_save" | "draft_update"): Promise<SendResult | DraftResult> {
   const account = await accountOf(a);
   const identity = uniqueIdentity(account, a.mailbox);
-  const helper = messenger.harnessMail;
+  const helper = messenger.chamberlainMail;
   check(helper, "unsupported", "The composer helper is not installed.");
   const sentFolder = await folderOf(a, a.sent_folder_id);
   await folderOf(a, a.draft_folder_id);
@@ -259,7 +259,7 @@ async function finishDraft(a: ComposeArgs, ctx: Ctx, tabId: number, saved: any, 
 
 async function cmdDraftDiscard(a: DraftDiscardArgs): Promise<DiscardResult> {
   await accountOf(a);
-  const helper = messenger.harnessMail;
+  const helper = messenger.chamberlainMail;
   check(helper, "unsupported", "The composer helper is not installed.");
   const draft = await locateOne(a, a.draft);
   check((await mailRaw(draft.id)) === a.expected_raw_sha256, "changed", "The draft changed since it was read.");
@@ -391,7 +391,7 @@ async function cmdReconcileDiscard(a: ReconcileDraftDiscardArgs): Promise<Reconc
   let composers = 0;
   if (found.messages.length === 1) {
     hash = await rawHash(found.messages[0].id);
-    const open = await messenger.harnessMail?.findComposers(a.account_id, a.mailbox, found.messages[0].id, found.messages[0].headerMessageId);
+    const open = await messenger.chamberlainMail?.findComposers(a.account_id, a.mailbox, found.messages[0].id, found.messages[0].headerMessageId);
     composers = open ? open.tab_ids.length : 0;
   }
   return { copies: found.messages.length, raw_sha256: hash, composers_open: composers };

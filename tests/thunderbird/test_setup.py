@@ -50,7 +50,7 @@ def test_b10_the_manifest_version_and_extension_id_agree_with_the_code() -> None
     assert match is not None
     assert match.group(1) == manifest["version"]
     assert manifest["browser_specific_settings"]["gecko"]["id"] == EXTENSION_ID
-    assert manifest["experiment_apis"]["harnessMail"]["parent"]["script"] == "experiment/api.js"
+    assert manifest["experiment_apis"]["chamberlainMail"]["parent"]["script"] == "experiment/api.js"
     assert HOST_NAME in (ADDON_DIR / "src" / "background.ts").read_text(encoding="utf-8")
 
 

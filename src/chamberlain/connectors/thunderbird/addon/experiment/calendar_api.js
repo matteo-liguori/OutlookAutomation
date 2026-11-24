@@ -49,10 +49,10 @@ function parseOne(text) {
   return { event: e };
 }
 
-var harnessCalendar = class extends ExtensionCommon.ExtensionAPI {
+var chamberlainCalendar = class extends ExtensionCommon.ExtensionAPI {
   getAPI() {
     return {
-      harnessCalendar: {
+      chamberlainCalendar: {
         async isOffline() {
           return !!Services.io.offline;
         },

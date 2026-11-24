@@ -317,7 +317,7 @@ async function cmdAccounts(): Promise<AccountsResult> {
 async function cmdRefresh(a: RefreshArgs): Promise<RefreshResult> {
   await accountOf(a);
   for (const id of a.folder_ids) await folderOf(a, id);
-  const sync = messenger.harnessMail;
+  const sync = messenger.chamberlainMail;
   check(sync, "unsupported", "The synchronisation helper is not installed.");
   const answer = await sync.syncFolders(a.account_id, a.mailbox, [...a.folder_ids], a.timeout_ms);
   const folders: FolderRefresh[] = (answer.folders ?? []).map((f: any) => ({ folder_id: String(f.folder_id), success: f.success === true, code: f.code ?? "" }));

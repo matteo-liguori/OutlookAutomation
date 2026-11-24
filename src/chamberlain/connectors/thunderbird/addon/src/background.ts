@@ -26,13 +26,13 @@ function advertisedCapabilities(): string[] {
     read: !!m.messages?.getFull,
     search: !!m.messages?.query,
     attachments: !!m.messages?.getAttachmentFile,
-    send: !!m.compose?.sendMessage && !!m.harnessMail,
-    draft: !!m.compose?.saveMessage && !!m.harnessMail,
+    send: !!m.compose?.sendMessage && !!m.chamberlainMail,
+    draft: !!m.compose?.saveMessage && !!m.chamberlainMail,
     move: !!m.messages?.move,
     trash: !!m.messages?.move,
     mark_read: !!m.messages?.update,
     contacts: !!m.addressBooks,
-    refresh: !!m.harnessMail?.syncFolders,
+    refresh: !!m.chamberlainMail?.syncFolders,
     calendar: calendarSupported(),
   };
   return ADVERTISED_CAPABILITIES.filter((name) => have[name]);

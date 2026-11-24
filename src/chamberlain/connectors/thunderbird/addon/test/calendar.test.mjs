@@ -34,7 +34,7 @@ const window = { calendar_id: CAL, start: "2027-03-01T00:00:00+00:00", end: "202
 
 test("C-1 calendar is advertised only when the privileged helper is present, and mail does not need it", async () => {
   const world = createWorld();
-  delete world.messenger.harnessCalendar;
+  delete world.messenger.chamberlainCalendar;
   const addon = startAddon(world);
   await new Promise((r) => setTimeout(r, 10));
   const caps = addon.posted.find((f) => f.t === "addon_hello").capabilities;
@@ -217,7 +217,7 @@ test("C-9 a read-only calendar and an offline client refuse writes before any pr
 
 test("C-10 mutation is possible only after the provider call began", async () => {
   const { addon, world } = setup();
-  const api = world.messenger.harnessCalendar;
+  const api = world.messenger.chamberlainCalendar;
   const original = api.addEvent;
   api.addEvent = async () => {
     world.calendarLog.push("add");
@@ -233,13 +233,13 @@ test("C-10 mutation is possible only after the provider call began", async () =>
 
 test("C-10 a write the provider silently dropped is not reported as done", async () => {
   const { addon, world } = setup();
-  world.messenger.harnessCalendar.addEvent = async () => ({});
+  world.messenger.chamberlainCalendar.addEvent = async () => ({});
   const res = await call(addon, "calendar_create", { calendar_id: CAL, event_id: "g1", icalendar: ics("g1") });
   assert.equal(res.error.code, "not_verified");
   assert.equal(res.error.mutation, "possible");
   const kept = ics("g2");
   world.calendars.get(CAL).items.set("g2", kept);
-  world.messenger.harnessCalendar.deleteEvent = async () => ({});
+  world.messenger.chamberlainCalendar.deleteEvent = async () => ({});
   const stuck = await call(addon, "calendar_delete", { calendar_id: CAL, event_id: "g2", expected_icalendar: kept });
   assert.equal(stuck.error.code, "not_verified");
   assert.equal(stuck.error.mutation, "possible");

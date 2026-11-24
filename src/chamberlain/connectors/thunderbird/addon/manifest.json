@@ -25,19 +25,19 @@
     "scripts": ["background.js"]
   },
   "experiment_apis": {
-    "harnessMail": {
+    "chamberlainMail": {
       "schema": "experiment/schema.json",
       "parent": {
         "scopes": ["addon_parent"],
-        "paths": [["harnessMail"]],
+        "paths": [["chamberlainMail"]],
         "script": "experiment/api.js"
       }
     },
-    "harnessCalendar": {
+    "chamberlainCalendar": {
       "schema": "experiment/calendar_schema.json",
       "parent": {
         "scopes": ["addon_parent"],
-        "paths": [["harnessCalendar"]],
+        "paths": [["chamberlainCalendar"]],
         "script": "experiment/calendar_api.js"
       }
     }

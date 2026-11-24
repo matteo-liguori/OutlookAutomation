@@ -71,7 +71,7 @@ test("B-5 a second in-flight request with the same ID is refused", async () => {
 
 test("B-9 capabilities list what Thunderbird offers and drop what the helper lacks", async () => {
   const world = createWorld();
-  delete world.messenger.harnessMail;
+  delete world.messenger.chamberlainMail;
   const addon = startAddon(world);
   await new Promise((r) => setTimeout(r, 10));
   const hello = addon.posted.find((f) => f.t === "addon_hello");

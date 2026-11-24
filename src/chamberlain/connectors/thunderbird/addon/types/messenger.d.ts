@@ -101,5 +101,5 @@ declare const messenger: {
   compose: any;
   tabs: any;
   addressBooks: any;
-  harnessMail?: HarnessMailApi;
+  chamberlainMail?: HarnessMailApi;
 };

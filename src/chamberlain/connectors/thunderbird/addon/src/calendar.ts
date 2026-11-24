@@ -8,7 +8,7 @@ const CALENDAR_SCAN_CAP = 5000;
 function calendarApi(): HarnessCalendarApi {
   let api: HarnessCalendarApi | undefined;
   try {
-    api = (messenger as { harnessCalendar?: HarnessCalendarApi }).harnessCalendar;
+    api = (messenger as { chamberlainCalendar?: HarnessCalendarApi }).chamberlainCalendar;
   } catch {
     api = undefined;
   }
@@ -18,7 +18,7 @@ function calendarApi(): HarnessCalendarApi {
 
 function calendarSupported(): boolean {
   try {
-    return typeof (messenger as { harnessCalendar?: HarnessCalendarApi }).harnessCalendar?.listCalendars === "function";
+    return typeof (messenger as { chamberlainCalendar?: HarnessCalendarApi }).chamberlainCalendar?.listCalendars === "function";
   } catch {
     return false;
   }
