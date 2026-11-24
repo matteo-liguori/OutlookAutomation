@@ -413,10 +413,13 @@ interface ReconcileMarkReadArgs {
   account_id: string;
   mailbox: string;
   refs: MessageRef[];
+  refresh: boolean;
 }
 
 interface ReconcileMarkReadResult {
   items: ReconcileReadItem[];
+  refreshed: boolean;
+  refresh_verified: boolean;
 }
 
 interface ReconcileMoveArgs {
@@ -2807,6 +2810,11 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
     "title": "Mailbox",
     "type": "string"
    },
+   "refresh": {
+    "default": true,
+    "title": "Refresh",
+    "type": "boolean"
+   },
    "refs": {
     "items": {
      "$ref": "#/$defs/MessageRef"
@@ -2834,10 +2842,20 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
     },
     "title": "Items",
     "type": "array"
+   },
+   "refresh_verified": {
+    "title": "Refresh Verified",
+    "type": "boolean"
+   },
+   "refreshed": {
+    "title": "Refreshed",
+    "type": "boolean"
    }
   },
   "required": [
-   "items"
+   "items",
+   "refreshed",
+   "refresh_verified"
   ],
   "title": "ReconcileMarkReadResult",
   "type": "object"

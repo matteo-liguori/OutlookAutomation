@@ -648,6 +648,7 @@ class ReconcileTrashArgs(ReconcileMoveArgs):
 
 class ReconcileMarkReadArgs(AccountArgs):
     refs: Annotated[tuple[MessageRef, ...], Field(min_length=1, max_length=200)]
+    refresh: bool = True
 
 
 class ReconcileReadItem(Model):
@@ -658,6 +659,8 @@ class ReconcileReadItem(Model):
 
 class ReconcileMarkReadResult(Model):
     items: tuple[ReconcileReadItem, ...]
+    refreshed: bool
+    refresh_verified: bool
 
 
 ARGS_MODELS: dict[Command, type[Model]] = {

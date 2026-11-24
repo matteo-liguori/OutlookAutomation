@@ -413,10 +413,11 @@ async function cmdReconcileMove(a: ReconcileMoveArgs): Promise<ReconcileMoveResu
 
 async function cmdReconcileMarkRead(a: ReconcileMarkReadArgs): Promise<ReconcileMarkReadResult> {
   await accountOf(a);
+  const refresh = await maybeRefresh(a, a.refresh, [...new Set(a.refs.map((r) => r.folder_id))].slice(0, 8));
   const items: ReconcileReadItem[] = [];
   for (const ref of a.refs) {
     const found = await copiesIn(a, ref.folder_id, ref.internet_message_id);
     items.push({ ref, copies: found.messages.length, read: found.messages.length === 1 ? found.messages[0].read : undefined });
   }
-  return { items };
+  return { items, refreshed: refresh.refreshed, refresh_verified: refresh.verified };
 }
