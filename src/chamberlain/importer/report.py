@@ -23,6 +23,8 @@ class ImportReport:
     left_behind: dict[str, int] = field(default_factory=dict[str, int])
     warnings: list[str] = field(default_factory=list[str])
     next_steps: list[str] = field(default_factory=list[str])
+    recipients: dict[str, Any] = field(default_factory=dict[str, Any])
+    """Per mail source: Sent-history seeding result (added, scanned, known, complete)."""
     config_written: str = ""
     """`created`, `already identical` or `kept existing (differs)`."""
     where: str = ""
@@ -51,6 +53,7 @@ class ImportReport:
             "unmapped_settings": self.unmapped_settings,
             "left_behind": dict(sorted(self.left_behind.items())),
             "warnings": sorted(self.warnings),
+            "recipients_seeded": dict(sorted(self.recipients.items())),
             "next_steps": self.next_steps,
             "config": self.config_written,
         }

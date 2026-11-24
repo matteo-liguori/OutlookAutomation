@@ -171,6 +171,15 @@
           data.counts.active_grants + " active grants, " + data.counts.open_cards + " open cards, " +
           data.needs_you.grants_to_review + " grants to review. Version " + data.version + "." })
       );
+      var sources = Object.keys(data.known_recipients || {});
+      if (sources.length) {
+        box.appendChild(
+          el("p", { class: "muted", text: "Known recipients: " + sources.map(function (s) {
+            var c = data.known_recipients[s];
+            return s + " " + (c["confirmed-grant"] + c["sent-history"] + c.own) + " (" + c["sent-history"] + " from Sent history)";
+          }).join("; ") + "." })
+        );
+      }
     });
     return box;
   }

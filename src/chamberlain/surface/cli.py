@@ -12,6 +12,8 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain config validate|show    check or print config/connections.yaml (no secrets)
     chamberlain demo init <data root>   write a demo-only profile into an empty data root
     chamberlain import <old data root>  one-shot, read-only import of the old harness
+    chamberlain recipients seed [--months N]
+                                        learn known recipients from each Sent folder (read-only)
     chamberlain <tool> --json '{...}'   call a tool and print the envelope
 """
 
@@ -42,6 +44,7 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.schema.registry import BY_NAME, STANDING_PROMPT, TOOLS, get_tool
 from chamberlain.schema.tools import DoctorCheck
 from chamberlain.surface.viewer.server import launch
+from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
 DATA_ENV = "CHAMBERLAIN_DATA"
 SESSION_ENV = "CHAMBERLAIN_SESSION"
@@ -82,6 +85,13 @@ def _parser() -> argparse.ArgumentParser:
         "import", help="import the old harness's data (the old folder is only read)"
     )
     importing.add_argument("old_root", help="the old data root (use a copy)")
+    recipients = commands.add_parser(
+        "recipients", help="known recipients: seed them from each mail source's Sent folder"
+    )
+    recipients.add_argument("action", choices=["seed"])
+    recipients.add_argument(
+        "--months", type=int, default=DEFAULT_MONTHS, help="how far back to read (default 24)"
+    )
     commands.add_parser(
         "tick", help="run one tick (exit status 10: events wait and no session is active)"
     )
@@ -271,6 +281,37 @@ def _import(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _recipients(args: argparse.Namespace, out: TextIO) -> int:
+    """Read each mail source's Sent folder and record its recipients as known (G-15)."""
+    data = args.data or os.environ.get(DATA_ENV)
+    try:
+        if not data:
+            raise ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                "No data root is set.",
+                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
+            )
+        if not 1 <= args.months <= 120:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID, "--months is between 1 and 120.", field="months"
+            )
+        app = open_app(Path(data))
+    except ChamberlainError as error:
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
+    try:
+        reports = seed_all(
+            app.context.db,
+            dict(app.context.sources.mail),
+            app.context.clock,
+            months=args.months,
+        )
+    finally:
+        app.close()
+    _print(out, {"sources": [r.summary() for r in reports], "months": args.months})
+    return EXIT_OK if reports and all(r.complete for r in reports) else EXIT_FAILED
+
+
 def _viewer(args: argparse.Namespace, out: TextIO) -> int:
     """Serve the viewer. The token goes to the browser only, never to this output (G-18)."""
     data = args.data or os.environ.get(DATA_ENV)
@@ -328,6 +369,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _demo(args, stream)
     if args.command == "import":
         return _import(args, stream)
+    if args.command == "recipients":
+        return _recipients(args, stream)
     if args.command == "viewer":
         return _viewer(args, stream)
     return _call_tool(args, stream)

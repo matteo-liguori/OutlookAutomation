@@ -535,3 +535,31 @@ def test_g_old_schedule_and_update_settings_become_connection_settings(
     ]
     assert connections.updates.enabled is True
     assert connections.updates.remote == "upstream"
+
+
+def test_g15_the_import_seeds_known_recipients_from_sent_history_and_reports_counts(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    from chamberlain.connectors.fake import FakeProvider
+
+    fake = FakeProvider(clock)
+    fake.mail.add_source("mail:seeded")
+    fake.mail.add_message(
+        "mail:seeded",
+        folder_id="f-sent",
+        internet_message_id="<s1@example.org>",
+        sender="me@example.org",
+        to=("Friend@Example.org",),
+        cc=("boss@example.org",),
+    )
+    report = run_import(
+        old_root, data_root, clock=clock, secrets=secrets, mail={"mail:seeded": fake.mail}
+    )
+    assert report.recipients["mail:seeded"]["added"] == 2
+    assert report.recipients["mail:seeded"]["complete"] is True
+    stored = rows(data_root, "SELECT address, origin, grant FROM known_recipients ORDER BY 1")
+    assert [(r["address"], r["origin"], r["grant"]) for r in stored] == [
+        ("boss@example.org", "sent-history", None),
+        ("friend@example.org", "sent-history", None),
+    ]
+    assert rows(data_root, "SELECT * FROM grants WHERE title LIKE '%sent-history%'") == []
