@@ -171,3 +171,23 @@ Response: `checks[] {id, status, summary, fix?}`, `metrics?`
   the request model, result is the envelope as structured content.
 - **T-16** Both surfaces call `app.App.call(tool, raw_request)` and nothing
   else. No surface contains business logic.
+
+### MCP server
+
+The server is a small built-in stdio loop (`surface/mcp_server.py`), not the
+official `mcp` SDK. The SDK (2.3.0) installs cleanly on Python 3.14 here, so
+this is a choice, not a limit. Reasons:
+
+- The stdio surface is four methods (`initialize`, `ping`, `tools/list`,
+  `tools/call`). The loop is about 100 lines and tested end to end
+  (`tests/surface/test_mcp_stdio.py`).
+- The SDK would add some twenty packages to a local, stdio-only tool
+  (starlette, uvicorn, cryptography, pywin32, httpx and more), none of which
+  the harness uses, plus a new major version whose API is still moving.
+- It would give nothing the contract needs. Tool definitions already come from
+  the registry, errors from the error taxonomy, and the per-tool guard hook
+  lives in `App.call` (T-16), so every surface gets it. The SDK would only be
+  a second path to keep identical.
+
+Revisit if the protocol needs more than tools (resources, prompts, streaming
+or HTTP transport).

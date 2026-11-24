@@ -5,9 +5,9 @@ Contract: docs/contracts/02-tools.md (T-15, T-16). No business logic here.
 `main` serves the configured app (`chamberlain.connections.open_app`).
 
 This is a deliberately small, dependency-free loop (newline-delimited
-JSON-RPC 2.0: `initialize`, `ping`, `tools/list`, `tools/call`). Whether to
-replace it with the official MCP SDK is a wave-2 decision; the tool
-definitions below are what either would serve.
+JSON-RPC 2.0: `initialize`, `ping`, `tools/list`, `tools/call`). The official
+MCP SDK was considered and not adopted; see the "MCP server" note in
+docs/contracts/02-tools.md.
 """
 
 import argparse
