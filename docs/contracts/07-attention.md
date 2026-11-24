@@ -20,10 +20,16 @@ Kinds (closed enumeration `EventKind`):
 `card.review_due`, `grant.needed`, `grant.review_due`,
 `operation.uncertain`, `source.stale`, `source.sign_in_needed`,
 `calendar.conflict`, `user.note`, `storage.over_budget`, `storage.orphans`,
-`update.available`, `schedule.pass_due`.
+`update.available`, `schedule.pass_due`, `report.due`.
 
 States: `new -> delivered -> handled`, and `new | delivered -> expired`.
 
+- **A-1b** `report.due` is the last item of a scheduled pass: the run is
+  `running` (a scheduled session works it), no report is kept yet and the
+  harness has stored the report outline. Its subject is the outline item (06,
+  M-39), its priority is 5 so every other item comes first, it is never a
+  notice, and it expires when a report is kept. The rule `report.write` rides
+  with it.
 - **A-1** `dedupe_key` is `kind + ":" + subject` plus, where one subject can
   have several distinct instances, a discriminator fixed per kind. A
   condition detected twice is one row: at most one non-terminal event exists

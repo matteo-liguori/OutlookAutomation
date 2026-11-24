@@ -20,6 +20,7 @@ from chamberlain.memory.checks import storage_checks
 from chamberlain.memory.complex_cards import ComplexCards
 from chamberlain.memory.evidence import EvidenceService
 from chamberlain.memory.find import find
+from chamberlain.memory.labels import keep_label
 from chamberlain.memory.reading import open_handle
 from chamberlain.memory.timeutil import parse, ts
 from chamberlain.schema.base import ToolName
@@ -46,7 +47,9 @@ def _actor(ctx: Context) -> str:
 
 
 def keep(ctx: Context, request: KeepRequest) -> Result:
-    """Store a note, evidence or an artifact under an owner (T-10, M-4)."""
+    """Store a note, evidence, a label or an artifact under an owner (T-10, M-4)."""
+    if request.kind is KeepKind.LABEL:
+        return keep_label(ctx, request)
     if request.kind is KeepKind.NOTE:
         assert request.text is not None
         handle = CardService(ctx.db, ctx.clock).add_note(request.owner, request.text)

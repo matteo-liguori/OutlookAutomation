@@ -4,7 +4,7 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-38 rules, about 6,970 characters in total (budget 12,000).
+40 rules, about 7,600 characters in total (budget 12,000).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
@@ -164,6 +164,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 > Before offering or accepting a time, check every calendar, with travel and all-day entries around it. Say plainly if any calendar could not be read. Judge availability only from complete results.
 
+## calendar.label: Giving calendar events a category
+
+- Trigger: `{'tool': 'find', 'scope': 'calendar'}`; shown session; priority 25; cap 320 chars (new)
+
+> Give each upcoming event one category by why it is on the calendar: work, personal, social, travel, health, occasion or home. Add a short title when the invite is vague: what the owner is doing and with whom. Only the viewer shows it; the calendar is not changed.
+
 ## calendar.invite: Guests and answers reach other people
 
 - Trigger: `{'tool': 'find', 'scope': 'calendar'}`; shown session; priority 45; cap 200 chars
@@ -214,15 +220,21 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 ## appointments.important: Important appointments
 
-- Trigger: `{}`; shown session; priority 30; cap 250 chars
+- Trigger: `{'tool': 'card', 'op': 'add_action'}`; shown session; priority 35; cap 380 chars (version 2: the title marker, the two times and who acknowledges are now stated, and it now fires when an action is added instead of being fetch-only)
 
-> For medical or user-marked important appointments, remind the user seven, two and one day ahead, each as its own action snoozed to that day. Repeat until acknowledged. Stop at the start or on cancellation. Show one marker on the actual date.
+> For medical or user-marked important appointments, add one action per reminder, titled Important then the appointment, due at its start and snoozed to the day it should surface: seven, two and one day ahead. The owner acknowledges it in the viewer; do not finish it unless the appointment is cancelled.
 
 ## filing.preferences: Filing mail
 
 - Trigger: `{}`; shown session; priority 30; cap 250 chars
 
 > Before filing mail, establish where the user wants it to go, and keep it unread unless the owner has said otherwise. Never delete, report as junk or unsubscribe on your own. Record what was moved and what failed.
+
+## report.write: Writing the pass report
+
+- Trigger: `{'event': 'report.due'}`; shown event; priority 70; cap 380 chars (new). The event is the last item of a scheduled pass, so this is the moment the report is due.
+
+> The work is done, so write the report now. Open the item to see which sections are yours: the harness fills sources, newest times, filing counts, appointments and reviews itself. Say what the owner must do next, then what changed, and plainly what you could not cover. Keep it under the named run.
 
 ## report.summary: Writing a report
 

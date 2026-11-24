@@ -23,6 +23,7 @@ from chamberlain.attention.models import (
     OperationRow,
     SessionRow,
 )
+from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME as OUTLINE_FILENAME
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind, EventState
 from chamberlain.limits import TOTAL_ARTIFACT_BYTES
@@ -447,11 +448,29 @@ def orphan_batch(db: sqlite3.Connection) -> tuple[str | None, int]:
 def due_runs(db: sqlite3.Connection) -> list[DueRun]:
     """Passes that are due or running; the runs track writes `runs` and `schedules`."""
     rows = db.execute(
-        "SELECT r.handle, r.schedule, s.kind, r.day FROM runs r "
-        "JOIN schedules s ON s.name = r.schedule WHERE r.state IN ('due', 'running') "
-        "ORDER BY r.due_at, r.handle"
+        "SELECT r.handle, r.schedule, s.kind, r.day, r.state, "
+        "(SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
+        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename = :outline "
+        " ORDER BY a.created_at DESC LIMIT 1) AS outline, "
+        "EXISTS (SELECT 1 FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
+        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename IS NOT :outline) "
+        " AS has_report "
+        "FROM runs r JOIN schedules s ON s.name = r.schedule "
+        "WHERE r.state IN ('due', 'running') ORDER BY r.due_at, r.handle",
+        {"outline": OUTLINE_FILENAME},
     )
-    return [DueRun(r["handle"], r["schedule"], r["kind"], r["day"]) for r in rows]
+    return [
+        DueRun(
+            r["handle"],
+            r["schedule"],
+            r["kind"],
+            r["day"],
+            outline=r["outline"],
+            state=r["state"],
+            has_report=bool(r["has_report"]),
+        )
+        for r in rows
+    ]
 
 
 def open_notes(db: sqlite3.Connection, since: str) -> list[OpenNote]:

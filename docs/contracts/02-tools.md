@@ -115,6 +115,13 @@ Response: `handle`, `kind`, `size`, `sha256`, `expires_at?`.
   (`instruction.refused`, `instruction.accepted`).
 - **T-10** No owner, no storage (M-4). A note's owner MUST be an open
   action. Evidence owners are cards, actions, grants and operations.
+- **T-10b** `kind: label` gives one calendar event a category. `owner` is the
+  event's `cev_` handle and `text` is one of `work`, `personal`, `social`,
+  `travel`, `health`, `occasion` or `home`, optionally followed by a bar and a
+  short title (120 characters) that the viewer shows instead of a vague invite
+  title. It stores a row in `event_labels` (06, M-39), not an artifact, and the
+  calendar itself is never changed. A repeat replaces the earlier label.
+  A pass report is an ordinary `kind: artifact` kept under the run (M-39).
 
 ### forget
 

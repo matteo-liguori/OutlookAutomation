@@ -64,6 +64,9 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "schedules": (_D.RECORDS, _T.RUNS),
     "runs": (_D.RECORDS, _T.RUNS),
     "user_notes": (_D.EPHEMERAL, _T.RUNS),
+    "run_reports": (_D.RECORDS, _T.RUNS),
+    "local_events": (_D.RECORDS, _T.RUNS),
+    "event_labels": (_D.RECORDS, _T.MEMORY),
 }
 
 TABLE_CLASSES: dict[str, DataClass] = {name: pair[0] for name, pair in TABLES.items()}
