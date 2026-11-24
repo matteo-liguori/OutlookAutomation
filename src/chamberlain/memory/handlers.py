@@ -11,7 +11,7 @@ from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.memory import refs
-from chamberlain.memory.artifacts import ArtifactService, Kept, read_import
+from chamberlain.memory.artifacts import ArtifactService, Kept, read_import, refuse_data_root
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.checks import storage_checks
 from chamberlain.memory.evidence import EvidenceService
@@ -92,6 +92,7 @@ def _artifact_source(
     if request.text is not None:
         return request.text.encode(), ArtifactKind.TEXT, None, "text/plain"
     if request.import_path is not None:
+        refuse_data_root(ctx.data_root, request.import_path)
         data, name = read_import(request.import_path)
         return data, ArtifactKind.IMPORT, name, None
     handle = request.from_handle or ""

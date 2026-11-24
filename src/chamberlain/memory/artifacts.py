@@ -135,6 +135,17 @@ def read_import(raw_path: str) -> tuple[bytes, str]:
     return data, path.name
 
 
+def refuse_data_root(data_root: Path, raw_path: str) -> None:
+    """A file under the data root is never imported: it holds the viewer token (G-18), the
+    store and the bridge secrets, and `open` would hand the copy back to the agent."""
+    try:
+        inside = Path(raw_path).resolve().is_relative_to(data_root.resolve())
+    except (OSError, ValueError):
+        inside = True
+    if inside:
+        raise _bad_import("Files in the harness's own data folder cannot be imported.")
+
+
 def _bad_import(message: str) -> ChamberlainError:
     return ChamberlainError(ErrorCode.REQUEST_INVALID, message, field="import_path")
 

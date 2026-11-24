@@ -6,6 +6,8 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain schema <tool>           print a tool's request and response schema
     chamberlain prompt                  print the standing prompt
     chamberlain tick                    run one tick for the operating system scheduler
+    chamberlain viewer [--port N] [--no-open]
+                                        serve the local viewer on 127.0.0.1 (never prints the token)
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
     chamberlain config validate|show    check or print config/connections.yaml (no secrets)
     chamberlain import <old data root>  one-shot, read-only import of the old harness
@@ -30,11 +32,13 @@ from chamberlain.connections import (
 )
 from chamberlain.importer.run import run_import
 from chamberlain.ports.clock import SystemClock
+from chamberlain.runs.plan import due_passes
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Reply, error_reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.schema.registry import BY_NAME, STANDING_PROMPT, TOOLS, get_tool
 from chamberlain.schema.tools import DoctorCheck
+from chamberlain.surface.viewer.server import launch
 
 DATA_ENV = "CHAMBERLAIN_DATA"
 SESSION_ENV = "CHAMBERLAIN_SESSION"
@@ -75,6 +79,11 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser(
         "tick", help="run one tick (exit status 10: events wait and no session is active)"
     )
+    viewer = commands.add_parser(
+        "viewer", help="serve the local viewer on 127.0.0.1 and open it in the browser"
+    )
+    viewer.add_argument("--port", type=int, default=0, help="port (default: a random free one)")
+    viewer.add_argument("--no-open", action="store_true", help="do not open the browser")
     for spec in TOOLS:
         tool = commands.add_parser(spec.name.value, help=spec.description)
         tool.add_argument("--json", dest="request", default="{}", help="the request as JSON")
@@ -154,9 +163,10 @@ def _tick(args: argparse.Namespace, out: TextIO) -> int:
         return EXIT_FAILED
     try:
         ran, wake = run_tick(app)
+        due = due_passes(app.context)
     finally:
         app.close()
-    _print(out, {"ran": ran, "wake": wake != 0})
+    _print(out, {"ran": ran, "wake": wake != 0, "due": due})
     return wake
 
 
@@ -221,6 +231,29 @@ def _import(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _viewer(args: argparse.Namespace, out: TextIO) -> int:
+    """Serve the viewer. The token goes to the browser only, never to this output (G-18)."""
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        reply = error_reply(
+            ChamberlainError(
+                ErrorCode.CONFIG_INVALID,
+                "No data root is set.",
+                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
+            )
+        )
+        _print(out, reply.model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
+    viewer = launch(Path(data), port=args.port, open_browser=not args.no_open, out=out)
+    try:
+        viewer.serve_forever()
+    except KeyboardInterrupt:
+        out.write("Viewer stopped." + chr(10))
+    finally:
+        viewer.close()
+    return EXIT_OK
+
+
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     stream = out or sys.stdout
     args = _parser().parse_args(argv)
@@ -244,6 +277,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _config(args, stream)
     if args.command == "import":
         return _import(args, stream)
+    if args.command == "viewer":
+        return _viewer(args, stream)
     return _call_tool(args, stream)
 
 

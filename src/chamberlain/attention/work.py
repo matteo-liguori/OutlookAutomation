@@ -32,6 +32,18 @@ def next_step(event: EventRow) -> NextStep:
             args={"check": "storage", "metrics": True},
             why="See what is using the space.",
         )
+    if kind is EventKind.SCHEDULE_PASS_DUE:
+        return NextStep(
+            tool=ToolName.NEXT,
+            args={},
+            why="Do the pass. Keep its short report with the run named in the item.",
+        )
+    if kind is EventKind.USER_NOTE:
+        return NextStep(
+            tool=ToolName.NEXT,
+            args={},
+            why="The note is in the line above. Act on it, then mark it handled.",
+        )
     if subject is not None:
         return NextStep(
             tool=ToolName.OPEN,

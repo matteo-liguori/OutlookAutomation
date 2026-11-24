@@ -10,10 +10,12 @@ from chamberlain.attention.models import (
     ActionRow,
     BudgetRow,
     CardRow,
+    DueRun,
     EventAttrs,
     EventDraft,
     EventRow,
     GrantRow,
+    OpenNote,
     OperationRow,
     SessionRow,
 )
@@ -395,6 +397,28 @@ def orphan_batch(db: sqlite3.Connection) -> tuple[str | None, int]:
         "SELECT COUNT(*) AS n FROM quarantine WHERE state = 'held' AND found_at = ?", (scan,)
     ).fetchone()
     return scan, int(row["n"])
+
+
+def due_runs(db: sqlite3.Connection) -> list[DueRun]:
+    """Passes that are due or running; the runs track writes `runs` and `schedules`."""
+    rows = db.execute(
+        "SELECT r.handle, r.schedule, s.kind, r.day FROM runs r "
+        "JOIN schedules s ON s.name = r.schedule WHERE r.state IN ('due', 'running') "
+        "ORDER BY r.due_at, r.handle"
+    )
+    return [DueRun(r["handle"], r["schedule"], r["kind"], r["day"]) for r in rows]
+
+
+def open_notes(db: sqlite3.Connection, since: str) -> list[OpenNote]:
+    rows = db.execute(
+        "SELECT id, text FROM user_notes WHERE state = 'open' AND created_at >= ? ORDER BY id",
+        (since,),
+    )
+    return [OpenNote(int(r["id"]), r["text"]) for r in rows]
+
+
+def update_tag(db: sqlite3.Connection) -> str | None:
+    return _system(db, "runs.update_tag") or None
 
 
 def last_tick(db: sqlite3.Connection) -> str | None:
