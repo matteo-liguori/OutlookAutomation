@@ -178,7 +178,7 @@ def test_doctor_reports_the_schema_checks(ctx: Context) -> None:
 def test_wiring_collects_the_track_modules(clock: ManualClock) -> None:
     handlers, hooks = load_tracks()
     assert ToolName.DOCTOR in handlers
-    assert hooks is None
+    assert hooks is not None
     assert len(TRACK_MODULES) == 3
 
 

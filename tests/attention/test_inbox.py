@@ -8,7 +8,7 @@ from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from chamberlain.app.context import Context
-from chamberlain.attention import inbox, repo
+from chamberlain.attention import inbox, repo, tick
 from chamberlain.attention.models import EventAttrs, EventDraft
 from chamberlain.domain.events import EventKind
 from chamberlain.ports.clock import ManualClock
@@ -195,3 +195,85 @@ def test_a1_a3_random_sequences_never_duplicate_or_lose_a_true_condition(
                     assert draft(k).dedupe_key not in keys_live
     finally:
         db.close()
+
+
+GRANT = EventDraft(EventKind.GRANT_REVIEW_DUE, "grant_0000000000000001", "g", 60)
+OP = EventDraft(EventKind.OPERATION_UNCERTAIN, "op_0000000000000001", "o", 95)
+BOTH = frozenset({EventKind.GRANT_REVIEW_DUE, EventKind.OPERATION_UNCERTAIN})
+steps_strategy = st.lists(
+    st.sampled_from(["on", "off", "deliver", "handle", "wait", "wait_long"]), max_size=40
+)
+
+
+@settings(max_examples=80, deadline=None)
+@given(steps_strategy)
+def test_a3_a4_quiet_periods_and_unhandleable_events_hold_in_random_runs(steps: list[str]):
+    clock = ManualClock()
+    db = connect(MEMORY)
+    migrate(db, clock, backup_dir=None)
+    is_true = False
+    handled_at_hours: float | None = None
+    elapsed = 0.0
+    try:
+        for step in steps:
+            if step in ("on", "off"):
+                is_true = step == "on"
+                drafts = [OP, GRANT] if is_true else []
+                inbox.reconcile(db, clock, drafts, evaluated=BOTH)
+                if not is_true:
+                    handled_at_hours = None
+                keys = {e.kind for e in repo.live_events(db)}
+                if is_true:
+                    assert EventKind.OPERATION_UNCERTAIN in keys
+                    quiet = handled_at_hours is not None and elapsed - handled_at_hours < 168
+                    assert (EventKind.GRANT_REVIEW_DUE in keys) is not quiet
+                else:
+                    assert keys == set()
+            elif step == "deliver":
+                inbox.deliver(db, clock, "ses_aaaaaaaaaaaaaaaa", repo.live_events(db))
+            elif step == "handle":
+                for event in repo.live_events(db):
+                    closed = inbox.handle_events(db, clock, [event.handle])
+                    assert (event.kind is EventKind.GRANT_REVIEW_DUE) == bool(closed)
+                    if closed:
+                        handled_at_hours = elapsed
+            else:
+                hours = 30.0 if step == "wait" else 200.0
+                clock.advance(hours=hours)
+                elapsed += hours
+    finally:
+        db.close()
+
+
+def test_a2_g8_a_reviewed_grant_stops_being_due(ctx: Context, clock: ManualClock):
+    ctx.db.execute(
+        "INSERT INTO sources (id, kind, connector, created_at, updated_at) "
+        "VALUES ('mail:test', 'mail', 'fake', 'x', 'x')"
+    )
+    ctx.db.execute(
+        "INSERT INTO grants (handle, kind, state, source_id, title, requirement, content_sha256, "
+        "proposed_at, review_at) VALUES ('grant_0000000000000001', 'standing', 'active', "
+        "'mail:test', 'g', 'none', ?, 'x', '2026-01-01T00:00:00Z')",
+        ("a" * 64,),
+    )
+    tick.tick(ctx, force=True)
+    assert [e.kind.value for e in repo.live_events(ctx.db)] == ["grant.review_due"]
+    ctx.db.execute("UPDATE grants SET review_at = '2027-01-01T00:00:00Z'")
+    tick.tick(ctx, force=True)
+    assert repo.live_events(ctx.db) == []
+
+
+def test_a2_a_storage_warning_clears_when_the_budget_is_met(ctx: Context):
+    def set_budget(value: str) -> None:
+        ctx.db.execute(
+            "INSERT INTO system_state (key, value, updated_at) VALUES "
+            "('memory.over_budget', ?, 'x') ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (value,),
+        )
+
+    set_budget("total:600/500")
+    tick.tick(ctx, force=True)
+    assert [e.kind.value for e in repo.live_events(ctx.db)] == ["storage.over_budget"]
+    set_budget("0")
+    tick.tick(ctx, force=True)
+    assert repo.live_events(ctx.db) == []
