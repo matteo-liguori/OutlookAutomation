@@ -33,8 +33,9 @@ function advertisedCapabilities(): string[] {
     mark_read: !!m.messages?.update,
     contacts: !!m.addressBooks,
     refresh: !!m.harnessMail?.syncFolders,
+    calendar: calendarSupported(),
   };
-  return REQUIRED_CAPABILITIES.filter((name) => have[name]);
+  return ADVERTISED_CAPABILITIES.filter((name) => have[name]);
 }
 
 function post(frame: unknown): void {
@@ -107,6 +108,18 @@ async function runCommand(frame: RequestFrame, ctx: Ctx): Promise<{ result: unkn
       return plain(cmdReconcileMove(args));
     case "reconcile_mark_read":
       return plain(cmdReconcileMarkRead(args));
+    case "calendar_list":
+      return plain(cmdCalendarList());
+    case "calendar_query":
+      return plain(cmdCalendarQuery(args));
+    case "calendar_read":
+      return plain(cmdCalendarRead(args));
+    case "calendar_create":
+      return plain(cmdCalendarWrite(args, ctx, "create"));
+    case "calendar_update":
+      return plain(cmdCalendarWrite(args, ctx, "update"));
+    case "calendar_delete":
+      return plain(cmdCalendarWrite(args, ctx, "delete"));
     default:
       return fail("unknown_command", "No such command.");
   }

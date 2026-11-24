@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Chamberlain Thunderbird Bridge",
   "version": "2.0.0",
-  "description": "Local mail bridge for Chamberlain (protocol 2). Composer control and folder sync use a narrow privileged helper.",
+  "description": "Local mail and calendar bridge for Chamberlain (protocol 2). Composer control, folder sync and calendar access use narrow privileged helpers.",
   "browser_specific_settings": {
     "gecko": {
       "id": "chamberlain-bridge@chamberlain.local",
@@ -31,6 +31,14 @@
         "scopes": ["addon_parent"],
         "paths": [["harnessMail"]],
         "script": "experiment/api.js"
+      }
+    },
+    "harnessCalendar": {
+      "schema": "experiment/calendar_schema.json",
+      "parent": {
+        "scopes": ["addon_parent"],
+        "paths": [["harnessCalendar"]],
+        "script": "experiment/calendar_api.js"
       }
     }
   }

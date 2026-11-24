@@ -19,6 +19,8 @@ from pathlib import Path
 import pytest
 
 from chamberlain.connectors.thunderbird import frames, native_host, protocol
+from chamberlain.connectors.thunderbird.calendar import CalendarBridgeFailure
+from chamberlain.connectors.thunderbird.calendar_bridge import ClientCalendarBridge
 from chamberlain.connectors.thunderbird.client import (
     BridgeClient,
     BridgeFailure,
@@ -59,7 +61,7 @@ FAST = Deadlines(
     client_read=1.5,
     client_write=1.5,
 )
-ALL_CAPS = tuple(sorted(c.value for c in protocol.Capability))
+ALL_CAPS = tuple(sorted(c.value for c in protocol.REQUIRED_CAPABILITIES))
 ID = "req_0123456789"
 
 Handler = Callable[[RequestFrame | ChunkFrame, "Addon"], None]
@@ -276,10 +278,12 @@ def test_b2_a_command_outside_the_list_is_refused_by_the_host(tmp_path: Path) ->
 
 def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
     gate = threading.Event()
+    arrived = threading.Event()
 
     def hold(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
         if isinstance(frame, RequestFrame):
-            gate.wait(3)
+            arrived.set()
+            gate.wait(10)
             status_handler(frame, addon)
 
     with bridge(tmp_path, hold) as env:
@@ -290,7 +294,7 @@ def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
                 say(connection, hello_frame())
                 assert isinstance(hear(connection), protocol.Welcome)
             say(first, RequestFrame(v=2, id=ID, cmd="status", args={}))
-            threading.Event().wait(0.2)
+            assert arrived.wait(10), "the first request never reached the add-on"
             say(second, RequestFrame(v=2, id=ID, cmd="status", args={}))
             answer = hear(second)
             assert isinstance(answer, Refusal)
@@ -606,3 +610,59 @@ def test_b10_an_optional_capability_does_not_disturb_the_mail_handshake(tmp_path
         answer = hear(connection)
         assert isinstance(answer, Refusal)
         assert answer.code is RefusalCode.CAPABILITY_MISSING
+
+
+# --- the calendar adapter over the client (CalendarBridge protocol) --------------------------
+
+UPDATE_ARGS = {
+    "calendar_id": "cal1",
+    "event_id": "e1",
+    "expected_icalendar": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+    "icalendar": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
+}
+
+
+def test_b10_the_calendar_adapter_needs_the_capability_and_sends_nothing_without_it(
+    tmp_path: Path,
+) -> None:
+    with bridge(tmp_path, status_handler) as env:
+        adapter = ClientCalendarBridge(env.client)
+        assert "calendar" not in adapter.hello().capabilities
+        with pytest.raises(CalendarBridgeFailure) as raised:
+            adapter.request("calendar_list", {})
+        assert raised.value.proven_not_applied
+        assert not raised.value.sent
+        assert env.addon.received == []
+
+
+def test_b10_the_calendar_adapter_keeps_the_bridges_words_about_mutation(tmp_path: Path) -> None:
+    def refuse(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
+        if isinstance(frame, RequestFrame):
+            possible = frame.args.get("event_id") == "e2"
+            addon.error(frame, BridgeErrorCode.CHANGED, "possible" if possible else "none")
+
+    with bridge(tmp_path, refuse, caps=(*ALL_CAPS, "calendar")) as env:
+        adapter = ClientCalendarBridge(env.client)
+        assert "calendar" in adapter.hello().capabilities
+        with pytest.raises(CalendarBridgeFailure) as clean:
+            adapter.request("calendar_update", UPDATE_ARGS, write=True)
+        assert (clean.value.code, clean.value.sent, clean.value.mutation) == (
+            "changed",
+            True,
+            "none",
+        )
+        assert clean.value.proven_not_applied
+        with pytest.raises(CalendarBridgeFailure) as unsure:
+            adapter.request("calendar_update", UPDATE_ARGS | {"event_id": "e2"}, write=True)
+        assert unsure.value.mutation == "possible"
+        assert not unsure.value.proven_not_applied
+        with pytest.raises(CalendarBridgeFailure) as malformed:
+            adapter.request("calendar_update", {"calendar_id": "cal1"}, write=True)
+        assert not malformed.value.sent
+
+
+def test_b10_the_calendar_adapter_refuses_a_command_outside_the_list() -> None:
+    adapter = ClientCalendarBridge(BridgeClient(RuntimeConnector(Path("."))))
+    with pytest.raises(CalendarBridgeFailure) as raised:
+        adapter.request("eval", {"code": "1"})
+    assert not raised.value.sent

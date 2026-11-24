@@ -66,6 +66,32 @@ interface HarnessMailApi {
   closeComposer(tabId: number, accountId: string, mailbox: string): Promise<any>;
 }
 
+interface RawCalendar {
+  id: string;
+  name: string;
+  type: string;
+  read_only: boolean;
+  disabled: boolean;
+}
+
+interface RawCalendarItem {
+  id: string;
+  recurrence_id: string | null;
+  icalendar: string;
+  invited: boolean;
+}
+
+interface HarnessCalendarApi {
+  isOffline(): Promise<boolean>;
+  listCalendars(): Promise<RawCalendar[]>;
+  queryEvents(calendarId: string, startMs: number, endMs: number, limit: number): Promise<{ items: RawCalendarItem[]; truncated: boolean }>;
+  getEvent(calendarId: string, eventId: string): Promise<RawCalendarItem | null>;
+  inspectEvent(icalendar: string): Promise<{ ok: boolean; error?: string; id?: string; invited?: boolean }>;
+  addEvent(calendarId: string, icalendar: string): Promise<unknown>;
+  modifyEvent(calendarId: string, eventId: string, icalendar: string): Promise<unknown>;
+  deleteEvent(calendarId: string, eventId: string): Promise<unknown>;
+}
+
 declare const messenger: {
   runtime: { getBrowserInfo(): Promise<{ version: string }>; connectNative(name: string): TbPort };
   accounts: { list(includeFolders: boolean): Promise<TbAccount[]>; get(id: string, includeFolders: boolean): Promise<TbAccount | null> };

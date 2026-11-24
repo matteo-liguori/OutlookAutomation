@@ -35,7 +35,11 @@ def test_addon_typechecks() -> None:
     assert done.returncode == 0, done.stdout[-3000:]
 
 
-SOURCES = [*sorted((ADDON_DIR / "src").glob("*.ts")), ADDON_DIR / "experiment" / "api.js"]
+SOURCES = [
+    *sorted((ADDON_DIR / "src").glob("*.ts")),
+    ADDON_DIR / "experiment" / "api.js",
+    ADDON_DIR / "experiment" / "calendar_api.js",
+]
 FORBIDDEN = [
     r"\beval\s*\(",
     r"new\s+Function\b",
@@ -70,3 +74,21 @@ def test_b2_the_experiment_api_exposes_only_five_named_functions() -> None:
     names = set(re.findall(r"^\s{8}async (\w+)\(", api, re.MULTILINE))
     assert names == {"syncFolders", "holdComposer", "openDraft", "findComposers", "closeComposer"}
     assert "execute(" not in api
+
+
+def test_b2_the_calendar_helper_exposes_only_eight_named_functions() -> None:
+    api = (ADDON_DIR / "experiment" / "calendar_api.js").read_text(encoding="utf-8")
+    names = set(re.findall(r"^\s{8}async (\w+)\(", api, re.MULTILINE))
+    assert names == {
+        "isOffline",
+        "listCalendars",
+        "queryEvents",
+        "getEvent",
+        "inspectEvent",
+        "addEvent",
+        "modifyEvent",
+        "deleteEvent",
+    }
+    assert "execute(" not in api
+    schema = (ADDON_DIR / "experiment" / "calendar_schema.json").read_text(encoding="utf-8")
+    assert set(re.findall(r'"name": "(\w+)",\s*"type": "function"', schema)) == names

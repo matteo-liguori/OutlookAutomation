@@ -1,0 +1,63 @@
+[
+  {
+    "namespace": "harnessCalendar",
+    "functions": [
+      { "name": "isOffline", "type": "function", "async": true, "parameters": [] },
+      { "name": "listCalendars", "type": "function", "async": true, "parameters": [] },
+      {
+        "name": "queryEvents",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "calendarId", "type": "string" },
+          { "name": "startMs", "type": "number" },
+          { "name": "endMs", "type": "number" },
+          { "name": "limit", "type": "integer" }
+        ]
+      },
+      {
+        "name": "getEvent",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "calendarId", "type": "string" },
+          { "name": "eventId", "type": "string" }
+        ]
+      },
+      {
+        "name": "inspectEvent",
+        "type": "function",
+        "async": true,
+        "parameters": [{ "name": "icalendar", "type": "string" }]
+      },
+      {
+        "name": "addEvent",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "calendarId", "type": "string" },
+          { "name": "icalendar", "type": "string" }
+        ]
+      },
+      {
+        "name": "modifyEvent",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "calendarId", "type": "string" },
+          { "name": "eventId", "type": "string" },
+          { "name": "icalendar", "type": "string" }
+        ]
+      },
+      {
+        "name": "deleteEvent",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "calendarId", "type": "string" },
+          { "name": "eventId", "type": "string" }
+        ]
+      }
+    ]
+  }
+]

@@ -28,7 +28,15 @@ def test_b2_the_command_list_is_the_one_in_the_brief() -> None:
     reads |= {"refresh", "contacts"}
     writes = {"send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read"}
     twins = {f"reconcile_{name}" for name in writes - {"send"}} | {"reconcile_send"}
-    assert {c.value for c in Command} == reads | writes | twins
+    calendar = {
+        f"calendar_{name}" for name in ("list", "query", "read", "create", "update", "delete")
+    }
+    assert {c.value for c in Command} == reads | writes | twins | calendar
+    assert {c.value for c in protocol.WRITE_COMMANDS} == writes | {
+        "calendar_create",
+        "calendar_update",
+        "calendar_delete",
+    }
 
 
 def test_b2_a_command_outside_the_list_is_refused() -> None:

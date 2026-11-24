@@ -13,7 +13,7 @@ import json
 import secrets
 import socket
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Protocol, cast
@@ -229,14 +229,23 @@ class BridgeClient:
 
     # --- handshake ----------------------------------------------------------------
 
-    def _handshake(self, connection: Connection) -> Welcome:
+    def hello(self) -> Welcome:
+        """Connect, handshake without extra requirements, and say what the add-on offers."""
+        connection = self._connector.open(timeout=5)
+        try:
+            return self._handshake(connection)
+        finally:
+            connection.close()
+
+    def _handshake(self, connection: Connection, require: Iterable[str] = ()) -> Welcome:
+        needed = {c.value for c in REQUIRED_CAPABILITIES} | set(require)
         try:
             hello = ClientHello(
                 v=PROTOCOL_VERSION,
                 id=self._new_id(),
                 token=self._connector.token(),
                 client_version=CLIENT_VERSION,
-                require=tuple(sorted(c.value for c in REQUIRED_CAPABILITIES)),
+                require=tuple(sorted(needed)),
             )
             connection.settimeout(10)
             frames.write_frame(connection, protocol.dump_frame(hello), frames.LOCAL_LIMIT)
@@ -275,7 +284,7 @@ class BridgeClient:
             raise BridgeFailure(
                 ErrorCode.SOURCE_UNAVAILABLE, "The bridge answered unexpectedly.", sent=False
             )
-        missing = {c.value for c in REQUIRED_CAPABILITIES} - set(answer.capabilities)
+        missing = needed - set(answer.capabilities)
         if answer.v != PROTOCOL_VERSION or missing:
             raise BridgeFailure(
                 ErrorCode.SOURCE_UNAVAILABLE,
@@ -294,13 +303,18 @@ class BridgeClient:
         args: Model,
         *,
         payloads: Mapping[str, bytes] | None = None,
+        require: Iterable[str] = (),
     ) -> Reply:
-        """Send one request. `payloads` maps each attachment key to its bytes."""
+        """Send one request. `payloads` maps each attachment key to its bytes.
+
+        `require` names optional add-on capabilities this request needs (the host refuses
+        the connection when the add-on lacks one).
+        """
         is_write = cmd in protocol.WRITE_COMMANDS
         limit = self.deadlines.client_write if is_write else self.deadlines.client_read
         connection = self._connector.open(timeout=5)
         try:
-            self._handshake(connection)
+            self._handshake(connection, require)
             started = self._monotonic()
             request_id = self._new_id()
             request = RequestFrame(
