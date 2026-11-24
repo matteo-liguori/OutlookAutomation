@@ -75,3 +75,31 @@ def test_s16_a_demo_profile_works_with_the_network_closed(
     finally:
         app.close()
     assert load_connections(data_root).sources["mail:demo"].kind == "demo"
+
+
+def _doctor(data_root: Path, profile: dict[str, Any]) -> dict[str, str]:
+    write_profile(data_root, profile)
+    app = open_app(data_root)
+    try:
+        reply = app.call("doctor", {"check": "sources"})
+    finally:
+        app.close()
+    assert reply.ok
+    assert reply.data is not None
+    return {c.id: c.status for c in reply.data.checks}  # type: ignore[attr-defined]
+
+
+def test_s16_doctor_is_calm_about_a_demo_only_profile(data_root: Path) -> None:
+    assert _doctor(data_root, _profile())["sources.demo"] == "ok"
+
+
+def test_s16_doctor_warns_when_demo_and_real_sources_are_mixed(data_root: Path) -> None:
+    mixed = {
+        "version": 1,
+        "sources": {
+            "mail:demo": {"kind": "demo"},
+            "calendar:owl": {"kind": "owl", "calendar_id": "cal-1"},
+        },
+    }
+    checks = _doctor(data_root, mixed)
+    assert checks["sources.demo_mixed"] == "warn"
