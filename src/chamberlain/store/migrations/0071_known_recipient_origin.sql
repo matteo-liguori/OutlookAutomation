@@ -1,4 +1,4 @@
--- 0031 writes track: a recipient can become known from Sent history, not only from a
+-- 0071 writes track: a recipient can become known from Sent history, not only from a
 -- human-confirmed grant. `grant` is now optional and `origin` says how the row arose.
 -- Contract: docs/contracts/05-grants.md (G-15), owner decision 2026-11-24.
 

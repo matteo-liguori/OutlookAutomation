@@ -1,4 +1,4 @@
--- 0031 writes track: the `abandoned` state, and what an old journal's operation shows.
+-- 0070 writes track: the `abandoned` state, and what an old journal's operation shows.
 -- Contract: docs/contracts/04-writes.md (owner ruling: the owner is not asked to settle what the
 -- harness or agent can). `abandoned` ends an uncertain operation that nothing can resend; it frees
 -- no grant. `summary_json` is display and matching only (never an intent), `attempted_at` is when
