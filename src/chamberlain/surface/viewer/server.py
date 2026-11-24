@@ -18,7 +18,7 @@ from typing import TextIO
 from wsgiref.simple_server import WSGIRequestHandler, WSGIServer, make_server
 
 from chamberlain.app.core import App
-from chamberlain.app.wiring import build_app
+from chamberlain.connections import load_connections, open_app, policy_of
 from chamberlain.ports.clock import Clock
 from chamberlain.surface.viewer.app import ViewerApp
 from chamberlain.writes.confirm import create_token
@@ -132,14 +132,20 @@ def launch(
     policy: WritePolicy | None = None,
     app_factory: AppFactory | None = None,
 ) -> Viewer:
-    """Bind, create the token and open the page; the caller then calls `serve_forever`."""
+    """Bind, create the token and open the page; the caller then calls `serve_forever`.
+
+    The app is built by `connections.open_app`, so the viewer runs on the configured write
+    policy, schedules and update check. Without `policy` the profile's own is used.
+    """
+    if policy is None and app_factory is None:
+        policy = policy_of(load_connections(data_root))
     server = _bind(port)
     token = create_token(data_root)
 
-    def open_app() -> App:
-        return build_app(data_root, clock=clock, policy=policy)
+    def configured_app() -> App:
+        return open_app(data_root, clock=clock)
 
-    viewer = Viewer(server, data_root, token, app_factory or open_app, policy)
+    viewer = Viewer(server, data_root, token, app_factory or configured_app, policy)
     if out is not None:
         out.write(f"Viewer: {viewer.url}\n")
     show = opener or webbrowser.open

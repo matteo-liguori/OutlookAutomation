@@ -165,6 +165,16 @@ def build_router(
     return SourceRouter(mail=mail, calendar=calendar, contacts=contacts)
 
 
+def policy_of(connections: Connections) -> WritePolicy:
+    """The write policy the profile configures, in the profile's time zone."""
+    return WritePolicy(
+        send_known=connections.write_policy.send_known,
+        other=connections.write_policy.other,
+        sends_per_hour=connections.write_policy.sends_per_hour,
+        zone=connections.timezone,
+    )
+
+
 def build_runtime(
     connections: Connections,
     data_root: Path,
@@ -172,12 +182,7 @@ def build_runtime(
     *,
     secrets: SecretStore | None = None,
 ) -> Runtime:
-    policy = WritePolicy(
-        send_known=connections.write_policy.send_known,
-        other=connections.write_policy.other,
-        sends_per_hour=connections.write_policy.sends_per_hour,
-        zone=connections.timezone,
-    )
+    policy = policy_of(connections)
     budgets = Budgets(
         per_card_bytes=connections.budgets.per_card_bytes,
         total_bytes=connections.budgets.total_bytes,

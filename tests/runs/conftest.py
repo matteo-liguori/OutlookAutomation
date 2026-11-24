@@ -20,7 +20,9 @@ from chamberlain.attention import sessions
 
 @pytest.fixture(autouse=True)
 def utc_guard(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sessions, "_local_day", lambda moment: moment.astimezone(UTC).date())
+    monkeypatch.setattr(
+        sessions, "_local_day", lambda moment, zone=None: moment.astimezone(UTC).date()
+    )
 
 
 @pytest.fixture

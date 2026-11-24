@@ -101,6 +101,25 @@ class BudgetsConfig(Model):
     total_bytes: int = Field(default=TOTAL_ARTIFACT_BYTES, ge=1)
 
 
+class ScheduleConfig(Model):
+    """One pass the person wants, applied to the schedule record at every start."""
+
+    name: str = Field(pattern=r"^[a-z0-9_.-]{1,40}$")
+    kind: Literal["mail", "calendar"]
+    at: str = Field(pattern=r"^([01][0-9]|2[0-3]):[0-5][0-9]$")
+    zone: str | None = None
+    """Defaults to the profile's `timezone`."""
+    weekdays: tuple[int, ...] = Field(default=(1, 2, 3, 4, 5, 6, 7), min_length=1)
+    enabled: bool = True
+
+
+class UpdatesConfig(Model):
+    """The daily check for a newer tag. Off unless enabled; it only reads tag names."""
+
+    enabled: bool = False
+    remote: str = Field(default="origin", min_length=1)
+
+
 class Connections(Model):
     version: Literal[1] = PROFILE_VERSION
     timezone: str = "UTC"
@@ -108,6 +127,8 @@ class Connections(Model):
     budgets: BudgetsConfig = BudgetsConfig()
     bridge_dir: str | None = None
     """Where the Thunderbird bridge keeps its runtime file; default `<data root>/bridge`."""
+    schedules: tuple[ScheduleConfig, ...] = ()
+    updates: UpdatesConfig = UpdatesConfig()
     sources: dict[SourceId, SourceConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")

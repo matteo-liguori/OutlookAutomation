@@ -244,7 +244,11 @@ def _viewer(args: argparse.Namespace, out: TextIO) -> int:
         )
         _print(out, reply.model_dump(mode="json", exclude_none=True))
         return EXIT_FAILED
-    viewer = launch(Path(data), port=args.port, open_browser=not args.no_open, out=out)
+    try:
+        viewer = launch(Path(data), port=args.port, open_browser=not args.no_open, out=out)
+    except ChamberlainError as error:
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
     try:
         viewer.serve_forever()
     except KeyboardInterrupt:

@@ -2,6 +2,7 @@
 """Sessions: docs/contracts/07-attention.md (A-10) and board ruling R10."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from chamberlain.app.core import App
@@ -143,6 +144,20 @@ def test_r10_a_scheduled_start_for_another_day_is_stopped_without_resume(
     assert "session.stopped" in [g.id for g in wrong.guidance]
     today = clock.now().astimezone().date().isoformat()
     assert app.call("start", {"purpose": "scheduled", "scheduled_day": today}).ok
+
+
+def test_r10_the_wrong_day_guard_uses_the_configured_zone_not_the_os_zone(
+    app: App, clock: ManualClock, data_root: Path
+):
+    (data_root / "config").mkdir(parents=True)
+    (data_root / "config" / "connections.yaml").write_text(
+        "version: 1\ntimezone: Pacific/Auckland\n", encoding="utf-8"
+    )
+    clock.set(datetime(2026, 1, 5, 20, 0, tzinfo=UTC))  # already 6 January in Auckland
+    behind = app.call("start", {"purpose": "scheduled", "scheduled_day": "2026-01-05"})
+    assert behind.error is not None
+    assert behind.error.code is ErrorCode.SESSION_STALE
+    assert app.call("start", {"purpose": "scheduled", "scheduled_day": "2026-01-06"}).ok
 
 
 def test_r10_without_a_scheduled_day_a_start_is_a_live_chat(app: App, clock: ManualClock):

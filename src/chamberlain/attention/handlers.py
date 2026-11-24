@@ -75,6 +75,7 @@ def start(ctx: Context, request: StartRequest) -> Result:
         agent=request.agent or "",
         purpose=request.purpose,
         resume=request.resume,
+        zone=sessions.configured_zone(ctx.data_root),
     )
     work, more = _offer(ctx, row.handle, START_WORK_ITEMS)
     response = StartResponse(
@@ -92,7 +93,9 @@ def next_work(ctx: Context, request: NextRequest) -> Result:
     if session is None:
         raise ChamberlainError(ErrorCode.SESSION_REQUIRED, "This tool needs a session.")
     row = repo.get_session(ctx.db, session)
-    if row is not None and sessions.is_stale_scheduled(row, ctx.clock):
+    if row is not None and sessions.is_stale_scheduled(
+        row, ctx.clock, sessions.configured_zone(ctx.data_root)
+    ):
         raise sessions.stop_error()
     if request.handled:
         inbox.handle_events(ctx.db, ctx.clock, request.handled)

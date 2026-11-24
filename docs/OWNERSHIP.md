@@ -12,6 +12,8 @@ this file is the rest.
 | (b) attention | `docs/waves/wave-1/b-attention.md` | `src/chamberlain/attention/`, `src/chamberlain/guidance/`, `tests/attention/`, `tests/guidance/`, migrations `0020`-`0029` |
 | (c) writes | `docs/waves/wave-1/c-writes.md` | `src/chamberlain/writes/`, `src/chamberlain/domain/grant_rules.py`, `tests/writes/`, migrations `0030`-`0039` |
 | (d) thunderbird | `docs/waves/wave-1/d-thunderbird.md` | `src/chamberlain/connectors/thunderbird/` (including `addon/`), `docs/contracts/12-bridge-v2.md`, `tests/thunderbird/`, add-on build files under `src/chamberlain/connectors/thunderbird/addon/` |
+| (g) importer and config | `docs/waves/wave-2/g-importer.md` | `src/chamberlain/connections/`, `src/chamberlain/importer/`, `tests/connections/`, `tests/importer/` |
+| (f) viewer and runs | `docs/waves/wave-2/f-viewer-runs.md` | `src/chamberlain/runs/`, `src/chamberlain/surface/viewer/`, `tests/runs/`, `tests/viewer/`, migration `0050` |
 
 A track may add new modules inside its own directories without telling
 anyone. A new module that another track will import or a column another

@@ -147,3 +147,52 @@ def test_tick_prints_the_passes_a_wake_adapter_should_start(tmp_path: Path) -> N
     out = io.StringIO()
     cli.main(["--data", str(tmp_path / "data"), "tick"], out)
     assert json.loads(out.getvalue()) == {"ran": True, "wake": False, "due": []}
+
+
+def test_the_viewer_runs_on_the_configured_app(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """It gets the profile's policy and schedules through `open_app`, like every surface."""
+    from chamberlain.connections import open_app
+
+    opened = threading.Event()
+
+    def spy(data_root: Path, **kwargs: object) -> object:
+        app = open_app(data_root, **kwargs)  # type: ignore[arg-type]
+        opened.set()
+        return app
+
+    monkeypatch.setattr(server, "open_app", spy)
+    root = tmp_path / "data"
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "connections.yaml").write_text(
+        "version: 1\n"
+        "timezone: Europe/London\n"
+        "write_policy: {sends_per_hour: 3}\n"
+        "schedules:\n"
+        "  - {name: morning, kind: mail, at: '07:30', weekdays: [1, 2, 3]}\n",
+        encoding="utf-8",
+    )
+    with serving(root, []) as (viewer, _):
+        assert viewer._policy is not None
+        assert viewer._policy.zone == "Europe/London"
+        assert viewer._policy.sends_per_hour == 3
+        assert opened.wait(10)
+    app = open_app(root)
+    try:
+        rows = app.context.db.execute("SELECT name, at_local, zone, weekdays FROM schedules")
+        assert [tuple(row) for row in rows] == [("morning", "07:30", "Europe/London", "1,2,3")]
+    finally:
+        app.close()
+
+
+def test_a_malformed_profile_stops_the_viewer_with_an_error_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data"
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "connections.yaml").write_text("version: 2\n", encoding="utf-8")
+    out = io.StringIO()
+    code = cli.main(["--data", str(root), "viewer", "--no-open"], out)
+    assert code == cli.EXIT_FAILED
+    assert "config.invalid" in out.getvalue()
