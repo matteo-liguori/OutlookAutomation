@@ -381,7 +381,10 @@ class Engine:
                 if kind in _CALENDAR_KINDS
                 else self.ctx.sources.mail_port(scope.source).capabilities(scope.source)
             )
-            if port_caps.get(capability) is None:
+            if port_caps.get(capability) is None or (
+                kind is IntentKind.CALENDAR_RESPOND
+                and port_caps.get(CapabilityName.CALENDAR_INVITE) is None
+            ):
                 raise ChamberlainError(
                     ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
                 )

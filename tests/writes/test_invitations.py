@@ -383,3 +383,15 @@ def test_g12b_requirement_is_a_pure_function_of_the_facts(owned: WriteRig) -> No
     assert requirement_needed(intent, Usage(), WritePolicy()).value == "human_confirmation"
     decision = authorise(intent, OperationFacts("op_x", "0" * 64), [], usage, WritePolicy(), START)
     assert decision.__class__.__name__ == "Deny"
+
+
+def test_w34_a_standing_answer_grant_needs_a_source_that_can_answer(owned: WriteRig) -> None:
+    scope = StandingScope(
+        source=CALENDAR_PLAIN,
+        intent_kinds=frozenset({IntentKind.CALENDAR_RESPOND}),
+        title="Answer",
+        recipients=frozenset({OUTSIDER}),
+    )
+    with pytest.raises(ChamberlainError) as raised:
+        owned.engine().propose_standing(scope)
+    assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
