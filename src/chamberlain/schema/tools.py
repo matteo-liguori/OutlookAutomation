@@ -1,0 +1,556 @@
+"""Request and response shapes of the twelve tools.
+
+Contract: docs/contracts/02-tools.md. One request and one response model per
+tool; the registry (`schema/registry.py`) pairs them.
+"""
+
+from enum import StrEnum
+from typing import Annotated, Literal, Self
+
+from pydantic import Field, model_validator
+
+from chamberlain.domain.capabilities import HealthState
+from chamberlain.domain.events import EventKind, EventState
+from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
+from chamberlain.domain.intents import IntentKind, WriteIntent
+from chamberlain.domain.operations import OperationState, Verification
+from chamberlain.limits import (
+    ACTION_TITLE_MAX,
+    CARD_GOAL_MAX,
+    CARD_POSITION_MAX,
+    CARD_RULES_MAX,
+    CARD_TITLE_MAX,
+    EVIDENCE_MAX,
+    FIND_LIMIT_MAX,
+    FIX_MAX,
+    NEXT_WORK_ITEMS_MAX,
+    NOTE_MAX,
+    OUTCOME_MAX,
+    PAGE_CHARS,
+    REASON_MAX,
+    START_WORK_ITEMS,
+    SUMMARY_MAX,
+)
+from chamberlain.schema.base import (
+    ActionHandle,
+    ArtifactHandle,
+    CalendarEventHandle,
+    CardHandle,
+    ContactHandle,
+    EventHandle,
+    EvidenceHandle,
+    GrantHandle,
+    Handle,
+    MessageHandle,
+    Model,
+    NoteHandle,
+    OperationHandle,
+    SessionHandle,
+    Sha256,
+    SourceId,
+    Timestamp,
+)
+from chamberlain.schema.envelope import Content, ContentLine, NextStep
+from chamberlain.schema.errors import ErrorCode
+
+
+class ToolRequest(Model):
+    """Base of every request (T-3)."""
+
+    session: SessionHandle | None = None
+
+
+# --- start, next, guide (attention) -----------------------------------------
+
+
+class SourceStatus(Model):
+    id: SourceId
+    kind: Literal["mail", "calendar", "contacts"]
+    state: HealthState
+    capabilities: tuple[str, ...] = ()
+
+
+class WorkItem(Model):
+    """One event, one line, one exact call (A-9)."""
+
+    event: EventHandle
+    kind: EventKind
+    subject: Handle | SourceId | None = None
+    summary: str = Field(max_length=SUMMARY_MAX)
+    next: NextStep
+
+
+class StartRequest(ToolRequest):
+    agent: str | None = Field(default=None, max_length=40)
+    purpose: Literal["interactive", "scheduled"] = "interactive"
+    resume: SessionHandle | None = None
+
+
+class StartResponse(Model):
+    session: SessionHandle
+    now: Timestamp
+    sources: tuple[SourceStatus, ...] = ()
+    work: tuple[WorkItem, ...] = Field(default=(), max_length=START_WORK_ITEMS)
+    more_work: int = Field(default=0, ge=0)
+
+
+class NextRequest(ToolRequest):
+    handled: tuple[EventHandle, ...] = ()
+    limit: int = Field(default=5, ge=1, le=NEXT_WORK_ITEMS_MAX)
+    cursor: str | None = None
+
+
+class NextResponse(Model):
+    work: tuple[WorkItem, ...] = Field(default=(), max_length=NEXT_WORK_ITEMS_MAX)
+    remaining: int = Field(default=0, ge=0)
+
+
+class GuideRequest(ToolRequest):
+    id: str | None = Field(default=None, pattern=r"^[a-z0-9_.]{3,40}$")
+    cursor: str | None = None
+
+
+class GuideRule(Model):
+    id: str
+    version: int
+    title: str = Field(max_length=60)
+    text: str | None = None
+
+
+class GuideResponse(Model):
+    rules: tuple[GuideRule, ...] = ()
+
+
+# --- find, open, keep, forget, card (memory) --------------------------------
+
+
+class FindScope(StrEnum):
+    CARDS = "cards"
+    MAIL = "mail"
+    CALENDAR = "calendar"
+    CONTACTS = "contacts"
+    STORED = "stored"
+    GRANTS = "grants"
+    OPERATIONS = "operations"
+
+
+class FindRequest(ToolRequest):
+    scope: FindScope
+    query: str | None = Field(default=None, max_length=200)
+    within: Handle | None = None
+    source: SourceId | None = None
+    since: Timestamp | None = None
+    until: Timestamp | None = None
+    unread: bool | None = None
+    limit: int = Field(default=10, ge=1, le=FIND_LIMIT_MAX)
+    cursor: str | None = None
+
+
+class Hit(Model):
+    """A handle and one line. Never a body (T-8)."""
+
+    handle: Handle
+    kind: str
+    when: Timestamp | None = None
+    summary: str | None = Field(default=None, max_length=SUMMARY_MAX)
+    content: ContentLine | None = None
+    offset: int | None = Field(default=None, ge=0)
+
+
+class FindResponse(Model):
+    hits: tuple[Hit, ...] = Field(default=(), max_length=FIND_LIMIT_MAX)
+
+
+class NoteView(Model):
+    handle: NoteHandle
+    text: str = Field(max_length=NOTE_MAX)
+
+
+class ActionView(Model):
+    kind: Literal["action"] = "action"
+    handle: ActionHandle
+    card: CardHandle
+    title: str = Field(max_length=ACTION_TITLE_MAX)
+    state: Literal["open", "done", "dropped"]
+    due_at: Timestamp | None = None
+    snooze_until: Timestamp | None = None
+    outcome: str | None = Field(default=None, max_length=OUTCOME_MAX)
+    notes: tuple[NoteView, ...] = ()
+
+
+class CardView(Model):
+    kind: Literal["card"] = "card"
+    handle: CardHandle
+    title: str
+    goal: str = ""
+    position: str = ""
+    rules: str = ""
+    state: Literal["open", "closed"]
+    version: int = Field(ge=1)
+    over_cap: bool = False
+    review_at: Timestamp | None = None
+    outcome: str | None = Field(default=None, max_length=OUTCOME_MAX)
+    actions: tuple[ActionView, ...] = ()
+
+
+class GrantView(Model):
+    kind: Literal["grant"] = "grant"
+    handle: GrantHandle
+    grant_kind: GrantKind
+    state: GrantState
+    title: str = Field(max_length=80)
+    summary: str = Field(default="", max_length=300)
+    source: SourceId
+    requirement: Requirement
+    content_sha256: Sha256
+    card: CardHandle | None = None
+    granted_at: Timestamp | None = None
+    expires_at: Timestamp | None = None
+    review_at: Timestamp | None = None
+
+
+class OperationView(Model):
+    kind: Literal["operation"] = "operation"
+    handle: OperationHandle
+    intent_kind: IntentKind
+    source: SourceId
+    state: OperationState
+    grant: GrantHandle | None = None
+    verification: Verification = Verification()
+    may_have_happened: bool = False
+    error_code: ErrorCode | None = None
+    result_ref: Handle | None = None
+    """Handle of what the write produced (a saved draft, a created event)."""
+    items_ok: int = 0
+    items_failed: int = 0
+    settled_at: Timestamp | None = None
+
+
+class EventView(Model):
+    kind: Literal["event"] = "event"
+    handle: EventHandle
+    event_kind: EventKind
+    subject: Handle | SourceId | None = None
+    summary: str = Field(max_length=SUMMARY_MAX)
+    state: EventState
+    detected_at: Timestamp
+
+
+class EvidenceView(Model):
+    kind: Literal["evidence"] = "evidence"
+    handle: EvidenceHandle
+    text: str = Field(max_length=EVIDENCE_MAX)
+    ref: Handle | None = None
+    created_at: Timestamp
+
+
+class ArtifactView(Model):
+    kind: Literal["artifact"] = "artifact"
+    handle: ArtifactHandle
+    artifact_kind: Literal["mail_body", "attachment", "download", "import", "text"]
+    media_type: str
+    size: int = Field(ge=0)
+    sha256: Sha256
+    state: Literal["live", "released", "deleted"]
+    reason: str = Field(max_length=REASON_MAX)
+    owners: tuple[Handle, ...] = ()
+    expires_at: Timestamp | None = None
+
+
+class MessageView(Model):
+    """Flags and times only; everything a sender wrote is in `content` (E-7)."""
+
+    kind: Literal["message"] = "message"
+    handle: MessageHandle
+    source: SourceId
+    folder_role: Literal["inbox", "sent", "drafts", "trash", "archive", "other"]
+    when: Timestamp
+    unread: bool
+    attachment_count: int = Field(default=0, ge=0)
+    raw_sha256: Sha256 | None = None
+    cards: tuple[CardHandle, ...] = ()
+
+
+class CalendarEventView(Model):
+    kind: Literal["calendar_event"] = "calendar_event"
+    handle: CalendarEventHandle
+    source: SourceId
+    start: Timestamp
+    end: Timestamp
+    all_day: bool = False
+    status: Literal["confirmed", "tentative", "cancelled"]
+    etag: str
+    attendee_count: int = Field(default=0, ge=0)
+
+
+class ContactView(Model):
+    kind: Literal["contact"] = "contact"
+    handle: ContactHandle
+    source: SourceId
+
+
+View = Annotated[
+    CardView
+    | ActionView
+    | GrantView
+    | OperationView
+    | EventView
+    | EvidenceView
+    | ArtifactView
+    | MessageView
+    | CalendarEventView
+    | ContactView,
+    Field(discriminator="kind"),
+]
+
+
+class AttachmentInfo(Model):
+    id: str = Field(pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    media_type: str
+    size: int = Field(ge=0)
+    content: ContentLine
+    """The file name, which the sender chose (E-7)."""
+
+
+class Range(Model):
+    offset: int = Field(ge=0)
+    length: int = Field(ge=0)
+    total: int = Field(ge=0)
+
+
+class Lease(Model):
+    path: str
+    expires_at: Timestamp
+
+
+class OpenPart(StrEnum):
+    SUMMARY = "summary"
+    BODY = "body"
+    HEADERS = "headers"
+    ATTACHMENTS = "attachments"
+    FILE = "file"
+
+
+class OpenRequest(ToolRequest):
+    handle: Handle
+    part: OpenPart = OpenPart.SUMMARY
+    offset: int = Field(default=0, ge=0)
+    length: int = Field(default=PAGE_CHARS, ge=1, le=PAGE_CHARS)
+    lease: bool = False
+
+
+class OpenResponse(Model):
+    handle: Handle
+    view: View
+    content: Content | None = None
+    range: Range | None = None
+    attachments: tuple[AttachmentInfo, ...] = ()
+    lease: Lease | None = None
+
+
+class KeepKind(StrEnum):
+    NOTE = "note"
+    EVIDENCE = "evidence"
+    ARTIFACT = "artifact"
+
+
+class KeepRequest(ToolRequest):
+    kind: KeepKind
+    owner: Handle
+    reason: str = Field(min_length=1, max_length=REASON_MAX)
+    text: str | None = Field(default=None, max_length=PAGE_CHARS)
+    from_handle: Handle | None = None
+    attachment: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    import_path: str | None = Field(default=None, max_length=1000)
+    filename: str | None = Field(default=None, max_length=200, pattern=r"^[^\\/\r\n]+$")
+    media_type: str | None = Field(default=None, max_length=100)
+    expires_in_hours: int | None = Field(default=None, ge=1)
+
+    @model_validator(mode="after")
+    def _one_source(self) -> Self:
+        given = [v for v in (self.text, self.from_handle, self.import_path) if v is not None]
+        if len(given) != 1:
+            raise ValueError("give exactly one of text, from_handle or import_path")
+        if self.kind is not KeepKind.ARTIFACT and self.text is None:
+            raise ValueError("notes and evidence are given as text")
+        if self.attachment is not None and self.from_handle is None:
+            raise ValueError("attachment names a part of from_handle")
+        return self
+
+
+class KeepResponse(Model):
+    handle: Handle
+    kind: KeepKind
+    size: int = Field(ge=0)
+    sha256: Sha256
+    expires_at: Timestamp | None = None
+
+
+class ForgetRequest(ToolRequest):
+    handle: Handle
+    owner: Handle | None = None
+
+
+class ForgetResponse(Model):
+    handle: Handle
+    released: bool
+    deleted: bool
+    remaining_owners: int = Field(default=0, ge=0)
+
+
+class CardOp(StrEnum):
+    CREATE = "create"
+    UPDATE = "update"
+    CLOSE = "close"
+    REOPEN = "reopen"
+    ADD_ACTION = "add_action"
+    UPDATE_ACTION = "update_action"
+    FINISH_ACTION = "finish_action"
+
+
+class CardFields(Model):
+    """Replaces the named fields; there is no append (T-12, M-14)."""
+
+    title: str | None = Field(default=None, min_length=1, max_length=CARD_TITLE_MAX)
+    goal: str | None = Field(default=None, max_length=CARD_GOAL_MAX)
+    position: str | None = Field(default=None, max_length=CARD_POSITION_MAX)
+    rules: str | None = Field(default=None, max_length=CARD_RULES_MAX)
+
+
+class ActionFields(Model):
+    title: str | None = Field(default=None, min_length=1, max_length=ACTION_TITLE_MAX)
+    due_at: Timestamp | None = None
+    snooze_until: Timestamp | None = None
+
+
+_NEEDS_CARD = frozenset({CardOp.UPDATE, CardOp.CLOSE, CardOp.REOPEN, CardOp.ADD_ACTION})
+_NEEDS_ACTION = frozenset({CardOp.UPDATE_ACTION, CardOp.FINISH_ACTION})
+_NEEDS_OUTCOME = frozenset({CardOp.CLOSE, CardOp.FINISH_ACTION})
+
+
+class CardRequest(ToolRequest):
+    op: CardOp
+    card: CardHandle | None = None
+    action: ActionHandle | None = None
+    expected_version: int | None = Field(default=None, ge=1)
+    fields: CardFields | None = None
+    action_fields: ActionFields | None = None
+    outcome: str | None = Field(default=None, min_length=1, max_length=OUTCOME_MAX)
+
+    @model_validator(mode="after")
+    def _shape(self) -> Self:
+        if self.op in _NEEDS_CARD and self.card is None:
+            raise ValueError(f"{self.op.value} needs card")
+        if self.op in _NEEDS_ACTION and self.action is None:
+            raise ValueError(f"{self.op.value} needs action")
+        if self.op in _NEEDS_OUTCOME and self.outcome is None:
+            raise ValueError(f"{self.op.value} needs outcome")
+        if self.op is CardOp.CREATE and (self.fields is None or self.fields.title is None):
+            raise ValueError("create needs fields.title")
+        if self.op is CardOp.ADD_ACTION and (
+            self.action_fields is None or self.action_fields.title is None
+        ):
+            raise ValueError("add_action needs action_fields.title")
+        return self
+
+
+class CardResponse(Model):
+    card: CardView
+
+
+# --- propose, do, reconcile (writes) ----------------------------------------
+
+
+class ProposeRequest(ToolRequest):
+    intent: WriteIntent | None = None
+    standing: StandingScope | None = None
+    operation: OperationHandle | None = None
+    approval_evidence: EvidenceHandle | None = None
+    card: CardHandle | None = None
+    evidence: tuple[EvidenceHandle, ...] = ()
+
+    @model_validator(mode="after")
+    def _one_mode(self) -> Self:
+        modes = [v for v in (self.intent, self.standing, self.operation) if v is not None]
+        if len(modes) != 1:
+            raise ValueError("give exactly one of intent, standing or operation")
+        if (self.operation is None) != (self.approval_evidence is None):
+            raise ValueError("operation and approval_evidence go together")
+        return self
+
+
+class ProposeResponse(Model):
+    operation: OperationHandle | None = None
+    grant: GrantHandle | None = None
+    state: OperationState | GrantState
+    requirement: Requirement
+    ready: bool
+    content_sha256: Sha256
+    preview: Content
+
+
+class DoRequest(ToolRequest):
+    operation: OperationHandle
+
+
+class DoResponse(Model):
+    operation: OperationView
+
+
+class ReconcileRequest(ToolRequest):
+    operation: OperationHandle
+
+
+class ReconcileResponse(Model):
+    operation: OperationView
+    changed: bool
+
+
+# --- doctor (app) -----------------------------------------------------------
+
+
+class DoctorCheck(StrEnum):
+    ALL = "all"
+    SOURCES = "sources"
+    STORAGE = "storage"
+    GUIDANCE = "guidance"
+    AUDIT = "audit"
+    SCHEMA = "schema"
+
+
+class DoctorRequest(ToolRequest):
+    check: DoctorCheck = DoctorCheck.ALL
+    metrics: bool = False
+
+
+class CheckResult(Model):
+    id: str = Field(pattern=r"^[a-z0-9_.]{3,40}$")
+    status: Literal["ok", "warn", "fail"]
+    summary: str = Field(max_length=SUMMARY_MAX)
+    fix: str | None = Field(default=None, max_length=FIX_MAX)
+
+
+class Metrics(Model):
+    """The fixed keys of docs/contracts/10-targets.md."""
+
+    open_cards: int = 0
+    open_card_chars_avg: int = 0
+    open_card_chars_max: int = 0
+    evidence_rows: int = 0
+    evidence_per_open_card: float = 0.0
+    artifacts_live: int = 0
+    artifact_bytes: int = 0
+    artifacts_without_owner: int = 0
+    orphans_quarantined: int = 0
+    db_bytes: int = 0
+    data_root_bytes: int = 0
+    largest_reply_chars_7d: int = 0
+    guidance_total_chars: int = 0
+    uncertain_operations: int = 0
+    grants_active: int = 0
+    grants_awaiting_human: int = 0
+
+
+class DoctorResponse(Model):
+    checks: tuple[CheckResult, ...] = ()
+    metrics: Metrics | None = None

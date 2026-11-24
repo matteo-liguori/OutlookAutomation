@@ -1,0 +1,154 @@
+"""Operation states, the legal transitions and what connectors report.
+
+Contract: docs/contracts/04-writes.md (States, W-6, W-10) and
+docs/contracts/08-ports.md (P-9 to P-12).
+"""
+
+from enum import StrEnum
+from typing import Self
+
+from pydantic import Field, JsonValue, model_validator
+
+from chamberlain.domain.intents import IntentKind
+from chamberlain.schema.base import Model, Sha256, SourceId, Timestamp
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
+
+
+class OperationState(StrEnum):
+    PROPOSED = "proposed"
+    AUTHORISED = "authorised"
+    PREPARED = "prepared"
+    DISPATCHED = "dispatched"
+    CONFIRMED = "confirmed"
+    FAILED_CLEAN = "failed_clean"
+    UNCERTAIN = "uncertain"
+    RECONCILING = "reconciling"
+    CONFIRMED_ABSENT = "confirmed_absent"
+    CANCELLED = "cancelled"
+
+
+_S = OperationState
+
+TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
+    _S.PROPOSED: frozenset({_S.AUTHORISED, _S.CANCELLED}),
+    _S.AUTHORISED: frozenset({_S.PREPARED, _S.FAILED_CLEAN, _S.CANCELLED}),
+    _S.PREPARED: frozenset({_S.DISPATCHED, _S.FAILED_CLEAN}),
+    _S.DISPATCHED: frozenset({_S.CONFIRMED, _S.FAILED_CLEAN, _S.UNCERTAIN}),
+    _S.UNCERTAIN: frozenset({_S.RECONCILING, _S.CONFIRMED, _S.CONFIRMED_ABSENT}),
+    _S.RECONCILING: frozenset({_S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.UNCERTAIN}),
+    _S.CONFIRMED: frozenset(),
+    _S.FAILED_CLEAN: frozenset(),
+    _S.CONFIRMED_ABSENT: frozenset(),
+    _S.CANCELLED: frozenset(),
+}
+"""Exactly the arrows of the state diagram (W-6).
+
+`uncertain -> confirmed | confirmed_absent` directly is the user resolving it
+in the viewer (W-13); the engine itself always goes through `reconciling`.
+"""
+
+TERMINAL_STATES = frozenset(state for state, targets in TRANSITIONS.items() if not targets)
+
+RELEASING_STATES = frozenset({_S.FAILED_CLEAN, _S.CONFIRMED_ABSENT, _S.CANCELLED})
+"""States that free the grant use (G-11). `proposed` never reserved one."""
+
+MAY_HAVE_HAPPENED_STATES = frozenset({_S.DISPATCHED, _S.UNCERTAIN, _S.RECONCILING})
+"""`do` in these states fails with `operation.needs_reconcile` (W-17)."""
+
+
+def check_transition(current: OperationState, target: OperationState) -> None:
+    """Raise unless `current -> target` is an arrow of the diagram (W-6)."""
+    if target not in TRANSITIONS[current]:
+        raise ChamberlainError(
+            ErrorCode.INTERNAL_UNEXPECTED,
+            f"Illegal operation transition {current.value} -> {target.value}.",
+        )
+
+
+class Verification(Model):
+    """How far a result has been checked (W-14)."""
+
+    client_verified: bool = False
+    server_verified: bool = False
+
+
+class ItemResult(Model):
+    """One element of a multi-item write such as `mail.mark_read` (W-24)."""
+
+    locator: str
+    ok: bool
+    code: ErrorCode | None = None
+
+
+class ProviderReceipt(Model):
+    """What a connector says happened. Never agent-facing as is."""
+
+    locator: str | None = None
+    """Stable locator of the item written, where there is one."""
+    etag: str | None = None
+    remote_sha256: Sha256 | None = None
+    verification: Verification = Verification()
+    items: tuple[ItemResult, ...] = ()
+
+
+class Prepared(Model):
+    """Everything `dispatch` and `reconcile` need; JSON-serialisable (P-9)."""
+
+    source: SourceId
+    intent_kind: IntentKind
+    reconcile_token: str | None = None
+    data: dict[str, JsonValue] = Field(default_factory=dict)
+
+
+class DispatchOutcome(StrEnum):
+    APPLIED = "applied"
+    NOT_APPLIED = "not_applied"
+    UNKNOWN = "unknown"
+
+
+class DispatchResult(Model):
+    outcome: DispatchOutcome
+    receipt: ProviderReceipt | None = None
+    detail: str = ""
+    """For the log only (E-15)."""
+
+    @model_validator(mode="after")
+    def _receipt_iff_applied(self) -> Self:
+        if (self.outcome is DispatchOutcome.APPLIED) != (self.receipt is not None):
+            raise ValueError("a receipt accompanies exactly the applied outcome")
+        return self
+
+
+class ReconcileStatus(StrEnum):
+    PRESENT = "present"
+    ABSENT = "absent"
+    UNKNOWN = "unknown"
+
+
+class ReconcileResult(Model):
+    status: ReconcileStatus
+    receipt: ProviderReceipt | None = None
+    proof: bool = False
+    """True only where absence is provable and coverage was complete (P-12)."""
+    detail: str = ""
+
+    @model_validator(mode="after")
+    def _consistent(self) -> Self:
+        if (self.status is ReconcileStatus.PRESENT) != (self.receipt is not None):
+            raise ValueError("a receipt accompanies exactly the present status")
+        if self.proof and self.status is not ReconcileStatus.ABSENT:
+            raise ValueError("proof qualifies only an absent result")
+        return self
+
+
+class Receipt(Model):
+    """The stored, agent-safe record of a settled operation (W-16, W-25)."""
+
+    intent_kind: IntentKind
+    source: SourceId
+    state: OperationState
+    intent_sha256: Sha256
+    settled_at: Timestamp
+    verification: Verification = Verification()
+    items_ok: int = 0
+    items_failed: int = 0
