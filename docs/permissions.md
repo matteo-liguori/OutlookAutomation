@@ -11,13 +11,12 @@ housekeeping choice, [larger cards](#larger-cards), below):
 
 1. **A standing permission.** "Always do this kind of thing" is yours to grant, never the assistant's.
 2. **A send to someone new.** Any recipient who is not on your known list (below).
-3. **A calendar change that tells someone other than you.** Inviting, changing or cancelling an
-   event with guests, or answering an invitation from someone who is not you. A guest who is
-   one of your own addresses (the address of any account you set up, or one you list as yours
-   under `authorised_senders: owner`) does not count: inviting yourself needs only your words.
+3. **Inviting someone new to an event.** A guest you have never written to, who is not one of
+   your own addresses. Changing or cancelling events, inviting people you already know and
+   answering invitations need only your words.
 
 Everything else, such as sending to a known person, drafting, filing, marking read
-or changing your own calendar, needs only your words: you tell the assistant in chat
+or any other calendar change, needs only your words: you tell the assistant in chat
 (or from an authorised email, below) and it records that. No click.
 
 Each click shows exactly what will happen (the recipients, subject, body, times)
@@ -101,7 +100,7 @@ An email counts only when **both** are true:
 Your own verified email counts like typing in chat. Another person's counts only for the actions in
 their `scope`; `ask_only` means they may ask questions and nothing more. Emails older than 7 days
 do not count. Even a verified email from you can never replace a click: standing
-permissions, sends to new people and calendar changes with attendees still need the viewer.
+permissions, sends to new people and invitations to new people still need the viewer.
 Accepted and refused instruction emails are both recorded and appear in the viewer's "Today" list.
 
 ## Why this is safer

@@ -134,7 +134,7 @@ def test_g12_requirement_table() -> None:
     assert need(mark, known, other=R.HUMAN_CONFIRMATION) is R.HUMAN_CONFIRMATION
 
 
-def test_g12_owner_calendar_needs_the_human_only_when_the_event_has_attendees() -> None:
+def test_g12c_calendar_needs_the_human_only_to_invite_a_new_stranger() -> None:
     plain = CalendarCreate.model_validate(
         {
             "source": CALENDAR,
@@ -147,9 +147,10 @@ def test_g12_owner_calendar_needs_the_human_only_when_the_event_has_attendees() 
     delete = CalendarDelete(source=CALENDAR, event_ref="cev_0123456789abcdef", expected_etag="e")
     known = frozenset({"a@example.org"})
     assert need(plain, frozenset()) is R.AGENT_EVIDENCE
-    assert need(guests, known) is R.HUMAN_CONFIRMATION
+    assert need(guests, known) is R.AGENT_EVIDENCE
+    assert need(guests, frozenset()) is R.HUMAN_CONFIRMATION
     assert need(delete, frozenset()) is R.AGENT_EVIDENCE
-    assert need(delete, existing_attendees=True) is (R.HUMAN_CONFIRMATION)
+    assert need(delete, existing_attendees=True) is R.AGENT_EVIDENCE
 
 
 def test_g12_config_may_tighten_but_never_loosen() -> None:

@@ -92,26 +92,22 @@ def requirement_for(
 ) -> Requirement:
     """The G-12 table: what it takes to activate a one-off grant for this intent.
 
-    `send_known` and `other` come from config and may only tighten a row. Calendar writes
-    need the human only when the event reaches someone other than the owner (owner rulings
-    2026-11-24): `existing_attendees` says the stored event an update or delete acts on has
-    attendees and `stored_attendees` names them (empty while `existing_attendees` is true
-    means they are not known, so the human decides). An answer to an invitation reaches the
-    organiser only (G-12b).
+    `send_known` and `other` come from config and may only tighten a row. A calendar write
+    needs the human only to invite a new stranger (G-12a): `stored_attendees` are the guests
+    already on the event an update acts on, so they never count as new.
     """
     if isinstance(intent, MailSend):
         if recipients_of(intent) <= known_recipients:
             return stricter(send_known, Requirement.AGENT_EVIDENCE)
         return Requirement.HUMAN_CONFIRMATION
-    if isinstance(intent, CalendarRespond):
-        if intent.organiser is not None and intent.organiser in owner_addresses:
-            return stricter(other, Requirement.AGENT_EVIDENCE)
-        return Requirement.HUMAN_CONFIRMATION
-    if isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete):
-        if existing_attendees and not stored_attendees:
-            return Requirement.HUMAN_CONFIRMATION
-        reached = recipients_of(intent) | stored_attendees
-        if reached and not reached <= owner_addresses:
+    if isinstance(intent, CalendarCreate | CalendarUpdate):
+        # Owner ruling 2026-11-24 (G-12c): the owner's word in chat is enough for any
+        # calendar write. Only inviting a new address the owner has never written to
+        # needs the viewer, for the same reason as mail to a stranger: event text would
+        # leave for an address nobody chose before. Answers, cancellations and updates
+        # to people already invited need no click.
+        added = recipients_of(intent) - stored_attendees
+        if added and not added <= (owner_addresses | known_recipients):
             return Requirement.HUMAN_CONFIRMATION
     return stricter(other, Requirement.AGENT_EVIDENCE)
 

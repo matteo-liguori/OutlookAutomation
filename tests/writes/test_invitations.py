@@ -249,7 +249,7 @@ def test_w33_a_source_that_cannot_invite_refuses_at_propose(owned: WriteRig) -> 
     assert plain.requirement.value == "agent_evidence"
 
 
-def test_g12b_answering_an_unknown_organiser_needs_the_human_and_is_recorded(
+def test_g12c_answering_any_organiser_needs_only_the_owners_word_and_is_recorded(
     owned: WriteRig,
 ) -> None:
     locator = owned.fake.calendar.add_event(
@@ -266,7 +266,7 @@ def test_g12b_answering_an_unknown_organiser_needs_the_human_and_is_recorded(
         response="tentative",
     )
     proposal = owned.engine().propose_intent(reply)
-    assert proposal.requirement.value == "human_confirmation"
+    assert proposal.requirement.value == "agent_evidence"
     owned.human_approves(proposal)
     assert proposal.operation is not None
     assert owned.engine().do(proposal.operation.handle).state is OperationState.CONFIRMED

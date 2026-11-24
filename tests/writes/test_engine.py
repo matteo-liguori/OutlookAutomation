@@ -400,7 +400,7 @@ def test_g12_owner_calendar_writes_without_attendees_use_agent_evidence(rig: Wri
     assert rig.engine().propose_intent(delete).requirement.value == "agent_evidence"
 
 
-def test_g12_owner_updating_or_deleting_an_event_with_attendees_needs_the_human(
+def test_g12c_updating_or_cancelling_an_event_with_guests_needs_only_the_owners_word(
     rig: WriteRig,
 ) -> None:
     fields = rig.event(attendees=("guest@example.org",)).event
@@ -414,9 +414,7 @@ def test_g12_owner_updating_or_deleting_an_event_with_attendees_needs_the_human(
     delete = CalendarDelete(source=CALENDAR, event_ref=handle, expected_etag=stored.etag)
     for intent in (update, delete):
         proposal = rig.engine().propose_intent(intent)
-        assert proposal.requirement.value == "human_confirmation"
-        with fails(ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED):
-            rig.agent_approves(proposal)
+        assert proposal.requirement.value == "agent_evidence"
 
 
 def test_r3_propose_runs_the_connector_scan_before_the_operation_is_stored(
