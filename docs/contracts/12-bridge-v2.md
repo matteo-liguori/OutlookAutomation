@@ -175,6 +175,49 @@ first): `reconcile_send`, `reconcile_draft_save`, `reconcile_draft_update`,
 observations (copies found, per-folder completeness, whether the refresh was
 verified) and never a verdict.
 
+**Calendar commands** (optional capability `calendar`): `calendar_list`,
+`calendar_query`, `calendar_read` (reads) and `calendar_create`,
+`calendar_update`, `calendar_delete` (writes, sharing the one write slot with
+mail). They take a Thunderbird `calendar_id` and no account fields. The add-on
+advertises `calendar` only when its privileged calendar helper
+(`experiment/calendar_api.js`, eight named functions, no generic execute) loads;
+only a client that uses these commands lists `calendar` in `require`, so mail
+works unchanged without it. Events cross the bridge as iCalendar text.
+
+- `calendar_list {}` returns `{calendars: [{id, name, type, read_only, disabled,
+  fresh_as_of?}]}`. `fresh_as_of` is sent only when the client can say when the
+  calendar last synchronised; the Owl helper cannot today, so the connector's
+  health is `stale` until a live check finds a source for it.
+- `calendar_query {calendar_id, start, end, limit}` (ISO times, `limit` 1 to
+  5000) returns `{items: [{id, recurrence_id|null, icalendar}], complete, gaps}`:
+  the occurrences inside the window (a series appears as its occurrences, each
+  with `recurrence_id` as `YYYYMMDDTHHMMSSZ` or `YYYYMMDD`), cancelled events
+  included, ordered by start then id. `complete: false` with no gap means the
+  scan stopped at `limit`; an offline Thunderbird adds a gap and the result is
+  incomplete.
+- `calendar_read {calendar_id, event_id}` returns `{item: {...} | null}`: the
+  exact stored text, or null when the id is not there.
+- `calendar_create {calendar_id, event_id, icalendar}` refuses with `changed`
+  when the id exists. `calendar_update {..., expected_icalendar, icalendar}` and
+  `calendar_delete {..., expected_icalendar}` refuse with `changed` unless the
+  stored text equals `expected_icalendar` exactly (the connector's etag is its
+  hash), and with `not_found` when the event is gone. Delete is a real
+  `deleteItem`.
+- **Refusals before any provider call carry `mutation: none`**: unknown or
+  disabled calendar (`not_found`); read-only calendar (`unsupported`); offline
+  (`client_offline`); text that is not one valid master event, or whose UID is
+  not `event_id` (`bad_request`); and any event, stored or supplied, with an
+  attendee or an organiser (`unsupported`: the harness sends no invitations).
+- The add-on marks the mutation immediately before the provider call; a failure
+  from then on, including a deadline, is `mutation: possible`. After the call it
+  reads the event back: a create or update the provider did not keep, or a
+  delete that left the event, is `not_verified` with `mutation: possible`. A
+  success returns `{item, timing_ms}` where `item` is the read-back (null after
+  a delete) and `timing_ms` maps each stage (`calendar`, `read_before`,
+  `provider`, `read_after`) to milliseconds since the command began.
+- There is no calendar reconcile twin: reconcile is `calendar_read` or a bounded
+  `calendar_query`. Absence through a client cache is never proof.
+
 ## 6. What the client concludes (reconcile)
 
 - **move/trash**: `present` when the source holds no copy and the destination
@@ -282,3 +325,10 @@ leave the connector in angle-bracket form (`<id>`) and enter the bridge bare.
 3. Read flag stability across `getFull`, attachment reads and moves on Gmail
    and Exchange.
 4. Outbox visibility for a queued send.
+5. Calendar (never run against a real Thunderbird): that
+   `calendar_api.js` loads under the target Thunderbird (`calUtils` and
+   `CalIcsParser` module paths); that `icalString` of an occurrence is the
+   occurrence and not its series; that `addItem`, `modifyItem` and `deleteItem`
+   on an Owl calendar complete and a read-back follows promptly; that
+   `icalString` is stable enough to serve as the etag across a restart; and
+   whether Owl exposes a last-synchronised time for `fresh_as_of`.
