@@ -108,7 +108,11 @@ class FileFaultInjector:
 
     def __init__(self, data_root: Path, bridge_dir: Path | None) -> None:
         self._path = data_root / "run" / FAULT_FILE
-        self._bridge_ok = bridge_dir is None or bridge_dir == data_root / "bridge"
+        default = (data_root / "bridge").resolve()
+        given = None if bridge_dir is None else bridge_dir
+        if given is not None and not given.is_absolute():
+            given = data_root / given  # a relative path in the profile is read from the data root
+        self._bridge_ok = given is None or given.resolve() == default
 
     def why_unavailable(self) -> str | None:
         if not self._bridge_ok:

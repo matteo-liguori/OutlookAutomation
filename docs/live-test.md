@@ -21,10 +21,8 @@ Only the sources you list in `live_test` (see `docs/configuration.md`).
 - **Your other mail and events.** Never changed. The tick that runs inside tool calls may
   read your inbox, as it always does. Reading leaves mail unread.
 - **The store.** One test card (`CHAMBERLAIN LIVE TEST card`) holds the run. Each run adds
-  one action to it and finishes it at the end. A few extra operations, evidence rows and
-  grants appear in the store and age out by the usual lifetime rules. The send to the
-  stranger leaves one proposal waiting for confirmation that nobody will confirm; it lapses
-  after seven days.
+  one action to it and finishes it at the end. A few extra operations and evidence rows
+  appear in the store and age out by the usual lifetime rules.
 
 ## Authority: how it is allowed to send
 
@@ -122,10 +120,10 @@ It works only when the bridge folder is `<data root>/bridge` (the default).
 
 ## Things to know before the first live run
 
-- **The send to a stranger leaves a proposal.** `mail.refuse_non_owned` proposes a send to
-  `someone@example.invalid`. The harness cannot withdraw a proposal, so one grant stays in
-  `proposed` state (you may see it in the viewer) until it lapses after seven days. Do not
-  confirm it.
+- **The send to a stranger is withdrawn.** `mail.refuse_non_owned` proposes a send to
+  `someone@example.invalid`, checks that `do` refuses it, then cancels the operation with
+  `forget`, which also withdraws the proposal waiting for confirmation. Nothing is left that
+  could send it later. The audit log keeps the record.
 - **Suggested card needs a clear match.** `mail.watermark_suggestion` fails, naming the
   reason, if another open card also sent to the same address; the harness then rightly
   suggests nothing.

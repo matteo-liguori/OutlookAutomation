@@ -23,7 +23,7 @@ def doctor_states(lab: Lab) -> dict[str, str]:
 def guidance_budgets(lab: Lab, t: Target) -> None:
     replies = {
         "start": lab.call("start", agent="live-test", resume=lab.session),
-        "next": lab.call("next", limit=5),
+        "next": lab.call("next", limit=1),
         "guide": lab.call("guide"),
     }
     for name, reply in replies.items():

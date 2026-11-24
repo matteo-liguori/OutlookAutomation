@@ -221,6 +221,13 @@ def _forget(lab: Lab, handle: str) -> None:
     lab.call("forget", handle=handle, owner=lab.action)
 
 
+def _withdraw(lab: Lab, operation: str) -> None:
+    """`forget` cancels a waiting operation and withdraws its proposal, so nothing can send it."""
+    lab.ok("forget", handle=operation)
+    state = lab.ok("open", handle=operation)["view"]["state"]
+    lab.check(state == "cancelled", f"the refused operation is {state}, not cancelled")
+
+
 def _unread(lab: Lab, handle: str) -> bool:
     return bool(lab.ok("open", handle=handle)["view"]["unread"])
 
@@ -277,6 +284,11 @@ def move_back(lab: Lab, t: Target) -> None:
     inbox = lab.folder_id(t.source, FolderRole.INBOX)
     subject, _, hit = _self_message(lab, t, "move_back")
     handle = hit["handle"]
+    if any(c.folder_id == scratch.id for c in lab.copies(t.source, subject)):
+        raise ScenarioSkip(
+            "the scratch folder already holds the message (as All Mail does on Gmail); "
+            "set live_test.mail.<source>.scratch_folder to a label that does not"
+        )
     lab.confirmed(
         lab.write(
             {"kind": "mail.move", "source": t.source, "message": handle, "to_folder": scratch.id}
@@ -418,7 +430,9 @@ def refuse_non_owned(lab: Lab, t: Target) -> None:
         proposed["requirement"] == "human_confirmation",
         f"a send to a stranger needs {proposed['requirement']}, not the owner's confirmation",
     )
-    done = lab.call("do", operation=proposed["operation"])
+    operation = str(proposed["operation"])
+    lab.defer("withdraw the refused proposal", lambda: _withdraw(lab, operation))
+    done = lab.call("do", operation=operation)
     lab.check(not done.ok, "do accepted a send that no grant covers")
     state = lab.ok("open", handle=proposed["operation"])["view"]["state"]
     lab.check(

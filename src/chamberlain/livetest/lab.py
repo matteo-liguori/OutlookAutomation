@@ -22,11 +22,15 @@ from chamberlain.livetest.config import LiveTestConfig
 from chamberlain.livetest.env import CalendarCopy, Environment, MailCopy
 from chamberlain.livetest.markers import MARKER, carries_marker, run_marker
 from chamberlain.livetest.model import Timing
+from chamberlain.schema.errors import ChamberlainError
 
 JSON = dict[str, Any]
 
 _HANDLE = re.compile(r"\b((?:op|msg|cev|art|grant)_[a-z0-9]{8,32})\b")
 POLL_SECONDS = 3
+MAIL_CLEANUP_PASSES = 4
+_OWN_TOOLS = frozenset({"propose", "do", "reconcile", "keep", "open", "forget"})
+"""Tools whose replies and requests name only things this run made."""
 CALENDAR_WINDOW_BEFORE = timedelta(days=60)
 CALENDAR_WINDOW_AFTER = timedelta(days=550)
 
@@ -118,6 +122,11 @@ class Lab:
     def subject(self, scenario: str) -> str:
         return f"{self.marker} {scenario}"
 
+    def track(self, handle: str) -> None:
+        """Record a handle this run made or found by its marker."""
+        self.handles.add(handle)
+        self.run_handles.add(handle)
+
     def skip(self, reason: str) -> None:
         raise ScenarioSkip(reason)
 
@@ -140,10 +149,11 @@ class Lab:
         raw: JSON = reply.model_dump(mode="json", exclude_none=True)
         text = json.dumps(raw)
         self.timings.append(Timing(tool=tool, ms=round(elapsed * 1000)))
-        for found in _HANDLE.findall(text) + _HANDLE.findall(json.dumps(request, default=str)):
-            if not found.startswith("grant_"):
-                self.handles.add(found)
-                self.run_handles.add(found)
+        if tool in _OWN_TOOLS:
+            # start, next and doctor list the owner's own work: never count those handles
+            for found in _HANDLE.findall(text) + _HANDLE.findall(json.dumps(request, default=str)):
+                if not found.startswith("grant_"):
+                    self.track(found)
         data: JSON = raw.get("data") or {}
         error: JSON = raw.get("error") or {}
         return Call(tool, bool(raw.get("ok")), data, error, raw, len(text))
@@ -175,7 +185,10 @@ class Lab:
         if folder is not None:
             request["folder"] = folder
         data = self.ok("find", **request)
-        return [hit for hit in data.get("hits", []) if query in _line(hit)]
+        found = [hit for hit in data.get("hits", []) if query in _line(hit)]
+        for hit in found:
+            self.track(str(hit["handle"]))
+        return found
 
     def arrival(self, source: str, subject: str) -> JSON:
         """The inbox hit for a marked subject, waiting for it to arrive."""
@@ -207,7 +220,7 @@ class Lab:
         handle = self.app.context.services.refs.remember(
             HandleKind.MESSAGE, copy.source, copy.locator, copy.message_id
         )
-        self.handles.add(handle)
+        self.track(handle)
         return handle
 
     # --- writes ---------------------------------------------------------------------
@@ -356,22 +369,47 @@ class Lab:
         """Trash every copy of marked mail matching `text` (not already in the trash).
 
         Only a subject that opens with the marker is touched, and `open headers` confirms it.
+        Each pass lists the copies again (trashing one copy can remove or merge another, as on
+        Gmail) and one copy that cannot be handled never stops the others; a few passes at most.
         """
         removed = 0
-        for copy in self.copies(source, text):
-            if copy.folder_role is FolderRole.TRASH or not carries_marker(copy.subject):
-                continue
-            handle = self.handle_of(copy)
-            opened = self.ok("open", handle=handle, part="headers")
-            shown = text_of(opened)
-            subject_line = next(
-                (ln[8:].strip() for ln in shown.splitlines() if ln.startswith("Subject:")), ""
+        failures: list[str] = []
+        for _ in range(MAIL_CLEANUP_PASSES):
+            progress = False
+            for copy in self.copies(source, text):
+                if copy.folder_role is FolderRole.TRASH or not carries_marker(copy.subject):
+                    continue
+                try:
+                    if self._trash_marked(copy):
+                        removed += 1
+                        progress = True
+                except (ScenarioFailure, ChamberlainError) as error:
+                    failures.append(str(error)[:80])
+            if not progress:
+                break
+        left = [
+            c
+            for c in self.copies(source, text)
+            if c.folder_role is not FolderRole.TRASH and carries_marker(c.subject)
+        ]
+        if left:
+            raise ScenarioFailure(
+                f"{len(left)} marked message(s) remain in {source}"
+                + (f" ({failures[-1]})" if failures else "")
             )
-            if not carries_marker(subject_line):
-                continue
-            self.trash(handle)
-            removed += 1
         return removed
+
+    def _trash_marked(self, copy: MailCopy) -> bool:
+        handle = self.handle_of(copy)
+        opened = self.ok("open", handle=handle, part="headers")
+        shown = text_of(opened)
+        subject_line = next(
+            (ln[8:].strip() for ln in shown.splitlines() if ln.startswith("Subject:")), ""
+        )
+        if not carries_marker(subject_line):
+            return False
+        self.trash(handle)
+        return True
 
     def calendar_window(self) -> tuple[datetime, datetime]:
         now = self.env.clock.now()
@@ -404,7 +442,7 @@ class Lab:
         handle = self.app.context.services.refs.remember(
             HandleKind.CALENDAR_EVENT, item.source, item.locator, None
         )
-        self.handles.add(handle)
+        self.track(handle)
         return handle
 
 
