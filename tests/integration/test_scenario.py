@@ -12,28 +12,14 @@ from tests.integration.conftest import MAIL, Stack, UnknownReconciles, build_sta
 
 from chamberlain.app.wiring import run_tick
 from chamberlain.connectors.fake import Fault
+from chamberlain.domain.mail import FolderRole
 from chamberlain.domain.operations import OperationState
-from chamberlain.store.migrate import stamp
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
 from chamberlain.writes.models import OperationRow
 
 FRIEND = "friend@example.org"
-
-
-def know(stack: Stack, *addresses: str) -> None:
-    """Make addresses known recipients, as a human-confirmed grant would (G-15)."""
-    db = stack.app.context.db
-    stored = stamp(stack.clock)
-    db.execute(
-        "INSERT OR IGNORE INTO grants (handle, kind, state, source_id, title, requirement, "
-        "content_sha256, proposed_at) VALUES ('grant_knownseed00', 'one_off', 'spent', ?, "
-        "'seed', 'human_confirmation', ?, ?)",
-        (MAIL, "0" * 64, stored),
-    )
-    for address in addresses:
-        repo.add_known_recipient(db, MAIL, address, "grant_knownseed00", stored)
 
 
 def sent_copies(stack: Stack, message_id: str) -> int:
@@ -64,7 +50,7 @@ def test_the_whole_scenario_confirms_a_send_exactly_once(stack: Stack) -> None:
         sender=FRIEND,
         body="Can you do 7pm?",
     )
-    know(stack, FRIEND)
+    stack.know(FRIEND)
 
     # start: one work item, one exact next call
     started = stack.start()
@@ -169,7 +155,7 @@ def test_the_whole_scenario_confirms_a_send_exactly_once(stack: Stack) -> None:
 
 def propose_ready_send(stack: Stack) -> str:
     """A send to a known recipient, approved with the user's words; returns the operation."""
-    know(stack, FRIEND)
+    stack.know(FRIEND)
     stack.start()
     intent = {
         "kind": "mail.send",
@@ -244,3 +230,46 @@ def test_an_unknown_recipient_needs_the_human_and_becomes_known_afterwards(stack
 
     second = stack.ok("propose", intent={**intent, "subject": "Hello again"})
     assert second["requirement"] == "agent_evidence"
+
+
+def test_the_same_scenario_through_the_thunderbird_connector(thunderbird_stack: Stack) -> None:
+    """Start to confirmed over the real add-on under Node, a lost answer included.
+
+    The send is matched by content and the token header (R1), the copy sits in Sent once.
+    """
+    rig = thunderbird_stack.fake
+    rig.seed(internet_message_id="<in1@example.org>", subject="Dinner on Friday?", unread=True)
+    thunderbird_stack.know(FRIEND)
+
+    started = thunderbird_stack.start()
+    assert [item["kind"] for item in started["work"]] == ["mail.new_unmatched"]
+    hits = thunderbird_stack.ok("find", scope="mail", unread=True)["hits"]
+    message = hits[0]["handle"]
+    opened = thunderbird_stack.ok("open", handle=message, part="body")
+    assert "Body text." in opened["content"]["text"]
+
+    intent = {
+        "kind": "mail.send",
+        "source": MAIL,
+        "to": [FRIEND],
+        "subject": "Re: Dinner on Friday?",
+        "body": "7pm works for me.",
+    }
+    operation = thunderbird_stack.ok("propose", intent=intent)["operation"]
+    words = thunderbird_stack.ok(
+        "keep", kind="evidence", owner=operation, text="Owner: yes, send it.", reason="Approval."
+    )
+    thunderbird_stack.ok("propose", operation=operation, approval_evidence=words["handle"])
+
+    assert rig.inject(Fault.LOSE_RESPONSE_AFTER_APPLY)
+    done = thunderbird_stack.call("do", operation=operation)
+    view = done["data"]["operation"] if done["ok"] else None
+    for _ in range(3):
+        if view is not None and view["state"] == "confirmed":
+            break
+        view = thunderbird_stack.ok("reconcile", operation=operation)["operation"]
+    assert view is not None
+    assert view["state"] == "confirmed"
+    token = token_of(thunderbird_stack, operation)
+    assert rig.copies(token, rig.folder_id(FolderRole.SENT)) == 1
+    assert verify(thunderbird_stack.app.context.db).ok
