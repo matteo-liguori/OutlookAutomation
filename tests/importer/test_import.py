@@ -1,0 +1,530 @@
+"""The importer: docs/rebuild-plan.md "Migrating current users' private data", G-6, M-13, S-14.
+
+Every test imports a synthetic old root built by `old_fixture.py`, never real data.
+"""
+
+import hashlib
+import json
+import sqlite3
+from pathlib import Path
+from typing import Any
+
+import pytest
+from old_fixture import MemorySecrets
+
+from chamberlain.connections import load_connections, open_app
+from chamberlain.importer.report import ImportReport
+from chamberlain.importer.run import run_import
+from chamberlain.ports.clock import ManualClock
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.store.db import connect
+from chamberlain.writes.confirm import keep_grant, resolve_operation
+
+
+def fingerprint(root: Path) -> dict[str, str]:
+    """Every file under a folder, by relative name, with the hash of its bytes."""
+    return {
+        str(path.relative_to(root)): hashlib.sha256(path.read_bytes()).hexdigest()
+        for path in sorted(root.rglob("*"))
+        if path.is_file()
+    }
+
+
+def dump_store(data_root: Path) -> dict[str, list[tuple[Any, ...]]]:
+    db = connect(data_root / "chamberlain.sqlite3")
+    try:
+        tables = [
+            row["name"]
+            for row in db.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+            if not row["name"].startswith("sqlite_")
+        ]
+        return {
+            name: [tuple(r) for r in db.execute(f"SELECT * FROM {name} ORDER BY 1, 2")]
+            for name in sorted(tables)
+        }
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def imported(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> ImportReport:
+    return run_import(old_root, data_root, clock=clock, secrets=secrets)
+
+
+def rows(data_root: Path, sql: str, *args: object) -> list[sqlite3.Row]:
+    db = connect(data_root / "chamberlain.sqlite3")
+    try:
+        return list(db.execute(sql, args))
+    finally:
+        db.close()
+
+
+# --- the old installation is never changed ------------------------------------------
+
+
+def test_s14_the_old_root_is_untouched_by_an_import(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    before = fingerprint(old_root)
+    assert not [name for name in before if name.endswith(("-wal", "-shm"))]
+    run_import(old_root, data_root, clock=clock, secrets=secrets)
+    run_import(old_root, data_root, clock=clock, secrets=secrets)
+    assert fingerprint(old_root) == before
+
+
+def test_s14_an_old_database_with_unmerged_wal_content_is_refused(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    holder = sqlite3.connect(old_root / "monitor" / "monitor.db")
+    holder.execute("PRAGMA journal_mode=WAL")
+    holder.execute("INSERT INTO meta VALUES('late', '1')")
+    holder.commit()
+    try:
+        assert (old_root / "monitor" / "monitor.db-wal").stat().st_size > 0
+        before = fingerprint(old_root)
+        with pytest.raises(ChamberlainError) as raised:
+            run_import(old_root, data_root, clock=clock, secrets=secrets)
+        assert raised.value.code is ErrorCode.CONFIG_INVALID
+        assert fingerprint(old_root) == before
+    finally:
+        holder.close()
+
+
+def test_s14_an_unsupported_old_schema_is_refused(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    db = sqlite3.connect(old_root / "monitor" / "monitor.db")
+    db.execute("PRAGMA user_version=4")
+    db.close()
+    with pytest.raises(ChamberlainError) as raised:
+        run_import(old_root, data_root, clock=clock, secrets=secrets)
+    assert "schema 4" in raised.value.message
+
+
+def test_s14_the_new_root_may_not_sit_inside_the_old_one(
+    old_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    with pytest.raises(ChamberlainError):
+        run_import(old_root, old_root / "new", clock=clock, secrets=secrets)
+    with pytest.raises(ChamberlainError):
+        run_import(old_root, old_root, clock=clock, secrets=secrets)
+
+
+# --- idempotency --------------------------------------------------------------------
+
+
+def test_s14_a_second_import_changes_nothing(
+    old_root: Path,
+    data_root: Path,
+    secrets: MemorySecrets,
+    clock: ManualClock,
+    imported: ImportReport,
+) -> None:
+    assert imported.changed
+    store_before = dump_store(data_root)
+    files_before = fingerprint(data_root)
+    secrets_before = dict(secrets.items)
+    clock.advance(hours=3)
+    again = run_import(old_root, data_root, clock=clock, secrets=secrets)
+    assert not again.changed
+    assert again.counts == {}
+    assert dump_store(data_root) == store_before  # every table, including audit_log
+    assert fingerprint(data_root) == files_before  # profile and report included
+    assert secrets.items == secrets_before
+
+
+# --- connection profile and secrets ---------------------------------------------------
+
+
+def test_g_the_profile_becomes_a_valid_connection_profile(
+    data_root: Path, imported: ImportReport
+) -> None:
+    connections = load_connections(data_root)
+    assert connections.timezone == "Europe/London"
+    assert connections.write_policy.send_known.value == "human_confirmation"
+    assert connections.write_policy.other.value == "agent_evidence"
+    work = connections.sources["mail:work"].model_dump()
+    assert work["kind"] == "thunderbird"
+    assert (work["account_id"], work["inbox_folder_id"]) == ("account1", "account1:/INBOX")
+    assert work["draft_folder_id"] == "account1:/Drafts"
+    assert connections.sources["contacts:work"].model_dump()["address_book_ids"] == ("book1",)
+    assert connections.sources["calendar:work"].model_dump()["calendar_id"] == "owl-cal-1"
+
+
+def test_g_a_transport_google_binding_becomes_a_google_source(
+    data_root: Path, imported: ImportReport
+) -> None:
+    google = load_connections(data_root).sources["calendar:primary"].model_dump()
+    assert google["kind"] == "google"
+    assert (google["account"], google["calendar_id"]) == ("owner@gmail.example", "primary")
+
+
+def test_g_an_unbindable_source_is_skipped_and_listed_never_guessed(
+    data_root: Path, imported: ImportReport
+) -> None:
+    sources = load_connections(data_root).sources
+    assert "mail:home" not in sources  # its old binding lacks three folder ids
+    assert "mail:old-com" not in sources  # a COM binding is dropped
+    assert "calendar:shared" not in sources
+    listed = " ".join(imported.skipped_sources)
+    assert "mail:home" in listed
+    assert "draft_folder_id" in listed
+    assert "mail:old_com" in listed
+    assert "calendar:shared" in listed
+
+
+def test_g_icloud_is_a_disabled_caldav_placeholder_with_its_credential_name(
+    data_root: Path, imported: ImportReport
+) -> None:
+    icloud = load_connections(data_root).sources["calendar:icloud"].model_dump()
+    assert icloud["kind"] == "caldav"
+    assert icloud["enabled"] is False
+    assert icloud["username"] == "owner@icloud.example"
+    assert icloud["credential"] == "password:owner@icloud.example"
+
+
+def test_s17_secrets_move_to_the_store_and_never_into_a_file(
+    data_root: Path, secrets: MemorySecrets, imported: ImportReport
+) -> None:
+    stored = " ".join(secrets.items.values())
+    for value in ("client-secret-value", "refresh-token-value", "abcd-efgh-ijkl-mnop"):
+        assert value in stored
+    for path in data_root.rglob("*"):
+        if path.is_file() and path.suffix != ".sqlite3":
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            assert not any(
+                v in text for v in ("client-secret-value", "refresh-token-value", "abcd-efgh")
+            )
+    assert imported.secrets["icloud app password"] == "copied"
+
+
+def test_s17_an_existing_different_secret_is_never_overwritten(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    secrets.set("chamberlain.caldav", "password:owner@icloud.example", "a-newer-password")
+    report = run_import(old_root, data_root, clock=clock, secrets=secrets)
+    assert report.secrets["icloud app password"] == "differs; kept the existing one"
+    assert secrets.get("chamberlain.caldav", "password:owner@icloud.example") == "a-newer-password"
+
+
+def test_g_an_existing_profile_is_kept(
+    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    profile = data_root / "config" / "connections.yaml"
+    profile.parent.mkdir(parents=True)
+    profile.write_text("version: 1\nsources: {}\n", encoding="utf-8")
+    report = run_import(old_root, data_root, clock=clock, secrets=secrets)
+    assert profile.read_text(encoding="utf-8") == "version: 1\nsources: {}\n"
+    assert report.config_written.startswith("kept existing")
+
+
+# --- cards, actions, evidence ---------------------------------------------------------
+
+
+def test_m_open_cards_import_with_their_review_clock_and_open_actions(
+    data_root: Path, imported: ImportReport
+) -> None:
+    cards = {r["title"]: r for r in rows(data_root, "SELECT * FROM cards")}
+    alpha = cards["Alpha supplier contract"]
+    assert alpha["state"] == "open"
+    assert alpha["goal"] == "Get the contract signed"
+    assert alpha["position"] == "Waiting for the supplier to countersign."
+    assert alpha["review_at"] == "2026-01-08T09:00:00Z"  # reviewed 1 Jan + 7 days
+    assert alpha["over_cap"] == 0
+    actions = rows(
+        data_root, "SELECT * FROM actions WHERE card = ? ORDER BY title", alpha["handle"]
+    )
+    assert [a["title"] for a in actions] == ["Step act-1", "Step act-2"]
+    assert actions[0]["due_at"] == "2026-01-06T09:00:00Z"
+    assert actions[1]["snooze_until"] == "2026-01-10T09:00:00Z"
+
+
+def test_m13_a_card_over_a_cap_imports_as_is_flagged_and_due(
+    data_root: Path, imported: ImportReport, clock: ManualClock
+) -> None:
+    big = next(r for r in rows(data_root, "SELECT * FROM cards") if r["title"] == "Oversized card")
+    assert big["over_cap"] == 1
+    assert len(big["position"]) == 2000  # stored as it is, nothing cut
+    assert big["review_at"] == "2026-01-05T09:00:00Z"  # due at once
+    assert any("case-big" in line for line in imported.over_cap_cards)
+    long_action = rows(data_root, "SELECT title FROM actions WHERE card = ?", big["handle"])[0]
+    assert len(long_action["title"]) == 160  # the one field a hard limit forces to be cut
+    assert any("act-long" in w for w in imported.warnings)
+
+
+def test_m_a_closed_card_keeps_one_outcome_line(data_root: Path, imported: ImportReport) -> None:
+    done = next(
+        r for r in rows(data_root, "SELECT * FROM cards") if r["title"] == "Finished matter"
+    )
+    assert done["state"] == "closed"
+    assert done["outcome"] == "Resolved by phone on the 2nd."
+    assert (done["goal"], done["position"], done["rules"]) == ("", "", "")
+
+
+def test_m_evidence_comes_across_only_when_referenced_and_at_most_15_per_card(
+    data_root: Path, imported: ImportReport
+) -> None:
+    texts = [r["text"] for r in rows(data_root, "SELECT text FROM evidence")]
+    assert not any("Nobody refers to me" in t for t in texts)
+    on_alpha = rows(
+        data_root,
+        "SELECT count(*) AS n FROM evidence_refs r JOIN cards c ON c.handle = r.owner "
+        "WHERE c.title = 'Alpha supplier contract'",
+    )[0]["n"]
+    assert on_alpha == 15
+    assert imported.left_behind["evidence beyond 15 per open card"] == 5
+
+
+def test_s14_handles_are_valid_and_deterministic(data_root: Path, imported: ImportReport) -> None:
+    for table in ("cards", "actions", "grants", "operations", "evidence"):
+        for row in rows(data_root, f"SELECT handle FROM {table}"):
+            prefix, _, token = row["handle"].partition("_")
+            assert prefix in {"card", "act", "grant", "op", "evd"}
+            assert len(token) == 16
+
+
+# --- grants ---------------------------------------------------------------------------
+
+
+def grants(data_root: Path) -> dict[str, sqlite3.Row]:
+    return {r["title"]: r for r in rows(data_root, "SELECT * FROM grants")}
+
+
+def test_g6_a_standing_grant_imports_suspended_and_due_for_review_at_once(
+    data_root: Path, imported: ImportReport
+) -> None:
+    dated = grants(data_root)["Standing sa-dated"]
+    assert dated["state"] == "suspended"
+    assert dated["kind"] == "standing"
+    assert dated["requirement"] == "human_confirmation"
+    assert dated["confirmed_via"] == "import"
+    assert dated["scope_json"] is None  # the old scope was free text; nothing is authorised
+    assert dated["granted_at"] == "2025-12-15T09:00:00Z"  # the original date, kept
+    assert dated["review_at"] <= "2026-01-05T09:00:00Z"
+    assert len(imported.standing_grants) == 3
+
+
+def test_g6_a_standing_grant_with_no_recorded_date_is_due_and_undated(
+    data_root: Path, imported: ImportReport
+) -> None:
+    undated = grants(data_root)["Standing sa-undated"]
+    assert undated["granted_at"] is None
+    assert undated["state"] == "suspended"
+    assert undated["review_at"] == "2026-01-05T09:00:00Z"
+
+
+def test_g5_an_expired_standing_grant_imports_expired_not_active(
+    data_root: Path, imported: ImportReport
+) -> None:
+    expired = grants(data_root)["Standing sa-expired"]
+    assert expired["state"] == "expired"
+    assert expired["ended_at"] == "2025-12-31T09:00:00Z"
+
+
+def test_g15_no_recipient_becomes_known_by_import(data_root: Path, imported: ImportReport) -> None:
+    assert rows(data_root, "SELECT * FROM known_recipients") == []
+
+
+def test_g5_one_off_grants_follow_the_seven_day_rule_and_their_journals(
+    data_root: Path, imported: ImportReport
+) -> None:
+    by_subject = {
+        r["title"]: r for r in rows(data_root, "SELECT * FROM grants WHERE kind = 'one_off'")
+    }
+    assert by_subject["Subject oa-fresh"]["state"] == "active"
+    assert by_subject["Subject oa-fresh"]["expires_at"] == "2026-01-10T10:00:00Z"
+    assert by_subject["Subject oa-old"]["state"] == "expired"
+    assert by_subject["Subject oa-sent"]["state"] == "spent"  # its journal says it was sent
+    assert "Subject oa-revoked" not in by_subject
+    for row in by_subject.values():
+        assert row["requirement"] == "human_confirmation"
+        assert row["scope_json"] is None
+
+
+def test_g_the_old_hash_is_kept_inert_not_recomputed(
+    data_root: Path, imported: ImportReport
+) -> None:
+    assert grants(data_root)["Subject oa-fresh"]["content_sha256"] == "a" * 64
+
+
+def test_g_the_old_wording_of_a_standing_grant_is_kept_as_evidence(
+    data_root: Path, imported: ImportReport
+) -> None:
+    handle = grants(data_root)["Standing sa-dated"]["handle"]
+    texts = [
+        r["text"]
+        for r in rows(
+            data_root,
+            "SELECT e.text FROM evidence e JOIN evidence_refs r ON r.evidence = e.handle "
+            "WHERE r.owner = ?",
+            handle,
+        )
+    ]
+    assert any("forward invoices" in t and "accountant only" in t for t in texts)
+
+
+# --- operations -----------------------------------------------------------------------
+
+
+def operations(data_root: Path) -> dict[str, sqlite3.Row]:
+    return {r["idempotency_key"]: r for r in rows(data_root, "SELECT * FROM operations")}
+
+
+def test_w_an_in_flight_send_becomes_uncertain_and_cannot_be_dispatched(
+    data_root: Path, imported: ImportReport
+) -> None:
+    op = operations(data_root)["import:thunderbird:send:oa-inflight"]
+    assert op["state"] == "uncertain"
+    assert op["kind"] == "mail.send"
+    assert op["source_id"] == "mail:work"
+    assert op["prepared_json"] is None  # nothing to re-dispatch
+    assert op["intent_json"] is None
+    assert op["lease_owner"] is None
+    grant = rows(data_root, "SELECT handle FROM grants WHERE title = 'Subject oa-inflight'")[0]
+    assert op["grant"] == grant["handle"]  # the grant is held by it (G-10)
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "import:outlook-send:oa-com",
+        "import:native-send:oa-native",  # `draft-saved` is not final
+        "import:thunderbird:trash:t-1",  # a stage this code has never seen
+        "import:thunderbird:calendar-create:c-1",
+    ],
+)
+def test_w_any_journal_not_in_a_final_state_is_uncertain(
+    data_root: Path, imported: ImportReport, key: str
+) -> None:
+    assert operations(data_root)[key]["state"] == "uncertain"
+
+
+def test_w_a_calendar_journal_lands_on_its_calendar_source(
+    data_root: Path, imported: ImportReport
+) -> None:
+    assert (
+        operations(data_root)["import:thunderbird:calendar-create:c-1"]["source_id"]
+        == "calendar:work"
+    )
+
+
+def test_w_finished_journals_become_receipts_and_clean_ones_are_released(
+    data_root: Path, imported: ImportReport
+) -> None:
+    done = operations(data_root)["import:thunderbird:send:oa-sent"]
+    assert done["state"] == "confirmed"
+    receipt = json.loads(done["receipt_json"])
+    assert receipt["summary"]["state"] == "confirmed"
+    assert operations(data_root)["import:thunderbird:move:m-1"]["state"] == "failed_clean"
+
+
+def test_w_an_imported_operation_is_never_in_a_retryable_state(
+    data_root: Path, imported: ImportReport
+) -> None:
+    for op in operations(data_root).values():
+        assert op["state"] in {"uncertain", "confirmed", "failed_clean"}
+        assert op["state"] not in {"proposed", "authorised", "prepared"}
+
+
+def test_w_the_tick_after_an_import_neither_fails_nor_changes_an_uncertain_operation(
+    data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    before = {k: v["state"] for k, v in operations(data_root).items()}
+    app = open_app(data_root, clock=clock, secrets=secrets)
+    try:
+        for _ in range(3):
+            clock.advance(minutes=20)
+            app.call("doctor", {})
+        events = {r["kind"] for r in app.context.db.execute("SELECT kind FROM events")}
+    finally:
+        app.close()
+    assert {k: v["state"] for k, v in operations(data_root).items()} == before
+    assert "operation.uncertain" in events
+    assert "grant.review_due" in events
+
+
+def test_w_the_owner_can_settle_an_imported_uncertain_operation_in_the_viewer(
+    data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    handle = operations(data_root)["import:thunderbird:send:oa-inflight"]["handle"]
+    app = open_app(data_root, clock=clock, secrets=secrets)
+    try:
+        answer = resolve_operation(app.context, handle, {"outcome": "did_not_happen"})
+    finally:
+        app.close()
+    assert answer["state"] == "confirmed_absent"
+
+
+def test_w_the_agent_cannot_reconcile_an_imported_operation_into_a_resend(
+    data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    handle = operations(data_root)["import:thunderbird:send:oa-inflight"]["handle"]
+    app = open_app(data_root, clock=clock, secrets=secrets)
+    try:
+        started = app.call("start", {"agent": "test"})
+        assert started.ok
+        reply = app.call("reconcile", {"operation": handle, "session": started.data.session})  # type: ignore[union-attr]
+        assert not reply.ok
+    finally:
+        app.close()
+    assert operations(data_root)["import:thunderbird:send:oa-inflight"]["state"] == "uncertain"
+
+
+def test_g7_keeping_an_undated_imported_grant_works_and_activates_nothing_new(
+    data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    handle = grants(data_root)["Standing sa-undated"]["handle"]
+    app = open_app(data_root, clock=clock, secrets=secrets)
+    try:
+        kept = keep_grant(app.context, handle)
+    finally:
+        app.close()
+    assert kept.scope is None  # still authorises nothing: it has no scope
+
+
+# --- audit and what is left for the owner ---------------------------------------------
+
+
+def test_g20_the_import_is_audited_and_the_chain_verifies(
+    data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    kinds = {r["kind"]: r for r in rows(data_root, "SELECT kind, actor FROM audit_log")}
+    assert {"import", "grant.imported", "operation.imported"} <= set(kinds)
+    assert {r["actor"] for r in rows(data_root, "SELECT DISTINCT actor FROM audit_log")} == {
+        "system:import"
+    }
+    app = open_app(data_root, clock=clock, secrets=secrets)
+    try:
+        reply = app.call("doctor", {"check": "audit"})
+        assert reply.ok
+    finally:
+        app.close()
+
+
+def test_s14_private_guidance_is_listed_for_the_owner_and_not_imported(
+    data_root: Path, imported: ImportReport
+) -> None:
+    assert set(imported.private_guidance) == {"filing", "reporting"}
+    stored = json.dumps(dump_store(data_root), default=str)
+    assert "Private filing rule" not in stored
+    report = json.loads((data_root / "import" / "report.json").read_text(encoding="utf-8"))
+    assert "Private filing rule" in report["private_guidance_to_convert"]["filing"]
+
+
+def test_s14_the_printed_summary_names_topics_but_carries_no_private_text(
+    imported: ImportReport,
+) -> None:
+    printed = json.dumps(imported.summary())
+    assert "filing" in printed
+    assert "Private filing rule" not in printed
+    assert "refresh-token-value" not in printed
+
+
+def test_s14_runs_and_review_history_are_left_behind_and_counted(
+    imported: ImportReport,
+) -> None:
+    assert imported.left_behind["runs"] == 1
+    assert imported.left_behind["message_reviews"] == 1
+    assert imported.unmapped_settings["schedule"] == {"morning": "08:00"}
