@@ -8,7 +8,6 @@ import pytest
 
 from chamberlain.app.context import Context
 from chamberlain.app.core import App
-from chamberlain.attention import tick as tick_module
 from chamberlain.attention.handlers import HANDLERS, HOOKS
 from chamberlain.ports.clock import ManualClock
 
@@ -128,9 +127,3 @@ def seed(ctx: Context, clock: ManualClock) -> Seed:
 @pytest.fixture
 def app(ctx: Context, seed: Seed) -> App:
     return App(ctx, HANDLERS, HOOKS)
-
-
-@pytest.fixture(autouse=True)
-def _reset_steps() -> None:
-    tick_module.ALWAYS_STEPS.clear()
-    tick_module.EXTRA_STEPS.clear()

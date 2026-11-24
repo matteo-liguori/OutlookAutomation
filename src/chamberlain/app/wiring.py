@@ -8,8 +8,8 @@ Each track exposes, in its own `handlers.py`:
 and attention additionally exposes `HOOKS: Hooks | None`. Tracks never edit
 this file. Here the real `Services` are built (memory first, then writes with
 memory's artifact store), the write handlers get the configured policy, and the
-tick's steps are installed: crash recovery and run planning on every call (`ALWAYS_STEPS`) and the
-sweeper plus write maintenance after the inbox is reconciled (`EXTRA_STEPS`).
+tick's steps are put in the context: crash recovery and run planning on every call
+(`always`) and the sweeper plus write maintenance after the inbox is reconciled (`extra`).
 """
 
 import sqlite3
@@ -17,7 +17,14 @@ from collections.abc import Callable
 from importlib import import_module
 from pathlib import Path
 
-from chamberlain.app.context import Context, DoctorCheckFn, Handler, Hooks, SourceRouter
+from chamberlain.app.context import (
+    Context,
+    DoctorCheckFn,
+    Handler,
+    Hooks,
+    SourceRouter,
+    TickSteps,
+)
 from chamberlain.app.core import App
 from chamberlain.app.doctor import make_doctor
 from chamberlain.app.services import Services
@@ -97,8 +104,8 @@ def build_services(
 
 def tick_steps(
     policy: WritePolicy | None, budgets: Budgets | None, update_lister: TagLister | None = None
-) -> tuple[list[Callable[[Context], None]], list[Callable[[Context], None]]]:
-    """`(always, extra)`: what the tick runs on every call, and what it runs when due."""
+) -> TickSteps:
+    """What the tick runs on every call (`always`) and when due (`extra`)."""
 
     def sweep_everything(ctx: Context) -> None:
         sweep(ctx, ctx.clock.now(), budgets=budgets, compactors=COMPACTORS)
@@ -113,18 +120,7 @@ def tick_steps(
     extra: list[Callable[[Context], None]] = [sweep_everything, maintain_writes]
     if update_lister is not None:
         extra.append(run_updates.tick_step(update_lister))
-    return always, extra
-
-
-def install_tick_steps(
-    policy: WritePolicy | None = None,
-    budgets: Budgets | None = None,
-    update_lister: TagLister | None = None,
-) -> None:
-    """Fill attention's step lists in place. Idempotent: the last built app's settings win."""
-    always, extra = tick_steps(policy, budgets, update_lister)
-    attention_tick.ALWAYS_STEPS[:] = always
-    attention_tick.EXTRA_STEPS[:] = extra
+    return TickSteps(always=tuple(always), extra=tuple(extra))
 
 
 def build_app(
@@ -152,9 +148,9 @@ def build_app(
         sources=sources or SourceRouter(),
         services=services
         or build_services(db, the_clock, data_root, policy=policy, budgets=budgets),
+        tick_steps=tick_steps(policy, budgets, update_lister),
     )
     handlers, hooks = load_tracks(policy)
-    install_tick_steps(policy, budgets, update_lister)
     return App(context, handlers, hooks)
 
 

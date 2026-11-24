@@ -52,6 +52,20 @@ def _route[PortT](ports: Mapping[str, PortT], source: str) -> PortT:
     return port
 
 
+TickStep = Callable[["Context"], None]
+"""A step another track contributes to the tick. It does its own transaction and may raise."""
+
+
+@dataclass(frozen=True)
+class TickSteps:
+    """What the tick runs besides attention's own work. Built with the app (`app/wiring.py`)."""
+
+    always: tuple[TickStep, ...] = ()
+    """Every call, even a skipped tick, before detection: crashed-operation recovery (W-9)."""
+    extra: tuple[TickStep, ...] = ()
+    """After the inbox is reconciled, at most once per interval: the sweeper (M-21)."""
+
+
 @dataclass(frozen=True)
 class Context:
     db: sqlite3.Connection
@@ -61,6 +75,8 @@ class Context:
     services: Services
     session: str | None = None
     """Set by the app from the request, after validation (T-3)."""
+    tick_steps: TickSteps = TickSteps()
+    """The tick's extra steps belong to the context, so two apps never share them (A-6)."""
 
 
 @dataclass(frozen=True)

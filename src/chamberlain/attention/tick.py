@@ -4,10 +4,10 @@ Contract: docs/contracts/07-attention.md (A-6, A-7). A tick never raises.
 """
 
 import logging
-from collections.abc import Callable
+from collections.abc import Iterable
 from datetime import datetime
 
-from chamberlain.app.context import Context
+from chamberlain.app.context import Context, TickStep
 from chamberlain.attention import inbox, repo, sessions, sync
 from chamberlain.attention.collect import collect
 from chamberlain.attention.detectors import DETECTORS
@@ -20,19 +20,10 @@ from chamberlain.store.schema import set_state
 
 log = logging.getLogger("chamberlain.attention")
 
-TickStep = Callable[[Context], None]
-"""A step another track contributes. It does its own transaction and may raise."""
-
-ALWAYS_STEPS: list[TickStep] = []
-"""Run on every call, even when the tick is skipped: crashed-operation recovery (W-9)."""
-
-EXTRA_STEPS: list[TickStep] = []
-"""Run after the inbox is reconciled, at most once per interval: the sweeper (M-21)."""
-
 WAKE_EXIT_STATUS = 10
 
 
-def _run_steps(ctx: Context, steps: list[TickStep]) -> None:
+def _run_steps(ctx: Context, steps: Iterable[TickStep]) -> None:
     for step in steps:
         try:
             step(ctx)
@@ -50,7 +41,7 @@ def _due(ctx: Context) -> bool:
 
 def tick(ctx: Context, *, force: bool = False) -> bool:
     """Run one tick. Returns True when detectors ran, False when it was skipped."""
-    _run_steps(ctx, ALWAYS_STEPS)
+    _run_steps(ctx, ctx.tick_steps.always)
     try:
         if ctx.session is not None:
             sessions.touch(ctx.db, ctx.clock, ctx.session)
@@ -84,7 +75,7 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
         )
         with transaction(ctx.db):
             set_state(ctx.db, ctx.clock, "attention.last_tick_at", _stamp(ctx))
-        _run_steps(ctx, EXTRA_STEPS)
+        _run_steps(ctx, ctx.tick_steps.extra)
         return True
     except Exception:
         log_failure(log, "tick failed")

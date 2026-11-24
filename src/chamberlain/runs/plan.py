@@ -144,7 +144,7 @@ def _keep_outlines(ctx: Context) -> None:
 
 
 def plan_runs(ctx: Context) -> None:
-    """The tick step (an `ALWAYS_STEPS` entry). It may raise; the tick logs and goes on."""
+    """The tick step (an `always` tick step). It may raise; the tick logs and goes on."""
     now = ctx.clock.now()
     with transaction(ctx.db):
         _create_due(ctx, now)

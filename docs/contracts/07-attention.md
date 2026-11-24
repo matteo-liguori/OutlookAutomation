@@ -61,10 +61,11 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   `attention/detectors/__init__.py`.
 - **A-6** A tick: collect connector deltas (bounded, read-only, P-3), run
   all detectors, reconcile the inbox (A-1, A-2), run the sweeper (M-21), then
-  write maintenance. Crashed-operation recovery (W-9) is an `ALWAYS_STEPS`
-  entry: it runs on every call, even a skipped tick, and BEFORE detection, so a
+  write maintenance. Crashed-operation recovery (W-9) is an `always` step
+  (`Context.tick_steps`, built with the app, never a module global): it runs on every call, even a skipped tick, and BEFORE
+  detection, so a
   recovered operation raises `operation.uncertain` in the same call. The sweeper
-  and `writes.maintenance.maintain` are `EXTRA_STEPS` run after the inbox is
+  and `writes.maintenance.maintain` are `extra` steps run after the inbox is
   reconciled, at most once per interval; `app/wiring.py` installs all three. A
   tick runs at the start of every tool call and when the scheduler calls
   `chamberlain tick` (forced; exit status 10 when events wait and no session is
