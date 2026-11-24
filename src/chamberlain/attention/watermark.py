@@ -25,6 +25,7 @@ from chamberlain.attention.tuning import (
     MAIL_OVERLAP,
     MAIL_PAGE_LIMIT,
     MAIL_REQUIRED_OVERLAP,
+    MAIL_SENT_KEEP,
     MAIL_STANDARD,
 )
 from chamberlain.domain.capabilities import HealthState
@@ -290,7 +291,7 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
                 width=None,
                 gap=None,
             )
-            repo.prune_seen(ctx.db, source, boundary)
+            repo.prune_seen(ctx.db, source, boundary, _fmt(now - MAIL_SENT_KEEP))
             return Scanned(True)
 
         # Not finished: keep how far a sound scan got. A scan held back by health (stale) promises

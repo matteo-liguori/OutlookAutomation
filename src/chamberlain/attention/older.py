@@ -3,15 +3,16 @@
 A scan reads the last day of a long uncovered span at once and holds the older part, because
 reading it costs tokens. The agent asks the owner. A yes arrives as `next` with the question's
 event listed under `older_mail`; a question marked handled without that is a no. A no leaves the
-span uncovered and visible: the question stays on record and `doctor` names it. A yes can still
-come later, by the same call, from the question's handle. Every answer is audited.
+span uncovered and visible: the span is reported again as its own `source.stale` event and
+`doctor` names it. A yes can still come later, by the same call, from that event's handle.
+Every answer is audited.
 """
 
 from collections.abc import Iterable
 
 from chamberlain.app.context import Context
 from chamberlain.attention import inbox, repo
-from chamberlain.attention.detectors.sources import OLDER
+from chamberlain.attention.detectors.sources import OLDER, OLDER_DECLINED
 from chamberlain.attention.models import EventRow
 from chamberlain.domain.events import EventKind
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -21,7 +22,7 @@ from chamberlain.store.db import transaction
 def _is_question(event: EventRow) -> bool:
     return (
         event.kind is EventKind.SOURCE_STALE
-        and event.attrs.reason == OLDER
+        and event.attrs.reason in (OLDER, OLDER_DECLINED)
         and event.subject is not None
     )
 
@@ -32,9 +33,10 @@ def _current(ctx: Context, event: EventRow) -> repo.Held | None:
         return None
     state = repo.watermark(ctx.db, event.subject)
     held = None if state is None else state.held
-    if held is None or not event.dedupe_key.endswith(f":older:{held.end}"):
+    if held is None:
         return None
-    return held
+    ends = (f":older:{held.end}", f":declined:{held.end}")
+    return held if event.dedupe_key.endswith(ends) else None
 
 
 def next_with_answers(

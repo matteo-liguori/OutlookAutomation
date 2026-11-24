@@ -1,7 +1,7 @@
 id: mail.unmatched
-version: 2
+version: 3
 title: New mail to triage
-when: {event: mail.new_unmatched}
+when: {event: mail.new_unmatched, reason: received}
 text: >
   List the new mail and open only what you need. Suggested cards are
   guesses; you decide each link. A deadline, promise or expected reply needs

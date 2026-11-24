@@ -214,7 +214,7 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 ## mail.unmatched: New mail to triage
 
-- Trigger: `{'event': 'mail.new_unmatched'}`; shown session; priority 40; cap 180 chars
+- Trigger: `{'event': 'mail.new_unmatched', 'reason': 'received'}`; shown session; priority 40; cap 180 chars
 
 > List the new mail and open only what you need. Suggested cards are guesses; you decide each link. A deadline, promise or expected reply needs a card; routine mail can be left.
 

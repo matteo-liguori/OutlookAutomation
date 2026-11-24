@@ -100,9 +100,14 @@ class StartResponse(Model):
 
 class NextRequest(ToolRequest):
     handled: tuple[EventHandle, ...] = ()
-    older_mail: tuple[EventHandle, ...] = ()
-    """Old-mail questions the owner answered yes to (A-23). Also marks them handled. An
-    old-mail question handled without being listed here is a no."""
+    older_mail: tuple[EventHandle, ...] = Field(
+        default=(),
+        description=(
+            "Events about older mail that the owner said yes to reading (also marks them handled). "
+            "Never fill this without the owner's yes."
+        ),
+    )
+    """An old-mail question handled without being listed here is a no (A-23)."""
     limit: int = Field(default=5, ge=1, le=NEXT_WORK_ITEMS_MAX)
     cursor: str | None = None
 

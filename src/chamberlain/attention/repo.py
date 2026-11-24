@@ -621,15 +621,16 @@ def add_seen(
     )
 
 
-def prune_seen(db: sqlite3.Connection, source: str, before: str) -> None:
+def prune_seen(db: sqlite3.Connection, source: str, before: str, sent_before: str) -> None:
     """Rows older than every future scan window are no longer needed to dedupe.
 
-    Waiting mail is kept; sent rows are a courtesy and go with the window.
+    Only triaged rows go. Waiting mail is kept, except a sent line nobody handled for a week:
+    that age is counted from when it was first seen, not from its date, which may be days old.
     """
     db.execute(
         "DELETE FROM mail_seen WHERE source_id = ? AND received_at < ? "
-        "AND (triaged = 1 OR sent = 1)",
-        (source, before),
+        "AND (triaged = 1 OR (sent = 1 AND first_seen_at < ?))",
+        (source, before, sent_before),
     )
 
 

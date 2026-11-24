@@ -92,9 +92,10 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   `sent-history`) and never counts as new mail. If it matches an open card (thread headers, or
   recipients that all point to one card) it is kept for one quiet, low-priority
   `mail.new_unmatched` line with reason `sent` ("N sent by you"), whose next call lists the
-  Sent folder; otherwise it needs no triage and goes with the window. The detector raises
-  one `mail.new_unmatched` event per source for received mail, keyed by the oldest waiting
-  row, whose next call is a `find` of that source since then, in every folder. Handling the
+  Sent folder; otherwise it needs no triage and goes with the window. An unhandled sent line
+  goes after `MAIL_SENT_KEEP` (7 days from when it was first seen). The detector raises
+  one `mail.new_unmatched` event (reason `received`) per source for received mail, keyed by
+  the oldest waiting row, whose next call is a `find` of that source since then, in every folder. Handling the
   event triages only the rows shown with it, in its own direction (received or sent); mail that
   arrived later raises a fresh event. `mail.new_for_card` is retired as a trigger. A mail
   event no longer ends because the message was marked read; it ends when the agent handles it.
@@ -113,9 +114,10 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   listed under `older_mail` (which also marks it handled): the state becomes `approved` and
   each later tick reads the held span oldest-first with its own page budget, moving
   `held_from` forward until nothing is left. A question marked handled without being listed
-  there is a no: the state becomes `declined`, nothing more is read, the span stays on record,
-  `doctor sources` (`sources.older_mail`) warns about it, and a later yes still works from the
-  same handle. Every answer is an audit row (`mail.older_yes`, `mail.older_no`). A yes is
+  there is a no: the state becomes `declined` and nothing more is read. The span stays on
+  record and is reported again as its own `source.stale` event (reason `older_mail_declined`,
+  which names the span and does not ask); `doctor sources` (`sources.older_mail`) warns about
+  it; a later yes still works from that event's handle. Every answer is an audit row (`mail.older_yes`, `mail.older_no`). A yes is
   refused for a question that is not an old-mail question or whose span has changed. A second
   long gap while a span is held extends it from its start and asks again. The first look back
   of a never-watched source is not held. Rows are not pruned inside a held span.

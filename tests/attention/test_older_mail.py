@@ -12,7 +12,7 @@ import pytest
 
 from chamberlain.app.context import Context
 from chamberlain.app.core import App
-from chamberlain.attention import tick
+from chamberlain.attention import repo, tick
 from chamberlain.attention.handlers import source_checks
 from chamberlain.attention.tuning import MAIL_STANDARD
 from chamberlain.connectors.fake import FakeProvider
@@ -70,7 +70,8 @@ def test_a_the_last_day_is_read_at_once_and_the_older_part_is_asked_about(
     start = app.call("start", {})
     item = next(w for w in start.data.work if w.kind.value == "source.stale")
     assert held["held_from"][:10] in item.summary
-    assert "about 6" in item.summary, "the owner is told roughly how much mail it is"
+    assert held["held_estimate"] == 6, "the owner is told roughly how much mail it is"
+    assert next(b for b in repo.mail_batches(ctx.db) if not b.sent).count == 2
     assert item.next.tool.value == "doctor", "the work item never carries the yes for the agent"
 
 
@@ -110,12 +111,53 @@ def test_a_no_leaves_the_older_mail_unread_and_visible_and_a_later_yes_still_wor
     app.call("next", {"session": session, "handled": [item.event]})
     go(ctx, clock, 6)
     assert seen(ctx) == {"new0@x", "new1@x"}, "a no reads nothing more"
-    again = app.call("start", {})
-    assert not [w for w in again.data.work if w.kind.value == "source.stale"], "it does not nag"
     assert older_check(ctx).status == "warn", "the uncovered span stays visible"
     assert any(r.kind == "mail.older_no" for r in ctx.services.audit.rows)
+    stale = app.call("next", {"session": session}).data.work
+    left = [w for w in stale if w.kind.value == "source.stale"]
+    assert len(left) == 1, "a source.stale names the span that stays unread"
+    assert "was not read" not in left[0].summary, "it does not ask the owner again"
+    app.call("next", {"session": session, "handled": [left[0].event]})
+    assert not [
+        w
+        for w in app.call("next", {"session": session}).data.work
+        if w.kind.value == "source.stale"
+    ], "once handled it does not nag"
 
-    app.call("next", {"session": session, "older_mail": [item.event]})
+    app.call("next", {"session": session, "older_mail": [left[0].event]})
     go(ctx, clock, 4)
     assert len(seen(ctx)) == 8
     assert ctx.db.execute("SELECT held_from FROM mail_watermarks").fetchone()[0] is None
+
+
+def test_a_a_reply_the_owner_sent_from_the_phone_in_the_held_span_still_reaches_the_agent(
+    after_a_long_absence: tuple[Context, ManualClock], app: App, seed: Any, fake: FakeProvider
+) -> None:
+    ctx, clock = after_a_long_absence
+    card = seed.card("Roof repair")
+    ctx.db.execute(
+        "INSERT INTO card_links (card, ref, internet_message_id, created_at) "
+        "VALUES (?, 'msg_00000000000000000001', '<orig@x>', '2026-01-01T00:00:00Z')",
+        (card,),
+    )
+    fake.mail.add_message(
+        SOURCE,
+        folder_id="f-sent",
+        internet_message_id="<reply@x>",
+        sender="owner@example.org",
+        to=("bob@example.org",),
+        in_reply_to="<orig@x>",
+        date=clock.now() - timedelta(days=3, hours=1),
+    )
+    go(ctx, clock)
+    start = app.call("start", {})
+    session = str(start.data.session)
+    item = next(w for w in start.data.work if w.kind.value == "source.stale")
+    app.call("next", {"session": session, "handled": [item.event], "older_mail": [item.event]})
+    go(ctx, clock, 4)
+    lines = [
+        w
+        for w in app.call("next", {"session": session}).data.work
+        if w.kind.value == "mail.new_unmatched" and w.next.args.get("folder") == "sent"
+    ]
+    assert len(lines) == 1, "the owner's reply is offered as context for its card"

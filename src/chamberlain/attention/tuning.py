@@ -53,6 +53,8 @@ MAIL_MAX_PAGES: Final = 5
 mail first, in time slices that shrink until each one fits (A-20)."""
 MAIL_ESTIMATE_PAGES: Final = 3
 """Pages read to estimate how much mail an older span holds; the rest is extrapolated."""
+MAIL_SENT_KEEP: Final = timedelta(days=7)
+"""A quiet "you sent this" line nobody handled is dropped after this long."""
 MAIL_SENT_PRIORITY: Final = 25
 """Mail the owner sent that matches a card: a quiet line, never a triage item by itself."""
 MAIL_HEADER_READS: Final = 20

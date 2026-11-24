@@ -98,6 +98,7 @@ _ROLE_BY_USE: Final = {
     "trash": FolderRole.TRASH,
     "junk": FolderRole.JUNK,
     "archive": FolderRole.ARCHIVE,
+    "archives": FolderRole.ARCHIVE,
 }
 
 

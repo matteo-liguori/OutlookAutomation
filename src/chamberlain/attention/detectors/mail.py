@@ -37,6 +37,6 @@ def new_unmatched(data: DetectorInput) -> Iterable[EventDraft]:
             batch.source,
             f"{batch.count} new mail in {batch.source}{extra}.",
             PRIORITY[EventKind.MAIL_NEW_UNMATCHED],
-            EventAttrs(source=batch.source, since=batch.oldest_received),
+            EventAttrs(source=batch.source, since=batch.oldest_received, reason="received"),
             discriminator=str(batch.first_seq),
         )
