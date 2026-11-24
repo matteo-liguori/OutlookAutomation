@@ -567,3 +567,21 @@ def test_w12_an_absent_proof_never_frees_a_grant_before_deadline_plus_margin(ela
 
 def test_w12_the_settle_wait_covers_the_deadline_and_margin() -> None:
     assert SETTLE_AFTER_MINUTES * 60 >= CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS
+
+
+def test_w17_a_racing_do_cannot_fail_clean_a_dispatched_operation(rig: WriteRig) -> None:
+    """The second `do` read the row early; the first has since journalled `dispatched`."""
+    op = rig.ready_send()
+    eng = rig.engine()
+    stale = eng.get(op.handle)
+    rig.db.execute("UPDATE operations SET state = 'dispatched' WHERE handle = ?", (op.handle,))
+    grant = rig.grant_for(op)
+    rig.db.execute("UPDATE grants SET state = 'revoked' WHERE handle = ?", (grant.handle,))
+    with fails(ErrorCode.OPERATION_NEEDS_RECONCILE):
+        eng._reserve(stale, eng.intent_of(stale))
+    after = eng.get(op.handle)
+    assert after.state is S.DISPATCHED
+    assert after.error_code is None
+    with pytest.raises(ChamberlainError):
+        eng._fail_clean(after, ErrorCode.SOURCE_BUSY)
+    assert eng.get(op.handle).state is S.DISPATCHED

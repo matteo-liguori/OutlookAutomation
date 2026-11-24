@@ -95,6 +95,20 @@ from chamberlain.writes.transitions import build_receipt, move_operation
 
 log = logging.getLogger("chamberlain.writes")
 
+_RESERVABLE_STATES: Final = frozenset(
+    {OperationState.PROPOSED, OperationState.AUTHORISED, OperationState.PREPARED}
+)
+"""The only states `do` may reserve from; later ones belong to the dispatching worker."""
+_SENT_STATES: Final = frozenset(
+    {
+        OperationState.DISPATCHED,
+        OperationState.UNCERTAIN,
+        OperationState.RECONCILING,
+        OperationState.CONFIRMED,
+    }
+)
+"""States from `dispatched` onward, where nothing may be declared "failed clean" unseen."""
+
 LEASE_SECONDS: Final = 300
 """Longer than a connector deadline plus the immediate-settle budget (R5, R6)."""
 SETTLE_INTERVAL_SECONDS: Final = 10
@@ -615,6 +629,13 @@ class Engine:
         reserved: OperationRow | None = None
         with transaction(self.db):
             current = self.get(op.handle)
+            if current.state not in _RESERVABLE_STATES:
+                # A racing `do` may have moved it on: never touch it from here (W-17).
+                if current.state in MAY_HAVE_HAPPENED_STATES:
+                    raise self.needs_reconcile(current.handle)
+                raise ChamberlainError(
+                    ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed."
+                )
             decision = self._decide(
                 intent, current.handle, current.intent_sha256, current.card, current.grant
             )
@@ -653,7 +674,16 @@ class Engine:
     def _fail_clean(
         self, op: OperationRow, code: ErrorCode, *, expected_lease: str | bool | None = False
     ) -> OperationRow | None:
-        """Proven nothing happened: release the grant use (W-10, W-11)."""
+        """Proven nothing happened: release the grant use (W-10, W-11).
+
+        From `dispatched` onward only the worker holding the lease can prove that, so
+        a caller without `expected_lease` is refused.
+        """
+        if op.state in _SENT_STATES and not isinstance(expected_lease, str):
+            raise ChamberlainError(
+                ErrorCode.INTERNAL_UNEXPECTED,
+                f"Operation {op.handle} may have happened and cannot be failed clean.",
+            )
         row = move_operation(
             self.db,
             self.ctx.clock,
