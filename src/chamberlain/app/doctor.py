@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
 from chamberlain.app.metrics import collect_metrics
+from chamberlain.memory.history import stored_bytes_history
 from chamberlain.schema.tools import CheckResult, DoctorCheck, DoctorRequest, DoctorResponse
 from chamberlain.store.db import table_names
 from chamberlain.store.migrate import discover, pending
@@ -45,6 +46,9 @@ def make_doctor(extra: Sequence[tuple[DoctorCheck, DoctorCheckFn]] = ()) -> Hand
             if request.check in (DoctorCheck.ALL, group):
                 results.extend(check(ctx))
         metrics = collect_metrics(ctx) if request.metrics else None
-        return Result(DoctorResponse(checks=tuple(results), metrics=metrics))
+        history = stored_bytes_history(ctx.db) if request.metrics else None
+        return Result(
+            DoctorResponse(checks=tuple(results), metrics=metrics, stored_bytes_history=history)
+        )
 
     return doctor

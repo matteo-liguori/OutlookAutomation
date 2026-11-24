@@ -26,7 +26,7 @@ target names what enforces it. Constants are in `src/chamberlain/limits.py`.
 | Evidence rows per open card | about 113 | under 15 | `doctor --metrics`; sweeper M-3 |
 | Files in the data root unknown to the harness | about 2,400 | 0 after the 14-day grace | sweeper M-26 |
 | Artifacts without a live owner | not measurable | 0 after each sweep | sweeper property test |
-| Stored bytes at 4, 12, 26 weeks | not tracked | flat after week 4, within 20 percent | `doctor --metrics` history |
+| Stored bytes at 4, 12, 26 weeks | not tracked | flat after week 4, within 20 percent | `doctor --metrics` (`stored_bytes_history`; null means not enough history yet) |
 | Largest tool reply | 12,000 chars | 6,000 chars (`MAX_REPLY_CHARS`) | app (E-2) |
 | List page | 12,000 chars | 4,000 chars (`PAGE_CHARS`) | M-17 |
 

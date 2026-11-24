@@ -45,6 +45,9 @@
       "uncertain_operations": 0,
       "grants_active": 0,
       "grants_awaiting_human": 0
+    },
+    "stored_bytes_history": {
+      "weeks_recorded": 0
     }
   },
   "next": [],

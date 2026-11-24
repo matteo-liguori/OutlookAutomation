@@ -17,7 +17,7 @@ from chamberlain.schema.tools import Metrics
 from chamberlain.store.db import DB_NAME
 
 
-def _tree_bytes(root: Path) -> int:
+def tree_bytes(root: Path) -> int:
     total = 0
     if root.exists():
         for entry in root.rglob("*"):
@@ -47,5 +47,5 @@ def memory_metrics(db: sqlite3.Connection, clock: Clock, data_root: Path) -> Met
         artifacts_without_owner=without_owner,
         orphans_quarantined=len(repo.held_quarantine(db)),
         db_bytes=db_file.stat().st_size if db_file.exists() else 0,
-        data_root_bytes=_tree_bytes(data_root),
+        data_root_bytes=tree_bytes(data_root),
     )

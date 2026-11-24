@@ -98,3 +98,11 @@ def test_the_audit_chain_verifies_after_wired_use(stack: Stack) -> None:
     stack.start()
     stack.ok("doctor")
     assert verify(stack.app.context.db).ok
+
+
+def test_doctor_metrics_reports_stored_bytes_history(stack: Stack) -> None:
+    stack.start()
+    stack.clock.advance(minutes=2)
+    first = stack.ok("doctor", metrics=True)["stored_bytes_history"]
+    assert first.get("week_4") is None
+    assert first["weeks_recorded"] >= 1

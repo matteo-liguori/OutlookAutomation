@@ -48,6 +48,7 @@ Every table and every file under the data root belongs to exactly one class.
 | Backups | 7 daily + 4 weekly slots | Oldest overwritten |
 | Logs | 14 days, 20 MB | Rotated |
 | Quarantined orphan | 14 days | Deleted |
+| Metrics history (`memory.metrics_history`) | one snapshot a week, 30 kept | Oldest dropped |
 
 - **M-3** Each line above is implemented once, in the sweeper's rule table.
   No other module deletes rows or files for lifetime reasons.
