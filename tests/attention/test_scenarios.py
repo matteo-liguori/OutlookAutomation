@@ -257,3 +257,43 @@ def test_golden_an_uncertain_send_start_reply(full_app: App, seed: Any):
     assert [g["id"] for g in golden["guidance"]] == ["send.uncertain", "session.first"]
     assert golden["guidance"][0]["version"] == 1
     assert golden["next"][0]["tool"] == "reconcile"
+
+
+def test_golden_next_after_handling_returns_the_rest(full_app: App, seed: Any):
+    seed.grant()
+    seed.card(over_cap=1)
+    start = full_app.call("start", {"agent": "g"})
+    session = start.data.session
+    first = start.data.work[0].event
+    reply = full_app.call("next", {"session": session, "handled": [first], "limit": 3})
+    assert dump(reply) == {
+        "ok": True,
+        "data": {"work": [], "remaining": 0},
+        "next": [],
+        "guidance": [],
+        "notices": [],
+    }
+
+
+def test_golden_next_shows_a_new_event_as_one_exact_call(full_app: App, seed: Any, clock: Any):
+    session = full_app.call("start", {"agent": "g"}).data.session
+    seed.operation("calendar.update")
+    clock.advance(seconds=120)
+    reply = full_app.call("next", {"session": session})
+    assert dump(reply)["data"] == {
+        "work": [
+            {
+                "event": "<evt>",
+                "kind": "operation.uncertain",
+                "subject": "<op>",
+                "summary": "Operation <op> may have happened and is not settled.",
+                "next": {
+                    "tool": "reconcile",
+                    "args": {"operation": "<op>"},
+                    "why": "Read what happened. Never send again.",
+                },
+            }
+        ],
+        "remaining": 0,
+    }
+    assert ids(reply) == ["write.uncertain"]

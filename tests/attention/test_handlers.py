@@ -104,3 +104,32 @@ def test_a12_doctor_reports_guidance_and_sources(ctx: Context):
     assert results["guidance.overrides"].status == "ok"
     sources = app.call("doctor", {"check": "sources"})
     assert sources.data.checks[0].id == "sources.health"
+
+
+def test_golden_guide_by_id_and_the_first_index_page(app: App):
+    one = app.call("guide", {"id": "do.once"})
+    assert one.model_dump(mode="json", exclude_none=True) == {
+        "ok": True,
+        "data": {
+            "rules": [
+                {
+                    "id": "do.once",
+                    "version": 1,
+                    "title": "Carrying out a change",
+                    "text": one.data.rules[0].text,
+                }
+            ]
+        },
+        "next": [],
+        "guidance": [],
+        "notices": [],
+    }
+    assert "Run it once." in one.data.rules[0].text
+    index = app.call("guide", {})
+    assert [r.id for r in index.data.rules][:3] == [
+        "action.due",
+        "appointments.important",
+        "calendar.checks",
+    ]
+    assert index.coverage.total == 36
+    assert index.coverage.returned == 25
