@@ -477,15 +477,6 @@ def delete_dead_evidence_refs(db: sqlite3.Connection) -> int:
     return db.execute(f"DELETE FROM evidence_refs WHERE NOT ({live})").rowcount
 
 
-def count_evidence_for_card(db: sqlite3.Connection, card: str) -> int:
-    return scalar(
-        db,
-        "SELECT count(DISTINCT evidence) FROM evidence_refs WHERE owner = ? OR owner IN "
-        "(SELECT handle FROM actions WHERE card = ?)",
-        (card, card),
-    )
-
-
 def search_evidence(db: sqlite3.Connection, text: str | None, limit: int) -> list[Row]:
     rows: list[Row] = db.execute(
         "SELECT * FROM evidence WHERE text LIKE ? ESCAPE '\\' "

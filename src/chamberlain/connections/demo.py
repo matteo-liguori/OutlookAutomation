@@ -98,10 +98,6 @@ def demo_provider(source_ids: Iterable[str], clock: Clock) -> FakeProvider:
     return provider
 
 
-def demo_sources(connections: Connections) -> dict[str, DemoSource]:
-    return connections.of_kind(DemoSource)
-
-
 def demo_profile() -> Connections:
     """A profile with only demo sources: mail, calendar and contacts."""
     return Connections(

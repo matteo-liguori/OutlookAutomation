@@ -8,7 +8,7 @@ next step.
 import secrets
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from chamberlain.app.core import App
 from chamberlain.livetest.authority import ensure_card, require_grants
@@ -49,11 +49,6 @@ class RunOptions:
     approve_calendar_edits: bool = False
     """The one-run option; the config setting works without it."""
     run_id: str | None = None
-
-
-@dataclass
-class _Totals:
-    results: list[ScenarioResult] = field(default_factory=lambda: list[ScenarioResult]())
 
 
 def approval(config: LiveTestConfig, options: RunOptions) -> tuple[bool, str]:

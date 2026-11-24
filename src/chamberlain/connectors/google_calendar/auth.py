@@ -91,13 +91,6 @@ def save_refresh_token(store: SecretStore, email: str, refresh_token: str, scope
         store.set(SERVICE, ACCOUNTS_NAME, json.dumps([*known, email]))
 
 
-def forget_account(store: SecretStore, email: str) -> bool:
-    email = email.strip().lower()
-    removed = store.delete(SERVICE, _token_name(email))
-    store.set(SERVICE, ACCOUNTS_NAME, json.dumps([a for a in accounts(store) if a != email]))
-    return removed
-
-
 def post_form(
     url: str, fields: Mapping[str, str], transport: HttpTransport | None = None
 ) -> dict[str, object]:

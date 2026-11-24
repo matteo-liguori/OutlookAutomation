@@ -8,12 +8,12 @@ anything: rules live in `authorise.py`, `grants.py` and `engine.py`.
 import contextlib
 import json
 import sqlite3
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from chamberlain.domain.grant_rules import format_ts, parse_ts
+from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import RELEASING_STATES, OperationState
@@ -664,12 +664,3 @@ def audit_delete_through(db: sqlite3.Connection, seq: int) -> int:
 
 def audit_count(db: sqlite3.Connection) -> int:
     return int(db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0])
-
-
-def grants_by_card(db: sqlite3.Connection, card: str) -> Mapping[str, GrantState]:
-    rows = db.execute("SELECT handle, state FROM grants WHERE card = ?", (card,)).fetchall()
-    return {row["handle"]: GrantState(row["state"]) for row in rows}
-
-
-def format_stamp(moment: datetime) -> str:
-    return format_ts(moment)

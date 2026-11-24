@@ -18,12 +18,6 @@ class ArtifactKind(StrEnum):
     TEXT = "text"
 
 
-class ArtifactState(StrEnum):
-    LIVE = "live"
-    RELEASED = "released"
-    DELETED = "deleted"
-
-
 class OwnerKind(StrEnum):
     """Who may hold an artifact (M-4). A card holds only the context carried over from the old
     harness (M-35); the agent cannot name a card as an owner."""

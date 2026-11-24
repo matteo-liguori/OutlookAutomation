@@ -28,7 +28,7 @@ from chamberlain.review import findings as review_findings
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs import sections
 from chamberlain.runs.models import RunRow
-from chamberlain.runs.repo import get_run, outline_handle, schedules
+from chamberlain.runs.repo import outline_handle, schedules
 from chamberlain.runs.reports import read_reports
 from chamberlain.runs.template import ReportTemplate, Slot, load_template
 from chamberlain.schema.base import Model
@@ -247,7 +247,3 @@ def ensure_outline(ctx: Context, run: RunRow) -> str | None:
     except ChamberlainError:
         return None
     return kept.handle
-
-
-def find_run(ctx: Context, handle: str) -> RunRow | None:
-    return get_run(ctx.db, handle)
