@@ -534,7 +534,18 @@ def last_tick(db: sqlite3.Connection) -> str | None:
     return _system(db, "attention.last_tick_at")
 
 
-# --- mail watermark and the batch awaiting triage (0060) ----------------------------------
+# --- mail watermark and the batch awaiting triage (0060, 0120) ----------------------------
+
+
+@dataclass(frozen=True)
+class Held:
+    """An older span that was not read, and where the owner's answer stands (A-23)."""
+
+    start: str
+    end: str
+    state: str
+    estimate: int | None
+    width: int | None
 
 
 @dataclass(frozen=True)
@@ -542,19 +553,39 @@ class Watermark:
     covered_through: str
     watching_since: str
     scan_started_at: str | None
-    scan_until: str | None
+    """Set while a scan is unfinished: the instant it began, which becomes the watermark."""
+    scan_from: str | None
+    """Oldest-first frontier of an unfinished scan: mail dated before it has been seen."""
+    scan_width: int | None
+    """Seconds per slice of an unfinished scan that had to be narrowed."""
+    held: Held | None
 
 
 def watermark(db: sqlite3.Connection, source: str) -> Watermark | None:
     row = db.execute(
-        "SELECT covered_through, watching_since, scan_started_at, scan_until "
+        "SELECT covered_through, watching_since, scan_started_at, scan_from, scan_width, "
+        "held_from, held_to, held_state, held_estimate, held_width "
         "FROM mail_watermarks WHERE source_id = ?",
         (source,),
     ).fetchone()
     if row is None:
         return None
+    held = None
+    if row["held_from"] is not None:
+        held = Held(
+            row["held_from"],
+            row["held_to"],
+            row["held_state"],
+            row["held_estimate"],
+            row["held_width"],
+        )
     return Watermark(
-        row["covered_through"], row["watching_since"], row["scan_started_at"], row["scan_until"]
+        row["covered_through"],
+        row["watching_since"],
+        row["scan_started_at"],
+        row["scan_from"],
+        row["scan_width"],
+        held,
     )
 
 
@@ -572,16 +603,18 @@ def save_scan(
     *,
     through: str,
     started: str | None,
-    until: str | None,
+    frontier: str | None,
+    width: int | None,
     gap: tuple[str, str] | None,
 ) -> None:
     db.execute(
-        "UPDATE mail_watermarks SET covered_through = ?, scan_started_at = ?, scan_until = ?, "
-        "gap_from = ?, gap_to = ? WHERE source_id = ?",
+        "UPDATE mail_watermarks SET covered_through = ?, scan_started_at = ?, scan_from = ?, "
+        "scan_width = ?, gap_from = ?, gap_to = ? WHERE source_id = ?",
         (
             through,
             started,
-            until,
+            frontier,
+            width,
             None if gap is None else gap[0],
             None if gap is None else gap[1],
             source,
@@ -589,61 +622,113 @@ def save_scan(
     )
 
 
-def is_seen(db: sqlite3.Connection, source: str, locator: str) -> bool:
-    row = db.execute(
-        "SELECT 1 FROM mail_seen WHERE source_id = ? AND locator = ?", (source, locator)
-    ).fetchone()
-    return row is not None
+def save_held(db: sqlite3.Connection, source: str, held: Held | None) -> None:
+    db.execute(
+        "UPDATE mail_watermarks SET held_from = ?, held_to = ?, held_state = ?, "
+        "held_estimate = ?, held_width = ? WHERE source_id = ?",
+        (
+            None if held is None else held.start,
+            None if held is None else held.end,
+            None if held is None else held.state,
+            None if held is None else held.estimate,
+            None if held is None else held.width,
+            source,
+        ),
+    )
+
+
+def held_state(db: sqlite3.Connection, source: str, state: str) -> None:
+    db.execute("UPDATE mail_watermarks SET held_state = ? WHERE source_id = ?", (state, source))
+
+
+def seen_keys(db: sqlite3.Connection, source: str, keys: list[str]) -> set[str]:
+    found: set[str] = set()
+    for start in range(0, len(keys), 200):
+        chunk = keys[start : start + 200]
+        marks = ",".join("?" * len(chunk))
+        rows = db.execute(
+            f"SELECT message_key FROM mail_seen WHERE source_id = ? AND message_key IN ({marks})",
+            (source, *chunk),
+        )
+        found.update(r["message_key"] for r in rows)
+    return found
 
 
 def add_seen(
     db: sqlite3.Connection,
     source: str,
+    key: str,
     locator: str,
     handle: str,
     received: str,
     now: str,
     suggested: str | None,
+    *,
+    sent: bool,
 ) -> None:
+    """One row per message. Sent mail with no suggested card needs no triage."""
     db.execute(
         "INSERT OR IGNORE INTO mail_seen (source_id, locator, handle, received_at, "
-        "first_seen_at, suggested_card) VALUES (?, ?, ?, ?, ?, ?)",
-        (source, locator, handle, received, now, suggested),
+        "first_seen_at, suggested_card, message_key, sent, triaged) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            source,
+            locator,
+            handle,
+            received,
+            now,
+            suggested,
+            key,
+            int(sent),
+            int(sent and suggested is None),
+        ),
     )
 
 
-def prune_seen(db: sqlite3.Connection, source: str, before: str) -> None:
-    """Triaged rows older than every future scan window are no longer needed to dedupe."""
+def prune_seen(db: sqlite3.Connection, source: str, before: str, sent_before: str) -> None:
+    """Rows older than every future scan window are no longer needed to dedupe.
+
+    Only triaged rows go. Waiting mail is kept, except a sent line nobody handled for a week:
+    that age is counted from when it was first seen, not from its date, which may be days old.
+    """
     db.execute(
-        "DELETE FROM mail_seen WHERE source_id = ? AND triaged = 1 AND received_at < ?",
-        (source, before),
+        "DELETE FROM mail_seen WHERE source_id = ? AND received_at < ? "
+        "AND (triaged = 1 OR (sent = 1 AND first_seen_at < ?))",
+        (source, before, sent_before),
     )
 
 
 def mail_batches(db: sqlite3.Connection) -> list[MailBatch]:
     rows = db.execute(
-        "SELECT s.source_id AS source_id, COUNT(*) AS n, MIN(s.seq) AS first_seq, "
+        "SELECT s.source_id AS source_id, s.sent AS sent, COUNT(*) AS n, MIN(s.seq) AS first_seq, "
         "MIN(s.received_at) AS oldest, SUM(c.handle IS NOT NULL) AS suggested "
         "FROM mail_seen s LEFT JOIN cards c ON c.handle = s.suggested_card AND c.state = 'open' "
-        "WHERE s.triaged = 0 GROUP BY s.source_id ORDER BY s.source_id"
+        "WHERE s.triaged = 0 GROUP BY s.source_id, s.sent ORDER BY s.source_id, s.sent"
     )
     return [
-        MailBatch(r["source_id"], r["n"], r["first_seq"], r["oldest"], r["suggested"] or 0)
+        MailBatch(
+            r["source_id"],
+            r["n"],
+            r["first_seq"],
+            r["oldest"],
+            r["suggested"] or 0,
+            bool(r["sent"]),
+        )
         for r in rows
     ]
 
 
-def stamp_delivered(db: sqlite3.Connection, source: str, event: str) -> None:
+def stamp_delivered(db: sqlite3.Connection, source: str, event: str, *, sent: bool) -> None:
     """The agent is being shown the batch: remember which rows it covers."""
     db.execute(
         "UPDATE mail_seen SET delivered_event = ? "
-        "WHERE source_id = ? AND triaged = 0 AND (delivered_event IS NULL OR "
+        "WHERE source_id = ? AND sent = ? AND triaged = 0 AND (delivered_event IS NULL OR "
         "delivered_event NOT IN (SELECT handle FROM events WHERE state IN ('new', 'delivered')))",
-        (event, source),
+        (event, source, int(sent)),
     )
 
 
-def triage_delivered(db: sqlite3.Connection, source: str, event: str) -> None:
+def triage_delivered(db: sqlite3.Connection, source: str, event: str, *, sent: bool) -> None:
     """The agent handled the batch it was shown; later arrivals stay pending."""
     if (
         db.execute(
@@ -651,7 +736,7 @@ def triage_delivered(db: sqlite3.Connection, source: str, event: str) -> None:
         ).fetchone()
         is None
     ):
-        stamp_delivered(db, source, event)
+        stamp_delivered(db, source, event, sent=sent)
     db.execute(
         "UPDATE mail_seen SET triaged = 1 WHERE source_id = ? AND delivered_event = ?",
         (source, event),
@@ -663,6 +748,22 @@ def mail_gaps(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
         "SELECT source_id, gap_from, gap_to FROM mail_watermarks WHERE gap_from IS NOT NULL"
     )
     return [(r["source_id"], r["gap_from"], r["gap_to"]) for r in rows]
+
+
+def mail_held(db: sqlite3.Connection) -> list[tuple[str, Held]]:
+    rows = db.execute(
+        "SELECT source_id, held_from, held_to, held_state, held_estimate, held_width "
+        "FROM mail_watermarks WHERE held_from IS NOT NULL ORDER BY source_id"
+    )
+    return [
+        (
+            r["source_id"],
+            Held(
+                r["held_from"], r["held_to"], r["held_state"], r["held_estimate"], r["held_width"]
+            ),
+        )
+        for r in rows
+    ]
 
 
 def linked_message_refs(db: sqlite3.Connection) -> list[tuple[str, str, str]]:

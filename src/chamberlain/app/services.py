@@ -9,6 +9,7 @@ implementation into `Context.services`. Until then tests use the doubles in
 Shared file (docs/OWNERSHIP.md): change only via docs/BOARD.md.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -104,6 +105,18 @@ class WriteControl(Protocol):
     def revoke_grant(self, handle: str, *, actor: str) -> None: ...
 
     def cancel_operation(self, handle: str, *, actor: str) -> None: ...
+
+    def own_addresses(self, source: str) -> frozenset[str]:
+        """The mailbox address(es) the source is bound to, lower-cased."""
+        ...
+
+    def learn_recipients(self, source: str, addresses: Iterable[str]) -> int:
+        """Record people the owner wrote to as known recipients (origin sent-history, G-15).
+
+        The source's own addresses and `.invalid` addresses are skipped. Never touches grants.
+        Runs inside the caller's transaction; returns how many were new.
+        """
+        ...
 
 
 @dataclass(frozen=True)

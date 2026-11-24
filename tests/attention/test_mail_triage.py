@@ -44,7 +44,8 @@ def test_a_many_new_messages_are_one_work_item_per_source(
     assert mail[0].subject == SOURCE
     assert "12 new mail" in mail[0].summary
     assert mail[0].next.tool.value == "find"
-    assert mail[0].next.args["folder"] == "inbox"
+    assert mail[0].next.args["source"] == SOURCE
+    assert "folder" not in mail[0].next.args, "mail may be filed anywhere, so list every folder"
 
 
 def test_a_a_reply_to_a_linked_message_suggests_that_card(
@@ -148,3 +149,36 @@ def test_a_a_handled_batch_does_not_come_back(
         "SELECT COUNT(*) FROM events WHERE kind LIKE 'mail.%' AND state IN ('new', 'delivered')"
     ).fetchone()[0]
     assert rows == 0
+
+
+def test_a_mail_the_owner_sent_teaches_recipients_and_never_becomes_new_mail(
+    ctx: Context, seed: Any, fake: FakeProvider, clock: ManualClock, app: App
+) -> None:
+    card = seed.card("Roof repair")
+    link(ctx, card, "<orig@x>")
+    fake.mail.add_message(
+        SOURCE,
+        folder_id="f-sent",
+        internet_message_id="<reply@x>",
+        sender="owner@example.org",
+        to=("bob@example.org",),
+        in_reply_to="<orig@x>",
+    )
+    fake.mail.add_message(
+        SOURCE,
+        folder_id="f-sent",
+        internet_message_id="<other@x>",
+        sender="owner@example.org",
+        to=("carol@example.org",),
+    )
+    fake.mail.add_message(SOURCE, internet_message_id="<in@x>")
+    go(ctx, clock)
+    learned = {address for _, address in ctx.services.writes.learned}
+    assert {"bob@example.org", "carol@example.org"} <= learned
+    work = app.call("start", {}).data.work
+    mail = [w for w in work if w.kind.value == "mail.new_unmatched"]
+    assert len(mail) == 2, "one line for the new mail, one quiet line for the reply on a card"
+    assert "1 new mail" in mail[0].summary, "sent mail is not counted as new mail"
+    assert mail[1].next.args["folder"] == "sent"
+    assert suggestions(ctx)["f-sent/<reply@x>"] == card
+    assert ctx.db.execute("SELECT COUNT(*) FROM mail_seen WHERE sent = 1").fetchone()[0] == 2

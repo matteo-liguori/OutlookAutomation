@@ -15,7 +15,7 @@
       {
         "id": "guidance.rules",
         "status": "ok",
-        "summary": "42 rules, 8118 characters."
+        "summary": "44 rules, 8535 characters."
       },
       {
         "id": "guidance.overrides",
@@ -26,6 +26,11 @@
         "id": "sources.health",
         "status": "ok",
         "summary": "0 of 0 sources need attention."
+      },
+      {
+        "id": "sources.older_mail",
+        "status": "ok",
+        "summary": "No mail is held back as too old."
       }
     ]
   },

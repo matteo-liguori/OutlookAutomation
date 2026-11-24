@@ -105,8 +105,10 @@ class FakeMail:
         self._world.mail.setdefault(source, [])
         self._world.folders.setdefault(source, list(_DEFAULT_FOLDERS))
 
-    def add_folder(self, source: str, folder_id: str, name: str) -> Folder:
-        folder = Folder(id=folder_id, name=name, path="/" + name)
+    def add_folder(
+        self, source: str, folder_id: str, name: str, role: FolderRole = FolderRole.OTHER
+    ) -> Folder:
+        folder = Folder(id=folder_id, name=name, path="/" + name, role=role)
         self._world.folders[source].append(folder)
         return folder
 

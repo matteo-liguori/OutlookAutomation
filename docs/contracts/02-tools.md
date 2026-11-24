@@ -65,8 +65,9 @@ harness-written line of at most 160 characters, one exact tool call.
 
 ### next
 
-Request: `handled[]` (event handles the agent has dealt with), `limit` (1 to
-10, default 5), `cursor?`. Response: `work[]`, `remaining`.
+Request: `handled[]` (event handles the agent has dealt with), `older_mail[]` (old-mail
+questions the owner said yes to, A-23; they are also marked handled), `limit` (1 to 10,
+default 5), `cursor?`. Response: `work[]`, `remaining`.
 
 ### guide
 

@@ -203,3 +203,50 @@ def test_m35_migration_0080_keeps_every_artifact_owner_of_a_store_at_0071(
         "VALUES ('art_0000000000000000', 'card', 'card_0000000000000001', '2026-01-01T00:00:00Z')"
     )
     db.close()
+
+
+def test_m36_migration_0120_gives_each_seen_message_one_key_and_drops_second_copies(
+    clock: ManualClock,
+) -> None:
+    """A live store at 0080 stored one row per copy; it must come out with one row per message."""
+    db = connect(MEMORY)
+    upto = [m for m in discover() if m.version <= 80]
+    assert migrate(db, clock, backup_dir=None, migrations=upto)[-1] == 80
+    when = "2026-01-01T00:00:00Z"
+    copies = [
+        ("f-inbox/<A@x>", "msg_a1", "<A@x>"),
+        ("f-all/<A@x>", "msg_a2", "<a@x>"),
+        ("f-inbox/<B@x>", "msg_b1", "<B@x>"),
+        ("f-inbox/none", "msg_c1", None),
+    ]
+    for locator, handle, message_id in copies:
+        db.execute(
+            "INSERT INTO refs (handle, kind, source_id, locator, internet_message_id, "
+            "first_seen_at, last_seen_at) VALUES (?, 'message', 'mail:t', ?, ?, ?, ?)",
+            (handle, locator, message_id, when, when),
+        )
+        db.execute(
+            "INSERT INTO mail_seen (source_id, locator, handle, received_at, first_seen_at) "
+            "VALUES ('mail:t', ?, ?, ?, ?)",
+            (locator, handle, when, when),
+        )
+    db.execute(
+        "INSERT INTO mail_watermarks (source_id, covered_through, watching_since, "
+        "scan_started_at, scan_until) VALUES ('mail:t', ?, ?, ?, ?)",
+        (when, when, when, when),
+    )
+    db.commit()
+    assert migrate(db, clock, backup_dir=None)[-1] >= 120
+    rows = db.execute("SELECT locator, message_key, sent FROM mail_seen ORDER BY seq").fetchall()
+    assert [(r["locator"], r["message_key"], r["sent"]) for r in rows] == [
+        ("f-inbox/<A@x>", "a@x", 0),
+        ("f-inbox/<B@x>", "b@x", 0),
+        ("f-inbox/none", "loc:f-inbox/none", 0),
+    ]
+    mark = db.execute(
+        "SELECT scan_until, scan_started_at, held_from FROM mail_watermarks"
+    ).fetchone()
+    assert mark["scan_until"] is None
+    assert mark["held_from"] is None
+    assert mark["scan_started_at"] == when, "an unfinished scan restarts from the watermark"
+    db.close()

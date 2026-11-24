@@ -56,8 +56,8 @@ Binding for every track that touches SQLite. Code:
 | `known_recipients` | Records | writes | Known recipients per source: confirmed by a grant, or seeded from Sent history (`origin`) |
 | `operations` | Records | writes | Write operations |
 | `audit_log` | System | writes | Hash-chained audit rows |
-| `mail_watermarks` | Records | attention | Per source: mail covered through a time, an in-progress scan, the uncovered span |
-| `mail_seen` | Records | attention | Identity, time and suggested card of each new message; the batch awaiting triage |
+| `mail_watermarks` | Records | attention | Per source: mail covered through a time, an in-progress oldest-first scan, the uncovered span, and the older span held for the owner's answer (A-23) |
+| `mail_seen` | Records | attention | One row per message (message key, whatever folders hold copies): time, suggested card, sent or received; the batch awaiting triage |
 | `schedules` | Records | runs | The schedule record: which passes are due, when |
 | `runs` | Records | runs | One row per scheduled pass and day; owns its report artifacts |
 | `user_notes` | Ephemeral | runs | Short notes from the viewer, raised as `user.note` |

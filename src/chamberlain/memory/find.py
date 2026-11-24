@@ -11,7 +11,7 @@ from chamberlain.app.context import Context, Result
 from chamberlain.domain.calendar import CalendarQuery
 from chamberlain.domain.contacts import ContactQuery
 from chamberlain.domain.handles import HandleKind, handle_kind
-from chamberlain.domain.mail import Folder, FolderRole, MailQuery, MessageSummary
+from chamberlain.domain.mail import Folder, FolderRole, MailQuery, MessageSummary, message_key
 from chamberlain.memory import refs, repo
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
@@ -233,14 +233,15 @@ def _mail(ctx: Context, request: FindRequest) -> Snapshot:
             )
             for item in shown
         }
-        suggestions = repo.mail_suggestions(ctx.db, source, list(handles.values()))
+        keys = {item.locator: message_key(item.internet_message_id, item.locator) for item in shown}
+        suggestions = repo.mail_suggestions(ctx.db, source, list(keys.values()))
         for item in shown:
             handle = handles[item.locator]
             group = copies[item.internet_message_id or item.locator]
             flags = "unread" if any(c.unread for c in group) else "read"
             if item.has_attachments:
                 flags += ", with attachments"
-            suggestion = suggestions.get(handle)
+            suggestion = suggestions.get(keys[item.locator])
             if suggestion is not None:
                 flags += f"; may belong to card {suggestion[0]}: {suggestion[1][:50]}"
             names = _folder_names(group, folders)

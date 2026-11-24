@@ -16,8 +16,18 @@ class FolderRole(StrEnum):
     SENT = "sent"
     DRAFTS = "drafts"
     TRASH = "trash"
+    JUNK = "junk"
     ARCHIVE = "archive"
     OTHER = "other"
+
+
+def message_key(internet_message_id: str, locator: str) -> str:
+    """One identity for every copy of a message: the bare, lower-cased Message-ID.
+
+    A message with no Message-ID falls back to its locator, so it is still counted once.
+    """
+    bare = internet_message_id.strip().strip("<>").strip().casefold()
+    return bare if bare else f"loc:{locator}"
 
 
 class Folder(Model):

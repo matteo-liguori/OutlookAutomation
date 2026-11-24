@@ -7,7 +7,7 @@ before it is prepared, and a dispatched one can never be touched here.
 
 import logging
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 
 from pydantic import TypeAdapter
 
@@ -108,6 +108,16 @@ class Control:
 
     def revoke_grant(self, handle: str, *, actor: str) -> None:
         self._grants.revoke(handle, actor=actor)
+
+    def own_addresses(self, source: str) -> frozenset[str]:
+        return repo.own_addresses(self._db, source)
+
+    def learn_recipients(self, source: str, addresses: Iterable[str]) -> int:
+        own = repo.own_addresses(self._db, source)
+        wanted = (
+            a for a in addresses if a.strip().lower() not in own and not a.endswith(".invalid")
+        )
+        return repo.seed_known_recipients(self._db, source, wanted, stamp(self._clock))
 
     def cancel_operation(self, handle: str, *, actor: str) -> None:
         cancel_operation(

@@ -12,6 +12,7 @@ from chamberlain.app.context import Context
 from chamberlain.attention import repo
 from chamberlain.attention.models import (
     DetectorInput,
+    HeldMail,
     MailGap,
     SourceSnapshot,
 )
@@ -95,6 +96,10 @@ def collect(ctx: Context) -> Collected:
         sources=snapshots,
         mail=tuple(repo.mail_batches(ctx.db)),
         mail_gaps=tuple(MailGap(*g) for g in repo.mail_gaps(ctx.db)),
+        mail_held=tuple(
+            HeldMail(source, h.start, h.end, h.state, h.estimate)
+            for source, h in repo.mail_held(ctx.db)
+        ),
         actions=tuple(repo.due_actions(ctx.db, now)),
         cards=tuple(repo.cards_needing_review(ctx.db, now)),
         open_cards=tuple(repo.open_cards(ctx.db)),

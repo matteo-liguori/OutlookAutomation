@@ -9,7 +9,7 @@ import binascii
 from typing import Literal
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Hooks, Result
-from chamberlain.attention import inbox, repo, sessions
+from chamberlain.attention import inbox, older, repo, sessions
 from chamberlain.attention.collect import source_health
 from chamberlain.attention.hooks import HOOKS as _HOOKS
 from chamberlain.attention.overrides import apply_overrides
@@ -97,8 +97,8 @@ def next_work(ctx: Context, request: NextRequest) -> Result:
         row, ctx.clock, sessions.configured_zone(ctx.data_root)
     ):
         raise sessions.stop_error()
-    if request.handled:
-        inbox.handle_events(ctx.db, ctx.clock, request.handled)
+    if request.handled or request.older_mail:
+        older.next_with_answers(ctx, request.handled, request.older_mail, actor=f"agent:{session}")
     work, more = _offer(ctx, session, request.limit)
     return Result(NextResponse(work=work, remaining=more))
 
@@ -190,13 +190,24 @@ def source_checks(ctx: Context) -> list[CheckResult]:
     health = repo.read_health(ctx.db)
     bad = sorted(s for s, state in health.items() if state is not HealthState.OK)
     summary = f"{len(bad)} of {len(health)} sources need attention."
+    held = repo.mail_held(ctx.db)
     return [
         CheckResult(
             id="sources.health",
             status="warn" if bad else "ok",
             summary=(summary + (" " + ", ".join(bad) if bad else ""))[:160],
             fix="Ask the user to check the listed sources." if bad else None,
-        )
+        ),
+        CheckResult(
+            id="sources.older_mail",
+            status="warn" if held else "ok",
+            summary=(
+                "; ".join(f"{s}: {h.start} to {h.end} UTC, {h.state}" for s, h in held)
+                if held
+                else "No mail is held back as too old."
+            )[:160],
+            fix="Ask the owner whether to read it, then answer through next." if held else None,
+        ),
     ]
 
 

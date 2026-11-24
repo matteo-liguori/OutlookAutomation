@@ -100,6 +100,14 @@ class StartResponse(Model):
 
 class NextRequest(ToolRequest):
     handled: tuple[EventHandle, ...] = ()
+    older_mail: tuple[EventHandle, ...] = Field(
+        default=(),
+        description=(
+            "Events about older mail that the owner said yes to reading (also marks them handled). "
+            "Never fill this without the owner's yes."
+        ),
+    )
+    """An old-mail question handled without being listed here is a no (A-23)."""
     limit: int = Field(default=5, ge=1, le=NEXT_WORK_ITEMS_MAX)
     cursor: str | None = None
 
@@ -288,7 +296,7 @@ class MessageView(Model):
     kind: Literal["message"] = "message"
     handle: MessageHandle
     source: SourceId
-    folder_role: Literal["inbox", "sent", "drafts", "trash", "archive", "other"]
+    folder_role: Literal["inbox", "sent", "drafts", "trash", "junk", "archive", "other"]
     when: Timestamp
     unread: bool
     attachment_count: int = Field(default=0, ge=0)

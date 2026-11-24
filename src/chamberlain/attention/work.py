@@ -34,6 +34,12 @@ def next_step(event: EventRow) -> NextStep:
             args={"handle": subject, "part": "summary"},
             why="Read where it is. Do not send it again.",
         )
+    if kind is EventKind.SOURCE_STALE and event.attrs.reason == "older_mail":
+        return NextStep(
+            tool=ToolName.DOCTOR,
+            args={"check": "sources"},
+            why="See the span, then ask the owner whether to read it.",
+        )
     if kind in (EventKind.SOURCE_STALE, EventKind.SOURCE_SIGN_IN_NEEDED):
         return NextStep(
             tool=ToolName.DOCTOR,
@@ -65,13 +71,16 @@ def next_step(event: EventRow) -> NextStep:
             why="The note is in the line above. Act on it, then mark it handled.",
         )
     if kind is EventKind.MAIL_NEW_UNMATCHED and subject is not None:
-        args: dict[str, JsonValue] = {"scope": "mail", "source": subject, "folder": "inbox"}
+        args: dict[str, JsonValue] = {"scope": "mail", "source": subject}
+        if event.attrs.reason == "sent":
+            args["folder"] = "sent"
         if event.attrs.since is not None:
             args["since"] = event.attrs.since
         args["limit"] = 25
-        return NextStep(
-            tool=ToolName.FIND, args=args, why="List the new mail; open only what you need."
-        )
+        why = "List the new mail; open only what you need."
+        if event.attrs.reason == "sent":
+            why = "List what you sent; see whether it settles a card."
+        return NextStep(tool=ToolName.FIND, args=args, why=why)
     if subject is not None:
         return NextStep(
             tool=ToolName.OPEN,

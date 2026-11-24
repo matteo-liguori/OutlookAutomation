@@ -380,17 +380,21 @@ def search_notes(db: sqlite3.Connection, text: str | None, limit: int) -> list[R
 
 
 def mail_suggestions(
-    db: sqlite3.Connection, source: str, handles: list[str]
+    db: sqlite3.Connection, source: str, keys: list[str]
 ) -> dict[str, tuple[str, str]]:
-    """Message handle to (open card handle, title), read from the attention track's batch rows."""
+    """Message key to (open card handle, title), read from the attention track's batch rows.
+
+    One row stands for every copy of a message, so the key (`domain.mail.message_key`), not a
+    handle, is how a listing finds it.
+    """
     found: dict[str, tuple[str, str]] = {}
-    for start in range(0, len(handles), 200):
-        chunk = handles[start : start + 200]
+    for start in range(0, len(keys), 200):
+        chunk = keys[start : start + 200]
         marks = ",".join("?" * len(chunk))
         rows = db.execute(
-            "SELECT s.handle AS message, c.handle AS card, c.title AS title FROM mail_seen s "
+            "SELECT s.message_key AS message, c.handle AS card, c.title AS title FROM mail_seen s "
             "JOIN cards c ON c.handle = s.suggested_card AND c.state = 'open' "
-            f"WHERE s.source_id = ? AND s.handle IN ({marks})",
+            f"WHERE s.source_id = ? AND s.message_key IN ({marks})",
             (source, *chunk),
         )
         for row in rows:
