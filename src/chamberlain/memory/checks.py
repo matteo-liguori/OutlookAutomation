@@ -85,7 +85,7 @@ def storage_checks(ctx: Context) -> list[CheckResult]:
         CheckResult(
             id="storage.evidence",
             status=_status(crowded == 0),
-            summary=f"{crowded} open cards hold over {EVIDENCE_PER_OPEN_CARD_TARGET} evidence rows.",
+            summary=f"{crowded} open cards hold too much evidence.",
             fix=None if crowded == 0 else "Forget evidence a card no longer needs.",
         )
     )
