@@ -72,6 +72,10 @@ LOG_MAX_BYTES: Final = 20 * 1024 * 1024
 
 # --- Writes and grants (04-writes.md, 05-grants.md) -------------------------
 SETTLE_AFTER_MINUTES: Final = 10
+CONNECTOR_DEADLINE_SECONDS: Final = 30
+"""The longest default write deadline of any connector (08-ports.md, P-17)."""
+ABSENCE_MARGIN_SECONDS: Final = 120
+"""Safety margin after the deadline: a timed-out write may land late (W-12)."""
 REPEAT_WINDOW_HOURS: Final = 24
 SENDS_PER_HOUR: Final = 20
 MARK_READ_MAX: Final = 200

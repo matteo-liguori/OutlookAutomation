@@ -475,7 +475,7 @@ class ComposeArgs(AccountArgs):
     sent_folder_id: str
     draft_folder_id: str
     token: Annotated[str, Field(min_length=1, max_length=998)]
-    """The intent's Message-ID token; also written as `X-Chamberlain-Token`."""
+    """The intent's Message-ID token; also written as `X-Chamberlain-Write-Token`."""
     attachments: tuple[AttachmentSpec, ...] = ()
     reply_to: MessageRef | None = None
     display_only: bool = False

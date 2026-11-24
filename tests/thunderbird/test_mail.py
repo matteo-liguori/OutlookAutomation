@@ -31,7 +31,6 @@ from chamberlain.domain.operations import (
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 SOURCE = "mail:test"
-QUEUED = getattr(ReconcileStatus, "QUEUED", ReconcileStatus.UNKNOWN)
 
 
 def handle(locator: str) -> str:
@@ -199,8 +198,9 @@ def test_r7_trash_that_merges_into_an_existing_copy_is_applied_with_a_warning(
     result = applied(
         stack.mail.dispatch(stack.mail.prepare(intent, {handle(inbox): inbox}), "k", {})
     )
-    assert "merged_existing_copy" in result.detail
-    assert "read_state_preserved=false" in result.detail
+    assert result.receipt is not None
+    assert result.receipt.warnings == ("merged_existing_copy",)
+    assert result.receipt.read_state_preserved is False
     assert stack.copies(message_id, stack.folder_id(FolderRole.TRASH)) == 1
 
 
@@ -343,7 +343,7 @@ def test_r2_an_exact_copy_waiting_in_the_outbox_is_queued_and_never_absent(stack
     prepared = stack.mail.prepare(send_intent(stack), {})
     applied(stack.mail.dispatch(prepared, "k", {}))
     settled = stack.mail.reconcile(prepared, "k")
-    assert settled.status is QUEUED
+    assert settled.status is ReconcileStatus.QUEUED
     assert settled.status is not ReconcileStatus.ABSENT
     assert not settled.proof
     assert "Outbox" in settled.detail

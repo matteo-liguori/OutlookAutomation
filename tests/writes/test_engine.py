@@ -3,17 +3,27 @@
 from contextlib import AbstractContextManager
 
 import pytest
+from hypothesis import HealthCheck, given, settings
+from hypothesis import strategies as st
 
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.canonical import sha256_bytes
+from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import (
     AttachmentRef,
+    CalendarDelete,
+    CalendarUpdate,
     MailMarkRead,
     MailMove,
     MailSend,
     MailTrash,
 )
 from chamberlain.domain.operations import OperationState
+from chamberlain.limits import (
+    ABSENCE_MARGIN_SECONDS,
+    CONNECTOR_DEADLINE_SECONDS,
+    SETTLE_AFTER_MINUTES,
+)
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.testing.write_rig import CALENDAR, MAIL, SimulatedCrash, WriteRig, make_rig
 from chamberlain.writes import repo
@@ -353,6 +363,61 @@ def test_q2_a_calendar_change_with_attendees_needs_the_human(rig: WriteRig) -> N
         rig.agent_approves(proposal)
 
 
+def test_g12_owner_calendar_writes_without_attendees_use_agent_evidence(rig: WriteRig) -> None:
+    """Owner ruling 2026-11-24: create, update and delete on an event with no attendees."""
+    created = rig.engine().propose_intent(rig.event())
+    assert created.requirement.value == "agent_evidence"
+    fields = rig.event().event
+    locator = rig.fake.calendar.add_event(CALENDAR, fields)
+    handle = rig.refs.remember(HandleKind.CALENDAR_EVENT, CALENDAR, locator)
+    stored = rig.fake.calendar.read(CALENDAR, locator)
+    update = CalendarUpdate(
+        source=CALENDAR,
+        event_ref=handle,
+        expected_etag=stored.etag,
+        event=fields.model_copy(update={"title": "Lunch moved"}),
+    )
+    delete = CalendarDelete(source=CALENDAR, event_ref=handle, expected_etag=stored.etag)
+    assert rig.engine().propose_intent(update).requirement.value == "agent_evidence"
+    assert rig.engine().propose_intent(delete).requirement.value == "agent_evidence"
+
+
+def test_g12_owner_updating_or_deleting_an_event_with_attendees_needs_the_human(
+    rig: WriteRig,
+) -> None:
+    fields = rig.event(attendees=("guest@example.org",)).event
+    locator = rig.fake.calendar.add_event(CALENDAR, fields)
+    handle = rig.refs.remember(HandleKind.CALENDAR_EVENT, CALENDAR, locator)
+    stored = rig.fake.calendar.read(CALENDAR, locator)
+    quiet = fields.model_copy(update={"title": "Lunch moved", "attendees": ()})
+    update = CalendarUpdate(
+        source=CALENDAR, event_ref=handle, expected_etag=stored.etag, event=quiet
+    )
+    delete = CalendarDelete(source=CALENDAR, event_ref=handle, expected_etag=stored.etag)
+    for intent in (update, delete):
+        proposal = rig.engine().propose_intent(intent)
+        assert proposal.requirement.value == "human_confirmation"
+        with fails(ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED):
+            rig.agent_approves(proposal)
+
+
+def test_r3_propose_runs_the_connector_scan_before_the_operation_is_stored(
+    rig: WriteRig,
+) -> None:
+    rig.know("friend@example.org")
+
+    def duplicate() -> None:
+        raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "A related message is already in Sent.")
+
+    rig.mail.after_prepare = duplicate
+    with fails(ErrorCode.REMOTE_CHANGED):
+        rig.engine().propose_intent(rig.send())
+    assert repo.count_operations(rig.db) == 0
+    rig.mail.after_prepare = None
+    assert rig.engine().propose_intent(rig.send()).operation is not None
+    assert rig.mail.last_refs.get("_allow_duplicate") is None
+
+
 def test_t11_cancel_only_before_prepare_and_never_after_dispatch(rig: WriteRig) -> None:
     op = rig.ready_send()
     cancelled = rig.engine().cancel(op.handle, actor="agent:x")
@@ -459,3 +524,28 @@ def test_w9_w25_the_tick_seams_recover_compact_and_sweep_grants(rig: WriteRig) -
     assert [name for name, _ in COMPACTORS] == ["operations_compacted", "grants_changed"]
     changed = [fn(rig.ctx, rig.clock.now()) for _, fn in COMPACTORS]
     assert changed == [0, 0]
+
+
+@settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+@given(elapsed=st.integers(min_value=0, max_value=1200))
+def test_w12_an_absent_proof_never_frees_a_grant_before_deadline_plus_margin(elapsed: int) -> None:
+    """Coordinator ruling: a late-landing timed-out write must not be released early."""
+    rig = make_rig(send_absence_provable=True)
+    try:
+        op = rig.ready_send()
+        rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
+        with fails(ErrorCode.OPERATION_UNCERTAIN):
+            rig.engine().do(op.handle)
+        rig.clock.advance(seconds=elapsed)
+        after, _ = rig.engine().reconcile(op.handle)
+        floor = CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS
+        if elapsed < floor:
+            assert after.state is S.UNCERTAIN
+        if elapsed >= SETTLE_AFTER_MINUTES * 60:
+            assert after.state is S.CONFIRMED_ABSENT
+    finally:
+        rig.close()
+
+
+def test_w12_the_settle_wait_covers_the_deadline_and_margin() -> None:
+    assert SETTLE_AFTER_MINUTES * 60 >= CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS

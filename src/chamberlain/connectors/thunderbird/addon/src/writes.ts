@@ -112,7 +112,7 @@ function composeDetails(r: ComposeArgs, identityId: string, sentFolder: TbFolder
     isPlainText: true,
     deliveryFormat: "plaintext",
     priority: r.high_importance ? "high" : "normal",
-    customHeaders: [{ name: "X-Chamberlain-Token", value: r.token }],
+    customHeaders: [{ name: "X-Chamberlain-Write-Token", value: r.token }],
   };
 }
 
@@ -136,7 +136,7 @@ async function verifyComposer(tabId: number, r: ComposeArgs, identityId: string,
   );
   check(details.priority === (r.high_importance ? "high" : "normal"), "changed", "The composer priority changed.");
   if (details.customHeaders) {
-    check(details.customHeaders.some((h: any) => h.name === "X-Chamberlain-Token" && h.value === r.token), "changed", "The composer token header changed.");
+    check(details.customHeaders.some((h: any) => h.name === "X-Chamberlain-Write-Token" && h.value === r.token), "changed", "The composer token header changed.");
   }
   const actual = await messenger.compose.listAttachments(tabId);
   check(actual.length === files.length, "changed", "The composer attachments changed.");
@@ -320,7 +320,7 @@ async function inspectCopy(r: Bound, h: TbHeader, fp: Fingerprint, where: Match[
   const replyHeader = (headers["in-reply-to"] ?? []).join(" ");
   const replyOk = !fp.in_reply_to || replyHeader.includes(fp.in_reply_to);
   const own = await isOwn(after, r.mailbox);
-  const tokenHeader = (headers["x-chamberlain-token"] ?? []).join(" ").trim();
+  const tokenHeader = (headers["x-chamberlain-write-token"] ?? []).join(" ").trim();
   const draftsOrSent = where === "drafts" || where === "sent";
   return {
     header: header(after),

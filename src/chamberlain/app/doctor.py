@@ -2,12 +2,13 @@
 
 Contract: docs/contracts/02-tools.md (doctor) and docs/contracts/10-targets.md.
 The app owns the handler; each track adds its checks to `DOCTOR_CHECKS` in its
-own `handlers.py`, and its figures to `Metrics` in wave 2.
+own `handlers.py`; the sixteen `--metrics` figures are collected by `app/metrics.py`.
 """
 
 from collections.abc import Sequence
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
+from chamberlain.app.metrics import collect_metrics
 from chamberlain.schema.tools import CheckResult, DoctorCheck, DoctorRequest, DoctorResponse
 from chamberlain.store.db import table_names
 from chamberlain.store.migrate import discover, pending
@@ -43,6 +44,7 @@ def make_doctor(extra: Sequence[tuple[DoctorCheck, DoctorCheckFn]] = ()) -> Hand
         for group, check in checks:
             if request.check in (DoctorCheck.ALL, group):
                 results.extend(check(ctx))
-        return Result(DoctorResponse(checks=tuple(results)))
+        metrics = collect_metrics(ctx) if request.metrics else None
+        return Result(DoctorResponse(checks=tuple(results), metrics=metrics))
 
     return doctor

@@ -162,7 +162,9 @@ def sweep(ctx, now) -> SweepReport
 
 - **M-25** The data root has a fixed layout: `chamberlain.sqlite3` (and its
   `-wal`, `-shm`), `config/`, `artifacts/`, `leases/`, `backups/`, `logs/`,
-  `quarantine/`, `run/`. Anything else under the data root, and any file in
+  `quarantine/`, `run/`, `bridge/` (R9: the native-host launcher, manifest,
+  add-on package and runtime token; the sweeper never scans it). Anything else
+  under the data root, and any file in
   `artifacts/` with no live row, is an orphan.
 - **M-26** The sweeper moves orphans to `quarantine/<date>/`, records them
   in the `quarantine` table, raises one `storage.orphans` event per sweep
@@ -186,3 +188,26 @@ crash-mid-sweep, checking after each sweep:
 3. no file exists in `artifacts/` without a live row, and no live row lacks
    its file;
 4. sweeping twice changes nothing the second time.
+
+## Readings accepted as rules (board, 2026-11-24)
+
+- **M-28** Sessions belong to attention. Memory never writes `sessions`; a
+  session is a dead owner when `ended_at` is set or `last_seen_at` is 4 hours
+  old, and memory deletes its own cursors for such sessions.
+- **M-29** A file in `artifacts/` whose hash matches a non-deleted row is never
+  an orphan (rule `bytes` deletes it); only files with no row are quarantined.
+- **M-30** Refs are kept while `card_links`, `evidence.ref` or a non-terminal
+  operation names them.
+- **M-31** Tombstone rows of deleted artifacts live 7 days, so `open` can say
+  `artifact.expired`; quarantine rows stay 14 days after the file is deleted.
+- **M-32** Compaction of operations and grants, and grant timers, are the
+  writes track's rules for its own tables. They run inside the sweeper's
+  `records` step through the `compactors` seam (`sweep(ctx, now, compactors=...)`,
+  wired in `app/wiring.py`) and are counted in the one `sweep` audit row. The
+  evidence of a compacted grant or operation dies with it. Attention trims its
+  own events and sessions inside its tick and supplies no compactor.
+- **M-33** `forget` on an artifact reports `deleted: true` once it is no longer
+  readable; the sweeper removes the bytes later. `RefResolver.repoint` (R4)
+  keeps the handle and replaces the locator after a move or draft update.
+- **M-34** `con_` handles open to a view only: ContactsPort has no
+  read-by-locator, so no contact content.

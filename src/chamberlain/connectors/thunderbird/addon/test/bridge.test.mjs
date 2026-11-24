@@ -317,7 +317,7 @@ test("P-15 send files the Sent copy with the bound folder and carries the token 
   assert.equal(res.ok, true);
   const sent = world.find("<tok-1@chamberlain.local>", SENT);
   assert.equal(sent.priority, "high");
-  assert.ok(sent.headers["x-chamberlain-token"]);
+  assert.ok(sent.headers["x-chamberlain-write-token"]);
   assert.equal(world.composers.size, 0, "a submitted composer is gone");
 });
 

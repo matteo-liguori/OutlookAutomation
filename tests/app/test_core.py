@@ -163,7 +163,11 @@ def test_g23_every_call_writes_one_audit_row_without_content(ctx: Context) -> No
     app = app_with(audited, start=start)
     app.call("start", {"agent": "private-agent-label"})
     app.call("do", {"operation": OPERATION, "session": SESSION})
-    assert [row.summary for row in audit.rows] == ["start: ok", "do: tool.not_implemented"]
+    assert [row.summary.split(" (")[0] for row in audit.rows] == [
+        "start: ok",
+        "do: tool.not_implemented",
+    ]
+    assert all(row.summary.endswith(" chars)") for row in audit.rows)
     assert audit.rows[1].actor == f"agent:{SESSION}"
     assert "private-agent-label" not in repr(audit.rows)
 
