@@ -1,14 +1,24 @@
 """The CalendarPort contract suite.
 
-Contract: docs/contracts/08-ports.md (P-16). Subclass and provide a `rig`
+Contract: docs/contracts/08-ports.md (P-16, P-23 to P-27). Subclass and provide a `rig`
 fixture returning a fresh `CalendarRig`.
 """
 
 from datetime import UTC, datetime, timedelta
+from typing import Literal
+from zoneinfo import ZoneInfo
 
 import pytest
 
-from chamberlain.domain.calendar import CalendarQuery, EventFields, EventStatus, Response
+from chamberlain.domain.calendar import (
+    CalendarEvent,
+    CalendarQuery,
+    EventFields,
+    EventStatus,
+    Frequency,
+    Recurrence,
+    Response,
+)
 from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import (
@@ -287,3 +297,127 @@ class CalendarPortContract:
                 rig.port.prepare(intent, {handle: locator})
             assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
             assert raised.value.detail == "invitee-copy"
+
+    # --- repeating events (P-23 to P-27) -----------------------------------------
+
+    def _series_caps(self, rig: CalendarRig) -> None:
+        caps = rig.port.capabilities(rig.source)
+        for name in (CapabilityName.CALENDAR_RECURRENCE, CapabilityName.CALENDAR_OCCURRENCE):
+            if caps.get(name) is None:
+                pytest.skip("this calendar does not write repeating events")
+
+    def _do(
+        self,
+        rig: CalendarRig,
+        locator: str,
+        etag: str,
+        scope: Literal["occurrence", "series"],
+        event: EventFields | None = None,
+    ) -> None:
+        """Change (with `event`) or cancel one date or the series, then check the read-back."""
+        handle = ref_handle(HandleKind.CALENDAR_EVENT, rig.source, locator)
+        intent: CalendarUpdate | CalendarDelete = (
+            CalendarDelete(source=rig.source, event_ref=handle, expected_etag=etag, scope=scope)
+            if event is None
+            else CalendarUpdate(
+                source=rig.source, event_ref=handle, expected_etag=etag, scope=scope, event=event
+            )
+        )
+        prepared = rig.port.prepare(intent, {handle: locator})
+        result = rig.port.dispatch(prepared, f"k-{locator}-{intent.kind}")
+        assert result.outcome is DispatchOutcome.APPLIED
+        assert rig.port.reconcile(prepared, "k-settle").status is ReconcileStatus.PRESENT
+
+    def _series_window(self, rig: CalendarRig) -> CalendarQuery:
+        return CalendarQuery(start=START - timedelta(days=1), end=START + timedelta(days=30))
+
+    def test_p24_a_series_is_written_and_read_one_date_or_all(self, rig: CalendarRig) -> None:
+        self._series_caps(rig)
+        uid = rig.new_uid()
+        rule = Recurrence(frequency=Frequency.DAILY, count=4, zone="UTC")
+        event = fields("Series").model_copy(update={"recurrence": rule})
+        prepared = rig.port.prepare(CalendarCreate(source=rig.source, event=event, uid=uid), {})
+        assert rig.port.dispatch(prepared, "k-series").outcome is DispatchOutcome.APPLIED
+        assert rig.port.reconcile(prepared, "k-series").status is ReconcileStatus.PRESENT
+        window = self._series_window(rig)
+
+        def dates() -> list[CalendarEvent]:
+            return list(rig.port.events(rig.source, window).items)
+
+        seen = dates()
+        assert [e.fields.start.day for e in seen] == [1, 2, 3, 4]
+        series = seen[0].series_locator
+        assert series is not None
+        assert all(e.is_occurrence and e.series_locator == series for e in seen)
+        master = rig.port.read(rig.source, series)
+        assert master.is_series
+        assert master.fields.recurrence is not None
+        assert (master.fields.recurrence.frequency, master.fields.recurrence.count) == (
+            Frequency.DAILY,
+            4,
+        )
+
+        # One date changed, one date cancelled: the others stay.
+        second = rig.port.read(rig.source, seen[1].locator)
+        self._do(
+            rig,
+            second.locator,
+            second.etag,
+            "occurrence",
+            second.fields.model_copy(update={"title": "Moved"}),
+        )
+        third = rig.port.read(rig.source, seen[2].locator)
+        self._do(rig, third.locator, third.etag, "occurrence")
+        after = {e.fields.start.day: e for e in dates()}
+        assert sorted(after) == [1, 2, 4]
+        assert after[2].fields.title == "Moved"
+        assert after[1].fields.title == after[4].fields.title == "Series"
+        assert after[2].series_locator == series
+
+        # The whole series changed: no rule given keeps the rule.
+        master = rig.port.read(rig.source, series)
+        self._do(
+            rig,
+            series,
+            master.etag,
+            "series",
+            master.fields.model_copy(update={"title": "Series v2", "recurrence": None}),
+        )
+        changed = {e.fields.start.day: e for e in dates()}
+        assert changed[1].fields.title == changed[4].fields.title == "Series v2"
+        kept = rig.port.read(rig.source, series).fields.recurrence
+        assert kept is not None
+        assert kept.count == 4
+
+        # The whole series deleted: no date is left in the window.
+        master = rig.port.read(rig.source, series)
+        self._do(rig, series, master.etag, "series")
+        assert dates() == []
+
+    def _london_series(self, rig: CalendarRig) -> tuple[datetime, list[CalendarEvent]]:
+        """A weekly series at nine o'clock London time, written a week before the clocks go
+        forward. Returns its first date's instant and the dates the window read gives."""
+        self._series_caps(rig)
+        london = ZoneInfo("Europe/London")
+        first = datetime(2027, 3, 22, 9, 0, tzinfo=london)
+        rule = Recurrence(frequency=Frequency.WEEKLY, count=3, zone="Europe/London")
+        event = EventFields(
+            title="London nine", start=first, end=first + timedelta(minutes=30), recurrence=rule
+        )
+        prepared = rig.port.prepare(
+            CalendarCreate(source=rig.source, event=event, uid=rig.new_uid()), {}
+        )
+        assert rig.port.dispatch(prepared, "k-london").outcome is DispatchOutcome.APPLIED
+        assert rig.port.reconcile(prepared, "k-london").status is ReconcileStatus.PRESENT
+        query = CalendarQuery(start=first - timedelta(days=1), end=first + timedelta(days=21))
+        return first, list(rig.port.events(rig.source, query).items)
+
+    def test_p23_a_series_repeats_on_its_own_clock(self, rig: CalendarRig) -> None:
+        """Nine o'clock in London stays nine o'clock across the clock change."""
+        first, found = self._london_series(rig)
+        london = ZoneInfo("Europe/London")
+        assert [e.fields.start.astimezone(london).hour for e in found] == [9, 9, 9]
+        assert [e.fields.start.hour for e in found] == [9, 8, 8]
+        series = found[0].series_locator
+        assert series is not None
+        assert rig.port.read(rig.source, series).fields.start == first

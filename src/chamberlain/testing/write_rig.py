@@ -47,7 +47,7 @@ CALENDAR = "calendar:test"
 CALENDAR_B = "calendar:two"
 """A second calendar in the fake world: invitations from `CALENDAR` land here."""
 CALENDAR_PLAIN = "calendar:plain"
-"""A calendar that cannot send or answer invitations, as an Owl calendar."""
+"""A calendar that cannot send or answer invitations or write a series, as an Owl calendar."""
 OWNER = "me@example.org"
 OWNER_B = "me.two@example.org"
 SESSION = "ses_testsession01"
@@ -279,7 +279,9 @@ def make_rig(*, send_absence_provable: bool = False, policy: WritePolicy | None 
     fake.mail.add_source(MAIL)
     fake.calendar.add_source(CALENDAR, OWNER)
     fake.calendar.add_source(CALENDAR_B, OWNER_B)
-    fake.calendar.add_source(CALENDAR_PLAIN, "plain@example.org", invitations=False)
+    fake.calendar.add_source(
+        CALENDAR_PLAIN, "plain@example.org", invitations=False, recurrence=False
+    )
     mail = ScriptedPort(fake.mail)
     calendar = ScriptedPort(fake.calendar)
     artifacts = MemoryArtifactStore()

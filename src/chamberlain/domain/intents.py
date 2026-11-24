@@ -118,6 +118,11 @@ class MailMarkRead(Model):
     read: bool = True
 
 
+EventScope = Literal["occurrence", "series"]
+"""Which part of a repeating event a change or cancel reaches (P-25): one occurrence, or the
+whole series. A single event takes no scope."""
+
+
 class CalendarCreate(Model):
     kind: Literal[IntentKind.CALENDAR_CREATE] = IntentKind.CALENDAR_CREATE
     source: SourceId
@@ -132,6 +137,9 @@ class CalendarUpdate(Model):
     event_ref: CalendarEventHandle
     expected_etag: str = Field(min_length=1)
     event: EventFields
+    scope: EventScope | None = None
+    """Needed for a repeating event: `occurrence` with an occurrence's handle, `series` with
+    the series' handle (`view.series` on an occurrence). A single event takes none."""
 
 
 class CalendarDelete(Model):
@@ -139,6 +147,7 @@ class CalendarDelete(Model):
     source: SourceId
     event_ref: CalendarEventHandle
     expected_etag: str = Field(min_length=1)
+    scope: EventScope | None = None
 
 
 class CalendarRespond(Model):

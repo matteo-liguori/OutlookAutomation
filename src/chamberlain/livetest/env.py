@@ -45,6 +45,8 @@ class CalendarCopy:
     title: str
     status: str
     start: datetime
+    series: str | None = None
+    """The locator of the series this is one date of, when it is one."""
 
 
 class Waiter(Protocol):
@@ -189,6 +191,7 @@ class PortProbe:
                 title=item.fields.title,
                 status=item.status.value,
                 start=item.fields.start,
+                series=item.series_locator if item.is_occurrence else None,
             )
             for item in page.items
             if text in item.fields.title

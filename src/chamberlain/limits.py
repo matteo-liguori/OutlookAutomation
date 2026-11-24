@@ -101,3 +101,10 @@ ONE_OFF_GRANT_DAYS: Final = 7
 STANDING_GRANT_MAX_DAYS: Final = 365
 PROPOSAL_LAPSE_DAYS: Final = 7
 REVIEW_GRACE_DAYS: Final = 14
+
+# --- Recurring events (08-ports.md P-23 to P-27) ------------------------------
+RECURRENCE_INTERVAL_MAX: Final = 99
+RECURRENCE_COUNT_MAX: Final = 1_000
+RECURRENCE_ZONE_MAX: Final = 64
+RECURRENCE_EXPAND_MAX: Final = 500
+"""Most occurrences one window read may expand from a single series."""

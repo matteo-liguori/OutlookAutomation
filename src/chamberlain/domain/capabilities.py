@@ -23,6 +23,10 @@ class CapabilityName(StrEnum):
     CALENDAR_WRITE = "calendar.write"
     CALENDAR_INVITE = "calendar.invite"
     """Send, change and cancel invitations, and answer invitations received."""
+    CALENDAR_RECURRENCE = "calendar.recurrence"
+    """Create a repeating series, and change or cancel a whole series."""
+    CALENDAR_OCCURRENCE = "calendar.occurrence"
+    """Change or cancel one occurrence of a series."""
     CONTACTS_SEARCH = "contacts.search"
 
 

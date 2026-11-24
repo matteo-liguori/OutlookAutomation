@@ -318,6 +318,10 @@ class CalendarEventView(Model):
     attendee_count: int = Field(default=0, ge=0)
     my_response: Literal["needs_action", "accepted", "tentative", "declined"] | None = None
     """Set when someone else invited this calendar's owner; the owner's answer so far."""
+    repeats: Literal["occurrence", "series"] | None = None
+    """`occurrence`: one date of a repeating event. `series`: the repeating event itself."""
+    series: CalendarEventHandle | None = None
+    """On an occurrence, the handle of its series: change or cancel every date through it."""
 
 
 class ContactView(Model):

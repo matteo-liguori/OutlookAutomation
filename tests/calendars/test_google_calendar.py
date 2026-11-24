@@ -1,7 +1,7 @@
 """Google connector behaviour beyond the shared contract (ported from the old harness)."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from cal_fake_google import FakeGoogleApi
@@ -50,9 +50,17 @@ def create(
     return prepared, port.dispatch(prepared, "k-" + uid)
 
 
-def edit(port: GoogleCalendar, locator: str, etag: str, event: EventFields) -> Prepared:
+def edit(
+    port: GoogleCalendar,
+    locator: str,
+    etag: str,
+    event: EventFields,
+    scope: Literal["occurrence", "series"] | None = None,
+) -> Prepared:
     handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
-    intent = CalendarUpdate(source=SOURCE, event_ref=handle, expected_etag=etag, event=event)
+    intent = CalendarUpdate(
+        source=SOURCE, event_ref=handle, expected_etag=etag, event=event, scope=scope
+    )
     return port.prepare(intent, {handle: locator})
 
 
@@ -106,7 +114,8 @@ def test_p16_update_keeps_what_the_fields_do_not_describe(world: World) -> None:
         }
     )
     before = port.read(SOURCE, locator)
-    result = port.dispatch(edit(port, locator, before.etag, fields("Renamed")), "k")
+    renamed = edit(port, locator, before.etag, fields("Renamed"), "series")
+    result = port.dispatch(renamed, "k")
     assert result.outcome is DispatchOutcome.APPLIED, result.detail
     after = api.events[locator]
     assert after["summary"] == "Renamed"
@@ -263,3 +272,23 @@ def test_p16_a_cancelled_event_is_reported_cancelled(world: World) -> None:
         item("X", "2027-03-01T10:00:00Z", "2027-03-01T11:00:00Z") | {"status": "cancelled"}
     )
     assert port.read(SOURCE, locator).status is EventStatus.CANCELLED
+
+
+def test_p27_an_all_day_series_with_an_until_is_verified_by_date(world: World) -> None:
+    """An all-day series ends on a date: a time of day in `until` must not fail the read-back."""
+    port, api, _ = world
+    event = fields(
+        "Holiday",
+        start=datetime(2027, 3, 1, tzinfo=UTC),
+        end=datetime(2027, 3, 2, tzinfo=UTC),
+        all_day=True,
+        recurrence={
+            "frequency": "daily",
+            "until": datetime(2027, 3, 3, 23, 59, 59, tzinfo=UTC),
+            "zone": "Europe/London",
+        },
+    )
+    prepared, result = create(port, "allday-series@t", event)
+    assert result.outcome is DispatchOutcome.APPLIED, result.detail
+    assert port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
+    assert api.live("allday-series@t")[0]["recurrence"] == ["RRULE:FREQ=DAILY;UNTIL=20270303"]

@@ -313,7 +313,7 @@ def _calendar(ctx: Context, request: FindRequest) -> Snapshot:
                     handle=handle,
                     kind="calendar_event",
                     when=item.fields.start,
-                    summary=item.status.value,
+                    summary=item.status.value + (", repeats" if item.series_locator else ""),
                     content=one_line(item.fields.title, ContentKind.CALENDAR_LINE, handle),
                 )
             )

@@ -42,3 +42,15 @@ class TestCalDavContract(CalendarPortContract):
         port, transport, collection = build(radicale, clock)
         assert isinstance(port, CalendarPort)
         return CalDavRig(port, transport, clock, collection, basic())
+
+    def test_p23_a_series_repeats_on_its_own_clock(self, rig: CalendarRig) -> None:
+        """Written with TZID and read back as the same zone and first date. Radicale's own
+        expansion of the other dates ignores the clock change, so the hour of each date is
+        checked live (iCloud), not here."""
+        first, found = self._london_series(rig)
+        series = found[0].series_locator
+        assert series is not None
+        master = rig.port.read(rig.source, series)
+        assert master.fields.start == first
+        assert master.fields.recurrence is not None
+        assert master.fields.recurrence.zone == "Europe/London"

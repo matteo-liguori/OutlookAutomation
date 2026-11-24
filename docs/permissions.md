@@ -20,7 +20,8 @@ or any other calendar change, needs only your words: you tell the assistant in c
 (or from an authorised email, below) and it records that. No click.
 
 Each click shows exactly what will happen (the recipients, subject, body, times)
-and approves only that. If the assistant changes one word, the permission no longer matches.
+and approves only that. For a repeating event it also says how often it repeats and whether a
+change reaches "this date only" or "every date of the series". If the assistant changes one word, the permission no longer matches.
 
 ## Larger cards
 

@@ -6,8 +6,10 @@ that the Thunderbird client implements, so this module imports nothing from the 
 Thunderbird keeps no version of an event, so the etag is a hash of its iCalendar text.
 The capability set is narrow: no invitations (not declared, so a write that reaches other
 people is refused when proposed; the add-on has no documented, tested way to send, change,
-cancel or answer an invitation through Owl), no recurring-occurrence writes, and absence
-is never proven (the client calendar is a cache, so `server_verified` is always False).
+cancel or answer an invitation through Owl), no repeating-event writes (a series is read, as
+its occurrences, but `calendar.recurrence` and `calendar.occurrence` are not declared: RRULE and
+EXDATE handling through the add-on and Exchange cannot be checked here), and absence is never
+proven (the client calendar is a cache, so `server_verified` is always False).
 """
 
 from collections.abc import Mapping
@@ -270,6 +272,8 @@ class ThunderbirdCalendar:
                         ErrorCode.REQUEST_INVALID, "The event has no uid.", field="uid"
                     )
                 ics.refuse_invitations(None, intent.event)
+                if intent.event.recurrence is not None:
+                    raise _no_series()
                 token = intent.uid
                 data = {
                     "event_id": intent.uid,
@@ -424,17 +428,17 @@ class ThunderbirdCalendar:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not known.")
         event_id, recurrence = ics.split_locator(locator)
         if recurrence is not None:
-            raise ChamberlainError(
-                ErrorCode.CAPABILITY_UNSUPPORTED,
-                "A single occurrence of a recurring event cannot be written.",
-            )
+            raise _no_series()
         item = self._item(binding, event_id)
         if item is None:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
         text = str(item["icalendar"])
         if ics.text_etag(text) != expected_etag:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event changed since it was read.")
-        ics.refuse_invitations(ics.master_of(text), wanted)
+        master = ics.master_of(text)
+        if master.recurring:
+            raise _no_series()
+        ics.refuse_invitations(master, wanted)
         return event_id, text
 
 
@@ -469,14 +473,28 @@ def _event(source: str, item: Json, text: str) -> CalendarEvent:
     return _event_of(source, ics.instance_locator(str(item["id"]), recurrence_id), text, parsed)
 
 
+def _no_series() -> ChamberlainError:
+    return ChamberlainError(
+        ErrorCode.CAPABILITY_UNSUPPORTED,
+        "This calendar cannot write repeating events.",
+        detail="recurrence-not-supported",
+    )
+
+
 def _event_of(source: str, locator: str, text: str, parsed: ics.ParsedEvent) -> CalendarEvent:
+    base, occurrence = ics.split_locator(locator)
+    series = base if occurrence is not None or parsed.recurring else None
+    fields = parsed.fields
+    if occurrence is None and parsed.rule is not None:
+        fields = fields.model_copy(update={"recurrence": parsed.rule})
     return CalendarEvent(
+        series_locator=series,
         source=source,
         locator=locator,
         uid=parsed.uid,
         etag=ics.text_etag(text),
         status=parsed.status,
-        fields=parsed.fields,
+        fields=fields,
         updated=parsed.updated,
     )
 

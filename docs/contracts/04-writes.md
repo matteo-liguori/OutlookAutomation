@@ -20,9 +20,9 @@ A `WriteIntent` is the canonical, complete description of one write. Kinds:
 | `mail.move` | `message`, `to_folder`, `mark_read`, `internet_message_id`*, `from_folder`* |
 | `mail.trash` | `message`, `internet_message_id`*, `from_folder`* |
 | `mail.mark_read` | `messages[]` (1 to 200), `read` |
-| `calendar.create` | `event` (`EventFields`), `uid`* |
-| `calendar.update` | `event_ref`, `expected_etag`, `event` |
-| `calendar.delete` | `event_ref`, `expected_etag` |
+| `calendar.create` | `event` (`EventFields`, with `recurrence` for a series), `uid`* |
+| `calendar.update` | `event_ref`, `expected_etag`, `event`, `scope?` (`occurrence` or `series`; 08-ports P-25) |
+| `calendar.delete` | `event_ref`, `expected_etag`, `scope?` |
 | `calendar.respond` | `event_ref`, `expected_etag`, `response` (`accepted`, `tentative`, `declined`), `organiser`* |
 
 Fields marked * are left empty by the agent and completed by the harness
@@ -261,6 +261,14 @@ and reconcile over the fake provider with random faults, checking:
   (addresses, case-insensitive; the organiser's own address is ignored). Delivery to an invitee is
   never claimed: the harness cannot see it from the organiser's side. The organiser's later view of
   each reply is `CalendarEvent.participants`.
+- **W-42** Repeating events (08-ports P-23 to P-27). `propose` reads the event a handle names and
+  checks `scope` against it (single event: none; one occurrence: `occurrence`; the series:
+  `series`), the capability (`calendar.occurrence`, `calendar.recurrence`) and that no guests are
+  involved, before anyone is asked. It keeps the date or the rule in the stored refs
+  (`_event_when`, `_event_repeats`) so the preview and the viewer say plainly whether a change
+  reaches "this date only" or "every date" and how often the event repeats. A series' `zone` is
+  completed at `propose` (W-1) from the owner's zone. Permissions are those of the same write on
+  a single event; `describe_intent` of an event that does not repeat is unchanged.
 - **W-32** (owner ruling) Calendar writes on events without attendees need
   only `agent_evidence` (G-12a). For `update` and `delete`, `propose` reads the
   stored event and keeps the attendee fact in the stored refs

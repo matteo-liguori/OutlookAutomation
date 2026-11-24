@@ -22,6 +22,7 @@ from chamberlain.domain.intents import (
     MailTrash,
     WriteIntent,
 )
+from chamberlain.domain.recurrence import describe
 
 PREVIEW_CHARS = 1_500
 EVENT_ATTENDEES_REF = "_event_attendees"
@@ -29,6 +30,10 @@ EVENT_ATTENDEES_REF = "_event_attendees"
 lists their addresses, comma separated; an older store holds `1` (not known)."""
 EVENT_ORGANISER_REF = "_event_organiser"
 """Key in the stored refs: who organised the event a response answers (W-1)."""
+EVENT_WHEN_REF = "_event_when"
+"""Key in the stored refs: when the occurrence an update or delete names starts (W-42)."""
+EVENT_REPEATS_REF = "_event_repeats"
+"""Key in the stored refs: how the series an update or delete names repeats, in words (W-42)."""
 
 _VERB = {
     IntentKind.MAIL_SEND: "Send a message",
@@ -45,9 +50,29 @@ _VERB = {
 }
 
 
+def _verb(intent: WriteIntent) -> str:
+    """What the write is, in words; says plainly when it reaches a repeating event (W-42)."""
+    if isinstance(intent, CalendarCreate) and intent.event.recurrence is not None:
+        return "Create a repeating calendar event"
+    if isinstance(intent, CalendarUpdate | CalendarDelete) and intent.scope is not None:
+        deleting = isinstance(intent, CalendarDelete)
+        if intent.scope == "occurrence":
+            return (
+                "Cancel one date of a repeating event"
+                if deleting
+                else ("Change one date of a repeating event")
+            )
+        return (
+            "Delete a repeating event, every date"
+            if deleting
+            else ("Change a repeating event, every date")
+        )
+    return _VERB[IntentKind(intent.kind)]
+
+
 def grant_title(intent: WriteIntent) -> str:
     """A short harness-written title (at most 80 characters)."""
-    verb = _VERB[IntentKind(intent.kind)]
+    verb = _verb(intent)
     if isinstance(intent, MailSend):
         count = len({*intent.to, *intent.cc, *intent.bcc})
         return f"{verb} to {count} recipient{'s' if count != 1 else ''}"
@@ -55,7 +80,7 @@ def grant_title(intent: WriteIntent) -> str:
 
 
 def grant_summary(intent: WriteIntent) -> str:
-    return f"{_VERB[IntentKind(intent.kind)]} on {intent.source}, exactly as previewed."
+    return f"{_verb(intent)} on {intent.source}, exactly as previewed."
 
 
 def describe_intent(
@@ -70,7 +95,7 @@ def describe_intent(
     event will also notify.
     """
     stored = refs or {}
-    lines: list[str] = [f"{_VERB[IntentKind(intent.kind)]} ({intent.source})"]
+    lines: list[str] = [f"{_verb(intent)} ({intent.source})"]
     body = ""
     if isinstance(intent, MailSend | MailDraftSave | MailDraftUpdate):
         lines.append("To: " + ", ".join(intent.to))
@@ -94,6 +119,10 @@ def describe_intent(
         event = intent.event
         lines.append(f"Title: {event.title}")
         lines.append(f"When: {event.start.isoformat()} to {event.end.isoformat()}")
+        if event.recurrence is not None:
+            lines.append("Repeats: " + describe(event.recurrence))
+        if isinstance(intent, CalendarUpdate) and intent.scope is not None:
+            lines.extend(_reach(intent.scope, stored))
         if event.attendees:
             lines.append("Attendees (invited by the calendar): " + ", ".join(event.attendees))
         if isinstance(intent, CalendarUpdate) and stored.get(EVENT_ATTENDEES_REF, "1") != "1":
@@ -102,6 +131,8 @@ def describe_intent(
             )
     elif isinstance(intent, CalendarDelete):
         lines.append("Event: " + intent.event_ref)
+        if intent.scope is not None:
+            lines.extend(_reach(intent.scope, stored))
         if stored.get(EVENT_ATTENDEES_REF, "1") != "1":
             lines.append("Cancellation sent to: " + stored[EVENT_ATTENDEES_REF].replace(",", ", "))
     elif isinstance(intent, CalendarRespond):
@@ -111,6 +142,16 @@ def describe_intent(
     if limit is not None and len(text) > limit:
         return text[:limit], True
     return text, False
+
+
+def _reach(scope: str, stored: Mapping[str, str]) -> list[str]:
+    """Which part of a repeating event a change reaches, as the owner reads it (W-42)."""
+    if scope == "occurrence":
+        when = stored.get(EVENT_WHEN_REF)
+        date = f" ({when})" if when else ""
+        return [f"Applies to: this date only{date}. Every other date stays as it is."]
+    rule = stored.get(EVENT_REPEATS_REF)
+    return ["Applies to: every date of the series" + (f" ({rule})" if rule else "") + "."]
 
 
 def describe_scope(scope: StandingScope) -> str:

@@ -11,7 +11,9 @@
         "capabilities": [
           "calendar.read",
           "calendar.write",
-          "calendar.invite"
+          "calendar.invite",
+          "calendar.recurrence",
+          "calendar.occurrence"
         ]
       },
       {

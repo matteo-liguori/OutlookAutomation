@@ -75,6 +75,9 @@ class StoredEvent:
     """Each invitee's answer, as the organiser's copy (and the invitee's copy) holds them."""
     invite_of: tuple[str, str] | None = None
     """On an invitee's copy: (organiser's source, event id on that calendar)."""
+    overrides: dict[str, EventFields | None] = field(default_factory=lambda: {})
+    """A series only: occurrence id to the fields that occurrence was changed to, or None when
+    that occurrence was cancelled."""
 
     @property
     def etag(self) -> str:
@@ -111,6 +114,8 @@ class FakeWorld:
         """Calendar source to its owner's address (invitations are delivered by address)."""
         self.invitations: dict[str, bool] = {}
         """Calendar source to whether it declares `calendar.invite`."""
+        self.recurrence: dict[str, bool] = {}
+        """Calendar source to whether it writes repeating events (an Owl calendar does not)."""
         self.undelivered: dict[str, list[tuple[str, str]]] = {}
         """`(uid, address)` of invitees outside every fake calendar, per organiser's source."""
         self.responses_sent: dict[str, list[tuple[str, str, Response]]] = {}

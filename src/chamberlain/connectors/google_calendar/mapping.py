@@ -14,11 +14,13 @@ from chamberlain.connectors.calendar_support.fields import (
     clean_one,
     clip_fields,
 )
+from chamberlain.connectors.calendar_support.rrule import format_rrule, parse_rrule, same_rule
 from chamberlain.domain.calendar import (
     CalendarEvent,
     EventFields,
     EventStatus,
     Participant,
+    Recurrence,
     Response,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -32,6 +34,8 @@ KEEP_ON_UPDATE = (
     "attachments",
     "source",
     "recurrence",
+    "recurringEventId",
+    "originalStartTime",
     "transparency",
     "visibility",
     "guestsCanInviteOthers",
@@ -85,11 +89,28 @@ def has_start(item: Resource) -> bool:
     return bool(item.get("start") or item.get("originalStartTime"))
 
 
+def series_rule(item: Resource) -> Recurrence | None:
+    """The plain rule of a series' master, or None (not a series, or a rule that is not plain)."""
+    start: Resource = item.get("start") or {}
+    name = str(start.get("timeZone") or "")
+    for line in item.get("recurrence", []):
+        if str(line).upper().startswith("RRULE:"):
+            return parse_rrule(str(line), zone=name if _zone(name) is not None else None)
+    return None
+
+
+def series_locator(item: Resource) -> str | None:
+    """The series an item belongs to: its own id for a master, the master's for an instance."""
+    if item.get("recurringEventId"):
+        return str(item["recurringEventId"])
+    return str(item["id"]) if item.get("recurrence") else None
+
+
 def fields_of(item: Resource, fallback: datetime) -> EventFields:
     first = item.get("start") or item.get("originalStartTime")
     start, all_day = parse_time(first) if first else (fallback, False)
     end = parse_time(item["end"])[0] if item.get("end") else start
-    return clip_fields(
+    fields = clip_fields(
         title=str(item.get("summary", "")),
         start=start,
         end=end,
@@ -98,6 +119,8 @@ def fields_of(item: Resource, fallback: datetime) -> EventFields:
         description=str(item.get("description", "")),
         attendees=(str(a.get("email", "")) for a in item.get("attendees", []) if not a.get("self")),
     )
+    rule = series_rule(item)
+    return fields.model_copy(update={"recurrence": rule}) if rule is not None else fields
 
 
 _RESPONSES = {
@@ -144,13 +167,22 @@ def event_of(source: str, item: Resource, fallback: datetime) -> CalendarEvent:
             for a in item.get("attendees", [])
             if not a.get("self") and (address := clean_one(str(a.get("email", ""))))
         ),
+        series_locator=series_locator(item),
     )
 
 
-def refuse_if_unwritable(item: Resource) -> None:
-    """Instances of a series, events with guests and special event types are never written."""
-    if item.get("recurringEventId"):
-        raise _unsupported("an occurrence of a recurring event")
+def refuse_if_unwritable(item: Resource, scope: str | None) -> None:
+    """Events with guests and special event types are never written, and a part of a series is
+    written only with the scope that names it (an instance: occurrence; the master: series)."""
+    part = (
+        "occurrence"
+        if item.get("recurringEventId")
+        else "series"
+        if item.get("recurrence")
+        else None
+    )
+    if scope != part:
+        raise _unsupported("a repeating event is written only with the scope that names it")
     if is_invitee_copy(item):
         raise ChamberlainError(
             ErrorCode.CAPABILITY_UNSUPPORTED,
@@ -169,28 +201,41 @@ def _unsupported(what: str) -> ChamberlainError:
     )
 
 
-def time_object(moment: datetime, all_day: bool, before: Resource | None) -> Resource:
+def time_object(
+    moment: datetime, all_day: bool, before: Resource | None, zone: str | None = None
+) -> Resource:
     """A start or end object; keeps the zone name the event already had."""
     if all_day:
         return {"date": moment.astimezone(UTC).date().isoformat()}
-    zone_name = before.get("timeZone") if before else None
-    zone = _zone(zone_name)
-    if zone is not None:
-        local = moment.astimezone(zone).replace(tzinfo=None)
+    zone_name = (before.get("timeZone") if before else None) or zone
+    found = _zone(zone_name)
+    if found is not None:
+        local = moment.astimezone(found).replace(tzinfo=None)
         return {"dateTime": local.isoformat(), "timeZone": str(zone_name)}
     return {"dateTime": moment.astimezone(UTC).isoformat().replace("+00:00", "Z")}
 
 
 def wanted_body(fields: EventFields, before: Resource | None = None) -> Resource:
+    rule = fields.recurrence
+    zone = (rule.zone if rule is not None else None) or None
     body: Resource = {
         "summary": fields.title,
-        "start": time_object(fields.start, fields.all_day, before.get("start") if before else None),
-        "end": time_object(fields.end, fields.all_day, before.get("end") if before else None),
+        "start": time_object(
+            fields.start, fields.all_day, before.get("start") if before else None, zone
+        ),
+        "end": time_object(fields.end, fields.all_day, before.get("end") if before else None, zone),
     }
-    if before and before.get("recurrence"):
+    if rule is not None or (before and before.get("recurrence")):
         for key in ("start", "end"):  # Google wants an explicit zone for a series
             if "dateTime" in body[key] and "timeZone" not in body[key]:
                 body[key] = {"dateTime": body[key]["dateTime"].rstrip("Z"), "timeZone": "UTC"}
+    if rule is not None:
+        kept = [
+            x
+            for x in (before or {}).get("recurrence", [])
+            if not str(x).upper().startswith("RRULE:")
+        ]
+        body["recurrence"] = [f"RRULE:{format_rrule(rule, all_day=fields.all_day)}", *kept]
     if fields.location:
         body["location"] = fields.location
     if fields.description:
@@ -253,6 +298,10 @@ def import_body(uid: str, fields: EventFields) -> Resource:
 
 def fields_match(item: Resource, wanted: EventFields, fallback: datetime) -> bool:
     actual = fields_of(item, fallback)
+    if wanted.recurrence is not None and not same_rule(
+        actual.recurrence, wanted.recurrence, actual.start.date(), all_day=wanted.all_day
+    ):
+        return False  # a series that lost its rule is not what was asked (P-27)
     return (
         actual.title == wanted.title
         and actual.start == wanted.start

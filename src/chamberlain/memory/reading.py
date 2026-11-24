@@ -19,6 +19,7 @@ from chamberlain.domain.operations import (
     Verification,
     recheck_text,
 )
+from chamberlain.domain.recurrence import describe
 from chamberlain.limits import ATTACHMENT_TEXT_MAX_BYTES
 from chamberlain.memory import attachment_text, refs, repo
 from chamberlain.memory.artifacts import ArtifactService
@@ -369,17 +370,36 @@ def _calendar_event(ctx: Context, request: OpenRequest) -> OpenResponse:
         status=event.status.value,
         etag=event.etag,
         attendee_count=len(event.fields.attendees),
+        repeats="series" if event.is_series else "occurrence" if event.is_occurrence else None,
+        series=(
+            refs.remember(
+                ctx.db, ctx.clock, HandleKind.CALENDAR_EVENT, source, event.series_locator
+            )
+            if event.is_occurrence and event.series_locator is not None
+            else None
+        ),
     )
     if request.part is not OpenPart.BODY:
         return OpenResponse(handle=request.handle, view=view)
     fields = event.fields
-    text = "\n".join(
-        (
-            fields.title,
-            f"Where: {fields.location}",
-            f"Who: {', '.join(fields.attendees)}",
-            fields.description,
+    lines = [
+        fields.title,
+        f"Where: {fields.location}",
+        f"Who: {', '.join(fields.attendees)}",
+        fields.description,
+    ]
+    if event.is_series:
+        rule = fields.recurrence
+        words = (
+            describe(rule)
+            if rule is not None
+            else "in a way this harness cannot describe; change or cancel it as a whole"
         )
-    )
+        lines.insert(
+            1, f"Repeats: {words}. This is the whole series; its times are the first date's."
+        )
+    elif event.is_occurrence:
+        lines.insert(1, "One date of a repeating event; view.series is the whole series.")
+    text = "\n".join(lines)
     content, window = _page(text, request, ContentKind.CALENDAR_EVENT)
     return OpenResponse(handle=request.handle, view=view, content=content, range=window)

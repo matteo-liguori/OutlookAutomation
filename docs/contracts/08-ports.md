@@ -25,7 +25,8 @@ agent sees sources and capability names, never a connector.
 
 Names: `mail.read`, `mail.search`, `mail.attachments`, `mail.send`,
 `mail.draft`, `mail.move`, `mail.trash`, `mail.mark_read`, `calendar.read`,
-`calendar.write`, `calendar.invite`, `contacts.search`.
+`calendar.write`, `calendar.invite`, `calendar.recurrence`, `calendar.occurrence`,
+`contacts.search`.
 
 `ContactsPort.read(source, locator)` returns the one contact a `search` locator
 names (it is part of `contacts.search`); an unknown locator is
@@ -176,6 +177,42 @@ bytes, which the engine reads from the artifact store.
   owner is refused. `prepare` of an update or delete on the invitee's copy raises
   `capability.unsupported` (detail `invitee-copy`). The fake provider delivers an invitation to
   every fake calendar whose address matches an attendee.
+- **P-23** Repeat rule. `EventFields.recurrence` is a plain rule: `frequency` (daily, weekly,
+  monthly, yearly), `interval`, `weekdays` (weekly only), `until` or `count` (not both; neither
+  means no end) and `zone`, the clock the times repeat on (nine o'clock stays nine o'clock across a
+  clock change; `propose` fills it with the owner's zone when the agent leaves it out). A series'
+  own `fields` are its first occurrence. A series whose rule on the server is outside this subset
+  reads with `recurrence` None: it can be read, and changed or cancelled as a whole, but never
+  have its rule replaced from a guess.
+- **P-24** Reading. A window read returns each occurrence as its own `CalendarEvent`, never the
+  series itself (a cancelled series is gone from the window). `series_locator` is the locator of
+  the series: it equals `locator` on the series (`read(series_locator)`), differs on an
+  occurrence, and is None on a single event. An occurrence's locator is
+  `<series locator>#<original start>` (`domain.recurrence.occurrence_id`) and stays the same when
+  the occurrence is moved. A connector that cannot expand a series says so with a `Gap`, never by
+  leaving it out. `open` shows `view.repeats` (`occurrence` or `series`) and, on an occurrence,
+  `view.series`, the handle to use to change every date. `find` marks an occurrence's summary
+  `<status>, repeats`.
+- **P-25** Writing a series. `calendar.create` with `event.recurrence` makes a series. A
+  `calendar.update` or `calendar.delete` names the part it reaches in `scope`: `occurrence` with an
+  occurrence's handle (one date: an update changes that date only and takes no rule; a delete
+  cancels that date), `series` with the series' handle (an update changes every date and keeps the
+  rule unless `event.recurrence` gives a new one; a delete removes the series). The scope must
+  agree with the handle (an occurrence with `series`, the series with `occurrence`, or a single
+  event with either, fails at `propose` with `request.invalid` and a fix that says which handle
+  to use). The etag is that of the handle named. Turning a single event into a series is not
+  supported (create a series).
+- **P-26** Capabilities. `calendar.recurrence` covers creating a series and changing or cancelling
+  a whole series; `calendar.occurrence` covers one occurrence. A write needing a capability the
+  source does not declare fails at `propose` with `capability.unsupported` and detail
+  `recurrence-not-supported`, never faked. Google, CalDAV and the fake declare both; the Owl
+  calendar declares neither (reads occurrences only). A series with guests is not supported on
+  any source: it fails the same way with detail `recurring-invitations-not-supported`.
+- **P-27** Verified outcome. A series create or update is `server_verified` only when the read-back
+  series carries the rule that was written (a create that lost its rule is `unknown`, not
+  applied). A cancelled occurrence reads cancelled or gone; a deleted series reads cancelled or
+  gone and leaves no live occurrence in a window read. Permissions are those of the same write on
+  a single event (G-12a): the owner's word, unless a new stranger is invited.
 - **P-17** Time limits: every port call takes its deadline from the
   connector's configuration, and a call that exceeds it raises
   `source.unavailable` for reads and returns `unknown` for `dispatch`.

@@ -156,7 +156,7 @@ def occurrence_text(uid: str, day: int) -> str:
     )
 
 
-def test_p6_an_occurrence_locator_from_events_reads_back_and_cannot_be_written() -> None:
+def test_p6_a_series_is_read_by_date_and_never_written() -> None:
     port, bridge, _ = build()
     master = (
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\nUID:series\r\n"
@@ -177,6 +177,14 @@ def test_p6_an_occurrence_locator_from_events_reads_back_and_cannot_be_written()
     ]
     for listed in page.items:
         assert port.read(SOURCE, listed.locator) == listed
+        assert listed.is_occurrence
+        assert listed.series_locator == "series"
+    series = port.read(SOURCE, "series")
+    assert series.is_series
+    assert series.fields.recurrence is not None
+    declared = port.capabilities(SOURCE)  # reads occurrences; writes none (P-26)
+    assert declared.get(CapabilityName.CALENDAR_RECURRENCE) is None
+    assert declared.get(CapabilityName.CALENDAR_OCCURRENCE) is None
     handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, page.items[1].locator)
     delete = CalendarDelete(source=SOURCE, event_ref=handle, expected_etag=page.items[1].etag)
     with pytest.raises(ChamberlainError) as raised:
