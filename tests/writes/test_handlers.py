@@ -50,7 +50,7 @@ class Recorder:
         return json.loads(HANDLE.sub(name, text))
 
 
-def test_the_replies_of_propose_do_and_reconcile_match_the_golden_file(rig: WriteRig) -> None:
+def test_t13_the_replies_of_propose_do_and_reconcile_match_the_golden_file(rig: WriteRig) -> None:
     rig.know("friend@example.org")
     rec = Recorder(rig)
     proposed = rec.call("propose a known send", "propose", {"intent": INTENT})
@@ -91,7 +91,7 @@ def test_the_replies_of_propose_do_and_reconcile_match_the_golden_file(rig: Writ
     assert json.loads(GOLDEN.read_text(encoding="utf-8")) == rec.log
 
 
-def test_every_reply_fits_the_envelope_rules(rig: WriteRig) -> None:
+def test_e1_e2_every_reply_fits_the_envelope_rules(rig: WriteRig) -> None:
     rig.know("friend@example.org")
     rec = Recorder(rig)
     proposed = rec.call("propose", "propose", {"intent": INTENT})
@@ -103,7 +103,7 @@ def test_every_reply_fits_the_envelope_rules(rig: WriteRig) -> None:
         assert entry["reply"]["ok"] == (entry["reply"].get("error") is None)
 
 
-def test_the_uncertain_error_never_claims_to_be_retryable(rig: WriteRig) -> None:
+def test_e11_e12_the_uncertain_error_never_claims_to_be_retryable(rig: WriteRig) -> None:
     rig.know("friend@example.org")
     rec = Recorder(rig)
     op = rec.call("propose", "propose", {"intent": INTENT})["data"]["operation"]
@@ -117,14 +117,14 @@ def test_the_uncertain_error_never_claims_to_be_retryable(rig: WriteRig) -> None
     assert op in reply["error"]["message"]
 
 
-def test_the_module_fills_the_names_wiring_reads() -> None:
+def test_t16_the_module_fills_the_names_wiring_reads() -> None:
     assert set(HANDLERS) == {ToolName.PROPOSE, ToolName.DO, ToolName.RECONCILE}
     handlers, _ = load_tracks()
     assert {ToolName.PROPOSE, ToolName.DO, ToolName.RECONCILE} <= set(handlers)
     assert [group.value for group, _ in DOCTOR_CHECKS] == ["audit"]
 
 
-def test_a_send_that_is_only_client_verified_is_called_submitted_never_delivered(
+def test_w14_a_send_that_is_only_client_verified_is_called_submitted_never_delivered(
     rig: WriteRig,
 ) -> None:
     rig.know("friend@example.org")

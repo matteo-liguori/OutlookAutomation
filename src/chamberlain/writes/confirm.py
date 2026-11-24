@@ -50,14 +50,20 @@ class Response:
 
 
 def create_token(data_root: Path) -> str:
-    """A fresh viewer token, kept in memory by the caller and in `run/viewer.token` (G-18)."""
+    """A fresh viewer token, kept in memory by the caller and in `run/viewer.token` (G-18).
+
+    The file is written to a sibling and renamed into place, so a reader never sees a
+    half-written token, and it is restricted to the user where the platform allows it.
+    """
     token = secrets.token_urlsafe(32)
     run = data_root / "run"
     run.mkdir(parents=True, exist_ok=True)
     target = run / "viewer.token"
-    target.write_text(token, encoding="utf-8")
+    partial = run / "viewer.token.partial"
+    partial.write_text(token, encoding="utf-8")
     with contextlib.suppress(OSError):
-        target.chmod(stat.S_IRUSR | stat.S_IWUSR)
+        partial.chmod(stat.S_IRUSR | stat.S_IWUSR)
+    partial.replace(target)
     return token
 
 

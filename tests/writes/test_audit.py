@@ -209,7 +209,7 @@ def test_g23_every_tool_call_writes_one_tool_call_row(rig: WriteRig) -> None:
     assert rows[0].actor == f"agent:{SESSION}"
 
 
-def test_doctor_reports_a_broken_chain_and_the_first_bad_row(rig: WriteRig) -> None:
+def test_g21_doctor_reports_a_broken_chain_and_the_first_bad_row(rig: WriteRig) -> None:
     from chamberlain.writes.handlers import audit_checks
 
     fill(rig, 5)

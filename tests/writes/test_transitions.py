@@ -128,7 +128,7 @@ def test_w7_a_lost_race_changes_nothing_and_writes_no_audit_row(rig: WriteRig) -
     assert repo.get_operation(rig.db, handle).state is S.UNCERTAIN  # type: ignore[union-attr]
 
 
-def test_a_terminal_operation_state_is_final_in_the_database_too(rig: WriteRig) -> None:
+def test_w6_a_terminal_operation_state_is_final_in_the_database_too(rig: WriteRig) -> None:
     import sqlite3
 
     handle = _make(rig, S.CONFIRMED)
@@ -142,7 +142,7 @@ def test_a_terminal_operation_state_is_final_in_the_database_too(rig: WriteRig) 
         rig.db.execute("DELETE FROM operations WHERE handle = ?", (handle,))
 
 
-def test_g_the_grant_transitions_are_the_lifecycle_diagram() -> None:
+def test_g2_g4_the_grant_transitions_are_the_lifecycle_diagram() -> None:
     G = GrantState
     assert GRANT_TRANSITIONS[G.PROPOSED] == {G.ACTIVE, G.DECLINED, G.LAPSED}
     assert GRANT_TRANSITIONS[G.ACTIVE] == {G.SPENT, G.REVOKED, G.EXPIRED, G.SUSPENDED}

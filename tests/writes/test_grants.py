@@ -394,7 +394,9 @@ def test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_can
     assert rig.engine().get(proposal.operation.handle).state is S.CANCELLED
 
 
-def test_declining_a_proposal_cancels_its_operation_and_ends_the_grant(rig: WriteRig) -> None:
+def test_g2_t11_declining_a_proposal_cancels_its_operation_and_ends_the_grant(
+    rig: WriteRig,
+) -> None:
     proposal = rig.engine().propose_intent(rig.send(to=("no@example.org",)))
     assert proposal.grant is not None
     assert proposal.operation is not None
@@ -403,7 +405,7 @@ def test_declining_a_proposal_cancels_its_operation_and_ends_the_grant(rig: Writ
     assert rig.engine().get(proposal.operation.handle).state is S.CANCELLED
 
 
-def test_forget_on_a_grant_revokes_it_through_write_control(rig: WriteRig) -> None:
+def test_t11_forget_on_a_grant_revokes_it_through_write_control(rig: WriteRig) -> None:
     standing = rig.standing_grant()
     rig.ctx.services.writes.revoke_grant(standing.handle, actor="agent:x")
     assert grant_of(rig, standing.handle).state is GrantState.REVOKED
@@ -413,7 +415,7 @@ def test_forget_on_a_grant_revokes_it_through_write_control(rig: WriteRig) -> No
     assert rig.engine().get(op.handle).state is S.CANCELLED
 
 
-def test_one_lifecycle_for_every_kind_of_intent(rig: WriteRig) -> None:
+def test_g1_to_g10_one_lifecycle_for_every_kind_of_intent(rig: WriteRig) -> None:
     """Old: test_non_email_one_off_has_exact_scope_and_same_review_lifecycle."""
     proposal = rig.engine().propose_intent(rig.event())
     approved = rig.agent_approves(proposal)

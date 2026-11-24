@@ -445,7 +445,7 @@ def test_w9_prepared_operations_survive_a_crash_and_do_resumes(rig: WriteRig) ->
     assert artifact in rig.artifacts.blobs
 
 
-def test_the_tick_seams_recover_compact_and_sweep_grants(rig: WriteRig) -> None:
+def test_w9_w25_the_tick_seams_recover_compact_and_sweep_grants(rig: WriteRig) -> None:
     from chamberlain.writes.maintenance import COMPACTORS, recover_operations
 
     op = rig.ready_send()

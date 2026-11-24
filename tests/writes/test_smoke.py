@@ -4,7 +4,7 @@ from chamberlain.domain.operations import OperationState
 from chamberlain.testing.write_rig import WriteRig
 
 
-def test_a_known_recipient_send_is_proposed_approved_and_sent_once(rig: WriteRig) -> None:
+def test_w7_w16_a_known_recipient_send_is_proposed_approved_and_sent_once(rig: WriteRig) -> None:
     op = rig.ready_send()
     done = rig.engine().do(op.handle)
     assert done.state is OperationState.CONFIRMED
