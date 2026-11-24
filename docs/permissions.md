@@ -10,7 +10,10 @@ You click in the viewer (`chamberlain viewer`) only for these three things:
 
 1. **A standing permission.** "Always do this kind of thing" is yours to grant, never the assistant's.
 2. **A send to someone new.** Any recipient who is not on your known list (below).
-3. **A calendar change on an event with other people on it.** Creating, changing or deleting one.
+3. **A calendar change that tells someone other than you.** Inviting, changing or cancelling an
+   event with guests, or answering an invitation from someone who is not you. A guest who is
+   one of your own addresses (the address of any account you set up, or one you list as yours
+   under `authorised_senders: owner`) does not count: inviting yourself needs only your words.
 
 Everything else, such as sending to a known person, drafting, filing, marking read
 or changing your own calendar, needs only your words: you tell the assistant in chat
@@ -25,7 +28,8 @@ A standing permission lets the assistant repeat one kind of change without askin
 
 - **Scope.** It names the account, the kind of action, and who it covers (exact addresses
   or domains), plus folders for filing. It never covers anything outside that.
-  Sends always need a daily limit.
+  Sends always need a daily limit. For invitations and answers it covers only the exact
+  addresses you list, never a domain.
 - **Limits.** A daily count, and never more than 20 sends an hour per mailbox. It never covers
   changing or deleting a calendar event.
 - **Monthly review.** Each month, on the day you granted it, the viewer asks "keep this?".

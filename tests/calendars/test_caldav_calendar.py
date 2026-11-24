@@ -144,7 +144,7 @@ def test_p4_a_recurring_series_is_listed_as_occurrences_that_can_be_read_not_wri
     assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
 
 
-def test_p16_events_with_attendees_or_an_organiser_are_never_written(world: World) -> None:
+def test_p16_someone_elses_invitation_is_never_changed_or_cancelled(world: World) -> None:
     port, rig = world
     guests = "ATTENDEE:mailto:other@example.test\r\nORGANIZER:mailto:me@example.test\r\n"
     put(rig, "invite.ics", raw("Invite", "invite@t", guests))
@@ -160,11 +160,7 @@ def test_p16_events_with_attendees_or_an_organiser_are_never_written(world: Worl
         with pytest.raises(ChamberlainError) as raised:
             port.prepare(intent, {handle: "invite.ics"})
         assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
-    with pytest.raises(ChamberlainError):
-        port.prepare(
-            CalendarCreate(source=SOURCE, event=fields(attendees=("a@example.test",)), uid="x@t"),
-            {},
-        )
+        assert raised.value.detail == "invitee-copy"
     assert not rig.transport.sent or all(m not in ("PUT", "DELETE") for m, _ in rig.transport.sent)
 
 

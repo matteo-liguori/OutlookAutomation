@@ -13,7 +13,7 @@ from typing import Any
 
 import icalendar
 
-from chamberlain.connectors.calendar_support.fields import clip_fields
+from chamberlain.connectors.calendar_support.fields import clean_one, clip_fields
 from chamberlain.domain.calendar import EventFields, EventStatus
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -34,6 +34,10 @@ class ParsedEvent:
     """The component carries an RRULE or RDATE."""
     organiser: bool
     sequence: int
+    organiser_address: str | None = None
+    """The address in ORGANIZER, lower-cased, when there is one."""
+    partstats: tuple[tuple[str, str], ...] = ()
+    """`(address, PARTSTAT)` of every ATTENDEE, the organiser's own entry included."""
 
 
 def text_etag(text: str) -> str:
@@ -113,6 +117,7 @@ def _parse_component(component: Any) -> ParsedEvent:
         sequence = int(component.get("SEQUENCE", 0))
     except (TypeError, ValueError):
         sequence = 0
+    organiser_text = component.get("ORGANIZER")
     return ParsedEvent(
         uid=str(component.get("UID", "")),
         recurrence_id=_recurrence_text(_prop(component, "RECURRENCE-ID")),
@@ -120,8 +125,16 @@ def _parse_component(component: Any) -> ParsedEvent:
         status=status,
         updated=updated,
         recurring=component.get("RRULE") is not None or component.get("RDATE") is not None,
-        organiser=component.get("ORGANIZER") is not None,
+        organiser=organiser_text is not None,
         sequence=sequence,
+        organiser_address=(
+            clean_one(str(organiser_text)) or None if organiser_text is not None else None
+        ),
+        partstats=tuple(
+            (address, str(getattr(a, "params", {}).get("PARTSTAT", "NEEDS-ACTION")).upper())
+            for a in _list(component, "ATTENDEE")
+            if (address := clean_one(str(a)))
+        ),
     )
 
 
@@ -178,8 +191,37 @@ def _set_text(component: Any, name: str, value: str) -> None:
         component.add(name.lower(), value)
 
 
-def build_new(uid: str, fields: EventFields, now: datetime) -> str:
-    """A fresh single-event resource. Times are written in UTC."""
+def _add_guest(event: Any, address: str, partstat: str, *, organiser: bool = False) -> None:
+    params = {"PARTSTAT": partstat, "CUTYPE": "INDIVIDUAL", "ROLE": "REQ-PARTICIPANT"}
+    if not organiser:
+        params["RSVP"] = "TRUE"
+    event.add("attendee", f"mailto:{address}", parameters=params)
+
+
+def _set_invitation(
+    event: Any, guests: tuple[str, ...], organiser: str, kept: dict[str, str]
+) -> None:
+    """ORGANIZER and ATTENDEE lines for an invitation (RFC 5545; the server schedules, RFC 6638).
+
+    `kept` maps an address to the PARTSTAT it already has; anyone else starts NEEDS-ACTION.
+    The organiser is listed as accepted, as calendar clients do.
+    """
+    for name in ("ORGANIZER", "ATTENDEE"):
+        event.pop(name, None)
+    if not guests:
+        return
+    event.add("organizer", f"mailto:{organiser}")
+    _add_guest(event, organiser, "ACCEPTED", organiser=True)
+    for address in guests:
+        if address != organiser:
+            _add_guest(event, address, kept.get(address, "NEEDS-ACTION"))
+
+
+def build_new(uid: str, fields: EventFields, now: datetime, organiser: str | None = None) -> str:
+    """A fresh single-event resource. Times are written in UTC.
+
+    With guests, `organiser` is the sending account's address and the result is an invitation.
+    """
     event = Event()
     event.add("uid", uid)
     event.add("dtstamp", now.astimezone(UTC))
@@ -188,6 +230,8 @@ def build_new(uid: str, fields: EventFields, now: datetime) -> str:
     _set_text(event, "location", fields.location)
     _set_text(event, "description", fields.description)
     event.add("sequence", 0)
+    if fields.attendees and organiser is not None:
+        _set_invitation(event, fields.attendees, organiser, {})
     calendar = Calendar()
     calendar.add("prodid", PRODID)
     calendar.add("version", "2.0")
@@ -195,8 +239,14 @@ def build_new(uid: str, fields: EventFields, now: datetime) -> str:
     return calendar.to_ical().decode("utf-8")
 
 
-def apply_fields(text: str, fields: EventFields, now: datetime) -> str:
-    """The resource with the master's described fields replaced and nothing else touched."""
+def apply_fields(
+    text: str, fields: EventFields, now: datetime, organiser: str | None = None
+) -> str:
+    """The resource with the master's described fields replaced and nothing else touched.
+
+    Guests are written only when `organiser` is given (the sending account). Guests who stay
+    keep their answers, unless the time changed (RFC 5546: a new time asks everyone again).
+    """
     calendar = Calendar.from_ical(text)
     masters = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None]
     if len(masters) != 1:
@@ -207,12 +257,16 @@ def apply_fields(text: str, fields: EventFields, now: datetime) -> str:
     current = _parse_component(event)
     event.pop("SUMMARY", None)
     event.add("summary", fields.title)
-    if (current.fields.start, current.fields.end, current.fields.all_day) != (
+    moved = (current.fields.start, current.fields.end, current.fields.all_day) != (
         fields.start,
         fields.end,
         fields.all_day,
-    ):
+    )
+    if moved:
         _set_times(event, fields)
+    if organiser is not None:
+        kept = {} if moved else dict(current.partstats)
+        _set_invitation(event, fields.attendees, organiser, kept)
     _set_text(event, "location", fields.location)
     _set_text(event, "description", fields.description)
     for name in ("DTSTAMP", "LAST-MODIFIED", "SEQUENCE"):
@@ -220,6 +274,30 @@ def apply_fields(text: str, fields: EventFields, now: datetime) -> str:
     event.add("dtstamp", now.astimezone(UTC))
     event.add("last-modified", now.astimezone(UTC))
     event.add("sequence", current.sequence + 1)
+    return calendar.to_ical().decode("utf-8")
+
+
+def apply_answer(text: str, address: str, partstat: str, now: datetime) -> str:
+    """The resource with only `address`'s PARTSTAT changed. SEQUENCE stays: it is the
+    organiser's counter, and an invitee must never move it."""
+    calendar = Calendar.from_ical(text)
+    masters = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None]
+    if len(masters) != 1:
+        raise ChamberlainError(
+            ErrorCode.CAPABILITY_UNSUPPORTED, "This calendar item is not a single event."
+        )
+    event = masters[0]
+    changed = False
+    for entry in _list(event, "ATTENDEE"):
+        if clean_one(str(entry)) == address:
+            entry.params["PARTSTAT"] = partstat
+            changed = True
+    if not changed:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_INVALID, "That event is not an invitation to this calendar."
+        )
+    event.pop("DTSTAMP", None)
+    event.add("dtstamp", now.astimezone(UTC))
     return calendar.to_ical().decode("utf-8")
 
 

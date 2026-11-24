@@ -116,7 +116,9 @@ def test_p16_update_keeps_what_the_fields_do_not_describe(world: World) -> None:
     assert after["start"]["timeZone"] == "Europe/London"
 
 
-def test_p16_occurrences_and_events_with_guests_are_refused_without_sending(world: World) -> None:
+def test_p16_occurrences_and_invitations_from_others_are_refused_without_sending(
+    world: World,
+) -> None:
     port, api, _ = world
     guest = api.seed(
         item("Invite", "2027-03-01T10:00:00Z", "2027-03-01T11:00:00Z")
@@ -134,9 +136,6 @@ def test_p16_occurrences_and_events_with_guests_are_refused_without_sending(worl
         with pytest.raises(ChamberlainError) as raised:
             port.prepare(delete, {handle: locator})
         assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
-    invite = fields(attendees=("a@example.test",))
-    with pytest.raises(ChamberlainError):
-        port.prepare(CalendarCreate(source=SOURCE, event=invite, uid="g@t"), {})
     assert len([c for c in api.calls if c[0] != "GET"]) == sent
     assert port.read(SOURCE, guest).fields.attendees == ("other@example.test",)
 

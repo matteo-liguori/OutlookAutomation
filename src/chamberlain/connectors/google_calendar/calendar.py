@@ -7,6 +7,7 @@ The connector never retries a write and never reports `not_applied` on a timeout
 """
 
 import base64
+import hashlib
 import json
 from collections.abc import Callable, Mapping
 from typing import Any, Final, cast
@@ -14,7 +15,6 @@ from urllib.parse import quote, urlencode
 
 from pydantic import JsonValue
 
-from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.calendar_support.http import (
     HttpReply,
     HttpTransport,
@@ -61,6 +61,7 @@ _PROVABLE = frozenset(
         IntentKind.CALENDAR_CREATE.value,
         IntentKind.CALENDAR_UPDATE.value,
         IntentKind.CALENDAR_DELETE.value,
+        IntentKind.CALENDAR_RESPOND.value,
     }
 )
 
@@ -110,6 +111,9 @@ class GoogleCalendar:
                     name=CapabilityName.CALENDAR_WRITE,
                     level=VerificationLevel.IMPLEMENTED,
                     absence_provable=_PROVABLE,
+                ),
+                Capability(
+                    name=CapabilityName.CALENDAR_INVITE, level=VerificationLevel.IMPLEMENTED
                 ),
             ),
         )
@@ -188,25 +192,44 @@ class GoogleCalendar:
                     raise ChamberlainError(
                         ErrorCode.REQUEST_INVALID, "The event has no uid.", field="uid"
                     )
-                _refuse_attendees(intent.event)
                 token = intent.uid
-                body = mapping.import_body(intent.uid, intent.event)
-                data = {"body": body, "fields": intent.event.model_dump(mode="json")}
+                fields = intent.event.model_dump(mode="json")
+                if intent.event.attendees:
+                    # `import` makes a private copy and sends nothing: an invitation is `insert`.
+                    event_id = event_id_for(intent.uid)
+                    body = mapping.insert_body(event_id, intent.event)
+                    data = {"body": body, "fields": fields, "event_id": event_id, "notify": True}
+                else:
+                    body = mapping.import_body(intent.uid, intent.event)
+                    data = {"body": body, "fields": fields}
             case CalendarUpdate():
-                _refuse_attendees(intent.event)
                 before = self._current(binding, refs, intent.event_ref, intent.expected_etag)
                 body = mapping.merge_update(before, mapping.wanted_body(intent.event, before))
+                notify = bool(intent.event.attendees) or _has_guests(before)
                 data = {
                     "locator": str(before["id"]),
                     "expected_etag": intent.expected_etag,
                     "body": body,
                     "fields": intent.event.model_dump(mode="json"),
+                    "notify": notify,
                 }
             case CalendarDelete():
                 before = self._current(binding, refs, intent.event_ref, intent.expected_etag)
-                data = {"locator": str(before["id"]), "expected_etag": intent.expected_etag}
+                data = {
+                    "locator": str(before["id"]),
+                    "expected_etag": intent.expected_etag,
+                    "notify": _has_guests(before),
+                }
             case CalendarRespond():
-                raise ics.no_invitations()
+                before = self._current(
+                    binding, refs, intent.event_ref, intent.expected_etag, answering=True
+                )
+                data = {
+                    "locator": str(before["id"]),
+                    "expected_etag": intent.expected_etag,
+                    "response": intent.response,
+                    "attendees": cast(JsonValue, mapping.answer_entries(before, intent.response)),
+                }
         return Prepared.model_validate(
             {
                 "source": intent.source,
@@ -241,28 +264,40 @@ class GoogleCalendar:
         data = prepared.data
         events = f"/calendars/{_quote(binding.calendar_id)}/events"
         kind = prepared.intent_kind
+        params: dict[str, str] = {}
+        if data.get("notify") is True:
+            params["sendUpdates"] = "all"
         if kind is IntentKind.CALENDAR_CREATE:
             uid = prepared.reconcile_token or ""
             try:
-                existing = self._find_by_uid(binding, uid)
+                existing = (
+                    self._get_by_id(binding, _text(data, "event_id"))
+                    if "event_id" in data
+                    else self._find_by_uid(binding, uid)
+                )
             except (ChamberlainError, TransportFailure) as error:
                 return DispatchResult(outcome=DispatchOutcome.NOT_APPLIED, detail=_why(error))
             if existing is not None:
                 return DispatchResult(
                     outcome=DispatchOutcome.NOT_APPLIED, detail="an event with this uid exists"
                 )
-            method, path, headers = "POST", events + "/import", {}
+            method, headers = "POST", {}
+            path = events if "event_id" in data else events + "/import"
             body: Json | None = dict(data["body"]) if isinstance(data["body"], dict) else None
         else:
             path = f"{events}/{_quote(_text(data, 'locator'))}"
             headers = {"If-Match": _text(data, "expected_etag")}
+            body = None
             if kind is IntentKind.CALENDAR_DELETE:
-                method, body = "DELETE", None
+                method = "DELETE"
+            elif kind is IntentKind.CALENDAR_RESPOND:
+                method, body = "PATCH", {"attendees": data["attendees"]}
+                params["sendUpdates"] = "all"
             else:
                 method = "PUT"
                 body = dict(data["body"]) if isinstance(data["body"], dict) else None
         try:
-            reply = self._send(binding, method, path, body=body, headers=headers)
+            reply = self._send(binding, method, path, params=params, body=body, headers=headers)
         except TransportFailure as error:
             outcome = DispatchOutcome.UNKNOWN if error.sent else DispatchOutcome.NOT_APPLIED
             return DispatchResult(outcome=outcome, detail=f"transport: {error}")
@@ -283,7 +318,7 @@ class GoogleCalendar:
         now = self._clock.now()
         try:
             if kind is IntentKind.CALENDAR_CREATE:
-                after = self._find_by_uid(binding, prepared.reconcile_token or "")
+                after = self._created(binding, prepared)
             else:
                 after = self._get_by_id(binding, _text(prepared.data, "locator"))
         except (ChamberlainError, TransportFailure) as error:
@@ -297,6 +332,12 @@ class GoogleCalendar:
                 )
                 return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="still present")
+        if kind is IntentKind.CALENDAR_RESPOND:
+            if after is None or _own_answer(after) != _text(prepared.data, "response"):
+                return DispatchResult(
+                    outcome=DispatchOutcome.UNKNOWN, detail="read-back differs from the request"
+                )
+            return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=_receipt(after))
         wanted = EventFields.model_validate(prepared.data["fields"])
         if after is None or not mapping.fields_match(after, wanted, now):
             return DispatchResult(
@@ -310,6 +351,13 @@ class GoogleCalendar:
         kind = prepared.intent_kind
         now = self._clock.now()
         if kind is IntentKind.CALENDAR_CREATE:
+            if "event_id" in prepared.data:
+                by_id = self._get_by_id(binding, _text(prepared.data, "event_id"))
+                if by_id is None:
+                    return ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
+                if by_id.get("status") == "cancelled":
+                    return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="was cancelled")
+                return _present(by_id)
             found = self._find_by_uid(binding, prepared.reconcile_token or "")
             if found is None:
                 return ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
@@ -319,6 +367,12 @@ class GoogleCalendar:
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="event not found")
         gone = current.get("status") == "cancelled"
         unchanged = current.get("etag") == _text(prepared.data, "expected_etag")
+        if kind is IntentKind.CALENDAR_RESPOND:
+            if unchanged:
+                return ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
+            if _own_answer(current) == _text(prepared.data, "response"):
+                return _present(current)
+            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")
         if kind is IntentKind.CALENDAR_DELETE:
             if gone:
                 return _present(current)
@@ -413,8 +467,19 @@ class GoogleCalendar:
         ]
         return masters[0] if masters else None
 
+    def _created(self, binding: GoogleBinding, prepared: Prepared) -> Json | None:
+        if "event_id" in prepared.data:
+            return self._get_by_id(binding, _text(prepared.data, "event_id"))
+        return self._find_by_uid(binding, prepared.reconcile_token or "")
+
     def _current(
-        self, binding: GoogleBinding, refs: Mapping[str, str], ref: str, expected_etag: str
+        self,
+        binding: GoogleBinding,
+        refs: Mapping[str, str],
+        ref: str,
+        expected_etag: str,
+        *,
+        answering: bool = False,
     ) -> Json:
         locator = refs.get(ref)
         if locator is None:
@@ -424,17 +489,28 @@ class GoogleCalendar:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
         if item.get("etag") != expected_etag or item.get("status") == "cancelled":
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event changed since it was read.")
+        if answering:
+            if not mapping.is_invitee_copy(item) or mapping.own_entry(item) is None:
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID, "That event is not an invitation to this calendar."
+                )
+            return item
         mapping.refuse_if_unwritable(item)
         return item
 
 
-def _refuse_attendees(fields: EventFields) -> None:
-    if fields.attendees:
-        raise ChamberlainError(
-            ErrorCode.CAPABILITY_UNSUPPORTED,
-            "Events with attendees cannot be written by this connector.",
-            detail="invitations-not-supported",
-        )
+def event_id_for(uid: str) -> str:
+    """The client-chosen id of an invitation: Google ids are 5 to 1024 characters of a-v, 0-9."""
+    return hashlib.sha256(uid.encode()).hexdigest()[:32]
+
+
+def _has_guests(item: Json) -> bool:
+    return any(not a.get("self") for a in item.get("attendees", []))
+
+
+def _own_answer(item: Json) -> str | None:
+    entry = mapping.own_entry(item)
+    return None if entry is None else str(entry.get("responseStatus", ""))
 
 
 def _receipt(item: Json) -> ProviderReceipt:
