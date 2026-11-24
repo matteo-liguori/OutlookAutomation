@@ -12,7 +12,7 @@ STATIC = Path(viewer_package.__file__).parent / "static"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
-@pytest.mark.parametrize("name", ["page.js", "calendar.js", "complex.js"])
+@pytest.mark.parametrize("name", ["page.js", "calendar.js", "complex.js", "livetest.js"])
 def test_each_viewer_script_parses(name: str) -> None:
     node = shutil.which("node")
     assert node is not None
