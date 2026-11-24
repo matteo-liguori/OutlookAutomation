@@ -149,9 +149,8 @@ the owner may agree, to raise two of them for that one card:
   approval, decline and revoke is one audit row (`card.complex_requested`,
   `card.complex_approved`, `card.complex_declined`, `card.complex_revoked`).
   The owner's rows name `human:viewer`; a request names the agent's session.
-- **M-37** At most 3 cards are `approved` at once. A request that would be the
-  fourth is refused (`request.invalid`) and the message names the three. A
-  declined card may not ask again for 30 days (`COMPLEX_DECLINE_DAYS`); the
+- **M-37** There is no limit on how many cards are `approved`: the owner's
+  click is the control (owner ruling 2026-11-24). A declined card may not ask again for 30 days (`COMPLEX_DECLINE_DAYS`); the
   refusal gives the date. The agent is told of an approval or decline by a
   `card.review_due` event (reason `complex_approved` or `complex_declined`) for
   7 days, and `open` shows `complex` on the card (`pending`, `approved`,

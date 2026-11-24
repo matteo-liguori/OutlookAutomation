@@ -15,7 +15,6 @@ from chamberlain.limits import (
     CARD_MAX_CHARS,
     CARD_POSITION_MAX,
     COMPLEX_CARD_MAX_CHARS,
-    COMPLEX_CARDS_MAX,
     COMPLEX_DECLINE_DAYS,
     COMPLEX_POSITION_MAX,
 )
@@ -116,34 +115,16 @@ def test_m36_the_caps_of_a_normal_card_do_not_change_for_other_cards(
     assert not agent.set_position(second, "p" * (CARD_POSITION_MAX + 1)).ok
 
 
-def test_m37_a_fourth_request_is_refused_and_names_the_three(rig: Rig, agent: Agent) -> None:
-    held = [agent.card(f"Matter {n}") for n in range(COMPLEX_CARDS_MAX)]
-    for card in held:
-        agent.ask(card)
-        assert rig.call("POST", f"/api/complex/{card}/approve", {}).status == 200
-    fourth = agent.card("Matter four")
-    refused = agent.ask(fourth)
-    assert not refused.ok
-    for card in held:
-        assert card in refused.error.message
-    assert fourth not in refused.error.message
-    assert rig.call("GET", "/api/complex").body["pending"] == []
-    # taking one back frees a place
-    assert rig.call("POST", f"/api/complex/{held[0]}/revoke", {}).status == 200
-    assert agent.ask(fourth).ok
-
-
-def test_m37_the_owner_cannot_approve_a_fourth_even_if_asked_earlier(
-    rig: Rig, agent: Agent
-) -> None:
-    cards = [agent.card(f"Matter {n}") for n in range(COMPLEX_CARDS_MAX + 1)]
+def test_m37_there_is_no_quota_the_owner_decides_each_card(rig: Rig, agent: Agent) -> None:
+    """Owner ruling 2026-11-24: no cap on how many cards may hold a larger limit."""
+    cards = [agent.card(f"Matter {n}") for n in range(5)]
     for card in cards:
-        assert agent.ask(card).ok  # all four wait together
-    for card in cards[:COMPLEX_CARDS_MAX]:
+        assert agent.ask(card).ok
+    for card in cards:
         assert rig.call("POST", f"/api/complex/{card}/approve", {}).status == 200
-    last = rig.call("POST", f"/api/complex/{cards[-1]}/approve", {})
-    assert last.status == 400
-    assert "Take one back" in last.body["message"]
+    overview = rig.call("GET", "/api/complex").body
+    assert sorted(a["card"] for a in overview["approved"]) == sorted(cards)
+    assert "limit" not in overview
 
 
 def test_m37_a_decline_tells_the_agent_and_blocks_asking_again_for_30_days(
@@ -296,14 +277,13 @@ def test_m36_the_cards_page_shows_which_cards_are_complex_and_why(rig: Rig, agen
     assert [a["card"] for a in overview["approved"]] == [held]
 
 
-def test_m36_closing_a_card_frees_its_place(rig: Rig, agent: Agent) -> None:
-    held = [agent.card(f"Matter {n}") for n in range(COMPLEX_CARDS_MAX)]
-    for card in held:
-        agent.ask(card)
-        rig.call("POST", f"/api/complex/{card}/approve", {})
-    closed = agent.call("card", {"op": "close", "card": held[0], "outcome": "Settled."})
+def test_m36_closing_a_card_ends_its_larger_limit(rig: Rig, agent: Agent) -> None:
+    card = agent.card("Matter")
+    agent.ask(card)
+    rig.call("POST", f"/api/complex/{card}/approve", {})
+    closed = agent.call("card", {"op": "close", "card": card, "outcome": "Settled."})
     assert closed.ok
-    assert agent.ask(agent.card("Next")).ok
+    assert rig.call("GET", "/api/complex").body["approved"] == []
 
 
 def test_m36_the_viewer_scripts_are_served_and_hold_no_markup_parsing(rig: Rig) -> None:

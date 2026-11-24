@@ -40,7 +40,6 @@ CARD_RULES_MAX: Final = 600
 CARD_MAX_CHARS: Final = 3_000
 COMPLEX_POSITION_MAX: Final = 4_000
 COMPLEX_CARD_MAX_CHARS: Final = 6_000
-COMPLEX_CARDS_MAX: Final = 3
 COMPLEX_DECLINE_DAYS: Final = 30
 """After the owner declines a larger limit, the agent may not ask again for that card this long."""
 COMPLEX_REASON_MAX: Final = 240

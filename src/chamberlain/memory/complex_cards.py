@@ -9,7 +9,7 @@ import sqlite3
 
 from chamberlain.app.services import AuditLog
 from chamberlain.domain.cards import card_size
-from chamberlain.limits import COMPLEX_CARDS_MAX, COMPLEX_DECLINE_DAYS
+from chamberlain.limits import COMPLEX_DECLINE_DAYS
 from chamberlain.memory import repo
 from chamberlain.memory.caps import NORMAL
 from chamberlain.memory.cards import CardService
@@ -54,12 +54,6 @@ class ComplexCards:
                     f"{str(existing['decided_at'])[:10]}.",
                     f"Work within the normal limit. You may ask again after {str(blocked)[:10]}.",
                 )
-        approved = [str(r["card"]) for r in repo.complex_rows(self._db, "approved")]
-        if len(approved) >= COMPLEX_CARDS_MAX:
-            raise _refuse(
-                f"{COMPLEX_CARDS_MAX} cards already have a larger limit: {', '.join(approved)}.",
-                "Work within the normal limit. The owner can take a limit back in the viewer.",
-            )
         with transaction(self._db):
             repo.set_complex(
                 self._db,
@@ -82,12 +76,6 @@ class ComplexCards:
 
     def approve(self, card: str) -> None:
         row = self._pending(card)
-        approved = [str(r["card"]) for r in repo.complex_rows(self._db, "approved")]
-        if len(approved) >= COMPLEX_CARDS_MAX:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID,
-                f"{COMPLEX_CARDS_MAX} cards already have a larger limit. Take one back first.",
-            )
         with transaction(self._db):
             repo.set_complex(
                 self._db,

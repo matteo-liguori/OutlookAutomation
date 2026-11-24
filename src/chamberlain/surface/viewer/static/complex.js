@@ -41,7 +41,7 @@
         data.pending.forEach(function (request) { area.appendChild(waiting(request, data)); });
       }
       if (data.approved.length) {
-        area.appendChild(el("h2", { text: "Cards with a larger limit (" + data.approved.length + " of " + data.limit + ")" }));
+        area.appendChild(el("h2", { text: "Cards with a larger limit (" + data.approved.length + ")" }));
         data.approved.forEach(function (item) { area.appendChild(holding(item)); });
       }
     }, function (error) { area.appendChild(V.problem(error)); });

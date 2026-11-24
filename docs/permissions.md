@@ -30,8 +30,7 @@ card and give a short reason. **Nothing changes until you agree.**
   One click on **Approve** or **Decline**.
 - **What you allow.** That one card may then hold a position of 4,000 characters and 6,000
   in all. Its other limits stay the same.
-- **At most three** cards at once. A fourth request is refused and the assistant is told
-  which three hold a larger limit.
+- **No quota.** Approve as many as you like; your click is the control.
 - **If you decline,** the assistant is told and may not ask again for that card for 30 days.
 - **Taking it back.** The Cards page marks each larger card and why. **Take the larger limit
   back** returns it to the normal limits straight away. If the card is then too big, nothing

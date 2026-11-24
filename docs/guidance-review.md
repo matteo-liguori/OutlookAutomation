@@ -180,7 +180,7 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 - Trigger: `{'error': 'card.over_cap'}`; shown session; priority 48; cap 230 chars
 
-> A card hit its size limit. Shorten it first. If the matter is genuinely demanding, you may ask the owner for a larger card with a short reason; the owner decides, and only three can exist.
+> A card hit its size limit. Shorten it first. If the matter is genuinely demanding, you may ask the owner for a larger card with a short reason; the owner decides.
 
 ## card.upkeep: Keeping a card
 

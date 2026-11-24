@@ -14,7 +14,7 @@ import re
 from typing import Any
 
 from chamberlain.app.context import Context
-from chamberlain.limits import COMPLEX_CARD_MAX_CHARS, COMPLEX_CARDS_MAX, COMPLEX_POSITION_MAX
+from chamberlain.limits import COMPLEX_CARD_MAX_CHARS, COMPLEX_POSITION_MAX
 from chamberlain.memory import repo as memory
 from chamberlain.memory.complex_cards import ComplexCards
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -37,7 +37,6 @@ def overview(ctx: Context) -> dict[str, Any]:
     return {
         "pending": [_line(r) for r in memory.complex_rows(ctx.db, "pending")],
         "approved": [_line(r) for r in memory.complex_rows(ctx.db, "approved")],
-        "limit": COMPLEX_CARDS_MAX,
         "position_max": COMPLEX_POSITION_MAX,
         "card_max": COMPLEX_CARD_MAX_CHARS,
     }
