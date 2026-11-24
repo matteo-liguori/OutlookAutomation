@@ -61,13 +61,20 @@ class AttentionHooks:
         """
         if isinstance(request, StartRequest):
             day = request.scheduled_day
-            if request.purpose == "scheduled" and day and sessions.is_stale_day(day, ctx.clock):
+            zone = sessions.configured_zone(ctx.data_root)
+            if (
+                request.purpose == "scheduled"
+                and day
+                and sessions.is_stale_day(day, ctx.clock, zone)
+            ):
                 raise sessions.stop_error()
             return
         if request.session is None:
             return
         row = repo.get_session(ctx.db, request.session)
-        if row is not None and sessions.is_stale_scheduled(row, ctx.clock):
+        if row is not None and sessions.is_stale_scheduled(
+            row, ctx.clock, sessions.configured_zone(ctx.data_root)
+        ):
             raise sessions.stop_error()
 
     def tick(self, ctx: Context) -> None:

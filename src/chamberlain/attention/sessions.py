@@ -7,7 +7,11 @@ without a live user turn, must stop (port of the old scheduled guard).
 """
 
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, tzinfo
+from pathlib import Path
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+import yaml
 
 from chamberlain.attention import repo
 from chamberlain.attention.models import SessionRow
@@ -20,22 +24,38 @@ from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 
 
-def _local_day(moment: datetime) -> date:
-    """The local calendar day. Interim: the operating system zone (board QUESTION)."""
-    return moment.astimezone().date()
+def _local_day(moment: datetime, zone: tzinfo | None = None) -> date:
+    """The calendar day in `zone`; the operating system zone when none is configured."""
+    return moment.astimezone(zone).date()
 
 
-def is_stale_scheduled(session: SessionRow, clock: Clock) -> bool:
-    """A scheduled run whose local start day is not today (old guard, R10)."""
+def configured_zone(data_root: Path) -> ZoneInfo | None:
+    """The `timezone` of `config/connections.yaml`, the zone schedules are written in.
+
+    Read directly: importing the config loader here would make attention depend on the
+    package that builds the app. None when there is no profile or it has no usable
+    timezone: the guard then uses the operating system zone, and the tools that need the
+    profile report its error.
+    """
+    path = data_root / "config" / "connections.yaml"
+    try:
+        document = yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+        return ZoneInfo(str(document["timezone"]))
+    except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError, ZoneInfoNotFoundError):
+        return None
+
+
+def is_stale_scheduled(session: SessionRow, clock: Clock, zone: tzinfo | None = None) -> bool:
+    """A scheduled run whose start day, in the schedule's zone, is not today (old guard, R10)."""
     if session.purpose != "scheduled":
         return False
     started = datetime.fromisoformat(session.started_at)
-    return _local_day(started) != _local_day(clock.now())
+    return _local_day(started, zone) != _local_day(clock.now(), zone)
 
 
-def is_stale_day(scheduled_day: str, clock: Clock) -> bool:
-    """A scheduled start meant for a day that is not today."""
-    return scheduled_day != _local_day(clock.now()).isoformat()
+def is_stale_day(scheduled_day: str, clock: Clock, zone: tzinfo | None = None) -> bool:
+    """A scheduled start meant for a day that is not today in the schedule's zone."""
+    return scheduled_day != _local_day(clock.now(), zone).isoformat()
 
 
 def stop_error() -> ChamberlainError:
@@ -64,14 +84,20 @@ def touch(db: sqlite3.Connection, clock: Clock, handle: str) -> None:
 
 
 def start(
-    db: sqlite3.Connection, clock: Clock, *, agent: str, purpose: str, resume: str | None
+    db: sqlite3.Connection,
+    clock: Clock,
+    *,
+    agent: str,
+    purpose: str,
+    resume: str | None,
+    zone: tzinfo | None = None,
 ) -> SessionRow:
     """Open a session, or resume a live one. Supersedes the same agent and purpose."""
     with transaction(db):
         end_idle(db, clock)
         if resume is not None:
             row = repo.get_session(db, resume)
-            if row is not None and is_stale_scheduled(row, clock):
+            if row is not None and is_stale_scheduled(row, clock, zone):
                 raise stop_error()
             if row is not None and row.ended_at is None:
                 repo.touch_session(db, row.handle, stamp(clock))
