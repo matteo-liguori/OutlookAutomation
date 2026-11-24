@@ -171,7 +171,7 @@ def test_r4_repoint_merges_when_the_new_locator_already_has_a_handle(
     assert again == old
 
 
-def test_lifetime_refs_expire_30_days_after_last_seen_unless_a_live_record_holds_them(
+def test_m3_refs_expire_30_days_after_last_seen_unless_a_live_record_holds_them(
     ctx: Context, cards: CardService, clock: ManualClock
 ) -> None:
     card = cards.create(title="Holds one ref")

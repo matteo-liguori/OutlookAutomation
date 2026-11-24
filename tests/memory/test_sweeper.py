@@ -1,6 +1,7 @@
 """The sweeper: docs/contracts/06-memory.md (M-21 to M-26, lifetime table)."""
 
 import os
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -193,7 +194,7 @@ def test_m25_the_fixed_layout_is_never_quarantined(ctx: Context, clock: ManualCl
     assert report.orphans_found == 0
 
 
-def test_p3_a_row_without_a_file_is_cleared_and_a_file_without_a_row_is_quarantined(
+def test_m21_p3_a_row_without_a_file_is_cleared_and_a_file_without_a_row_is_quarantined(
     ctx: Context, store: ArtifactService, action: str, clock: ManualClock
 ) -> None:
     handle = keep_text(store, action, "vanishes")
@@ -205,7 +206,7 @@ def test_p3_a_row_without_a_file_is_cleared_and_a_file_without_a_row_is_quaranti
     assert gone.value.code is ErrorCode.ARTIFACT_EXPIRED
 
 
-def test_lifetime_tombstones_vanish_after_a_week(
+def test_m3_tombstones_vanish_after_a_week(
     ctx: Context, store: ArtifactService, action: str, clock: ManualClock
 ) -> None:
     handle = keep_text(store, action, "tombstone")
@@ -217,7 +218,7 @@ def test_lifetime_tombstones_vanish_after_a_week(
     assert repo.get_artifact(ctx.db, handle) is None
 
 
-def test_ported_unclaimed_inputs_expire_but_pending_work_survives(
+def test_m4_unclaimed_inputs_expire_but_pending_work_survives(
     ctx: Context, store: ArtifactService, cards: CardService, clock: ManualClock, session: str
 ) -> None:
     scratch = keep_text(store, session, "session scratch")
@@ -273,7 +274,7 @@ def test_m24_backup_slots_are_fixed(ctx: Context, clock: ManualClock) -> None:
     assert get_state(ctx.db, "memory.last_backup_at") is not None
 
 
-def test_lifetime_logs_rotate_by_age_and_size_and_stale_temp_files_go(
+def test_m3_logs_rotate_by_age_and_size_and_stale_temp_files_go(
     ctx: Context, clock: ManualClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     logs = ctx.data_root / "logs"
@@ -299,3 +300,48 @@ def test_lifetime_logs_rotate_by_age_and_size_and_stale_temp_files_go(
     os.utime(logs / "newer.log", (now - 30, now - 30))
     sweep(ctx, clock.now())
     assert not fresh.exists()  # the oldest goes first when the folder is over its size
+
+
+def test_m3_other_tracks_compactors_run_inside_the_one_sweep(
+    ctx: Context, clock: ManualClock
+) -> None:
+    seen: list[datetime] = []
+
+    def compact_operations(context: Context, now: datetime) -> int:
+        seen.append(now)
+        return 3
+
+    report = sweep(ctx, clock.now(), compactors=[("operations_compacted", compact_operations)])
+    assert report.total("operations_compacted") == 3
+    assert seen == [clock.now()]
+    audit = ctx.services.audit
+    assert isinstance(audit, RecordingAuditLog)
+    assert len(audit.rows) == 1
+    assert "operations_compacted=3" in audit.rows[0].summary
+
+
+def test_m26_a_directory_junction_is_never_followed_or_left_held_forever(
+    ctx: Context, clock: ManualClock, tmp_path: Path
+) -> None:
+    if os.name != "nt":
+        pytest.skip("junctions exist only on Windows; the symlink test covers other systems")
+    target = tmp_path / "precious"
+    target.mkdir()
+    (target / "keep.txt").write_text("precious")
+    ctx.data_root.mkdir(parents=True, exist_ok=True)
+    made = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(ctx.data_root / "escape"), str(target)],
+        capture_output=True,
+        check=False,
+    )
+    if made.returncode != 0:
+        pytest.skip("could not create a junction here")
+    report = sweep(ctx, clock.now())
+    assert report.orphans_found == 1
+    assert (target / "keep.txt").read_text() == "precious"
+    clock.advance(hours=24 * 15)
+    sweep(ctx, clock.now())
+    assert (target / "keep.txt").read_text() == "precious"
+    assert held(ctx) == []
+    assert get_state(ctx.db, "memory.pending_deletions") == "0"
+    assert not any(p.name == "escape" for p in (ctx.data_root / "quarantine").rglob("*"))

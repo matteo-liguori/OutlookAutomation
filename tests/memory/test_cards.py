@@ -18,7 +18,9 @@ from chamberlain.limits import (
 from chamberlain.memory import repo
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
+from chamberlain.memory.checks import storage_checks
 from chamberlain.memory.evidence import EvidenceService
+from chamberlain.memory.metrics import memory_metrics
 from chamberlain.memory.sweeper import sweep
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -158,7 +160,7 @@ def test_m16_a_stale_version_conflicts(cards: CardService) -> None:
     assert "version 2" in error.message
 
 
-def test_lifetime_closing_compacts_and_erases_everything_the_card_held(
+def test_m3_closing_compacts_and_erases_everything_the_card_held(
     ctx: Context, cards: CardService, store: ArtifactService, clock: ManualClock
 ) -> None:
     card = cards.create(title="To close", goal="goal", position="position", rules="rules")
@@ -194,7 +196,7 @@ def store_files(ctx: Context) -> int:
     return len([p for p in (ctx.data_root / "artifacts").rglob("*") if p.is_file()])
 
 
-def test_lifetime_reopening_starts_empty_and_outcome_lines_age_out(
+def test_m3_reopening_starts_empty_and_outcome_lines_age_out(
     ctx: Context, cards: CardService, clock: ManualClock
 ) -> None:
     card = cards.create(title="Reopen me", position="old position")
@@ -215,7 +217,7 @@ def test_lifetime_reopening_starts_empty_and_outcome_lines_age_out(
     assert repo.get_card(ctx.db, card.handle) is not None  # open cards are never purged
 
 
-def test_lifetime_finished_action_loses_notes_and_its_line_goes_after_90_days(
+def test_m3_finished_action_loses_notes_and_its_line_goes_after_90_days(
     ctx: Context, cards: CardService, action: str, clock: ManualClock
 ) -> None:
     note = cards.add_note(action, "scratch")
@@ -232,7 +234,7 @@ def test_lifetime_finished_action_loses_notes_and_its_line_goes_after_90_days(
     assert repo.get_action(ctx.db, action) is None
 
 
-def test_lifetime_a_note_untouched_for_30_days_goes_even_with_its_action_open(
+def test_m3_a_note_untouched_for_30_days_goes_even_with_its_action_open(
     ctx: Context, cards: CardService, action: str, clock: ManualClock
 ) -> None:
     note = cards.add_note(action, "stale scratch")
@@ -251,7 +253,7 @@ def test_t10_a_note_needs_an_open_action(cards: CardService, action: str) -> Non
     refused(lambda: cards.add_note(action, "text"), ErrorCode.ARTIFACT_OWNER_ENDED)
 
 
-def test_actions_can_be_updated_in_place(cards: CardService, action: str) -> None:
+def test_m14_actions_can_be_updated_in_place(cards: CardService, action: str) -> None:
     view = cards.update_action(
         action,
         None,
@@ -263,3 +265,33 @@ def test_actions_can_be_updated_in_place(cards: CardService, action: str) -> Non
     )
     assert view.actions[0].title == "Send the revised quote"
     assert view.actions[0].due_at is not None
+
+
+def test_m12_evidence_target_of_15_per_open_card_is_reported_not_refused(
+    ctx: Context, cards: CardService
+) -> None:
+    card = cards.create(title="Crowded")
+    service = EvidenceService(ctx.db, ctx.clock)
+    for index in range(15):
+        service.add(text=f"Fact {index}.", owner=card.handle, session=None)
+    assert {c.id: c.status for c in storage_checks(ctx)}["storage.evidence"] == "ok"
+    service.add(text="Fact sixteen.", owner=card.handle, session=None)  # a target, not a refusal
+    assert {c.id: c.status for c in storage_checks(ctx)}["storage.evidence"] == "warn"
+    metrics = memory_metrics(ctx.db, ctx.clock, ctx.data_root)
+    assert metrics.evidence_rows == 16
+    assert metrics.evidence_per_open_card == 16.0
+
+
+def test_t10_targets_metrics_report_open_cards_artifacts_and_ownerless_storage(
+    ctx: Context, cards: CardService, store: ArtifactService, action: str, clock: ManualClock
+) -> None:
+    keep_text(store, action, "twelve bytes")
+    metrics = memory_metrics(ctx.db, ctx.clock, ctx.data_root)
+    assert metrics.open_cards == 1
+    assert 0 < metrics.open_card_chars_avg <= metrics.open_card_chars_max <= CARD_MAX_CHARS
+    assert (metrics.artifacts_live, metrics.artifact_bytes) == (1, 12)
+    assert metrics.artifacts_without_owner == 0
+    cards.finish_action(action, None, "Done.")  # releases the hold; the sweeper has not run yet
+    sweep(ctx, clock.now())
+    after = memory_metrics(ctx.db, ctx.clock, ctx.data_root)
+    assert (after.artifacts_live, after.artifacts_without_owner) == (0, 0)

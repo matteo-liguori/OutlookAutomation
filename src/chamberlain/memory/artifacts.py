@@ -73,8 +73,8 @@ def write_blob(data_root: Path, data: bytes, sha256: str) -> None:
     A failure at any point leaves neither a partial nor a final file.
     """
     target = blob_path(data_root, sha256)
-    if target.exists():
-        return
+    if target.exists() and read_blob(data_root, sha256) is not None:
+        return  # identical content is stored once; a damaged copy is replaced below
     run = data_root / RUN_DIR
     run.mkdir(parents=True, exist_ok=True)
     target.parent.mkdir(parents=True, exist_ok=True)

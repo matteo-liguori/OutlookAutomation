@@ -481,6 +481,21 @@ def dead_holds(db: sqlite3.Connection, edges: Edges) -> list[Row]:
     return rows
 
 
+def count_artifacts_without_live_owner(db: sqlite3.Connection, edges: Edges) -> int:
+    """Live artifacts that no live owner holds (the `artifacts_without_owner` metric)."""
+    params = {"grace_edge": edges.grace_edge, "idle_edge": edges.idle_edge}
+    row = db.execute(
+        "SELECT count(*) FROM artifacts a WHERE a.state = 'live' AND NOT EXISTS ("
+        "SELECT 1 FROM artifact_owners o WHERE o.artifact = a.handle AND ("
+        f"(o.owner_kind = 'action' AND o.owner IN ({LIVE_ACTION})) OR "
+        f"(o.owner_kind = 'operation' AND o.owner IN ({LIVE_OPERATION})) OR "
+        f"(o.owner_kind = 'grant' AND o.owner IN ({LIVE_GRANT})) OR "
+        f"(o.owner_kind = 'session' AND o.owner IN ({LIVE_SESSION}))))",
+        params,
+    ).fetchone()
+    return int(row[0])
+
+
 def expirable_artifacts(db: sqlite3.Connection, now: str) -> list[str]:
     """Live artifacts past `expires_at` that no operation still holds (M-11)."""
     rows = db.execute(

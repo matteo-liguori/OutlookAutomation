@@ -243,7 +243,7 @@ def test_t3_a_session_is_required(app: App) -> None:
     assert reply.error.code.value == "session.required"
 
 
-def test_doctor_storage_checks_report_through_the_app(ctx: Context) -> None:
+def test_m23_doctor_storage_checks_report_through_the_app(ctx: Context) -> None:
     handlers = {**HANDLERS, ToolName.DOCTOR: make_doctor(DOCTOR_CHECKS)}
     reply = App(ctx, handlers).call("doctor", {"check": "storage"})
     assert reply.ok

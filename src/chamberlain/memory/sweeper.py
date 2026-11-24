@@ -9,7 +9,7 @@ this module deletes rows or files for lifetime reasons.
 import os
 import shutil
 import sqlite3
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -71,6 +71,15 @@ def _unlink(path: Path) -> None:
     path.unlink()
 
 
+Compactor = Callable[[Context, datetime], int]
+"""A lifetime rule for a table another track writes (operations, grants, events, audit).
+
+The owning track supplies the function; the sweeper runs it inside the `records` step so
+the whole lifetime table is applied in one ordered pass and reported in one audit row.
+It returns how many rows it compacted or deleted. Memory never writes those tables.
+"""
+
+
 @dataclass(frozen=True)
 class SweepHooks:
     """Seams for tests: how a file is removed, and a chance to die between rules."""
@@ -108,6 +117,7 @@ class _Run:
     now: datetime
     budgets: Budgets
     hooks: SweepHooks
+    compactors: Sequence[tuple[str, Compactor]] = ()
     counts: dict[str, RuleCount] = field(default_factory=dict[str, RuleCount])
     failed: int = 0
     orphans: int = 0
@@ -138,9 +148,14 @@ def sweep(
     *,
     budgets: Budgets | None = None,
     hooks: SweepHooks | None = None,
+    compactors: Sequence[tuple[str, Compactor]] = (),
 ) -> SweepReport:
-    """Apply the lifetime table once (M-21). Order follows M-22."""
-    run = _Run(ctx, now, budgets or Budgets(), hooks or SweepHooks())
+    """Apply the lifetime table once (M-21). Order follows M-22.
+
+    `compactors` are the other tracks' rules for their own tables (operation and grant
+    compaction, event expiry, audit windows), supplied at wiring and run in `records`.
+    """
+    run = _Run(ctx, now, budgets or Budgets(), hooks or SweepHooks(), compactors)
     for name, rule in _RULES:
         rule(run)
         if run.hooks.after_rule is not None:
@@ -262,6 +277,8 @@ def _compact_records(run: _Run) -> None:
             "artifact_rows_purged",
             repo.purge_tombstones(run.db, minus(run.now, days=TOMBSTONE_DAYS)),
         )
+    for name, compactor in run.compactors:
+        run.add(name, compactor(run.ctx, run.now))
 
 
 def _trim_ephemeral(run: _Run) -> None:
@@ -285,9 +302,15 @@ def _trim_ephemeral(run: _Run) -> None:
     run.add("leases_expired", leases)
 
 
+def _is_link(path: Path) -> bool:
+    """A symlink or, on Windows, a directory junction. Neither is ever followed."""
+    return path.is_symlink() or path.is_junction()
+
+
 def _inside(parent: Path, child: Path) -> bool:
+    """Whether the entry itself sits inside `parent`; a link is judged by where it lives."""
     try:
-        return child.resolve().is_relative_to(parent.resolve())
+        return child.parent.resolve().is_relative_to(parent.resolve())
     except OSError:
         return False
 
@@ -306,7 +329,7 @@ def _scan_orphans(run: _Run) -> None:
     freed = 0
     for row in repo.due_quarantine(run.db, ts(run.now)):
         target = Path(str(row["quarantined_path"]))
-        if _inside(run.root / "quarantine", target) and (target.exists() or target.is_symlink()):
+        if _inside(run.root / "quarantine", target) and (target.exists() or _is_link(target)):
             try:
                 _remove_any(target)
             except OSError:
@@ -331,14 +354,14 @@ def _find_orphans(run: _Run) -> list[Path]:
             orphans.append(entry)
     known = repo.known_shas(run.db)
     artifacts = root / ARTIFACTS_DIR
-    if artifacts.is_dir() and not artifacts.is_symlink():
+    if artifacts.is_dir() and not _is_link(artifacts):
         for entry in sorted(artifacts.iterdir()):
-            if entry.is_symlink() or not entry.is_dir() or len(entry.name) != 2:
+            if _is_link(entry) or not entry.is_dir() or len(entry.name) != 2:
                 orphans.append(entry)
                 continue
             for blob in sorted(entry.iterdir()):
                 ok = (
-                    not blob.is_symlink()
+                    not _is_link(blob)
                     and blob.is_file()
                     and blob.name in known
                     and blob.name.startswith(entry.name)
@@ -346,16 +369,16 @@ def _find_orphans(run: _Run) -> list[Path]:
                 if not ok:
                     orphans.append(blob)
     leases = root / LEASES_DIR
-    if leases.is_dir() and not leases.is_symlink():
+    if leases.is_dir() and not _is_link(leases):
         ids = {str(row["id"]) for row in repo.all_leases(run.db)}
         for entry in sorted(leases.iterdir()):
-            if entry.is_symlink() or not entry.is_dir() or entry.name not in ids:
+            if _is_link(entry) or not entry.is_dir() or entry.name not in ids:
                 orphans.append(entry)
     return orphans
 
 
 def _size_of(path: Path) -> int:
-    if path.is_symlink() or path.is_file():
+    if _is_link(path) or path.is_file():
         try:
             return path.lstat().st_size
         except OSError:
@@ -372,7 +395,9 @@ def _size_of(path: Path) -> int:
 
 def _remove_any(path: Path) -> None:
     """Remove a file, a link (never its target) or a folder tree."""
-    if path.is_symlink() or path.is_file():
+    if path.is_junction():
+        os.rmdir(path)
+    elif path.is_symlink() or path.is_file():
         path.unlink()
     elif path.is_dir():
         shutil.rmtree(path)
@@ -385,7 +410,7 @@ def _quarantine(run: _Run, path: Path) -> bool:
         folder.mkdir(parents=True, exist_ok=True)
         target = folder / path.name
         counter = 1
-        while target.exists() or target.is_symlink():
+        while target.exists() or _is_link(target):
             counter += 1
             target = folder / f"{counter}-{path.name}"
         size = _size_of(path)

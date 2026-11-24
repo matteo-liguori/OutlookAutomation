@@ -62,13 +62,21 @@ def add_grant(
     return handle
 
 
-def keep_text(store: ArtifactService, owner: str, text: str = "hello", **kw: object) -> str:
+def keep_text(
+    store: ArtifactService,
+    owner: str,
+    text: str = "hello",
+    *,
+    filename: str | None = None,
+    expires_in_hours: int | None = None,
+) -> str:
     kept = store.keep_bytes(
         data=text.encode(),
         kind=ArtifactKind.TEXT,
         owner=owner,
         reason="test",
-        **kw,  # type: ignore[arg-type]
+        filename=filename,
+        expires_in_hours=expires_in_hours,
     )
     return kept.handle
 

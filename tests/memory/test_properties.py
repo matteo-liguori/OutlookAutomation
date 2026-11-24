@@ -262,4 +262,4 @@ SweeperMachine.TestCase.settings = settings(
     ],
 )
 
-TestSweeperProperties = SweeperMachine.TestCase
+TestM21SweeperProperties = SweeperMachine.TestCase

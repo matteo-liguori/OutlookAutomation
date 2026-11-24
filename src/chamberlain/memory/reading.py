@@ -124,7 +124,7 @@ def _artifact(ctx: Context, request: OpenRequest) -> OpenResponse:
     state = str(row["state"])
     view = ArtifactView(
         handle=request.handle,
-        artifact_kind=ArtifactKind(str(row["kind"])).value,  # pyright: ignore[reportArgumentType]
+        artifact_kind=ArtifactKind(str(row["kind"])).value,
         media_type=str(row["media_type"]),
         size=int(row["size"]),
         sha256=str(row["sha256"]),
@@ -245,7 +245,7 @@ def _message(ctx: Context, request: OpenRequest) -> OpenResponse:
     view = MessageView(
         handle=request.handle,
         source=source,
-        folder_role=role.value,  # pyright: ignore[reportArgumentType]
+        folder_role=role.value,
         when=message.date,
         unread=message.unread,
         attachment_count=len(message.attachments),
@@ -281,7 +281,7 @@ def _calendar_event(ctx: Context, request: OpenRequest) -> OpenResponse:
         start=event.fields.start,
         end=event.fields.end,
         all_day=event.fields.all_day,
-        status=event.status.value,  # pyright: ignore[reportArgumentType]
+        status=event.status.value,
         etag=event.etag,
         attendee_count=len(event.fields.attendees),
     )

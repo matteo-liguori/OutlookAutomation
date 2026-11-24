@@ -34,11 +34,7 @@ def memory_metrics(db: sqlite3.Connection, clock: Clock, data_root: Path) -> Met
     sizes = [card_size(cards.view(handle)) for handle in handles]
     evidence_rows = repo.scalar(db, "SELECT count(*) FROM evidence")
     edges = ArtifactService(db, clock, data_root).edges()
-    without_owner = repo.scalar(
-        db,
-        "SELECT count(*) FROM artifacts WHERE state = 'live' "
-        "AND handle NOT IN (SELECT artifact FROM artifact_owners)",
-    ) + len(repo.dead_holds(db, edges))
+    without_owner = repo.count_artifacts_without_live_owner(db, edges)
     db_file = data_root / DB_NAME
     return Metrics(
         open_cards=len(handles),

@@ -244,7 +244,7 @@ def test_m9_open_with_lease_returns_a_path_that_expires(
     assert (reply.data.lease.expires_at - ctx.clock.now()) == timedelta(minutes=30)
 
 
-def test_find_scopes_cards_stored_calendar_contacts_grants_operations(
+def test_t8_find_scopes_cards_stored_calendar_contacts_grants_operations(
     app: App, fake: FakeProvider, cards: CardService, ctx: Context, action: str
 ) -> None:
     cards.create(title="Supplier negotiation")
@@ -274,7 +274,7 @@ def test_find_scopes_cards_stored_calendar_contacts_grants_operations(
     assert hits(call(app, "find", scope="operations")) == []
 
 
-def test_unknown_and_wrong_kind_handles_have_fixes(app: App) -> None:
+def test_e13_unknown_and_wrong_kind_handles_have_fixes(app: App) -> None:
     unknown = call(app, "open", handle="msg_0123456789abcdef")
     assert unknown.error is not None
     assert unknown.error.code.value == "request.unknown_handle"

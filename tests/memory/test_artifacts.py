@@ -223,7 +223,7 @@ def test_m4_default_and_maximum_expiry(store: ArtifactService, action: str, ctx:
     assert longest.expires_at == "2026-07-04T09:00:00Z"  # 180 days
 
 
-def test_ported_long_open_actions_keep_what_they_own_until_renewed(
+def test_m4_m10_long_open_actions_keep_what_they_own_until_renewed(
     store: ArtifactService, action: str, ctx: Context, clock: ManualClock
 ) -> None:
     long_lived = keep_text(store, action, "kept for a long time", expires_in_hours=24 * 180)
@@ -289,3 +289,15 @@ def test_m27_global_and_per_card_budgets_refuse_and_report(
     clean = sweep(ctx, clock.now())
     assert not clean.over_budget
     assert os.path.exists(ctx.data_root)
+
+
+def test_m7_keeping_identical_content_repairs_a_damaged_blob(
+    store: ArtifactService, action: str, ctx: Context
+) -> None:
+    first = keep_text(store, action, "same content")
+    path = blob_path(ctx.data_root, sha256_bytes(b"same content"))
+    path.write_bytes(b"damaged")
+    second = keep_text(store, action, "same content")
+    assert store.read_bytes(second) == b"same content"
+    assert path.read_bytes() == b"same content"
+    assert first != second
