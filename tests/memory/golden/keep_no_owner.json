@@ -1,0 +1,15 @@
+{
+  "ok": false,
+  "next": [],
+  "guidance": [],
+  "notices": [],
+  "error": {
+    "code": "artifact.no_owner",
+    "category": "invalid_request",
+    "retryable": false,
+    "may_have_happened": false,
+    "message": "That handle is not something that can hold stored items.",
+    "fix": "Name an open action, operation or session as the owner.",
+    "field": "owner"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "ok": true,
+  "data": {
+    "handle": "evd_#1",
+    "kind": "evidence",
+    "size": 24,
+    "sha256": "42e575a302f502f4bb8b75643446a75c11d59fc55ae57a9abf3572f8daba550d"
+  },
+  "next": [],
+  "guidance": [],
+  "notices": []
+}
