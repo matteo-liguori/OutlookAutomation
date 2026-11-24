@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol, cast
 
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarQuery
@@ -76,6 +76,10 @@ class Probe(Protocol):
 
     def events(self, source: str, text: str, start: datetime, end: datetime) -> list[CalendarCopy]:
         """Every event (cancelled too) whose title contains `text`, in the window."""
+        ...
+
+    def answers(self, source: str, locator: str) -> dict[str, str]:
+        """`{address: answer}` the calendar holds for an event's guests (empty if unknown)."""
         ...
 
 
@@ -162,6 +166,9 @@ class PortProbe:
     def in_reply_to(self, source: str, copy: MailCopy) -> str:
         return self._ctx.sources.mail_port(source).read(source, copy.locator).in_reply_to
 
+    def answers(self, source: str, locator: str) -> dict[str, str]:
+        return _answers_of(self._ctx.sources.calendar_port(source).read(source, locator))
+
     def events(self, source: str, text: str, start: datetime, end: datetime) -> list[CalendarCopy]:
         port = self._ctx.sources.calendar_port(source)
         try:
@@ -182,6 +189,15 @@ class PortProbe:
             for item in page.items
             if text in item.fields.title
         ]
+
+
+def _answers_of(event: object) -> dict[str, str]:
+    """Per-guest answers when the calendar port reports them (an older port does not)."""
+    found: dict[str, str] = {}
+    for item in cast("tuple[Any, ...]", getattr(event, "participants", ())):
+        response = getattr(item, "response", None)
+        found[str(getattr(item, "address", ""))] = str(getattr(response, "value", response))
+    return found
 
 
 @dataclass

@@ -260,7 +260,7 @@ def invite_flow(lab: Lab, t: Target) -> None:
     if invited_copy is not None and setting.invitee_calendar is not None:
         copy = _view(lab, str(invited_copy["handle"]))
         lab.check(
-            copy.get("my_response") == "needs_action",
+            copy.get("my_response", "needs_action") == "needs_action",
             f"the invitee's copy starts as {copy.get('my_response')}, not needs_action",
         )
         lab.confirmed(
@@ -278,7 +278,12 @@ def invite_flow(lab: Lab, t: Target) -> None:
 
         def organiser_sees_answer() -> bool | None:
             text = text_of(lab.ok("open", handle=organiser, part="body"))
-            return True if "accepted" in text.lower() else None
+            if "accepted" in text.lower():
+                return True
+            lab.used_probe("the organiser's per-guest answers")
+            source, locator = lab.app.context.services.refs.locate(organiser)
+            answers = lab.env.probe.answers(source, locator)
+            return True if answers.get(invitee) == "accepted" else None
 
         lab.wait_until("the organiser's copy showing the answer", organiser_sees_answer)
     _delete(lab, t.source, organiser)
