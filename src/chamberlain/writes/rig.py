@@ -21,7 +21,8 @@ from chamberlain.app.doubles import (
 from chamberlain.app.services import Services
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.domain.handles import HandleKind
-from chamberlain.domain.intents import CalendarCreate, MailSend
+from chamberlain.domain.grants import StandingScope
+from chamberlain.domain.intents import CalendarCreate, IntentKind, MailSend
 from chamberlain.domain.mail import FolderRole
 from chamberlain.domain.operations import (
     DispatchResult,
@@ -36,7 +37,7 @@ from chamberlain.store.migrate import migrate, stamp
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import confirm_grant
 from chamberlain.writes.engine import Engine, Proposal
-from chamberlain.writes.models import OperationRow, WritePolicy
+from chamberlain.writes.models import GrantRow, OperationRow, WritePolicy
 from chamberlain.writes.services import build
 
 _NO_ROOT = Path("unused-data-root")
@@ -62,6 +63,8 @@ class ScriptedPort:
         self.during_dispatch: Callable[[], None] | None = None
         self.reconcile_script: list[ReconcileResult] = []
         self.reconcile_calls = 0
+        self.last_refs: dict[str, str] = {}
+        self.result_transform: Callable[[DispatchResult], DispatchResult] | None = None
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._inner, name)
@@ -69,6 +72,7 @@ class ScriptedPort:
     def prepare(self, intent: Any, refs: Mapping[str, str]) -> Prepared:
         if self.crash_in_prepare:
             raise SimulatedCrash
+        self.last_refs = dict(refs)
         prepared: Prepared = self._inner.prepare(intent, refs)
         if self.after_prepare is not None:
             self.after_prepare()
@@ -86,6 +90,8 @@ class ScriptedPort:
             self.during_dispatch()
         if self.crash_after_dispatch:
             raise SimulatedCrash
+        if self.result_transform is not None:
+            return self.result_transform(result)
         return result
 
     def reconcile(self, prepared: Prepared, key: str) -> ReconcileResult:
@@ -186,6 +192,33 @@ class WriteRig:
         eng = self.engine()
         evidence = self.evidence.add(text=words, owner=proposal.operation.handle, session=SESSION)
         return eng.attach_approval(proposal.operation.handle, evidence)
+
+    def standing_grant(
+        self,
+        recipients: tuple[str, ...] = ("friend@example.org",),
+        *,
+        max_per_day: int = 5,
+        allow_repeat: bool = False,
+        card: str | None = None,
+    ) -> GrantRow:
+        """A standing send grant, proposed by the agent and confirmed by the human."""
+        scope = StandingScope(
+            source=MAIL,
+            intent_kinds=frozenset({IntentKind.MAIL_SEND}),
+            title="Send to a friend",
+            recipients=frozenset(recipients),
+            max_per_day=max_per_day,
+            allow_repeat=allow_repeat,
+            card=card,
+        )
+        proposal = self.engine().propose_standing(scope)
+        assert proposal.grant is not None
+        return confirm_grant(
+            self.engine().ctx,
+            proposal.grant.handle,
+            {"content_sha256": proposal.content_sha256},
+            self.policy,
+        )
 
     def ready_send(self, **kwargs: Any) -> OperationRow:
         """Propose a send to a known recipient, approve it, and return the ready operation."""
