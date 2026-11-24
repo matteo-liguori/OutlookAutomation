@@ -44,6 +44,17 @@ def _zone(name: str | None) -> ZoneInfo | None:
 
 def parse_time(value: Resource) -> tuple[datetime, bool]:
     """A Google start or end object as a UTC instant and an all-day flag."""
+    try:
+        return _parse_time(value)
+    except (KeyError, ValueError, TypeError):
+        raise ChamberlainError(
+            ErrorCode.SOURCE_UNAVAILABLE,
+            "Google returned a time this connector cannot read.",
+            detail=f"google time: {value!r}",
+        ) from None
+
+
+def _parse_time(value: Resource) -> tuple[datetime, bool]:
     if "date" in value:
         day = date.fromisoformat(value["date"])
         return datetime(day.year, day.month, day.day, tzinfo=UTC), True

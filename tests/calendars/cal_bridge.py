@@ -1,7 +1,7 @@
 """A fake Thunderbird calendar bridge: the commands of docs/contracts/12-bridge-v2.md (calendar)."""
 
 from collections.abc import Callable, Mapping
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from pydantic import JsonValue
@@ -25,6 +25,8 @@ class FakeCalendarBridge:
         self.version = version
         self.capabilities = capabilities
         self.items: dict[str, str] = {}
+        self.occurrences: list[tuple[str, str, str]] = []
+        """`(event id, recurrence id, icalendar)` for series: the query answers with these."""
         self.requests: list[tuple[str, bool]] = []
         self.offline = False
         self.fresh_as_of: str | None = None
@@ -64,7 +66,7 @@ class FakeCalendarBridge:
                 entry["fresh_as_of"] = self.fresh_as_of
             return {"calendars": [entry]}
         if cmd == "calendar_query":
-            return self._query(int(str(args["limit"])))
+            return self._query(args)
         event_id = str(args["event_id"])
         if cmd == "calendar_read":
             return {"item": self._item(event_id)}
@@ -76,14 +78,26 @@ class FakeCalendarBridge:
         text = self.items.get(event_id)
         return None if text is None else {"id": event_id, "recurrence_id": None, "icalendar": text}
 
-    def _query(self, limit: int) -> Json:
+    def _query(self, args: Mapping[str, JsonValue]) -> Json:
+        """Like the add-on: `complete` is false when the limit or staleness cut the scan."""
+        limit = int(str(args["limit"]))
+        start = datetime.fromisoformat(str(args["start"]))
+        end = datetime.fromisoformat(str(args["end"]))
         stale = Fault.STALE in self._armed
         if stale:
             self._armed.remove(Fault.STALE)
-        found = [self._item(i) for i in sorted(self.items)][:limit]
+        everything: list[JsonValue] = [
+            {"id": i, "recurrence_id": None, "icalendar": self.items[i]}
+            for i in sorted(self.items)
+            if i not in {o[0] for o in self.occurrences}
+        ]
+        for event_id, recurrence, text in self.occurrences:
+            moment = datetime.strptime(recurrence, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+            if start <= moment <= end:
+                everything.append({"id": event_id, "recurrence_id": recurrence, "icalendar": text})
         return {
-            "items": [item for item in found if item is not None],
-            "complete": not stale,
+            "items": everything[:limit],
+            "complete": not stale and len(everything) <= limit,
             "gaps": ["The calendar has not synchronised."] if stale else [],
         }
 

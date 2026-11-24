@@ -7,6 +7,7 @@ import pytest
 from cal_bridge import FakeCalendarBridge
 from cal_owl_rig import OwlRig
 
+from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.fake.world import Fault
 from chamberlain.connectors.thunderbird.calendar import (
     OwlBinding,
@@ -144,3 +145,64 @@ def test_p16_an_edit_by_the_user_after_prepare_stops_the_update() -> None:
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.NOT_APPLIED
     assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
     assert port.read(SOURCE, "e1").fields.title == "Theirs"
+
+
+def occurrence_text(uid: str, day: int) -> str:
+    return (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\n"
+        f"UID:{uid}\r\nDTSTAMP:20270101T000000Z\r\nRECURRENCE-ID:2027030{day}T100000Z\r\n"
+        f"DTSTART:2027030{day}T100000Z\r\nDTEND:2027030{day}T103000Z\r\nSUMMARY:Standup\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+
+
+def test_p6_an_occurrence_locator_from_events_reads_back_and_cannot_be_written() -> None:
+    port, bridge, _ = build()
+    master = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\nUID:series\r\n"
+        "DTSTAMP:20270101T000000Z\r\nDTSTART:20270301T100000Z\r\nDTEND:20270301T103000Z\r\n"
+        "RRULE:FREQ=DAILY;COUNT=3\r\nSUMMARY:Standup\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    bridge.items["series"] = master
+    bridge.occurrences = [
+        ("series", f"2027030{d}T100000Z", occurrence_text("series", d)) for d in (1, 2, 3)
+    ]
+    page = port.events(
+        SOURCE, CalendarQuery(start=START - timedelta(days=1), end=START + timedelta(days=5))
+    )
+    assert [e.locator for e in page.items] == [
+        "series#20270301T100000Z",
+        "series#20270302T100000Z",
+        "series#20270303T100000Z",
+    ]
+    for listed in page.items:
+        assert port.read(SOURCE, listed.locator) == listed
+    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, page.items[1].locator)
+    delete = CalendarDelete(source=SOURCE, event_ref=handle, expected_etag=page.items[1].etag)
+    with pytest.raises(ChamberlainError) as raised:
+        port.prepare(delete, {handle: page.items[1].locator})
+    assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
+
+
+def test_p4_paging_through_the_limit_is_not_reported_as_a_coverage_gap() -> None:
+    port, bridge, clock = build()
+    for index in range(5):
+        start = START + timedelta(hours=index)
+        bridge.items[f"e{index}"] = ics.build_new(
+            f"e{index}",
+            fields(f"E{index}", start=start, end=start + timedelta(minutes=30)),
+            clock.now(),
+        )
+    query = CalendarQuery(start=START - timedelta(days=1), end=START + timedelta(days=1), limit=2)
+    titles: list[str] = []
+    page = port.events(SOURCE, query)
+    while True:
+        titles += [e.fields.title for e in page.items]
+        assert not page.gaps
+        if not page.cursor:
+            break
+        page = port.events(SOURCE, query, page.cursor)
+    assert page.complete
+    assert titles == [f"E{i}" for i in range(5)]
+    bridge.arm(Fault.STALE)
+    assert port.events(SOURCE, query).gaps

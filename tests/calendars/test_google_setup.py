@@ -10,6 +10,7 @@ from pathlib import Path
 
 import keyring
 import pytest
+from cal_keyring import MemoryKeyring
 from keyring.backends import fail
 
 from chamberlain.connectors.calendar_support.http import HttpReply
@@ -22,7 +23,6 @@ from chamberlain.connectors.calendar_support.secrets import (
 from chamberlain.connectors.google_calendar import auth, setup
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from conftest import MemoryKeyring
 
 CLIENT_ID = "fixture-123.apps.googleusercontent.com"
 CLIENT_SECRET = "client-secret-DO-NOT-LEAK"

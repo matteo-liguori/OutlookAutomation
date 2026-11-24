@@ -10,7 +10,7 @@ is never proven (the client calendar is a cache, so `server_verified` is always 
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Final, Protocol, cast
 
 from pydantic import Field, JsonValue
@@ -143,11 +143,12 @@ class ThunderbirdCalendar:
         if not isinstance(fresh, str):
             # A client cache that cannot say when it last synchronised cannot be vouched for (P-5).
             return SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
+        try:
+            fresh_as_of = datetime.fromisoformat(fresh)
+        except ValueError:
+            return SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
         return SourceHealth(
-            source=source,
-            state=HealthState.OK,
-            checked_at=now,
-            fresh_as_of=datetime.fromisoformat(fresh),
+            source=source, state=HealthState.OK, checked_at=now, fresh_as_of=fresh_as_of
         )
 
     # --- reading --------------------------------------------------------------
@@ -168,11 +169,16 @@ class ThunderbirdCalendar:
             },
         )
         found: list[CalendarEvent] = []
+        unreadable = 0
         for item in _items(result, "items"):
             text = item.get("icalendar")
             if not isinstance(text, str):
                 continue
-            event = _event(source, item, text)
+            try:
+                event = _event(source, item, text)
+            except ChamberlainError:
+                unreadable += 1
+                continue
             if event.status.value == "cancelled" and not query.include_cancelled:
                 continue
             fields = event.fields
@@ -188,10 +194,15 @@ class ThunderbirdCalendar:
         window = found[offset : offset + query.limit]
         more = offset + query.limit < len(found)
         gaps = [Gap(source=source, reason=str(g)) for g in _list(result.get("gaps"))]
-        if result.get("complete") is not True and not gaps:
+        if unreadable:
+            gaps.append(Gap(source=source, reason="Some calendar items could not be read."))
+        returned = len(_items(result, "items"))
+        # `complete: false` at exactly the requested limit only means "there is more" (paging);
+        # it is a coverage gap when the add-on stopped short of the limit or the limit is the cap.
+        paging = returned >= wanted and wanted < _SCAN_CAP
+        if result.get("complete") is not True and not gaps and not paging:
             gaps.append(Gap(source=source, reason="The calendar did not report a complete scan."))
-        scan_capped = len(_items(result, "items")) >= wanted and wanted >= _SCAN_CAP
-        if scan_capped:
+        if returned >= wanted and wanted >= _SCAN_CAP:
             gaps.append(Gap(source=source, reason="The scan stopped at its limit."))
         return Page[CalendarEvent](
             items=tuple(window),
@@ -213,6 +224,32 @@ class ThunderbirdCalendar:
         for parsed in ics.parse_events(text):
             if parsed.recurrence_id == recurrence:
                 return _event_of(source, locator, text, parsed)
+        return self._occurrence(source, binding, event_id, recurrence)
+
+    def _occurrence(
+        self, source: str, binding: OwlBinding, event_id: str, recurrence: str
+    ) -> CalendarEvent:
+        """An occurrence the connector handed out: found by a one-second query at its start."""
+        try:
+            moment = datetime.strptime(recurrence, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+        except ValueError:
+            moment = datetime.strptime(recurrence, "%Y%m%d").replace(tzinfo=UTC)
+        result = self._read(
+            "calendar_query",
+            {
+                "calendar_id": binding.calendar_id,
+                "start": moment.isoformat(),
+                "end": (moment + timedelta(seconds=1)).isoformat(),
+                "limit": 50,
+            },
+        )
+        for item in _items(result, "items"):
+            text = item.get("icalendar")
+            if item.get("id") != event_id or not isinstance(text, str):
+                continue
+            event = _event(source, item, text)
+            if event.locator == ics.instance_locator(event_id, recurrence):
+                return event
         raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That occurrence is not there.")
 
     # --- writing --------------------------------------------------------------
@@ -414,7 +451,12 @@ def _write_command(binding: OwlBinding, prepared: Prepared) -> tuple[str, Json]:
 
 
 def _event(source: str, item: Json, text: str) -> CalendarEvent:
-    parsed = ics.parse_events(text)[0]
+    events = ics.parse_events(text)
+    if not events:
+        raise ChamberlainError(
+            ErrorCode.SOURCE_UNAVAILABLE, "The calendar returned an item with no event."
+        )
+    parsed = events[0]
     recurrence = item.get("recurrence_id")
     recurrence_id = recurrence if isinstance(recurrence, str) else parsed.recurrence_id
     return _event_of(source, ics.instance_locator(str(item["id"]), recurrence_id), text, parsed)

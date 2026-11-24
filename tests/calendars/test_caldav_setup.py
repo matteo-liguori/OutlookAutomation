@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from cal_keyring import MemoryKeyring
 from cal_radicale import PASSWORD, USER, RadicaleServer
 
 from chamberlain.connectors.caldav import setup
@@ -12,7 +13,6 @@ from chamberlain.connectors.caldav.credentials import SERVICE, credential_name, 
 from chamberlain.connectors.calendar_support.secrets import KeyringStore, SecretStore
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from conftest import MemoryKeyring
 
 GOOD = "abcd-efgh-ijkl-mnop"
 APPLE_ID = "me@example.test"
@@ -109,8 +109,12 @@ def test_registering_is_idempotent_keeps_a_backup_and_holds_no_password(tmp_path
 
 
 def test_the_forget_command_removes_the_password(
-    store: SecretStore, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    store: SecretStore,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.delenv("CHAMBERLAIN_DATA", raising=False)
     setup.save_credential(store, APPLE_ID, GOOD, lambda *a: [])
     lines: list[str] = []
     assert (

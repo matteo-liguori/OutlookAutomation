@@ -5,38 +5,17 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import keyring
-import keyring.errors
 import pytest
-from keyring.backend import KeyringBackend
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from cal_keyring import MemoryKeyring
 from cal_radicale import RadicaleServer
 
 
-class MemoryKeyring(KeyringBackend):
-    """An in-memory credential store so tests never touch the real one."""
-
-    priority = 1  # type: ignore[assignment]
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.items: dict[tuple[str, str], str] = {}
-
-    def get_password(self, service: str, username: str) -> str | None:
-        return self.items.get((service, username))
-
-    def set_password(self, service: str, username: str, password: str) -> None:
-        self.items[(service, username)] = password
-
-    def delete_password(self, service: str, username: str) -> None:
-        if (service, username) not in self.items:
-            raise keyring.errors.PasswordDeleteError("absent")
-        del self.items[(service, username)]
-
-
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def memory_keyring() -> Iterator[MemoryKeyring]:
+    """Every test here gets an in-memory credential store, never the real vault."""
     previous = keyring.get_keyring()
     backend = MemoryKeyring()
     keyring.set_keyring(backend)
