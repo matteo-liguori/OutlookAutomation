@@ -8,6 +8,7 @@ subject, title and name says it is a demo, so nothing here can pass for real mai
 from collections.abc import Iterable
 from datetime import timedelta
 
+from chamberlain.connections.load import dump_connections
 from chamberlain.connections.model import Connections, DemoSource
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.domain.calendar import EventFields
@@ -110,3 +111,8 @@ def demo_profile() -> Connections:
             "contacts:demo": DemoSource(label="Demo contacts"),
         }
     )
+
+
+def demo_document() -> str:
+    """The text of a demo-only `config/connections.yaml`."""
+    return dump_connections(demo_profile())
