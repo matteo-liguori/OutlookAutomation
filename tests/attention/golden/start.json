@@ -10,7 +10,8 @@
         "state": "ok",
         "capabilities": [
           "calendar.read",
-          "calendar.write"
+          "calendar.write",
+          "calendar.invite"
         ]
       },
       {

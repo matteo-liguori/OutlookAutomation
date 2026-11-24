@@ -17,6 +17,22 @@ class EventStatus(StrEnum):
     CANCELLED = "cancelled"
 
 
+class Response(StrEnum):
+    """An invitee's answer to an invitation."""
+
+    NEEDS_ACTION = "needs_action"
+    ACCEPTED = "accepted"
+    TENTATIVE = "tentative"
+    DECLINED = "declined"
+
+
+class Participant(Model):
+    """One invited person and the answer this calendar holds for them."""
+
+    address: EmailAddress
+    response: Response = Response.NEEDS_ACTION
+
+
 class EventFields(Model):
     """What a calendar write sets. Part of the intent, so part of the hash."""
 
@@ -43,6 +59,13 @@ class CalendarEvent(Model):
     status: EventStatus
     fields: EventFields
     updated: Timestamp
+    organiser: EmailAddress | None = None
+    """Who sent the invitation, when the event has one. Read only; never part of a write."""
+    my_response: Response | None = None
+    """This calendar owner's answer on THIS copy, or None when they are not an invitee."""
+    participants: tuple[Participant, ...] = ()
+    """Each invitee's answer as this calendar knows it. On the organiser's copy this is how
+    replies show. Read only; the attendee list a write sets is `fields.attendees`."""
 
 
 class CalendarQuery(Model):

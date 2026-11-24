@@ -25,7 +25,7 @@ agent sees sources and capability names, never a connector.
 
 Names: `mail.read`, `mail.search`, `mail.attachments`, `mail.send`,
 `mail.draft`, `mail.move`, `mail.trash`, `mail.mark_read`, `calendar.read`,
-`calendar.write`, `contacts.search`.
+`calendar.write`, `calendar.invite`, `contacts.search`.
 
 `ContactsPort.read(source, locator)` returns the one contact a `search` locator
 names (it is part of `contacts.search`); an unknown locator is
@@ -139,6 +139,15 @@ bytes, which the engine reads from the artifact store.
   (`request.unknown_handle`), and `events(include_cancelled)` returns nothing
   or the cancelled one. CalDAV and Owl deletes are real deletes; reconcile of
   a delete is `present` either way.
+- **P-19** Invitations (04-writes W-33 to W-36). `CalendarEvent` carries, read only, `organiser`
+  (who invited this calendar's owner, else None), `my_response` (the owner's answer on this copy:
+  `needs_action`, `accepted`, `tentative`, `declined`; None when the owner is not an invitee) and
+  `participants` (each invitee's answer as the calendar holds it). A connector declaring
+  `calendar.invite` writes attendees on create and update, sends the cancellation on delete and
+  changes only the owner's own answer on respond; a write on an invitee's copy by anyone but its
+  owner is refused. `prepare` of an update or delete on the invitee's copy raises
+  `capability.unsupported` (detail `invitee-copy`). The fake provider delivers an invitation to
+  every fake calendar whose address matches an attendee.
 - **P-17** Time limits: every port call takes its deadline from the
   connector's configuration, and a call that exceeds it raises
   `source.unavailable` for reads and returns `unknown` for `dispatch`.

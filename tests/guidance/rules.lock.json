@@ -11,6 +11,10 @@
   "hash": "d1331ef8f64933810d530b0e204f1307ff42914dbe2e50cd4457a798fbcab7e3",
   "version": 1
  },
+ "calendar.invite": {
+  "hash": "75308f999151dda3062b983650d3a32a142d285b6798d868052b2d1015b3a336",
+  "version": 1
+ },
  "card.complex": {
   "hash": "c5ddc4666422d7394adfc30e787ebde103dab2b63f6db975b178fd878947a75c",
   "version": 2
@@ -144,7 +148,7 @@
   "version": 1
  },
  "write.uncertain": {
-  "hash": "d3137b4805320ac9d400f7ce0997e3a7a367fe7d10df479005d09296b36b6e78",
+  "hash": "6f4f7ac04b92225d40ed739a8462de9f7fca2bc9379ae9fbe1874e7e2d35c5cc",
   "version": 1
  }
 }

@@ -18,7 +18,7 @@ from pydantic import JsonValue
 from chamberlain.connectors.caldav import dav
 from chamberlain.connectors.caldav.config import CalDavBinding, CalDavConfig
 from chamberlain.connectors.calendar_support import ics
-from chamberlain.connectors.calendar_support.fields import same_content
+from chamberlain.connectors.calendar_support.fields import attendees_match, same_content
 from chamberlain.connectors.calendar_support.http import (
     HttpReply,
     HttpTransport,
@@ -27,7 +27,14 @@ from chamberlain.connectors.calendar_support.http import (
     require_secure,
     write_may_have_landed,
 )
-from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, EventFields, EventStatus
+from chamberlain.domain.calendar import (
+    CalendarEvent,
+    CalendarQuery,
+    EventFields,
+    EventStatus,
+    Participant,
+    Response,
+)
 from chamberlain.domain.capabilities import (
     Capability,
     CapabilityName,
@@ -40,6 +47,7 @@ from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
     CalendarIntent,
+    CalendarRespond,
     CalendarUpdate,
     IntentKind,
 )
@@ -62,8 +70,15 @@ _PROVABLE = frozenset(
         IntentKind.CALENDAR_CREATE.value,
         IntentKind.CALENDAR_UPDATE.value,
         IntentKind.CALENDAR_DELETE.value,
+        IntentKind.CALENDAR_RESPOND.value,
     }
 )
+_PARTSTAT = {"accepted": "ACCEPTED", "tentative": "TENTATIVE", "declined": "DECLINED"}
+_RESPONSES = {
+    "ACCEPTED": Response.ACCEPTED,
+    "TENTATIVE": Response.TENTATIVE,
+    "DECLINED": Response.DECLINED,
+}
 _CALENDAR_TYPE = {"Content-Type": 'text/calendar; charset="utf-8"'}
 _XML_TYPE = {"Content-Type": "application/xml; charset=utf-8"}
 
@@ -95,7 +110,7 @@ class CalDavCalendar:
     # --- description ----------------------------------------------------------
 
     def capabilities(self, source: str) -> CapabilitySet:
-        self._binding(source)
+        binding = self._binding(source)
         return CapabilitySet(
             source=source,
             capabilities=(
@@ -109,7 +124,17 @@ class CalDavCalendar:
                     level=VerificationLevel.IMPLEMENTED,
                     absence_provable=_PROVABLE,
                 ),
+                *self._invite_capability(binding),
             ),
+        )
+
+    @staticmethod
+    def _invite_capability(binding: CalDavBinding) -> tuple[Capability, ...]:
+        """Invitations need to know the address they are sent from (RFC 6638 ORGANIZER)."""
+        if own_address(binding) is None:
+            return ()
+        return (
+            Capability(name=CapabilityName.CALENDAR_INVITE, level=VerificationLevel.IMPLEMENTED),
         )
 
     def health(self, source: str) -> SourceHealth:
@@ -164,7 +189,13 @@ class CalDavCalendar:
                 ):
                     continue
                 found.append(
-                    _event(source, ics.instance_locator(name, parsed.recurrence_id), etag, parsed)
+                    _event(
+                        source,
+                        ics.instance_locator(name, parsed.recurrence_id),
+                        etag,
+                        parsed,
+                        own_address(binding),
+                    )
                 )
         found.sort(key=lambda e: (e.fields.start, e.locator))
         window = found[offset : offset + query.limit]
@@ -184,10 +215,10 @@ class CalDavCalendar:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
         text, etag = fetched
         if recurrence is None:
-            return _event(source, name, etag, ics.master_of(text))
+            return _event(source, name, etag, ics.master_of(text), own_address(binding))
         for parsed in ics.parse_events(text):
             if parsed.recurrence_id == recurrence:
-                return _event(source, locator, etag, parsed)
+                return _event(source, locator, etag, parsed, own_address(binding))
         moment = datetime.strptime(recurrence, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
         body = dav.query_window(moment, moment + timedelta(seconds=1), expand=True)
         for other, _, expanded in self._report(binding, self._collection(binding), body):
@@ -195,7 +226,7 @@ class CalDavCalendar:
                 continue
             for parsed in ics.parse_events(expanded):
                 if parsed.recurrence_id == recurrence:
-                    return _event(source, locator, etag, parsed)
+                    return _event(source, locator, etag, parsed, own_address(binding))
         raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That occurrence is not there.")
 
     # --- writing --------------------------------------------------------------
@@ -212,28 +243,45 @@ class CalDavCalendar:
                     raise ChamberlainError(
                         ErrorCode.REQUEST_INVALID, "The event has no uid.", field="uid"
                     )
-                ics.refuse_invitations(None, intent.event)
+                organiser = _need_address(binding) if intent.event.attendees else None
                 token = intent.uid
                 data = {
                     "name": resource_name(intent.uid),
-                    "ics": ics.build_new(intent.uid, intent.event, now),
+                    "ics": ics.build_new(intent.uid, intent.event, now, organiser),
                     "fields": intent.event.model_dump(mode="json"),
+                    "guests": organiser is not None,
                 }
             case CalendarUpdate():
-                name, text, _ = self._current(
-                    binding, refs, intent.event_ref, intent.expected_etag, intent.event
+                name, text, parsed = self._current(
+                    binding, refs, intent.event_ref, intent.expected_etag
+                )
+                organiser = (
+                    _need_address(binding)
+                    if intent.event.attendees or parsed.fields.attendees
+                    else None
                 )
                 data = {
                     "name": name,
                     "expected_etag": intent.expected_etag,
-                    "ics": ics.apply_fields(text, intent.event, now),
+                    "ics": ics.apply_fields(text, intent.event, now, organiser),
                     "fields": intent.event.model_dump(mode="json"),
+                    "guests": organiser is not None,
                 }
             case CalendarDelete():
-                name, _, _ = self._current(
-                    binding, refs, intent.event_ref, intent.expected_etag, None
-                )
+                name, _, _ = self._current(binding, refs, intent.event_ref, intent.expected_etag)
                 data = {"name": name, "expected_etag": intent.expected_etag}
+            case CalendarRespond():
+                me = _need_address(binding)
+                name, text, parsed = self._current(
+                    binding, refs, intent.event_ref, intent.expected_etag, answering=True
+                )
+                data = {
+                    "name": name,
+                    "expected_etag": intent.expected_etag,
+                    "ics": ics.apply_answer(text, me, _PARTSTAT[intent.response], now),
+                    "response": intent.response,
+                    "address": me,
+                }
         return Prepared.model_validate(
             {
                 "source": intent.source,
@@ -308,8 +356,16 @@ class CalDavCalendar:
                     receipt=ProviderReceipt(locator=name, verification=_VERIFIED),
                 )
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="still present")
+        if kind is IntentKind.CALENDAR_RESPOND:
+            if parsed is None or fetched is None or not _answered(parsed, prepared.data):
+                return DispatchResult(
+                    outcome=DispatchOutcome.UNKNOWN, detail="read-back differs from the request"
+                )
+            return DispatchResult(
+                outcome=DispatchOutcome.APPLIED, receipt=_receipt(name, fetched[1])
+            )
         wanted = EventFields.model_validate(prepared.data["fields"])
-        if fetched is None or parsed is None or not same_content(parsed.fields, wanted):
+        if fetched is None or parsed is None or not _same(parsed, wanted, binding):
             return DispatchResult(
                 outcome=DispatchOutcome.UNKNOWN, detail="read-back differs from the request"
             )
@@ -335,8 +391,13 @@ class CalDavCalendar:
         text, etag = fetched
         if etag == _text(data, "expected_etag"):
             return ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
+        parsed = ics.master_of(text)
+        if kind is IntentKind.CALENDAR_RESPOND:
+            if _answered(parsed, data):
+                return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=_receipt(name, etag))
+            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")
         wanted = EventFields.model_validate(data["fields"])
-        if same_content(ics.master_of(text).fields, wanted):
+        if _same(parsed, wanted, binding):
             return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=_receipt(name, etag))
         return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")
 
@@ -426,7 +487,8 @@ class CalDavCalendar:
         refs: Mapping[str, str],
         ref: str,
         expected_etag: str,
-        wanted: EventFields | None,
+        *,
+        answering: bool = False,
     ) -> tuple[str, str, ics.ParsedEvent]:
         locator = refs.get(ref)
         if locator is None:
@@ -444,7 +506,18 @@ class CalDavCalendar:
         if etag != expected_etag:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event changed since it was read.")
         parsed = ics.master_of(text)
-        ics.refuse_invitations(parsed, wanted)
+        me = own_address(binding)
+        if answering:
+            if me is None or not _is_invitee_copy(parsed, me) or me not in dict(parsed.partstats):
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID, "That event is not an invitation to this calendar."
+                )
+        elif _is_invitee_copy(parsed, me):
+            raise ChamberlainError(
+                ErrorCode.CAPABILITY_UNSUPPORTED,
+                "Only the organiser can change that event.",
+                detail="invitee-copy",
+            )
         return name, text, parsed
 
 
@@ -460,15 +533,72 @@ def _check(reply: HttpReply, accepted: tuple[int, ...]) -> None:
     raise _unavailable(f"http {reply.status}")
 
 
-def _event(source: str, locator: str, etag: str, parsed: ics.ParsedEvent) -> CalendarEvent:
+def own_address(binding: CalDavBinding) -> str | None:
+    """The calendar user address this account sends and answers invitations as."""
+    for candidate in (binding.address, binding.username):
+        if candidate and "@" in candidate:
+            return candidate.strip().lower()
+    return None
+
+
+def _need_address(binding: CalDavBinding) -> str:
+    address = own_address(binding)
+    if address is None:
+        raise ics.no_invitations()
+    return address
+
+
+def _is_invitee_copy(parsed: ics.ParsedEvent, me: str | None) -> bool:
+    """Someone else organised it (or it lists guests and says nobody did)."""
+    guests = [a for a, _ in parsed.partstats if a != parsed.organiser_address]
+    if parsed.organiser_address is None:
+        return bool(guests)
+    return parsed.organiser_address != me
+
+
+def _same(parsed: ics.ParsedEvent, wanted: EventFields, binding: CalDavBinding) -> bool:
+    """The read-back carries what was written, guests included (W-36). The organiser's own
+    entry is ignored: servers list the organiser among the attendees or not."""
+    ignore = [a for a in (own_address(binding), parsed.organiser_address) if a]
+    return same_content(parsed.fields, wanted) and attendees_match(
+        parsed.fields.attendees, wanted.attendees, ignore=ignore
+    )
+
+
+def _answered(parsed: ics.ParsedEvent, data: Mapping[str, JsonValue]) -> bool:
+    mine = dict(parsed.partstats).get(_text(data, "address"))
+    return mine == _PARTSTAT[_text(data, "response")]
+
+
+def _event(
+    source: str, locator: str, etag: str, parsed: ics.ParsedEvent, me: str | None
+) -> CalendarEvent:
+    invitee = bool(me is not None and _is_invitee_copy(parsed, me) and parsed.organiser_address)
+    hidden = {a for a in (me, parsed.organiser_address if not invitee else None) if a}
+    fields = parsed.fields.model_copy(
+        update={"attendees": tuple(a for a in parsed.fields.attendees if a not in hidden)}
+    )
+    answers = dict(parsed.partstats)
     return CalendarEvent(
         source=source,
         locator=locator,
         uid=parsed.uid,
         etag=etag,
         status=parsed.status,
-        fields=parsed.fields,
+        fields=fields,
         updated=parsed.updated,
+        organiser=parsed.organiser_address if invitee else None,
+        my_response=(
+            _RESPONSES.get(answers.get(me or "", ""), Response.NEEDS_ACTION)
+            if invitee and me in answers
+            else None
+        ),
+        participants=tuple(
+            Participant(
+                address=a, response=_RESPONSES.get(answers.get(a, ""), Response.NEEDS_ACTION)
+            )
+            for a in fields.attendees
+        ),
     )
 
 

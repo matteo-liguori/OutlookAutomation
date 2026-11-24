@@ -327,6 +327,9 @@ class CalendarRigAdapter:
     def seed(self, fields: EventFields) -> str:
         return self._stack.seed_event(fields, self.new_uid())
 
+    def seed_invitation(self, organiser: str, fields: EventFields) -> str | None:
+        return None  # the Owl calendar cannot send or answer invitations (W-34)
+
     def inject(self, fault: Fault) -> bool:
         name = _CALENDAR_FAULTS.get(fault)
         return name is not None and bool(self._stack.control("inject", fault=name))

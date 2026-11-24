@@ -187,6 +187,7 @@
     "calendar.create": "Calendar event created",
     "calendar.update": "Calendar event changed",
     "calendar.delete": "Calendar event deleted",
+    "calendar.respond": "Calendar invitation answered",
   };
 
   function uncertainCard(op) {

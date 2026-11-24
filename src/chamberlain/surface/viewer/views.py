@@ -5,6 +5,7 @@ Contract: docs/contracts/06-memory.md (read-only views), 10-targets.md (storage 
 except in `rendered`, the exact text of an operation the person is asked to decide on.
 """
 
+import json
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
@@ -117,7 +118,9 @@ def uncertain(ctx: Context) -> dict[str, Any]:
         imported = op.intent_json is None
         rendered: str | None = None
         if not imported:
-            rendered = describe_intent(Engine.intent_of(op), limit=None)[0]
+            rendered = describe_intent(
+                Engine.intent_of(op), limit=None, refs=json.loads(op.refs_json or "{}")
+            )[0]
         summary = parse_summary(op.summary_json)
         found.append(
             {

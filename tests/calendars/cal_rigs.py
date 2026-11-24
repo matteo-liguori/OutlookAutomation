@@ -14,6 +14,8 @@ from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
 
 _SERIAL = iter(range(1, 1_000_000))
+CALDAV_ADDRESS = "alice@example.test"
+"""The calendar user address the CalDAV test account sends invitations from."""
 
 
 def new_uid(prefix: str) -> str:
@@ -53,6 +55,20 @@ class GoogleRig:
                 "summary": fields.title,
                 "start": {"dateTime": iso(fields.start)},
                 "end": {"dateTime": iso(fields.end)},
+            }
+        )
+
+    def seed_invitation(self, organiser: str, fields: EventFields) -> str | None:
+        return self.api.seed(
+            {
+                "summary": fields.title,
+                "start": {"dateTime": iso(fields.start)},
+                "end": {"dateTime": iso(fields.end)},
+                "organizer": {"email": organiser},
+                "attendees": [
+                    {"email": organiser, "organizer": True, "responseStatus": "accepted"},
+                    {"email": self.api.owner, "self": True, "responseStatus": "needsAction"},
+                ],
             }
         )
 
@@ -140,6 +156,28 @@ class CalDavRig:
         uid = new_uid("seed")
         name = f"seed-{self._seeded}.ics"
         text = ics.build_new(uid, fields, self.clock.now())
+        reply = self.transport.inner.send(
+            "PUT",
+            self.collection + name,
+            headers={**self._auth, "Content-Type": "text/calendar", "If-None-Match": "*"},
+            body=text.encode(),
+            timeout=10,
+        )
+        assert reply.status in (201, 204)
+        return name
+
+    def seed_invitation(self, organiser: str, fields: EventFields) -> str | None:
+        self._seeded += 1
+        uid = new_uid("invite")
+        name = f"invite-{self._seeded}.ics"
+        text = ics.build_new(uid, fields, self.clock.now())
+        text = text.replace(
+            "END:VEVENT",
+            f"ORGANIZER:mailto:{organiser}\r\n"
+            f"ATTENDEE;PARTSTAT=ACCEPTED:mailto:{organiser}\r\n"
+            f"ATTENDEE;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:{CALDAV_ADDRESS}\r\n"
+            "END:VEVENT",
+        )
         reply = self.transport.inner.send(
             "PUT",
             self.collection + name,

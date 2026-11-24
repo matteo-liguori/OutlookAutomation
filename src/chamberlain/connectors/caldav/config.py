@@ -15,6 +15,10 @@ class CalDavBinding(Model):
     username: str = Field(min_length=1)
     credential: str = Field(min_length=1)
     """The name of the password in the credential store."""
+    address: str | None = None
+    """The calendar user address invitations are sent from and answered as (iCloud: the
+    Apple ID address). Without it, a username that is an address is used; with neither, the
+    calendar declines invitations rather than guess."""
 
 
 class CalDavConfig(Model):

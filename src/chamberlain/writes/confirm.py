@@ -275,7 +275,9 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
         intent = Engine.intent_of(shown)
         detail["operation"] = shown.handle
         detail["intent"] = json.loads(shown.intent_json or "{}")
-        detail["rendered"] = describe_intent(intent, limit=None)[0]
+        detail["rendered"] = describe_intent(
+            intent, limit=None, refs=json.loads(shown.refs_json or "{}")
+        )[0]
     return detail
 
 

@@ -22,6 +22,7 @@ A `WriteIntent` is the canonical, complete description of one write. Kinds:
 | `calendar.create` | `event` (`EventFields`), `uid`* |
 | `calendar.update` | `event_ref`, `expected_etag`, `event` |
 | `calendar.delete` | `event_ref`, `expected_etag` |
+| `calendar.respond` | `event_ref`, `expected_etag`, `response` (`accepted`, `tentative`, `declined`), `organiser`* |
 
 Fields marked * are left empty by the agent and completed by the harness
 at `propose`, before hashing (`intents.HARNESS_COMPLETED_FIELDS`). A value
@@ -232,6 +233,28 @@ and reconcile over the fake provider with random faults, checking:
 - **W-31** (R11) If the Sent copy is missing but the exact message (token or
   content match) arrived in the sender's own Inbox for a self-addressed send,
   reconcile counts it `present`.
+- **W-33** (owner ruling 2026-11-24) Invitations. A `calendar.create` or `calendar.update` whose
+  `event.attendees` is not empty is an invitation: the calendar service sends it, changes it and
+  cancels it (`calendar.delete` on the organiser's copy); the harness sends no mail itself.
+  `calendar.respond` answers an invitation the owner received by changing only the owner's own
+  answer on the owner's copy. It names the organiser, which the harness fills at `propose` from
+  the stored event (W-1: an agent value is replaced), and fails with `request.invalid` when the
+  event is not an invitation to this calendar's owner.
+- **W-34** A source declares the capability `calendar.invite` only if it can send, change and
+  cancel invitations and answer them. A write that reaches other people (attendees on a create or
+  update, stored attendees on an update or delete, any respond) on a source without it fails at
+  `propose` with `capability.unsupported` and detail `invitations-not-supported`, before anyone is
+  asked to confirm. The Owl calendar through Thunderbird does not declare it: the add-on's calendar
+  API documents no way to send or answer an invitation, and the harness does not guess at Owl's own
+  handling.
+- **W-35** Only the organiser changes or cancels an invitation. `update` and `delete` on the
+  owner's copy of someone else's invitation fail at `propose` with `capability.unsupported` and
+  detail `invitee-copy`; the owner's write there is `calendar.respond`.
+- **W-36** Verified outcome. A connector reports `server_verified` for an invitation only when the
+  read-back event on the organiser's own calendar carries the attendee set that was written
+  (addresses, case-insensitive; the organiser's own address is ignored). Delivery to an invitee is
+  never claimed: the harness cannot see it from the organiser's side. The organiser's later view of
+  each reply is `CalendarEvent.participants`.
 - **W-32** (owner ruling) Calendar writes on events without attendees need
   only `agent_evidence` (G-12a). For `update` and `delete`, `propose` reads the
   stored event and keeps the attendee fact in the stored refs

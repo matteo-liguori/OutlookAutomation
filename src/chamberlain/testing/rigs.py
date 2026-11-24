@@ -80,6 +80,13 @@ class CalendarRig(_Faulty, Protocol):
         """Live (not cancelled) events with this uid."""
         ...
 
+    def seed_invitation(self, organiser: str, fields: EventFields) -> str | None:
+        """An invitation this calendar's owner received from `organiser`, awaiting an answer.
+
+        Returns its locator, or None when the rig cannot make one (the test is then skipped).
+        """
+        ...
+
 
 class ContactsRig(Protocol):
     port: ContactsPort

@@ -18,6 +18,11 @@
         "title": "Offering or accepting a time"
       },
       {
+        "id": "calendar.invite",
+        "version": 1,
+        "title": "Guests and answers reach other people"
+      },
+      {
         "id": "card.complex",
         "version": 2,
         "title": "A card that needs more room"
@@ -121,18 +126,13 @@
         "id": "propose.check",
         "version": 2,
         "title": "Proposing a change"
-      },
-      {
-        "id": "reconcile.read",
-        "version": 1,
-        "title": "Settling an uncertain change"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 37,
+    "total": 38,
     "cursor": "ZzI1",
     "gaps": []
   },

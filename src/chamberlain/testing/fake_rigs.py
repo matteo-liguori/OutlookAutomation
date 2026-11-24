@@ -3,7 +3,7 @@
 from itertools import count
 
 from chamberlain.connectors.fake import FakeProvider, Fault
-from chamberlain.domain.calendar import EventFields
+from chamberlain.domain.calendar import EventFields, Response
 from chamberlain.domain.mail import FolderRole
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.contacts import ContactsPort
@@ -95,6 +95,14 @@ class FakeCalendarRig(_FakeFaults):
 
     def count(self, uid: str) -> int:
         return self.fake.calendar.count(self.source, uid)
+
+    def seed_invitation(self, organiser: str, fields: EventFields) -> str | None:
+        return self.fake.calendar.add_event(
+            self.source,
+            fields.model_copy(update={"attendees": (organiser,)}),
+            organiser=organiser,
+            my_response=Response.NEEDS_ACTION,
+        )
 
 
 class FakeContactsRig:

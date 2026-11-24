@@ -4,7 +4,9 @@ Contract: docs/contracts/08-ports.md and docs/contracts/12-bridge-v2.md (calenda
 are an optional capability). The connector talks to a `CalendarBridge`, a narrow protocol
 that the Thunderbird client implements, so this module imports nothing from the bridge.
 Thunderbird keeps no version of an event, so the etag is a hash of its iCalendar text.
-The capability set is narrow: no invitations, no recurring-occurrence writes, and absence
+The capability set is narrow: no invitations (not declared, so a write that reaches other
+people is refused when proposed; the add-on has no documented, tested way to send, change,
+cancel or answer an invitation through Owl), no recurring-occurrence writes, and absence
 is never proven (the client calendar is a cache, so `server_verified` is always False).
 """
 
@@ -30,6 +32,7 @@ from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
     CalendarIntent,
+    CalendarRespond,
     CalendarUpdate,
     IntentKind,
 )
@@ -293,6 +296,10 @@ class ThunderbirdCalendar:
                     "expected_icalendar": text,
                     "expected_etag": intent.expected_etag,
                 }
+            case CalendarRespond():
+                # Thunderbird's calendar API documents no way to answer an invitation, and
+                # Owl's own handling of one is not something this connector may guess at.
+                raise ics.no_invitations()
         return Prepared.model_validate(
             {
                 "source": intent.source,

@@ -9,8 +9,18 @@ from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from chamberlain.connectors.calendar_support.fields import clip_fields
-from chamberlain.domain.calendar import CalendarEvent, EventFields, EventStatus
+from chamberlain.connectors.calendar_support.fields import (
+    attendees_match,
+    clean_one,
+    clip_fields,
+)
+from chamberlain.domain.calendar import (
+    CalendarEvent,
+    EventFields,
+    EventStatus,
+    Participant,
+    Response,
+)
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 Resource = dict[str, Any]
@@ -90,7 +100,31 @@ def fields_of(item: Resource, fallback: datetime) -> EventFields:
     )
 
 
+_RESPONSES = {
+    "accepted": Response.ACCEPTED,
+    "tentative": Response.TENTATIVE,
+    "declined": Response.DECLINED,
+}
+
+
+def _answer(entry: Resource) -> Response:
+    return _RESPONSES.get(str(entry.get("responseStatus", "")), Response.NEEDS_ACTION)
+
+
+def is_invitee_copy(item: Resource) -> bool:
+    """Someone else organised this event: only its owner's own answer may change."""
+    others = any(not a.get("self") for a in item.get("attendees", []))
+    return others and not item.get("organizer", {}).get("self")
+
+
+def own_entry(item: Resource) -> Resource | None:
+    return next((a for a in item.get("attendees", []) if a.get("self")), None)
+
+
 def event_of(source: str, item: Resource, fallback: datetime) -> CalendarEvent:
+    invitee = is_invitee_copy(item)
+    mine = own_entry(item)
+    organiser = clean_one(str(item.get("organizer", {}).get("email", "")))
     status = {
         "cancelled": EventStatus.CANCELLED,
         "tentative": EventStatus.TENTATIVE,
@@ -103,6 +137,13 @@ def event_of(source: str, item: Resource, fallback: datetime) -> CalendarEvent:
         status=status,
         fields=fields_of(item, fallback),
         updated=parse_stamp(item.get("updated"), fallback),
+        organiser=organiser if invitee and organiser else None,
+        my_response=_answer(mine) if invitee and mine is not None else None,
+        participants=tuple(
+            Participant(address=address, response=_answer(a))
+            for a in item.get("attendees", [])
+            if not a.get("self") and (address := clean_one(str(a.get("email", ""))))
+        ),
     )
 
 
@@ -110,8 +151,12 @@ def refuse_if_unwritable(item: Resource) -> None:
     """Instances of a series, events with guests and special event types are never written."""
     if item.get("recurringEventId"):
         raise _unsupported("an occurrence of a recurring event")
-    if any(not a.get("self") for a in item.get("attendees", [])):
-        raise _unsupported("an event with attendees")
+    if is_invitee_copy(item):
+        raise ChamberlainError(
+            ErrorCode.CAPABILITY_UNSUPPORTED,
+            "Only the organiser can change that event.",
+            detail="invitee-copy",
+        )
     if item.get("eventType", "default") != "default":
         raise _unsupported("a special event type")
 
@@ -150,7 +195,28 @@ def wanted_body(fields: EventFields, before: Resource | None = None) -> Resource
         body["location"] = fields.location
     if fields.description:
         body["description"] = fields.description
+    attendees = guest_entries(fields, before)
+    if attendees:
+        body["attendees"] = attendees
     return body
+
+
+def guest_entries(fields: EventFields, before: Resource | None) -> list[Resource]:
+    """The `attendees` array to write: wanted guests (keeping the answers they already gave),
+    plus the owner's own entry when the event already had one."""
+    if not fields.attendees:
+        return []
+    existing = {clean_one(str(a.get("email", ""))): a for a in (before or {}).get("attendees", [])}
+    entries: list[Resource] = []
+    own = [a for a in (before or {}).get("attendees", []) if a.get("self")]
+    entries.extend(dict(a) for a in own)
+    for address in fields.attendees:
+        kept = existing.get(address)
+        if kept is not None and not kept.get("self"):
+            entries.append(dict(kept))
+        elif kept is None:
+            entries.append({"email": address})
+    return entries
 
 
 def merge_update(before: Resource, wanted: Resource) -> Resource:
@@ -161,6 +227,22 @@ def merge_update(before: Resource, wanted: Resource) -> Resource:
     if before.get("status") and before["status"] != "cancelled":
         merged.setdefault("status", before["status"])
     return merged
+
+
+def insert_body(event_id: str, fields: EventFields) -> Resource:
+    """A new event the calendar will send as an invitation: the client chooses the id."""
+    body = wanted_body(fields)
+    body["id"] = event_id
+    return body
+
+
+def answer_entries(item: Resource, response: str) -> list[Resource]:
+    """The whole `attendees` array with only the owner's own answer changed (a patch replaces
+    arrays whole, and a guest may change nothing else)."""
+    return [
+        {**a, "responseStatus": response} if a.get("self") else dict(a)
+        for a in item.get("attendees", [])
+    ]
 
 
 def import_body(uid: str, fields: EventFields) -> Resource:
@@ -178,6 +260,11 @@ def fields_match(item: Resource, wanted: EventFields, fallback: datetime) -> boo
         and actual.all_day == wanted.all_day
         and actual.location == wanted.location
         and actual.description == wanted.description
+        and attendees_match(
+            actual.attendees,
+            wanted.attendees,
+            ignore=[str(a.get("email", "")) for a in item.get("attendees", []) if a.get("self")],
+        )
     )
 
 

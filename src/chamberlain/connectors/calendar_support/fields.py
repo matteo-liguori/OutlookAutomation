@@ -28,6 +28,23 @@ def clean_addresses(values: Iterable[str]) -> tuple[str, ...]:
     return tuple(seen)
 
 
+def clean_one(value: str) -> str:
+    """One address, cleaned as `clean_addresses` does, or an empty string if it is not one."""
+    found = clean_addresses([value])
+    return found[0] if found else ""
+
+
+def attendees_match(
+    actual: Iterable[str], wanted: Iterable[str], *, ignore: Iterable[str] = ()
+) -> bool:
+    """Every wanted attendee is on the event. Organisers and the owner's own entry never count."""
+    skip = set(clean_addresses(ignore))
+    have = set(clean_addresses(actual)) - skip
+    return (
+        set(clean_addresses(wanted)) - skip <= have and have <= set(clean_addresses(wanted)) | skip
+    )
+
+
 def clip_fields(
     *,
     title: str,

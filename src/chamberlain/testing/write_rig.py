@@ -5,6 +5,7 @@ in-memory store and wraps the fake mail port so a test can crash a process,
 race a takeover or script reconcile answers, all without a real mailbox.
 """
 
+import json
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, replace
@@ -43,6 +44,12 @@ from chamberlain.writes.services import build
 _NO_ROOT = Path("unused-data-root")
 MAIL = "mail:test"
 CALENDAR = "calendar:test"
+CALENDAR_B = "calendar:two"
+"""A second calendar in the fake world: invitations from `CALENDAR` land here."""
+CALENDAR_PLAIN = "calendar:plain"
+"""A calendar that cannot send or answer invitations, as an Owl calendar."""
+OWNER = "me@example.org"
+OWNER_B = "me.two@example.org"
 SESSION = "ses_testsession01"
 
 
@@ -136,6 +143,16 @@ class WriteRig:
         """A message in the inbox of the fake mailbox; returns its `msg_` handle."""
         locator = self.fake.mail.add_message(MAIL, internet_message_id=message_id, **kwargs)
         return self.refs.remember(HandleKind.MESSAGE, MAIL, locator, message_id)
+
+    def own(self, source: str, address: str) -> None:
+        """Declare `address` as the address of a configured source, so it counts as the owner's."""
+        stored = stamp(self.clock)
+        kind = source.partition(":")[0]
+        self.db.execute(
+            "INSERT OR REPLACE INTO sources (id, kind, connector, label, binding_json, state, "
+            "created_at, updated_at) VALUES (?, ?, 'demo', '', ?, 'enabled', ?, ?)",
+            (source, kind, json.dumps({"address": address}), stored, stored),
+        )
 
     def know(self, *addresses: str) -> None:
         """Make addresses known recipients, as a human-confirmed grant would (G-15)."""
@@ -260,7 +277,9 @@ def make_rig(*, send_absence_provable: bool = False, policy: WritePolicy | None 
     migrate(db, clock, backup_dir=None)
     fake = FakeProvider(clock, send_absence_provable=send_absence_provable)
     fake.mail.add_source(MAIL)
-    fake.calendar.add_source(CALENDAR)
+    fake.calendar.add_source(CALENDAR, OWNER)
+    fake.calendar.add_source(CALENDAR_B, OWNER_B)
+    fake.calendar.add_source(CALENDAR_PLAIN, "plain@example.org", invitations=False)
     mail = ScriptedPort(fake.mail)
     calendar = ScriptedPort(fake.calendar)
     artifacts = MemoryArtifactStore()
@@ -272,7 +291,12 @@ def make_rig(*, send_absence_provable: bool = False, policy: WritePolicy | None 
         clock=clock,
         data_root=_NO_ROOT,
         sources=SourceRouter(
-            mail={MAIL: cast(MailPort, mail)}, calendar={CALENDAR: cast(CalendarPort, calendar)}
+            mail={MAIL: cast(MailPort, mail)},
+            calendar={
+                CALENDAR: cast(CalendarPort, calendar),
+                CALENDAR_B: cast(CalendarPort, fake.calendar),
+                CALENDAR_PLAIN: cast(CalendarPort, fake.calendar),
+            },
         ),
         services=Services(
             audit=audit, artifacts=artifacts, evidence=evidence, refs=refs, writes=control

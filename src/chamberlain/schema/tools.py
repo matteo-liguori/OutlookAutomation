@@ -295,6 +295,8 @@ class CalendarEventView(Model):
     status: Literal["confirmed", "tentative", "cancelled"]
     etag: str
     attendee_count: int = Field(default=0, ge=0)
+    my_response: Literal["needs_action", "accepted", "tentative", "declined"] | None = None
+    """Set when someone else invited this calendar's owner; the owner's answer so far."""
 
 
 class ContactView(Model):
