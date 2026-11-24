@@ -38,6 +38,9 @@ Every table and every file under the data root belongs to exactly one class.
 | Ref (`msg`, `cev`, `con`) | 30 days after last seen, unless referenced by a live record | Delete row |
 | Session | idle 4 hours | Ended; its ephemeral rows deleted |
 | Cursor, lease | 2 hours, 30 minutes | Deleted; leased file removed |
+| Schedule | until the person removes it | Kept (a record) |
+| Run | 35 days after its day | Deleted by the sweeper's records step (`runs_trimmed`); its report artifacts follow their own `expires_at` (30 days by default) |
+| User note | 7 days open, 14 days kept | Stops raising `user.note` after 7 days; deleted after 14 (`notes_trimmed`) |
 | Event | condition true | `expired` when false; row deleted 14 days after terminal |
 | Operation | 30 days after terminal | Compacted (W-25) |
 | Terminal grant | 90 days | Compacted (G-2) |
@@ -66,7 +69,7 @@ An artifact row: `handle`, `kind` (`mail_body`, `attachment`, `download`,
   | operation | not terminal, plus 24 hours after terminal |
   | grant | `proposed`, `active` or `suspended` |
   | session | not ended |
-  | run | not finished (wave 2) |
+  | run | its row exists (rows live 35 days past their day; the report's own `expires_at` still ends it first) |
 
 - **M-5** Liveness is read from the owning track's tables as defined in
   `09-storage.md`. The memory track never writes those tables.

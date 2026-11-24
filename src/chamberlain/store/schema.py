@@ -26,6 +26,7 @@ class Track(StrEnum):
     MEMORY = "memory"
     ATTENTION = "attention"
     WRITES = "writes"
+    RUNS = "runs"
     ANY = "any"
 
 
@@ -56,6 +57,9 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "known_recipients": (_D.RECORDS, _T.WRITES),
     "operations": (_D.RECORDS, _T.WRITES),
     "audit_log": (_D.SYSTEM, _T.WRITES),
+    "schedules": (_D.RECORDS, _T.RUNS),
+    "runs": (_D.RECORDS, _T.RUNS),
+    "user_notes": (_D.EPHEMERAL, _T.RUNS),
 }
 
 TABLE_CLASSES: dict[str, DataClass] = {name: pair[0] for name, pair in TABLES.items()}
@@ -73,6 +77,8 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "writes.audit_checkpoint_hash",
         "writes.audit_head",
         "app.installed_version",
+        "runs.update_tag",
+        "runs.update_checked_at",
     }
 )
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""
