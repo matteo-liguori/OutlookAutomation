@@ -38,7 +38,10 @@ def when(value: str | None, zone: ZoneInfo) -> str:
 
 
 def _cell(text: str) -> str:
-    return " ".join(text.replace("|", "/").split())
+    """Text from cards, grants or sources, made safe to put in a table or a line of markdown:
+    no bar, link, emphasis or code can come out of it."""
+    plain = text.translate({ord(c): " " for c in "|[]()*`_<>#"})
+    return " ".join(plain.split())
 
 
 class Facts:

@@ -43,7 +43,7 @@ def next_step(event: EventRow) -> NextStep:
     if kind is EventKind.REPORT_DUE and subject is not None:
         return NextStep(
             tool=ToolName.OPEN,
-            args={"handle": subject},
+            args={"handle": subject, "part": "body"},
             why="Read what to write, then keep the report under the run.",
         )
     if kind is EventKind.USER_NOTE:

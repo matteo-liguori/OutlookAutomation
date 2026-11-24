@@ -9,7 +9,7 @@ and operations (T-11).
 import sqlite3
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
-from chamberlain.domain.artifacts import ArtifactKind
+from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME, ArtifactKind
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.domain.senders import AuthorisedSenders, Refusal, evaluate, instruction_ref
@@ -71,6 +71,10 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
             KeepResponse(
                 handle=handle, kind=KeepKind.EVIDENCE, size=len(data), sha256=sha256_bytes(data)
             )
+        )
+    if request.filename == REPORT_OUTLINE_FILENAME:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_INVALID, "That file name is the harness's own.", field="filename"
         )
     store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
     store.require_owner(request.owner)

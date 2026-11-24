@@ -92,7 +92,7 @@ def test_a_scheduled_pass_ends_with_the_owners_report_as_the_front_page(rig: Rig
     last = work.data.work[-1]
     assert last.kind.value == "report.due"
     assert "report.write" in [g.id for g in work.guidance]
-    outline = tools(rig, "open", session=handle, handle=last.subject, part="body")
+    outline = tools(rig, last.next.tool.value, session=handle, **last.next.args)
     assert "Email and tasks" in outline.data.content.text
     assert "Verification" in outline.data.content.text  # named as the harness's own
 
