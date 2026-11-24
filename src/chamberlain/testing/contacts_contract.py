@@ -4,8 +4,11 @@ Contract: docs/contracts/08-ports.md. Subclass and provide a `rig` fixture
 returning a fresh `ContactsRig`.
 """
 
+import pytest
+
 from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.contacts import ContactQuery
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.testing.rigs import ContactsRig
 
 
@@ -35,3 +38,18 @@ class ContactsPortContract:
                 assert page.complete
                 break
         assert len(seen) == len(set(seen)) == 5
+
+    def test_read_returns_the_contact_a_search_found(self, rig: ContactsRig) -> None:
+        rig.seed("Grace Reader", "grace.reader@example.org")
+        found = rig.port.search(rig.source, ContactQuery(text="grace reader")).items[0]
+        read = rig.port.read(rig.source, found.locator)
+        assert (read.name, read.emails, read.locator) == (
+            "Grace Reader",
+            ("grace.reader@example.org",),
+            found.locator,
+        )
+
+    def test_read_of_an_unknown_locator_is_an_unknown_handle(self, rig: ContactsRig) -> None:
+        with pytest.raises(ChamberlainError) as raised:
+            rig.port.read(rig.source, "no-such-contact")
+        assert raised.value.code is ErrorCode.REQUEST_UNKNOWN_HANDLE

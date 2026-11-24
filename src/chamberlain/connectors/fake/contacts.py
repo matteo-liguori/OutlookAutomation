@@ -42,6 +42,16 @@ class FakeContacts:
         self._world.require_source(self._world.contacts, source)
         return self._world.health(source)
 
+    def read(self, source: str, locator: str) -> Contact:
+        self._world.require_source(self._world.contacts, source)
+        self._world.begin_read(source)
+        for c in self._world.contacts[source]:
+            if c.id == locator:
+                return Contact.model_validate(
+                    {"source": source, "locator": c.id, "name": c.name, "emails": c.emails}
+                )
+        raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "No such contact.")
+
     def search(self, source: str, query: ContactQuery, cursor: str | None = None) -> Page[Contact]:
         self._world.require_source(self._world.contacts, source)
         self._world.begin_read(source)
