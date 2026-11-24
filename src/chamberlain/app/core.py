@@ -93,6 +93,9 @@ class App:
             reply = Reply[Model](
                 ok=True, data=result.data, coverage=result.coverage, next=result.next
             )
+        if ctx.sources.demo and reply.coverage is not None:
+            marked = reply.coverage.model_copy(update={"demo": True})
+            reply = reply.model_copy(update={"coverage": marked})
         if self._hooks is not None:
             reply = self._hooks.decorate(ctx, spec, request, reply)
         return reply

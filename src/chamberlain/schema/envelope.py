@@ -4,7 +4,7 @@ Contract: docs/contracts/03-envelope-errors.md (E-1 to E-9).
 """
 
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, Field, JsonValue, SerializeAsAny, model_validator
 
@@ -63,6 +63,8 @@ class Coverage(Model):
     total: int | None = Field(default=None, ge=0)
     cursor: str | None = None
     gaps: tuple[CoverageGap, ...] = ()
+    demo: Literal[True] | None = None
+    """True when the installation has demo sources: the data is synthetic (E-3)."""
 
     @model_validator(mode="after")
     def _honest(self) -> Self:
