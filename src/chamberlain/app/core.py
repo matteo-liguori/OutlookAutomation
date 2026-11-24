@@ -22,6 +22,14 @@ from chamberlain.store.db import transaction
 log = logging.getLogger("chamberlain.app")
 
 
+def _reply_size(reply: Reply[Model]) -> int:
+    return len(reply.model_dump_json(exclude_none=True))
+
+
+REPLY_SIZE_PATTERN = r"^[a-z]+: \S+ \((\d+) chars\)$"
+"""The audit summary of a `tool.call` row; `app/metrics.py` parses the size from it."""
+
+
 class App:
     """Validates, ticks, dispatches to a handler, decorates and bounds the reply."""
 
@@ -34,6 +42,11 @@ class App:
         self._context = context
         self._handlers = dict(handlers)
         self._hooks = hooks
+
+    @property
+    def context(self) -> Context:
+        """The shared context (no session): what the operator commands run against."""
+        return self._context
 
     def close(self) -> None:
         """Close the store. The app is unusable afterwards."""
@@ -51,8 +64,9 @@ class App:
         except Exception:
             log.exception("unexpected failure in tool %s", tool)
             reply = error_reply(ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Harness fault."))
-        reply = self._bounded(reply)
-        self._audit(spec, raw, reply)
+        size = _reply_size(reply)
+        reply = self._bounded(reply, size)
+        self._audit(spec, raw, reply, size)
         return reply
 
     def _run(self, spec: ToolSpec, request: ToolRequest) -> Reply[Model]:
@@ -93,9 +107,8 @@ class App:
             log.exception("tick failed")
 
     @staticmethod
-    def _bounded(reply: Reply[Model]) -> Reply[Model]:
+    def _bounded(reply: Reply[Model], size: int) -> Reply[Model]:
         """Enforce the reply cap last (E-2)."""
-        size = len(reply.model_dump_json(exclude_none=True))
         if size <= MAX_REPLY_CHARS:
             return reply
         log.error("reply of %d characters exceeds the cap", size)
@@ -103,8 +116,13 @@ class App:
             ChamberlainError(ErrorCode.REPLY_TOO_LARGE, "The reply was too large to return.")
         )
 
-    def _audit(self, spec: ToolSpec | None, raw: Mapping[str, Any], reply: Reply[Model]) -> None:
-        """One `tool.call` row per call (G-23): hashes and codes, never content."""
+    def _audit(
+        self, spec: ToolSpec | None, raw: Mapping[str, Any], reply: Reply[Model], size: int
+    ) -> None:
+        """One `tool.call` row per call (G-23): hashes, codes and the reply size, never content.
+
+        The size (before the cap) is what `doctor --metrics` reads for `largest_reply_chars_7d`.
+        """
         name = spec.name.value if spec is not None else "unknown"
         outcome = "ok" if reply.error is None else reply.error.code.value
         session = raw.get("session")
@@ -115,7 +133,7 @@ class App:
                     actor=actor[:SUMMARY_MAX],
                     kind="tool.call",
                     subject=None,
-                    summary=f"{name}: {outcome}",
+                    summary=f"{name}: {outcome} ({size} chars)",
                     payload_sha256=sha256_text(repr(sorted(raw.items(), key=lambda kv: kv[0]))),
                 )
         except Exception:

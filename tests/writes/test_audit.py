@@ -205,7 +205,7 @@ def test_g23_every_tool_call_writes_one_tool_call_row(rig: WriteRig) -> None:
     assert not reply.ok
     rows = [row for row in repo.audit_rows(rig.db)[before:] if row.kind == "tool.call"]
     assert len(rows) == 1
-    assert rows[0].summary == "do: request.unknown_handle"
+    assert rows[0].summary.startswith("do: request.unknown_handle (")
     assert rows[0].actor == f"agent:{SESSION}"
 
 
