@@ -98,6 +98,8 @@ Response: `handle`, `view` (a record view discriminated by `kind`: `card`,
 `action`, `grant`, `operation`, `event`, `evidence`, `artifact`, `message`,
 `calendar_event`, `contact`), `content?`, `range? {offset, length, total}`,
 `attachments[]`, `lease? {path, expires_at}`.
+A `calendar_event` view of a repeating event carries `repeats` (`occurrence` or `series`) and, on an
+occurrence, `series`, the handle of the series (08-ports P-24).
 
 ### keep
 
