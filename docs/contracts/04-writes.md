@@ -269,7 +269,7 @@ and reconcile over the fake provider with random faults, checking:
   reaches "this date only" or "every date" and how often the event repeats. A series' `zone` is
   completed at `propose` (W-1) from the owner's zone. Permissions are those of the same write on
   a single event; `describe_intent` of an event that does not repeat is unchanged.
-- **W-32** (owner ruling) Calendar writes on events without attendees need
+- **W-32** Calendar writes on events without attendees need
   only `agent_evidence` (G-12a). For `update` and `delete`, `propose` reads the
   stored event and keeps the attendee fact in the stored refs
   (`_event_attendees`).

@@ -23,8 +23,9 @@ from urllib.parse import parse_qs
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
-from chamberlain.domain.grant_rules import parse_ts, recipients_of
-from chamberlain.domain.grants import ConfirmedVia, GrantKind, GrantState
+from chamberlain.domain.grant_rules import parse_ts
+from chamberlain.domain.grants import ConfirmedVia, GrantKind, GrantState, Requirement
+from chamberlain.domain.permissions import click_reason, recipients_of
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.writes import repo
 from chamberlain.writes.engine import Engine
@@ -265,6 +266,8 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
     """`GET /api/grants/{handle}`: exactly what would be authorised, with its hash."""
     grant = _grant(ctx, handle)
     detail = _grant_json(grant)
+    if grant.requirement is Requirement.HUMAN_CONFIRMATION:
+        detail["why_a_click"] = click_reason()
     if grant.scope is not None:
         detail["scope"] = json.loads(grant.scope.model_dump_json(exclude_none=True))
         detail["rendered"] = describe_scope(grant.scope)

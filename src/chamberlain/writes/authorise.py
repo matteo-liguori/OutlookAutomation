@@ -46,10 +46,8 @@ class Usage:
     or reserved and not yet dispatched."""
     source_sends_last_hour: int = 0
     known_recipients: frozenset[str] = frozenset()
-    event_has_attendees: bool = False
-    """The stored event an update or delete acts on has attendees (read at propose)."""
     event_attendees: frozenset[str] = frozenset()
-    """Who those attendees are; empty while `event_has_attendees` is true means not known."""
+    """The guests already on the stored event an update acts on (read at propose)."""
     owner_addresses: frozenset[str] = frozenset()
     """The owner's own addresses: every source's address and `authorised_senders.owner`."""
 
@@ -75,7 +73,6 @@ def requirement_needed(intent: WriteIntent, usage: Usage, policy: WritePolicy) -
         usage.known_recipients,
         send_known=policy.send_known,
         other=policy.other,
-        existing_attendees=usage.event_has_attendees,
         stored_attendees=usage.event_attendees,
         owner_addresses=usage.owner_addresses,
     )

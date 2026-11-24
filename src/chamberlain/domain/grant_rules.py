@@ -1,6 +1,7 @@
 """Pure grant rules: requirement selection, scope matching, review dates.
 
-Contract: docs/contracts/05-grants.md (G-1 to G-16, G-12 table, G-6) and
+Contract: docs/contracts/05-grants.md (G-1 to G-16, G-6); the permission rows live in
+domain/permissions.py and
 docs/contracts/04-writes.md (W-22: exact-field scope matching, never fuzzy).
 Nothing here reads a clock, a store or a connector.
 """
@@ -12,17 +13,14 @@ from zoneinfo import ZoneInfo
 from chamberlain.domain.canonical import content_hash
 from chamberlain.domain.grants import Requirement, StandingScope
 from chamberlain.domain.intents import (
-    CalendarCreate,
-    CalendarDelete,
     CalendarRespond,
-    CalendarUpdate,
     IntentKind,
     MailMarkRead,
     MailMove,
-    MailSend,
     MailTrash,
     WriteIntent,
 )
+from chamberlain.domain.permissions import Facts, Needs, cover_for, needs_for, recipients_of
 from chamberlain.limits import REVIEW_GRACE_DAYS
 
 _TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
@@ -54,28 +52,6 @@ def intent_hash(intent: WriteIntent) -> str:
     return content_hash(intent.model_copy(update=blank))
 
 
-def recipients_of(intent: WriteIntent) -> frozenset[str]:
-    """Every address the write would reach (to, cc, bcc; event attendees)."""
-    match intent:
-        case MailSend():
-            return frozenset((*intent.to, *intent.cc, *intent.bcc))
-        case CalendarCreate() | CalendarUpdate():
-            return frozenset(intent.event.attendees)
-        case CalendarRespond():
-            return frozenset() if intent.organiser is None else frozenset({intent.organiser})
-        case _:
-            return frozenset()
-
-
-def may_reach_attendees(intent: WriteIntent) -> bool:
-    """Calendar updates and deletes act on an existing event whose attendees the intent omits.
-
-    Used by scope matching: a standing grant never covers them. One-off requirement selection
-    asks the stored event instead (`existing_attendees` of `requirement_for`).
-    """
-    return isinstance(intent, CalendarUpdate | CalendarDelete)
-
-
 def stricter(a: Requirement, b: Requirement) -> Requirement:
     return a if _STRICTNESS[a] >= _STRICTNESS[b] else b
 
@@ -86,30 +62,22 @@ def requirement_for(
     *,
     send_known: Requirement,
     other: Requirement,
-    existing_attendees: bool = False,
     stored_attendees: frozenset[str] = frozenset(),
     owner_addresses: frozenset[str] = frozenset(),
 ) -> Requirement:
-    """The G-12 table: what it takes to activate a one-off grant for this intent.
+    """What it takes to activate a one-off grant for this intent, read from the permission table.
 
-    `send_known` and `other` come from config and may only tighten a row. A calendar write
-    needs the human only to invite a new stranger (G-12a): `stored_attendees` are the guests
-    already on the event an update acts on, so they never count as new.
+    `send_known` and `other` come from config and may only tighten a row. `stored_attendees`
+    are the guests already on the event an update acts on, so they never count as new.
     """
-    if isinstance(intent, MailSend):
-        if recipients_of(intent) <= known_recipients:
-            return stricter(send_known, Requirement.AGENT_EVIDENCE)
-        return Requirement.HUMAN_CONFIRMATION
-    if isinstance(intent, CalendarCreate | CalendarUpdate):
-        # Owner ruling 2026-11-24 (G-12c): the owner's word in chat is enough for any
-        # calendar write. Only inviting a new address the owner has never written to
-        # needs the viewer, for the same reason as mail to a stranger: event text would
-        # leave for an address nobody chose before. Answers, cancellations and updates
-        # to people already invited need no click.
-        added = recipients_of(intent) - stored_attendees
-        if added and not added <= (owner_addresses | known_recipients):
+    needs = needs_for(Facts(intent, known_recipients, stored_attendees, owner_addresses))
+    match needs:
+        case Needs.CLICK:
             return Requirement.HUMAN_CONFIRMATION
-    return stricter(other, Requirement.AGENT_EVIDENCE)
+        case Needs.WORD_SEND_KNOWN:
+            return stricter(send_known, Requirement.AGENT_EVIDENCE)
+        case Needs.WORD_OTHER:
+            return stricter(other, Requirement.AGENT_EVIDENCE)
 
 
 def check_config_requirement(value: Requirement) -> Requirement:
@@ -137,18 +105,16 @@ def scope_mismatch(scope: StandingScope, intent: WriteIntent, card: str | None) 
         return True
     if isinstance(intent, CalendarRespond) and intent.organiser is None:
         return True
+    cover = cover_for(IntentKind(intent.kind))
+    if cover.never:
+        return True
     addresses = recipients_of(intent)
     if addresses:
-        if isinstance(intent, CalendarCreate | CalendarRespond):
-            covered = scope.recipients
-        else:
-            covered = scope.recipients | {
-                a for a in addresses if _domain(a) in scope.recipient_domains
-            }
+        covered = scope.recipients
+        if cover.domains:
+            covered = covered | {a for a in addresses if _domain(a) in scope.recipient_domains}
         if not addresses <= covered:
             return True
-    if may_reach_attendees(intent):
-        return True
     if isinstance(intent, MailMove) and (
         intent.to_folder not in scope.folders or (intent.mark_read and not scope.allow_mark_read)
     ):

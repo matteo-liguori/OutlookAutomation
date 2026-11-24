@@ -382,7 +382,7 @@ def test_q2_a_calendar_change_with_attendees_needs_the_human(rig: WriteRig) -> N
 
 
 def test_g12_owner_calendar_writes_without_attendees_use_agent_evidence(rig: WriteRig) -> None:
-    """Owner ruling 2026-11-24: create, update and delete on an event with no attendees."""
+    """Create, update and delete on an event with no attendees need only your word (G-12a)."""
     created = rig.engine().propose_intent(rig.event())
     assert created.requirement.value == "agent_evidence"
     fields = rig.event().event

@@ -79,15 +79,28 @@ proposed -> active -> spent        (one_off, its operation confirmed)
 
 ## Who may activate a grant
 
-| Situation | Requirement |
-| --- | --- |
-| Any standing grant | `human_confirmation` (mandatory) |
-| `mail.send` with any recipient not in `known_recipients` for that source | `human_confirmation` (mandatory) |
-| `calendar.create` or `update` that invites an address that is neither an owner address nor a known recipient | `human_confirmation` (mandatory) |
-| `mail.send` to known recipients only | config `grants.send_known`, default `agent_evidence` (owner decision 2026-11-24) |
-| Every other write: `mail.draft_*`, `mail.move`, `mail.trash`, `mail.mark_read`, `calendar.create`, `update`, `delete`, `respond` | config `grants.other`, default `agent_evidence` |
+This table is generated from `src/chamberlain/domain/permissions.py` (the one place that
+holds it; a test keeps this text in step). The first row that fits wins; read top to bottom.
 
-- **G-12a** (owner ruling 2026-11-24, replaces the earlier calendar rulings) The owner's word in
+<!-- permission-table -->
+| When | What it takes |
+| --- | --- |
+| Any standing permission | Your click in the viewer |
+| Sending mail to anyone you have not written to before | Your click in the viewer |
+| Creating or changing an event that invites a new address (not one of yours, not already a guest of the event, not someone you have written to) | Your click in the viewer |
+| Sending mail only to people you have written to | Your word in chat (setting `grants.send_known`, may ask for a click) |
+| Everything else: drafts, filing, trash, mark read, other calendar writes | Your word in chat (setting `grants.other`, may ask for a click) |
+
+| A standing permission for | May cover |
+| --- | --- |
+| `mail.send` | Exact addresses or whole domains, and a daily limit |
+| `calendar.create`, `calendar.respond` | Exact addresses only, never a domain |
+| `calendar.update`, `calendar.delete` | Never covered |
+| `mail.move`, `mail.trash` | Named folders |
+| `mail.mark_read`, `mail.draft_save`, `mail.draft_update`, `mail.draft_discard` | The account and the kind of write |
+<!-- /permission-table -->
+
+- **G-12a** The owner's word in
   chat is enough for any calendar write. The viewer is needed only to invite a new address: one
   that is not an owner address (the address of any configured source, or in
   `authorised_senders.owner`) and not a known recipient of any source. It is the same reason as mail

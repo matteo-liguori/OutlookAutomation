@@ -217,7 +217,7 @@ def own_addresses(db: sqlite3.Connection, source_id: str) -> frozenset[str]:
 
 def owner_addresses(db: sqlite3.Connection) -> frozenset[str]:
     """Every address that is the owner's: any configured source's own address, and the
-    `owner` list of `authorised_senders` (G-12b). Lower-cased."""
+    `owner` list of `authorised_senders` (G-12a). Lower-cased."""
     found: set[str] = set()
     for row in db.execute("SELECT binding_json FROM sources").fetchall():
         found |= _binding_addresses(str(row["binding_json"]))

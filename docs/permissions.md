@@ -6,18 +6,31 @@ permission is quiet; a few things always need you. This page says exactly which.
 
 ## When a click is needed
 
-You click in the viewer (`chamberlain viewer`) only for these three things (plus one
-housekeeping choice, [larger cards](#larger-cards), below):
+Read the table top to bottom; the first row that fits wins. It is generated from one place in
+the code (`src/chamberlain/domain/permissions.py`), and a test keeps this page in step.
 
-1. **A standing permission.** "Always do this kind of thing" is yours to grant, never the assistant's.
-2. **A send to someone new.** Any recipient who is not on your known list (below).
-3. **Inviting someone new to an event.** A guest you have never written to, who is not one of
-   your own addresses. Changing or cancelling events, inviting people you already know and
-   answering invitations need only your words.
+<!-- permission-table -->
+| When | What it takes |
+| --- | --- |
+| Any standing permission | Your click in the viewer |
+| Sending mail to anyone you have not written to before | Your click in the viewer |
+| Creating or changing an event that invites a new address (not one of yours, not already a guest of the event, not someone you have written to) | Your click in the viewer |
+| Sending mail only to people you have written to | Your word in chat (setting `grants.send_known`, may ask for a click) |
+| Everything else: drafts, filing, trash, mark read, other calendar writes | Your word in chat (setting `grants.other`, may ask for a click) |
 
-Everything else, such as sending to a known person, drafting, filing, marking read
-or any other calendar change, needs only your words: you tell the assistant in chat
-(or from an authorised email, below) and it records that. No click.
+| A standing permission for | May cover |
+| --- | --- |
+| `mail.send` | Exact addresses or whole domains, and a daily limit |
+| `calendar.create`, `calendar.respond` | Exact addresses only, never a domain |
+| `calendar.update`, `calendar.delete` | Never covered |
+| `mail.move`, `mail.trash` | Named folders |
+| `mail.mark_read`, `mail.draft_save`, `mail.draft_update`, `mail.draft_discard` | The account and the kind of write |
+<!-- /permission-table -->
+
+"Known" is explained [below](#known-recipients). Changing or cancelling events, inviting people you
+already know and answering invitations need only your words. Everything else needs only your
+words too: you tell the assistant in chat (or from an authorised email, below) and it records
+that. No click. (There is one housekeeping choice for [larger cards](#larger-cards).)
 
 Each click shows exactly what will happen (the recipients, subject, body, times)
 and approves only that. For a repeating event it also says how often it repeats and whether a
