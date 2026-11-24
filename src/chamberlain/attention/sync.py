@@ -148,7 +148,8 @@ def _after(
         else:
             failure = outcome.code or "failed"
             if catchup is None:
-                catchup = synced_at
+                # From its last good sync; a folder that never synced from this first try.
+                catchup = synced_at or _fmt(outcome.at)
     return repo.SyncFolder(
         folder.id, folder.name, folder.role.value, synced_at, attempted, failure, catchup
     )

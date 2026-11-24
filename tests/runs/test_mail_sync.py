@@ -5,6 +5,7 @@ provider models a client whose local index lags (`unsynced=True` mail is hidden 
 syncs) and a folder whose sync never finishes (`stick_folder`).
 """
 
+import json
 from datetime import timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -16,12 +17,28 @@ from chamberlain.app.wiring import run_tick
 from chamberlain.attention import repo as attention_repo
 from chamberlain.attention import watermark
 from chamberlain.attention.handlers import source_checks
+from chamberlain.ports.sync import FOLDER_SECONDS
 from chamberlain.runs import sections
 from chamberlain.runs.models import PassKind, RunRow, RunState
 from chamberlain.runs.schedule import ScheduleSpec, set_schedule
+from chamberlain.store.db import transaction
+from chamberlain.store.schema import MAIL_SYNC_KEY, set_state
 
 MORNING = ScheduleSpec("morning", PassKind.MAIL, "08:00", "UTC", presync_minutes=5)
 ARCHIVE = "f-archive"
+FRESH_MINUTES = 10
+LIMIT_SECONDS = 180
+
+
+def configure(rig: Rig) -> None:
+    """The settings these scenarios are written for, so a changed default breaks nothing here."""
+    with transaction(rig.ctx.db):
+        set_state(
+            rig.ctx.db,
+            rig.clock,
+            MAIL_SYNC_KEY,
+            json.dumps({"fresh_minutes": FRESH_MINUTES, "time_limit_seconds": LIMIT_SECONDS}),
+        )
 
 
 def at(rig: Rig, hour: int, minute: int) -> None:
@@ -47,6 +64,7 @@ def sync_events(rig: Rig) -> list[Any]:
 
 
 def test_a_scheduled_pass_is_synced_ahead_and_finds_fresh_folders(rig: Rig) -> None:
+    configure(rig)
     set_schedule(rig.ctx, MORNING)
     at(rig, 7, 50)
     run_tick(rig.app)
@@ -82,9 +100,10 @@ def test_a_scheduled_pass_is_synced_ahead_and_finds_fresh_folders(rig: Rig) -> N
 
 
 def test_folders_synced_too_long_ago_are_synced_again_when_the_agent_starts(rig: Rig) -> None:
+    configure(rig)
     run_tick(rig.app)
     first = syncs(rig)
-    rig.clock.advance(minutes=40)
+    rig.clock.advance(minutes=FRESH_MINUTES + 30)
     rig.fake.mail.add_message(MAIL, folder_id=ARCHIVE, internet_message_id="<new@x>", unsynced=True)
 
     started = rig.start()
@@ -95,7 +114,7 @@ def test_folders_synced_too_long_ago_are_synced_again_when_the_agent_starts(rig:
     assert complete is not None
     assert complete[0] == rig.clock.now().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    rig.clock.advance(minutes=9)
+    rig.clock.advance(minutes=FRESH_MINUTES - 1)
     rig.start()
     assert syncs(rig) == first + 1, "inside the freshness window nothing is asked again"
 
@@ -103,6 +122,7 @@ def test_folders_synced_too_long_ago_are_synced_again_when_the_agent_starts(rig:
 def test_a_folder_that_will_not_sync_is_reported_waited_for_once_and_retried(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    configure(rig)
     # Small pages, so the scan's best-effort look back cannot reach the stuck folder's mail:
     # only the catch-up read of that folder can.
     monkeypatch.setattr(watermark, "MAIL_PAGE_LIMIT", 3)
@@ -135,22 +155,23 @@ def test_a_folder_that_will_not_sync_is_reported_waited_for_once_and_retried(
         before = rig.clock.now()
         run_tick(rig.app)
         waited.append((rig.clock.now() - before).total_seconds())
-    assert waited[0] < 200, "the first try is given up at the time limit, not waited for ever"
-    assert max(waited[1:]) <= 30, "a folder that already failed costs one short wait per tick"
+    # The first try is given up at the time limit, not waited for ever; after that a folder that
+    # already failed costs one short wait per tick.
+    assert waited[0] <= LIMIT_SECONDS + FOLDER_SECONDS
+    assert max(waited[1:]) <= 2 * FOLDER_SECONDS
     assert "lost@x" not in seen(rig)
 
     events = sync_events(rig)
     assert len(events) == 1
-    assert "1 folder" in events[0]["summary"]
-    assert "archive" in events[0]["summary"], "named by role: folder names are remote text"
+    assert json.loads(events[0]["attrs_json"])["reason"] == "sync"
     check = next(c for c in source_checks(rig.ctx) if c.id == "sources.sync")
     assert check.status == "warn"
     run = RunRow(
         "run_x", "morning", "2026-01-05", RunState.RUNNING, "2026-01-05T08:00:00Z", None, None, None
     )
-    report = sections.verification(sections.Facts(rig.ctx, run, ZoneInfo("UTC")))
-    assert "Partially verified" in report
-    assert "did not sync" in report
+    facts = sections.Facts(rig.ctx, run, ZoneInfo("UTC"))
+    assert "Archive" in sections.access_problems(facts), "the report names the folder"
+    assert "Partially verified" in sections.verification(facts)
 
     rig.fake.mail.stick_folder(MAIL, ARCHIVE, stuck=False)
     rig.clock.advance(minutes=1)
