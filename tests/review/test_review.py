@@ -1,5 +1,6 @@
 """The improvisation log, the review round and the Claude file guard (docs/contracts M-40)."""
 
+import io
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -16,6 +17,7 @@ from chamberlain.review.homes import AgentHomes
 from chamberlain.review.rounds import RoundRule
 from chamberlain.review.scan import ReviewSettings, scan
 from chamberlain.schema.errors import ChamberlainError
+from chamberlain.surface import cli
 
 SECRETS = ("TOPSECRET", "alice@example.org", "Quarterly", "hunter2")
 NOW = datetime(2026, 3, 2, 9, 0, tzinfo=UTC)
@@ -239,9 +241,12 @@ def test_the_claude_guard_adds_once_keeps_other_rules_and_is_checked_by_doctor(
     )
     monkeypatch.setenv("CHAMBERLAIN_AGENT_HOME", str(rig.root / "home"))
     ctx = rig.app.context
-    assert access_checks(ctx)[0].status == "warn"
+    off = access_checks(ctx)[0]
+    assert off.status == "ok"  # off by default while the harness is developed; not a warning
+    assert "off" in off.summary
 
-    claude_guard.add(data)
+    out = io.StringIO()
+    assert cli.main(["--data", str(data), "guard", "on"], out) == cli.EXIT_OK
     claude_guard.add(data)
     saved = json.loads(settings.read_text(encoding="utf-8"))
     assert saved["model"] == "x"
@@ -257,10 +262,15 @@ def test_the_claude_guard_adds_once_keeps_other_rules_and_is_checked_by_doctor(
     assert access_checks(ctx)[0].status == "warn"  # a missing rule is noticed
 
     claude_guard.add(data)
-    assert claude_guard.remove(data)
+    out = io.StringIO()
+    assert cli.main(["--data", str(data), "guard", "off"], out) == cli.EXIT_OK
+    assert out.getvalue() == "Guard off.\n"
+    assert access_checks(ctx)[0].status == "ok"
     remaining = json.loads(settings.read_text(encoding="utf-8"))["permissions"]["deny"]
     assert remaining == ["Bash(rm *)"]
     assert not claude_guard.remove(data)
+    assert claude_guard.add(data)
+    assert claude_guard.remove(data)
 
     settings.write_text("{not json", encoding="utf-8")
     with pytest.raises(ChamberlainError):

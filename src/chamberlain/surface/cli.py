@@ -44,6 +44,9 @@ from chamberlain.importer.run import run_import
 from chamberlain.livetest.commands import main as live_test_main
 from chamberlain.livetest.runner import RunOptions
 from chamberlain.ports.clock import SystemClock
+from chamberlain.review.claude_guard import add as add_guard
+from chamberlain.review.claude_guard import check as check_guard
+from chamberlain.review.claude_guard import remove as remove_guard
 from chamberlain.runs.plan import due_passes
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Reply, error_reply
@@ -88,6 +91,11 @@ def _parser() -> argparse.ArgumentParser:
     demo = commands.add_parser("demo", help="try Chamberlain without real accounts")
     demo.add_argument("action", choices=["init"])
     demo.add_argument("root", help="an empty (or new) folder to use as the demo data root")
+    guard = commands.add_parser(
+        "guard",
+        help="switch the Claude file guard on or off (off by default; docs/review.md)",
+    )
+    guard.add_argument("action", choices=["on", "off", "status"])
     importing = commands.add_parser(
         "import", help="import the old harness's data (the old folder is only read)"
     )
@@ -305,6 +313,29 @@ def _import(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _guard(args: argparse.Namespace, out: TextIO) -> int:
+    """The Claude file guard: deny Claude Code's file tools the data root (an accident guard).
+
+    Off by default while the harness is developed; `on` when the agent runs unattended."""
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
+        return EXIT_FAILED
+    root = Path(data)
+    try:
+        if args.action == "on":
+            where = add_guard(root)
+            out.write(f"Guard on: Claude Code's file tools are denied the data root ({where}).\n")
+        elif args.action == "off":
+            out.write("Guard off.\n" if remove_guard(root) else "Guard was already off.\n")
+        else:
+            out.write("Guard on.\n" if check_guard(root).present else "Guard off.\n")
+    except ChamberlainError as error:
+        out.write(f"{error.message}\n")
+        return EXIT_FAILED
+    return EXIT_OK
+
+
 def _recipients(args: argparse.Namespace, out: TextIO) -> int:
     """Read each mail source's Sent folder and record its recipients as known (G-15)."""
     data = args.data or os.environ.get(DATA_ENV)
@@ -436,6 +467,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _import(args, stream)
     if args.command == "recipients":
         return _recipients(args, stream)
+    if args.command == "guard":
+        return _guard(args, stream)
     if args.command == "viewer":
         return _viewer(args, stream)
     if args.command == "live-test":

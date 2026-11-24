@@ -52,8 +52,8 @@ bad request, 3 when the answer is uncertain, and 1 otherwise.
 
 ## Keeping Claude Code out of the data root
 
-`python -m chamberlain.review.claude_guard add --data <data-root>` adds deny rules so Claude Code's
-file tools cannot read or edit the data root. It does not stop a shell, and Codex has no equivalent.
+`chamberlain guard on` adds deny rules so Claude Code's file tools cannot read or edit the data
+root; `chamberlain guard off` removes them. Off by default while the harness is developed. It does not stop a shell, and Codex has no equivalent.
 See [review.md](review.md).
 
 ## Checking it works

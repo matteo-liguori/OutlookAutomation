@@ -19,12 +19,21 @@ def access_checks(ctx: Context) -> list[CheckResult]:
                 summary="Claude Code's file tools are denied the data root.",
             )
         ]
+    if state.where == "none":
+        # Never switched on: off is the default while the harness is developed (owner).
+        return [
+            CheckResult(
+                id="access.claude_guard",
+                status="ok",
+                summary="The Claude file guard is off (switch on: chamberlain guard on).",
+            )
+        ]
     return [
         CheckResult(
             id="access.claude_guard",
             status="warn",
-            summary="Claude Code's file tools can still read the data root.",
-            fix="Run: python -m chamberlain.review.claude_guard add --data <data root>",
+            summary="The Claude file guard was switched on but its rules are gone.",
+            fix="Run: chamberlain guard on (or chamberlain guard off to stop this warning).",
         )
     ]
 
