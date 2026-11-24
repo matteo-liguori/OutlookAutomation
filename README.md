@@ -95,6 +95,21 @@ chamberlain prompt                     # the standing prompt an agent is given
 chamberlain --data ./scratch-data doctor
 ```
 
+## Try it without real accounts
+
+The demo source is a small synthetic mailbox, calendar and address book held in memory
+(`example.invalid` addresses, every item marked `[DEMO]`). Nothing it does leaves the process.
+
+```
+.venv/Scripts/python -m chamberlain.surface.cli demo init ./demo-data
+.venv/Scripts/python -m chamberlain.surface.cli --data ./demo-data start
+```
+
+`demo init` refuses a folder that is not empty. Replies from a demo installation carry
+`"demo": true` in `coverage`, and `doctor` warns if demo and real sources are mixed.
+Use `--data ./demo-data` for any tool, or point an agent's MCP server at it
+(`python -m chamberlain.surface.mcp_server --data ./demo-data`).
+
 ## Layout
 
 ```

@@ -36,9 +36,37 @@ def schema_checks(ctx: Context) -> list[CheckResult]:
     ]
 
 
+def demo_checks(ctx: Context) -> list[CheckResult]:
+    """Synthetic and real sources must not be mixed: demo data looks like an inbox."""
+    demo = ctx.sources.demo
+    if not demo:
+        return []
+    real = [source for source in ctx.sources.source_ids() if source not in demo]
+    if real:
+        return [
+            CheckResult(
+                id="sources.demo_mixed",
+                status="warn",
+                summary=f"Demo sources ({', '.join(sorted(demo))}) run beside real ones.",
+                fix="Disable the demo sources in config/connections.yaml before real work.",
+            )
+        ]
+    return [
+        CheckResult(
+            id="sources.demo",
+            status="ok",
+            summary="Only demo sources are configured: all data is synthetic.",
+        )
+    ]
+
+
 def make_doctor(extra: Sequence[tuple[DoctorCheck, DoctorCheckFn]] = ()) -> Handler:
     """Build the doctor handler from the app's checks plus the tracks' checks."""
-    checks: list[tuple[DoctorCheck, DoctorCheckFn]] = [(DoctorCheck.SCHEMA, schema_checks), *extra]
+    checks: list[tuple[DoctorCheck, DoctorCheckFn]] = [
+        (DoctorCheck.SCHEMA, schema_checks),
+        (DoctorCheck.SOURCES, demo_checks),
+        *extra,
+    ]
 
     def doctor(ctx: Context, request: DoctorRequest) -> Result:
         results: list[CheckResult] = []
