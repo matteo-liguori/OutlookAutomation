@@ -293,7 +293,7 @@ class Engine:
         completed = self._complete(intent, refs)
         self._check_limits(completed, capability)
         sha = intent_hash(completed)
-        existing = self._existing(completed, sha)
+        existing = self._existing(completed, sha, card)
         if existing is not None:
             self._note_redo(existing)
             return self._proposal_for(existing, completed)
@@ -510,10 +510,10 @@ class Engine:
             ):
                 self._note_redo(op)
 
-    def _existing(self, intent: WriteIntent, sha: str) -> OperationRow | None:
+    def _existing(self, intent: WriteIntent, sha: str, card: str | None) -> OperationRow | None:
         """An identical live operation, or a recent one that may not repeat (W-18, W-19)."""
         window = self.ctx.clock.now() - timedelta(hours=REPEAT_WINDOW_HOURS)
-        repeat_ok = self._repeat_allowed(intent)
+        repeat_ok = self._repeat_allowed(intent, card)
         found = [
             op
             for op in repo.live_by_hash(self.db, intent.source, sha)
@@ -521,10 +521,10 @@ class Engine:
         ]
         return found[-1] if found else None
 
-    def _repeat_allowed(self, intent: WriteIntent) -> bool:
+    def _repeat_allowed(self, intent: WriteIntent, card: str | None) -> bool:
         for grant in repo.grants_in_states(self.db, (GrantState.ACTIVE,), intent.source):
             scope = grant.scope
-            if scope is not None and scope.allow_repeat and not scope_mismatch(scope, intent, None):
+            if scope is not None and scope.allow_repeat and not scope_mismatch(scope, intent, card):
                 return True
         return False
 

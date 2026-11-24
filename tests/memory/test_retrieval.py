@@ -119,12 +119,21 @@ def test_m17_a_cursor_is_immutable_session_bound_query_bound_and_expires(
 
 def test_t9_find_and_open_leave_unread_mail_unread(app: App, fake: FakeProvider) -> None:
     locator = fake.mail.add_message(
-        "mail:test", internet_message_id="<unread@x>", body="Hello there"
+        "mail:test",
+        internet_message_id="<unread@x>",
+        body="Hello there",
+        in_reply_to="<first@x>",
+        references=("<root@x>", "<first@x>"),
     )
     [hit] = hits(call(app, "find", scope="mail"))
     for part in ("summary", "headers", "body", "attachments"):
         reply = call(app, "open", handle=hit.handle, part=part)
         assert reply.ok, reply.error
+        if part == "headers":
+            assert isinstance(reply.data, OpenResponse)
+            assert reply.data.content is not None
+            assert "In-Reply-To: <first@x>" in reply.data.content.text
+            assert "References: <root@x> <first@x>" in reply.data.content.text
     assert fake.mail.is_unread("mail:test", locator)
     opened = call(app, "open", handle=hit.handle, part="body")
     assert isinstance(opened.data, OpenResponse)

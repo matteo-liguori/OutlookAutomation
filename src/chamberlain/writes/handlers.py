@@ -4,6 +4,7 @@ Contract: docs/contracts/04-writes.md, 05-grants.md, 02-tools.md. `app/wiring.py
 reads the names below; this track fills them and never edits the app package.
 """
 
+import re
 from collections.abc import Callable
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
@@ -116,6 +117,11 @@ def audit_checks(ctx: Context) -> list[CheckResult]:
     return [chain, channel, *recipient_checks(ctx)]
 
 
+def check_id(prefix: str, source: str) -> str:
+    """A doctor check id for one source: only the characters a check id may hold."""
+    return f"{prefix}.{re.sub(r'[^a-z0-9_]', '_', source.lower())}"[:40]
+
+
 def recipient_checks(ctx: Context) -> list[CheckResult]:
     """How many recipients each mail source knows, by origin (G-15)."""
     found: list[CheckResult] = []
@@ -124,7 +130,7 @@ def recipient_checks(ctx: Context) -> list[CheckResult]:
         seeded = counts["sent-history"]
         found.append(
             CheckResult(
-                id=f"recipients.{source.replace(':', '_')}"[:40],
+                id=check_id("recipients", source),
                 status="ok" if seeded else "warn",
                 summary=(
                     f"{source}: {counts['confirmed-grant']} confirmed, {seeded} from Sent "

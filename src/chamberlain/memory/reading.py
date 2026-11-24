@@ -233,6 +233,10 @@ def _header_text(message: Message) -> str:
         f"Date: {message.date.strftime('%Y-%m-%dT%H:%M:%SZ')}",
         f"Message-ID: {message.internet_message_id}",
     ]
+    if message.in_reply_to:
+        lines.append(f"In-Reply-To: {message.in_reply_to}")
+    if message.references:
+        lines.append(f"References: {' '.join(message.references)}")
     return "\n".join(lines)
 
 

@@ -129,3 +129,12 @@ def test_doctor_shows_the_known_recipient_counts_per_source(rig: WriteRig) -> No
     [after] = recipient_checks(rig.ctx)
     assert after.status == "ok"
     assert "1 from Sent history" in after.summary
+
+
+def test_doctor_check_ids_are_valid_for_any_source_id() -> None:
+    """Live-suite bug: `mail:lab-a` gave a check id the doctor schema refused."""
+    from chamberlain.schema.tools import CheckResult
+    from chamberlain.writes.handlers import check_id
+
+    for source in ("mail:lab-a", "mail:test", "calendar:Work-2"):
+        CheckResult(id=check_id("recipients", source), status="ok", summary="s")

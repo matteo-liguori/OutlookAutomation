@@ -1,12 +1,15 @@
 """Grant lifecycle, immutability, review and protection (05-grants.md G-2 to G-16)."""
 
+import json
 import sqlite3
 from datetime import timedelta
 
 import pytest
 
 from chamberlain.connectors.fake import Fault
-from chamberlain.domain.grants import GrantKind, GrantState
+from chamberlain.domain.canonical import canonical_json
+from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
+from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig
@@ -191,6 +194,36 @@ def test_g8_an_expired_grant_is_a_visible_status_never_available(rig: WriteRig) 
     states = {row["state"] for row in rig.db.execute("SELECT state FROM grants")}
     assert "expired" in states
     assert not rig.engine().propose_intent(rig.send()).ready
+
+
+def test_w19_a_card_bound_grant_with_repeats_allows_a_repeat_on_its_card(rig: WriteRig) -> None:
+    """Live-suite bug: the repeat check ignored the card, so a card grant never allowed one."""
+    card = "card_0123456789abcdef"
+    rig.know("friend@example.org")
+    rig.standing_grant(("friend@example.org",), allow_repeat=True, card=card)
+    first = rig.engine().propose_intent(rig.send(), card=card)
+    assert first.ready
+    assert first.operation is not None
+    rig.engine().do(first.operation.handle)
+    again = rig.engine().propose_intent(rig.send(), card=card)
+    assert again.ready
+    assert again.operation is not None
+    assert again.operation.handle != first.operation.handle
+
+
+def test_d14_a_scope_hash_never_depends_on_set_order() -> None:
+    """Live-suite bug: sets were written in iteration order, so equal scopes could differ."""
+    people = [f"p{i}@example.org" for i in range(40)]
+    scope = StandingScope(
+        source=MAIL,
+        title="t",
+        intent_kinds=frozenset({IntentKind.MAIL_SEND, IntentKind.MAIL_MOVE}),
+        recipients=frozenset(reversed(people)),
+        max_per_day=3,
+    )
+    data = json.loads(canonical_json(scope))
+    assert data["recipients"] == sorted(people)
+    assert data["intent_kinds"] == sorted(data["intent_kinds"])
 
 
 def test_g9_a_card_bound_grant_ends_with_its_card_a_global_one_survives(rig: WriteRig) -> None:
