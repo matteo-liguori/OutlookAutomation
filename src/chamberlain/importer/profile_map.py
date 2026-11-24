@@ -1,0 +1,213 @@
+"""The old `profile.json` and `customisations.yaml` become the new connection profile.
+
+Bindings carry over verbatim (Thunderbird account and folder ids, calendar ids, Google
+account and calendar). A binding that cannot be carried exactly is skipped and reported,
+never guessed: a wrong folder id would file or send in the wrong place.
+"""
+
+import re
+from dataclasses import dataclass, field
+from typing import Any, cast
+
+from chamberlain.connections.model import (
+    BudgetsConfig,
+    CalDavSource,
+    Connections,
+    GoogleCalendarSource,
+    OwlCalendarSource,
+    SourceConfig,
+    ThunderbirdContactsSource,
+    ThunderbirdMailSource,
+    WritePolicyConfig,
+)
+from chamberlain.connectors.caldav.credentials import credential_name
+from chamberlain.domain.grants import Requirement
+from chamberlain.importer.old import Json, OldInstallation
+from chamberlain.importer.report import ImportReport
+
+ICLOUD_ROOT_URL = "https://caldav.icloud.com/"
+DEFAULT_ZONE = "Europe/London"
+"""The old harness's default zone, used when neither file names one."""
+ASK_EVERY_TIME = "ask-every-time"
+_DEFAULT_PROVIDERS = {
+    "calendar:work": "outlook",
+    "calendar:primary": "google",
+    "calendar:shared": "google",
+    "calendar:icloud": "icloud",
+}
+_MAIL_FIELDS = {
+    "account_id": "account_id",
+    "selected_inbox_id": "inbox_folder_id",
+    "sent_folder_id": "sent_folder_id",
+    "draft_folder_id": "draft_folder_id",
+    "trash_folder_id": "trash_folder_id",
+}
+_SETTING_GROUPS = ("schedule", "reviews", "maintenance", "updates", "templates")
+
+
+@dataclass
+class MappedProfile:
+    connections: Connections
+    mail_by_address: dict[str, str] = field(default_factory=dict[str, str])
+    """Lower-cased mailbox address to new source id (for placing old operations)."""
+    calendar_by_id: dict[str, str] = field(default_factory=dict[str, str])
+    """Old Thunderbird or Google `calendar_id` to new source id."""
+    default_mail: str | None = None
+    default_calendar: str | None = None
+    icloud_source: str | None = None
+    """The disabled CalDAV placeholder, when the old profile had iCloud."""
+
+
+def new_source_id(old: str) -> str:
+    """Old ids allowed `_`; the new pattern does not."""
+    role, _, name = old.partition(":")
+    cleaned = re.sub(r"[^a-z0-9-]", "-", name.lower().replace("_", "-"))[:32].strip("-")
+    return f"{role}:{cleaned or 'main'}"
+
+
+def _text(binding: Json, key: str) -> str | None:
+    value = binding.get(key)
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _bindings(profile: Json) -> tuple[str, dict[str, Json]]:
+    raw = profile.get("platform")
+    platform: Json = cast(Json, raw) if isinstance(raw, dict) else {}
+    backend = str(platform.get("outlook_backend") or "")
+    found = platform.get("bindings")
+    bindings = cast(dict[str, Json], found) if isinstance(found, dict) else {}
+    return backend, bindings
+
+
+def _is_thunderbird(binding: Json, default_backend: str) -> bool:
+    return str(binding.get("backend") or default_backend) == "thunderbird"
+
+
+def _zone(old: OldInstallation) -> str:
+    custom = old.customisations.get("timezone")
+    profile = old.profile.get("timezone")
+    for candidate in (custom, profile):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+    return DEFAULT_ZONE
+
+
+def _policy(old: OldInstallation, report: ImportReport) -> WritePolicyConfig:
+    merged: dict[str, Any] = {}
+    for layer in (
+        old.profile.get("permission_defaults"),
+        old.customisations.get("permission_defaults"),
+    ):
+        if isinstance(layer, dict):
+            merged.update(cast(Json, layer))
+    send = Requirement.AGENT_EVIDENCE
+    other = Requirement.AGENT_EVIDENCE
+    if merged.get("sending") == ASK_EVERY_TIME:
+        send = Requirement.HUMAN_CONFIRMATION
+    if merged.get("calendar_writes") == ASK_EVERY_TIME:
+        other = Requirement.HUMAN_CONFIRMATION
+    ignored = sorted(set(merged) - {"sending", "calendar_writes"})
+    if ignored:
+        report.unmapped_settings["permission_defaults"] = {k: merged[k] for k in ignored}
+    return WritePolicyConfig(send_known=send, other=other)
+
+
+def _carry_settings(old: OldInstallation, report: ImportReport) -> None:
+    for group in _SETTING_GROUPS:
+        value = old.customisations.get(group)
+        if value:
+            report.unmapped_settings[group] = value
+
+
+def map_profile(
+    old: OldInstallation, report: ImportReport, icloud_username: str | None = None
+) -> MappedProfile:
+    profile = old.profile
+    backend, bindings = _bindings(profile)
+    sources: dict[str, SourceConfig] = {}
+    mapped = MappedProfile(connections=Connections())
+
+    mail = profile.get("mail")
+    for name, address in sorted(cast(Json, mail).items() if isinstance(mail, dict) else []):
+        sid = new_source_id(name)
+        binding = bindings.get(name, {})
+        if not isinstance(address, str) or not _is_thunderbird(binding, backend):
+            report.skipped_sources.append(
+                f"{name}: not bound to Thunderbird (Outlook COM and native bindings are dropped)"
+            )
+            continue
+        values = {new: _text(binding, old_key) for old_key, new in _MAIL_FIELDS.items()}
+        missing = sorted(k for k, v in values.items() if v is None)
+        if missing:
+            report.skipped_sources.append(f"{name}: the old binding lacks {', '.join(missing)}")
+            continue
+        sources[sid] = ThunderbirdMailSource(
+            label=name,
+            mailbox=address.strip(),
+            account_id=str(values["account_id"]),
+            inbox_folder_id=str(values["inbox_folder_id"]),
+            sent_folder_id=str(values["sent_folder_id"]),
+            draft_folder_id=str(values["draft_folder_id"]),
+            trash_folder_id=str(values["trash_folder_id"]),
+        )
+        mapped.mail_by_address[address.strip().lower()] = sid
+        mapped.default_mail = mapped.default_mail or sid
+        report.sources[sid] = f"Thunderbird mailbox {address.strip()}"
+        books: list[Any] = cast(list[Any], binding.get("address_book_ids") or [])
+        names = [b for b in books if isinstance(b, str) and b]
+        if names and len(names) == len(books) and len(set(names)) == len(names):
+            cid = "contacts:" + sid.partition(":")[2]
+            sources[cid] = ThunderbirdContactsSource(label=name, address_book_ids=tuple(names))
+            report.sources[cid] = f"Thunderbird address books ({len(names)})"
+
+    providers = {**_DEFAULT_PROVIDERS}
+    custom_providers = profile.get("calendar_providers")
+    if isinstance(custom_providers, dict):
+        providers.update(cast(dict[str, str], custom_providers))
+    calendars = profile.get("calendars")
+    for name in cast(list[str], calendars) if isinstance(calendars, list) else []:
+        sid = new_source_id(name)
+        binding = bindings.get(name, {})
+        provider = providers.get(name)
+        calendar_id = _text(binding, "calendar_id")
+        if provider == "icloud":
+            sources[sid] = CalDavSource(
+                label=name,
+                enabled=False,
+                url=ICLOUD_ROOT_URL,
+                username=icloud_username or "pending",
+                credential=credential_name(icloud_username) if icloud_username else "pending",
+            )
+            mapped.icloud_source = sid
+            report.sources[sid] = "iCloud calendar (disabled until `caldav.setup register`)"
+            continue
+        if not _is_thunderbird(binding, backend) or calendar_id is None:
+            report.skipped_sources.append(
+                f"{name}: no Thunderbird or Google calendar binding to carry over"
+            )
+            continue
+        if binding.get("transport") == "google":
+            account, _, google_calendar = calendar_id.partition("/")
+            if not account or not google_calendar:
+                report.skipped_sources.append(
+                    f"{name}: the Google calendar id is not <account>/<id>"
+                )
+                continue
+            sources[sid] = GoogleCalendarSource(
+                label=name, account=account, calendar_id=google_calendar
+            )
+            report.sources[sid] = f"Google calendar {google_calendar} of {account}"
+        else:
+            sources[sid] = OwlCalendarSource(label=name, calendar_id=calendar_id)
+            report.sources[sid] = "Thunderbird (Owl) calendar"
+        mapped.calendar_by_id[calendar_id] = sid
+        mapped.default_calendar = mapped.default_calendar or sid
+
+    _carry_settings(old, report)
+    mapped.connections = Connections(
+        timezone=_zone(old),
+        write_policy=_policy(old, report),
+        budgets=BudgetsConfig(),
+        sources=sources,
+    )
+    return mapped
