@@ -210,12 +210,132 @@ def timezone_case(lab: Lab, t: Target) -> None:
 @scenario(
     "calendar.recurring",
     "calendar",
-    "Change one instance of a recurring event",
+    "A repeating event: change one date, cancel one, change the series, delete it",
     Scope.CALENDAR,
-    needs=_NEEDS,
+    needs=(*_NEEDS, "calendar.recurrence", "calendar.occurrence"),
 )
 def recurring(lab: Lab, t: Target) -> None:
-    raise ScenarioSkip("recurrence not supported by v2 EventFields")
+    _require_approval(lab)
+    title = lab.subject(f"series {t.tag}")
+    start = _soon(lab, 2)
+    lab.defer(f"remove marked events in {t.source}", lambda: lab.remove_events(t.source, title))
+    rule: JSON = {"frequency": "daily", "count": 3}
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.create",
+                "source": t.source,
+                "event": _event(title, start, recurrence=rule),
+            }
+        ),
+        "create series",
+    )
+
+    def dates() -> list[JSON]:
+        found = lab.ok(
+            "find",
+            scope="calendar",
+            source=t.source,
+            query=title,
+            since=_stamp(start - timedelta(days=1)),
+            until=_stamp(start + timedelta(days=4)),
+        )
+        return [h for h in found.get("hits", []) if title in text_of(h)]
+
+    def live() -> list[JSON]:
+        return [h for h in dates() if not str(h.get("summary", "")).startswith("cancelled")]
+
+    seen = lab.wait_until(
+        "the three dates of the series showing", lambda: dates() if len(dates()) == 3 else None
+    )
+    lab.check(
+        all(str(h.get("summary", "")).endswith("repeats") for h in seen),
+        "a date of the series is not marked as repeating",
+    )
+    first = _view(lab, str(seen[0]["handle"]))
+    lab.check(first.get("repeats") == "occurrence", "a date is not an occurrence of a series")
+    series = str(first["series"])
+
+    # One date changed: its location, nothing else.
+    second = _view(lab, str(seen[1]["handle"]))
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.update",
+                "source": t.source,
+                "event_ref": seen[1]["handle"],
+                "expected_etag": second["etag"],
+                "scope": "occurrence",
+                "event": _event(title, _parse(second["start"]), location="Live test room"),
+            }
+        ),
+        "change one date",
+    )
+    lab.check(
+        "Live test room" in text_of(lab.ok("open", handle=seen[1]["handle"], part="body")),
+        "the changed date did not keep its new location",
+    )
+    lab.check(
+        "Live test room" not in text_of(lab.ok("open", handle=seen[0]["handle"], part="body")),
+        "changing one date changed another",
+    )
+
+    # One date cancelled.
+    third = _view(lab, str(seen[2]["handle"]))
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.delete",
+                "source": t.source,
+                "event_ref": seen[2]["handle"],
+                "expected_etag": third["etag"],
+                "scope": "occurrence",
+            }
+        ),
+        "cancel one date",
+    )
+    lab.check(len(live()) == 2, f"{len(live())} dates are live after one was cancelled, not 2")
+
+    # The whole series: every date that was not changed on its own.
+    master = _view(lab, series)
+    lab.check(master.get("repeats") == "series", "the series handle is not the series")
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.update",
+                "source": t.source,
+                "event_ref": series,
+                "expected_etag": master["etag"],
+                "scope": "series",
+                "event": {
+                    "title": title,
+                    "start": master["start"],
+                    "end": master["end"],
+                    "location": "Series room",
+                },
+            }
+        ),
+        "change the series",
+    )
+    lab.check(
+        "Series room" in text_of(lab.ok("open", handle=seen[0]["handle"], part="body")),
+        "the series change did not reach an unchanged date",
+    )
+
+    master = _view(lab, series)
+    lab.confirmed(
+        lab.write(
+            {
+                "kind": "calendar.delete",
+                "source": t.source,
+                "event_ref": series,
+                "expected_etag": master["etag"],
+                "scope": "series",
+            }
+        ),
+        "delete the series",
+    )
+    lab.check(not live(), "a date of the series is still live after the series was deleted")
 
 
 def _wait_find(lab: Lab, source: str, title: str, start: datetime) -> JSON:

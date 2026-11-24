@@ -61,6 +61,15 @@ def test_events_are_swept_only_with_approval_and_foreign_ones_never(lab: FakeLab
         lab.provider.calendar.add_event(
             FAKE_CAL_A, EventFields(title=title, start=start, end=start)
         )
+    series = EventFields.model_validate(
+        {
+            "title": f"CHAMBERLAIN LIVE TEST {OLD_RUN} series x",
+            "start": start,
+            "end": start,
+            "recurrence": {"frequency": "daily", "count": 3, "zone": "UTC"},
+        }
+    )
+    lab.provider.calendar.add_event(FAKE_CAL_A, series)  # three dates, swept as one series
     events = lab.provider.world.events[FAKE_CAL_A]
 
     def live() -> list[str]:
@@ -70,10 +79,10 @@ def test_events_are_swept_only_with_approval_and_foreign_ones_never(lab: FakeLab
     left = sweep(lab.app, lab.env, off, RunOptions())
     assert left.events_removed == 0
     assert any("not swept" in note for note in left.notes)
-    assert len(live()) == 2
+    assert len(live()) == 3
 
     done = sweep(lab.app, lab.env, lab.config, RunOptions())
-    assert done.events_removed == 1
+    assert done.events_removed == 2
     assert live() == ["Dentist (CHAMBERLAIN LIVE TEST)"]
 
 

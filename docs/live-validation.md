@@ -46,6 +46,14 @@ to `live_verified`. Record each result on the board with the date.
 | 2.7 | iCloud: the address the account sends as (`calendar-user-address-set`) equals the configured `address` | owner's iCloud (read-only) |
 | 2.8 | Owl: a write with attendees refuses at propose with `invitations-not-supported` and changes nothing | KCL calendar (nothing written) |
 
+### 2c. Repeating events (`chamberlain live-test run --only calendar.recurring` runs the write side)
+
+| # | Check | Calendar |
+| --- | --- | --- |
+| 2.9 | Google: `events.import` accepts `recurrence` with an explicit `timeZone`; a window read with `singleEvents` lists the dates; PUT and DELETE on an instance id make an exception; a PUT of the series keeps an exception when only the title changes; deleting the series cancels its dates | test account |
+| 2.10 | iCloud: a series written with `DTSTART;TZID=Europe/London` and the generated VTIMEZONE is accepted; `<C:expand>` keeps nine o'clock across a clock change, the first date included (Radicale does not, so the contract test checks only the zone and the first date as written); an override VEVENT and an EXDATE are kept and read back; `If-Match` on the resource covers both | owner's iCloud: one self-created series, deleted afterwards |
+| 2.11 | Owl: a window read lists the dates of a series with `recurrence_id`; opening the series' own id returns the master; no write is offered (no `calendar.recurrence` or `calendar.occurrence`) | KCL calendar (read-only) |
+
 ## 3. Harness behaviour
 
 | # | Check |

@@ -36,12 +36,15 @@ def test_the_whole_suite_runs_green_and_leaves_only_the_trash(lab: FakeLab) -> N
     assert {r.cleanup for r in report.results} == {"clean"}
     ran = {r.id for r in report.results if r.status is Status.PASS}
     assert len(ran) >= 30
-    for needed in ("mail.fault_lost_response[mail:laba]", "calendar.invite_flow[calendar:laba]"):
+    for needed in (
+        "mail.fault_lost_response[mail:laba]",
+        "calendar.invite_flow[calendar:laba]",
+        "calendar.recurring[calendar:laba]",
+    ):
         assert needed in ran
     skipped = [r for r in report.results if r.status is Status.SKIPPED]
     assert all(r.reason for r in skipped)
     assert {r.id.split("[")[0] for r in skipped} <= {
-        "calendar.recurring",
         "calendar.invite_flow",
         "mail.outbox_queued",
     }

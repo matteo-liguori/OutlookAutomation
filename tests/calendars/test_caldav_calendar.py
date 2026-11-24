@@ -1,6 +1,7 @@
 """CalDAV connector behaviour beyond the shared contract, against real Radicale."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 
 import pytest
 from cal_radicale import RadicaleServer
@@ -59,9 +60,17 @@ def put(rig: CalDavRig, name: str, text: str) -> None:
     assert reply.status in (201, 204), reply.body
 
 
-def prepare_edit(port: CalDavCalendar, locator: str, etag: str, event: EventFields) -> Prepared:
+def prepare_edit(
+    port: CalDavCalendar,
+    locator: str,
+    etag: str,
+    event: EventFields,
+    scope: Literal["occurrence", "series"] | None = None,
+) -> Prepared:
     handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
-    intent = CalendarUpdate(source=SOURCE, event_ref=handle, expected_etag=etag, event=event)
+    intent = CalendarUpdate(
+        source=SOURCE, event_ref=handle, expected_etag=etag, event=event, scope=scope
+    )
     return port.prepare(intent, {handle: locator})
 
 
@@ -103,7 +112,7 @@ def test_p16_update_keeps_alarms_recurrence_and_time_zone(world: World) -> None:
     put(rig, "series.ics", series)
     before = port.read(SOURCE, "series.ics")
     new = fields("Renamed", start=before.fields.start, end=before.fields.end)
-    result = port.dispatch(prepare_edit(port, "series.ics", before.etag, new), "k")
+    result = port.dispatch(prepare_edit(port, "series.ics", before.etag, new, "series"), "k")
     assert result.outcome is DispatchOutcome.APPLIED, result.detail
     text = rig.transport.inner.send(
         "GET",
@@ -123,7 +132,7 @@ def test_p16_update_keeps_alarms_recurrence_and_time_zone(world: World) -> None:
     assert "DTSTART:20270301T100000Z" in text
 
 
-def test_p4_a_recurring_series_is_listed_as_occurrences_that_can_be_read_not_written(
+def test_p4_a_recurring_series_is_listed_as_occurrences_and_written_only_with_its_scope(
     world: World,
 ) -> None:
     port, rig = world
@@ -273,3 +282,22 @@ def test_p10_a_server_error_after_sending_is_unknown(world: World) -> None:
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
     rig.transport.inner.send = real  # type: ignore[method-assign]
     assert port.reconcile(prepared, "k").status is ReconcileStatus.ABSENT
+
+
+def test_p27_an_all_day_series_with_an_until_is_verified_by_date(world: World) -> None:
+    port, _ = world
+    event = fields(
+        "Holiday",
+        start=datetime(2027, 3, 1, tzinfo=UTC),
+        end=datetime(2027, 3, 2, tzinfo=UTC),
+        all_day=True,
+        recurrence={
+            "frequency": "daily",
+            "until": datetime(2027, 3, 3, 23, 59, 59, tzinfo=UTC),
+            "zone": "Europe/London",
+        },
+    )
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=event, uid="allday@t"), {})
+    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.APPLIED
+    assert port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
+    assert len(port.events(SOURCE, window()).items) == 3

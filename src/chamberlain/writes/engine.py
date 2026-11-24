@@ -27,6 +27,7 @@ from typing import Final
 from pydantic import TypeAdapter
 
 from chamberlain.app.context import Context
+from chamberlain.domain.calendar import CalendarEvent
 from chamberlain.domain.canonical import sha256_bytes, sha256_text
 from chamberlain.domain.capabilities import Capability, CapabilityName
 from chamberlain.domain.grant_rules import (
@@ -69,6 +70,7 @@ from chamberlain.domain.operations import (
     Verification,
     recheck_text,
 )
+from chamberlain.domain.recurrence import describe
 from chamberlain.domain.senders import parse_instruction_ref
 from chamberlain.limits import (
     ABSENCE_MARGIN_SECONDS,
@@ -103,6 +105,8 @@ from chamberlain.writes.recheck import look_in_recipient_mailboxes, sender_place
 from chamberlain.writes.render import (
     EVENT_ATTENDEES_REF,
     EVENT_ORGANISER_REF,
+    EVENT_REPEATS_REF,
+    EVENT_WHEN_REF,
     describe_intent,
     describe_scope,
     grant_summary,
@@ -136,6 +140,8 @@ CALENDAR_SETTLE_WINDOW_SECONDS: Final = 60
 ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
 """Reserved key in the `refs` mapping given to `prepare` (board R3)."""
 INVITATIONS_UNSUPPORTED: Final = "invitations-not-supported"
+RECURRENCE_UNSUPPORTED: Final = "recurrence-not-supported"
+RECURRING_INVITATIONS_UNSUPPORTED: Final = "recurring-invitations-not-supported"
 
 _INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
 _CAPABILITY: dict[IntentKind, CapabilityName] = {
@@ -290,6 +296,7 @@ class Engine:
         capability = self._capability(intent)
         refs = self._locate(intent)
         self._require_invitations(intent, refs)
+        self._require_recurrence(intent)
         completed = self._complete(intent, refs)
         self._check_limits(completed, capability)
         sha = intent_hash(completed)
@@ -547,6 +554,8 @@ class Engine:
         if isinstance(intent, CalendarUpdate | CalendarDelete | CalendarRespond):
             port = self.ctx.sources.calendar_port(intent.source)
             event = port.read(intent.source, located[intent.event_ref])
+            if isinstance(intent, CalendarUpdate | CalendarDelete):
+                self._check_scope(intent, event, located)
             if isinstance(intent, CalendarRespond):
                 if event.organiser is None or event.my_response is None:
                     raise ChamberlainError(
@@ -567,6 +576,100 @@ class Engine:
                 if event.fields.attendees:
                     located[EVENT_ATTENDEES_REF] = ",".join(sorted(event.fields.attendees))
         return located
+
+    @staticmethod
+    def _check_scope(
+        intent: CalendarUpdate | CalendarDelete, event: CalendarEvent, located: dict[str, str]
+    ) -> None:
+        """The scope must say which part of a repeating event is meant, and fit the handle (P-25).
+
+        The fix names the handle to use, so the agent needs no standing knowledge of series.
+        """
+        scope = intent.scope
+        if event.series_locator is None:
+            if scope is not None:
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID,
+                    "That event does not repeat, so it takes no scope.",
+                    fix="Leave scope out.",
+                    field="scope",
+                )
+            if isinstance(intent, CalendarUpdate) and intent.event.recurrence is not None:
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID,
+                    "An event that exists cannot be made to repeat.",
+                    fix="Create a repeating event with calendar.create instead.",
+                    field="event",
+                )
+            return
+        wanted = "series" if event.is_series else "occurrence"
+        if scope != wanted:
+            fix = (
+                "This is the whole series. Give scope series, or open one date and use that "
+                "date's handle with scope occurrence."
+                if event.is_series
+                else "This is one date of a repeating event. Give scope occurrence, or use "
+                "view.series of this event as the handle with scope series."
+            )
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "Say which part of the repeating event this reaches.",
+                fix=fix,
+                field="scope",
+            )
+        if (
+            isinstance(intent, CalendarUpdate)
+            and scope == "occurrence"
+            and intent.event.recurrence is not None
+        ):
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "One date of a repeating event takes no repeat rule.",
+                fix="Leave recurrence out, or change the series with scope series.",
+                field="event",
+            )
+        if event.fields.attendees or (
+            isinstance(intent, CalendarUpdate) and intent.event.attendees
+        ):
+            raise ChamberlainError(
+                ErrorCode.CAPABILITY_UNSUPPORTED,
+                "A repeating event with guests cannot be changed here.",
+                detail=RECURRING_INVITATIONS_UNSUPPORTED,
+            )
+        if scope == "occurrence":
+            located[EVENT_WHEN_REF] = event.fields.start.isoformat()
+        elif event.fields.recurrence is not None:
+            located[EVENT_REPEATS_REF] = describe(event.fields.recurrence)
+
+    def _require_recurrence(self, intent: WriteIntent) -> None:
+        """A write that repeats needs a source that says it can; checked at propose (P-26)."""
+        if not isinstance(intent, _CALENDAR_INTENTS) or isinstance(intent, CalendarRespond):
+            return
+        needed: CapabilityName | None = None
+        if isinstance(intent, CalendarCreate):
+            if intent.event.recurrence is not None:
+                needed = CapabilityName.CALENDAR_RECURRENCE
+                if intent.event.attendees:
+                    raise ChamberlainError(
+                        ErrorCode.CAPABILITY_UNSUPPORTED,
+                        "A repeating event with guests cannot be created here.",
+                        fix="Create it without guests.",
+                        detail=RECURRING_INVITATIONS_UNSUPPORTED,
+                    )
+        elif intent.scope == "occurrence":
+            needed = CapabilityName.CALENDAR_OCCURRENCE
+        elif intent.scope == "series":
+            needed = CapabilityName.CALENDAR_RECURRENCE
+        if needed is None:
+            return
+        caps = self.ctx.sources.calendar_port(intent.source).capabilities(intent.source)
+        if caps.get(needed) is None:
+            raise ChamberlainError(
+                ErrorCode.CAPABILITY_UNSUPPORTED,
+                "This calendar cannot write repeating events that way.",
+                fix="Use a calendar that can, or write a single event.",
+                detail=RECURRENCE_UNSUPPORTED,
+            )
 
     def _require_invitations(self, intent: WriteIntent, refs: Mapping[str, str]) -> None:
         """A write that reaches other people needs a source that can send invitations (P-2).
@@ -595,7 +698,7 @@ class Engine:
 
     def _complete(self, intent: WriteIntent, refs: Mapping[str, str]) -> WriteIntent:
         """Fill the harness-completed fields and drop agent-supplied tokens (W-1, R1)."""
-        blank: dict[str, str | None] = {}
+        blank: dict[str, object] = {}
         for name in ("message_id", "uid"):
             if name in type(intent).model_fields:
                 blank[name] = None
@@ -607,6 +710,13 @@ class Engine:
             blank["from_folder"] = seen.folder_id
         if isinstance(intent, CalendarRespond):
             blank["organiser"] = refs[EVENT_ORGANISER_REF]
+        if isinstance(intent, CalendarCreate | CalendarUpdate):
+            rule = intent.event.recurrence
+            if rule is not None and rule.zone is None:
+                # Nine o'clock stays nine o'clock across a clock change (P-23).
+                blank["event"] = intent.event.model_copy(
+                    update={"recurrence": rule.model_copy(update={"zone": self.policy.zone})}
+                )
         completed = intent.model_copy(update=blank)
         for attachment in getattr(completed, "attachments", ()):
             info = self.ctx.services.artifacts.info(attachment.artifact)

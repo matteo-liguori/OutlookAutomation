@@ -253,6 +253,7 @@
       var item = el("div", { class: "calendar-event " + catClass(event) + (mark ? importanceClasses(mark, state.today) : "") });
       item.appendChild(el("div", { class: "event-time", text: event.all_day ? "All day" : event.start_time + "\u2013" + event.end_time }));
       item.appendChild(titleNode(event, mark));
+      if (event.repeats) item.appendChild(el("div", { class: "event-time", text: "Repeats" }));
       if (event.location && !event.url) item.appendChild(el("div", { class: "event-time", text: event.location }));
       if (event.local) {
         item.appendChild(el("div", { class: "event-time", text: "Local event, only in this viewer" }));

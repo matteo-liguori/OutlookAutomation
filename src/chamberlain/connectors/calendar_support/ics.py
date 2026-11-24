@@ -10,11 +10,14 @@ import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import icalendar
 
 from chamberlain.connectors.calendar_support.fields import clean_one, clip_fields
-from chamberlain.domain.calendar import EventFields, EventStatus
+from chamberlain.connectors.calendar_support.rrule import format_rrule, parse_rrule
+from chamberlain.domain.calendar import EventFields, EventStatus, Recurrence
+from chamberlain.domain.recurrence import parse_occurrence_id
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 Calendar: Any = icalendar.Calendar
@@ -38,6 +41,12 @@ class ParsedEvent:
     """The address in ORGANIZER, lower-cased, when there is one."""
     partstats: tuple[tuple[str, str], ...] = ()
     """`(address, PARTSTAT)` of every ATTENDEE, the organiser's own entry included."""
+    rule: Recurrence | None = None
+    """The plain repeat rule of a series' own component; None when absent or not plain."""
+    zone: str | None = None
+    """The IANA zone DTSTART is written in, when it is not UTC."""
+    cancelled_dates: tuple[str, ...] = ()
+    """Occurrence ids (`domain.recurrence.occurrence_id`) taken out of the series by EXDATE."""
 
 
 def text_etag(text: str) -> str:
@@ -69,6 +78,32 @@ def _recurrence_text(value: Any) -> str | None:
         return None
     moment, all_day = _utc(value)
     return moment.strftime("%Y%m%d") if all_day else moment.strftime("%Y%m%dT%H%M%SZ")
+
+
+def _zone_of(component: Any) -> str | None:
+    """The IANA zone DTSTART is written in: its TZID parameter when that names one (a server may
+    rewrite the VTIMEZONE), else the zone of the parsed value."""
+    start = component.get("DTSTART")
+    named = getattr(start, "params", {}).get("TZID") if start is not None else None
+    if isinstance(named, str):
+        try:
+            ZoneInfo(named)
+        except (ValueError, OSError, KeyError):
+            named = None
+        else:
+            return None if named == "UTC" else named
+    key = getattr(getattr(_prop(component, "DTSTART"), "tzinfo", None), "key", None)
+    return key if isinstance(key, str) and key != "UTC" else None
+
+
+def _exdates(component: Any) -> tuple[str, ...]:
+    found: list[str] = []
+    for entry in _list(component, "EXDATE"):
+        for item in getattr(entry, "dts", []):
+            text = _recurrence_text(getattr(item, "dt", item))
+            if text:
+                found.append(text)
+    return tuple(found)
 
 
 def _components(text: str) -> list[Any]:
@@ -118,7 +153,12 @@ def _parse_component(component: Any) -> ParsedEvent:
     except (TypeError, ValueError):
         sequence = 0
     organiser_text = component.get("ORGANIZER")
+    zone = _zone_of(component)
+    rrule = component.get("RRULE")
     return ParsedEvent(
+        rule=parse_rrule(rrule.to_ical().decode(), zone=zone) if rrule is not None else None,
+        zone=zone,
+        cancelled_dates=_exdates(component),
         uid=str(component.get("UID", "")),
         recurrence_id=_recurrence_text(_prop(component, "RECURRENCE-ID")),
         fields=fields,
@@ -174,15 +214,31 @@ def refuse_invitations(parsed: ParsedEvent | None, wanted: EventFields | None = 
         )
 
 
-def _set_times(component: Any, fields: EventFields) -> None:
+def _set_times(component: Any, fields: EventFields, zone: str | None = None) -> None:
+    """Times in UTC, or on `zone`'s clock when a series repeats on it (nine o'clock stays)."""
     for name in ("DTSTART", "DTEND", "DURATION"):
         component.pop(name, None)
     if fields.all_day:
         component.add("dtstart", fields.start.date())
         component.add("dtend", fields.end.date())
     else:
-        component.add("dtstart", fields.start.astimezone(UTC))
-        component.add("dtend", fields.end.astimezone(UTC))
+        clock = ZoneInfo(zone) if zone and zone != "UTC" else UTC
+        component.add("dtstart", fields.start.astimezone(clock))
+        component.add("dtend", fields.end.astimezone(clock))
+
+
+def _set_rule(component: Any, rule: Recurrence | None, *, all_day: bool) -> None:
+    if rule is None:
+        return
+    component.pop("RRULE", None)
+    component.add("rrule", icalendar.vRecur.from_ical(format_rrule(rule, all_day=all_day)))
+
+
+def _with_zones(calendar: Any) -> str:
+    """The text of the calendar, with VTIMEZONE blocks for any zone it names."""
+    if any(_zone_of(c) for c in calendar.walk("VEVENT")):
+        calendar.add_missing_timezones()
+    return calendar.to_ical().decode("utf-8")
 
 
 def _set_text(component: Any, name: str, value: str) -> None:
@@ -218,7 +274,8 @@ def _set_invitation(
 
 
 def build_new(uid: str, fields: EventFields, now: datetime, organiser: str | None = None) -> str:
-    """A fresh single-event resource. Times are written in UTC.
+    """A fresh single-event resource, or a series when the fields carry a rule. Times are written
+    in UTC, or on the rule's clock for a series.
 
     With guests, `organiser` is the sending account's address and the result is an invitation.
     """
@@ -226,7 +283,9 @@ def build_new(uid: str, fields: EventFields, now: datetime, organiser: str | Non
     event.add("uid", uid)
     event.add("dtstamp", now.astimezone(UTC))
     event.add("summary", fields.title)
-    _set_times(event, fields)
+    rule = fields.recurrence
+    _set_times(event, fields, rule.zone if rule is not None else None)
+    _set_rule(event, rule, all_day=fields.all_day)
     _set_text(event, "location", fields.location)
     _set_text(event, "description", fields.description)
     event.add("sequence", 0)
@@ -236,7 +295,7 @@ def build_new(uid: str, fields: EventFields, now: datetime, organiser: str | Non
     calendar.add("prodid", PRODID)
     calendar.add("version", "2.0")
     calendar.add_component(event)
-    return calendar.to_ical().decode("utf-8")
+    return _with_zones(calendar)
 
 
 def apply_fields(
@@ -262,8 +321,14 @@ def apply_fields(
         fields.end,
         fields.all_day,
     )
-    if moved:
-        _set_times(event, fields)
+    rule = fields.recurrence
+    zone = rule.zone if rule is not None else current.zone
+    reclocked = (
+        rule is not None and (rule.zone or None) != current.zone and current.rule is not None
+    )
+    if moved or reclocked:
+        _set_times(event, fields, zone)
+    _set_rule(event, rule, all_day=fields.all_day)
     if organiser is not None:
         kept = {} if moved else dict(current.partstats)
         _set_invitation(event, fields.attendees, organiser, kept)
@@ -274,7 +339,93 @@ def apply_fields(
     event.add("dtstamp", now.astimezone(UTC))
     event.add("last-modified", now.astimezone(UTC))
     event.add("sequence", current.sequence + 1)
-    return calendar.to_ical().decode("utf-8")
+    return _with_zones(calendar)
+
+
+def _series_parts(calendar: Any) -> tuple[Any, list[Any]]:
+    """The series' own component and its overrides."""
+    masters = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None]
+    if len(masters) != 1 or (masters[0].get("RRULE") is None and masters[0].get("RDATE") is None):
+        raise ChamberlainError(
+            ErrorCode.CAPABILITY_UNSUPPORTED, "This calendar item is not a repeating event."
+        )
+    overrides = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is not None]
+    return masters[0], overrides
+
+
+def _in_form_of(master: Any, occurrence: str) -> Any:
+    """The moment an occurrence id names, written as the series' own start is (RFC 5545 asks
+    RECURRENCE-ID and EXDATE to match DTSTART's form)."""
+    named = parse_occurrence_id(occurrence)
+    if named is None:
+        raise ChamberlainError(ErrorCode.REQUEST_INVALID, "That is not an occurrence.")
+    moment, all_day = named
+    if all_day:
+        return moment.date()
+    start = _prop(master, "DTSTART")
+    clock = getattr(start, "tzinfo", None)
+    if clock is None or getattr(clock, "key", "UTC") == "UTC":
+        return moment
+    return moment.astimezone(clock)
+
+
+def _stamp(event: Any, now: datetime, sequence: int) -> None:
+    for name in ("DTSTAMP", "LAST-MODIFIED", "SEQUENCE"):
+        event.pop(name, None)
+    event.add("dtstamp", now.astimezone(UTC))
+    event.add("last-modified", now.astimezone(UTC))
+    event.add("sequence", sequence)
+
+
+def _override_for(overrides: list[Any], occurrence: str) -> Any | None:
+    for component in overrides:
+        if _recurrence_text(_prop(component, "RECURRENCE-ID")) == occurrence:
+            return component
+    return None
+
+
+def apply_occurrence(text: str, occurrence: str, fields: EventFields, now: datetime) -> str:
+    """The series with one date changed: an override component for that date, the series itself
+    and every other date untouched."""
+    calendar = Calendar.from_ical(text)
+    master, overrides = _series_parts(calendar)
+    event = _override_for(overrides, occurrence)
+    sequence = 0
+    if event is None:
+        event = Event()
+        event.add("uid", str(master.get("UID", "")))
+        event.add("recurrence-id", _in_form_of(master, occurrence))
+        calendar.add_component(event)
+    else:
+        sequence = _parse_component(event).sequence + 1
+    event.pop("SUMMARY", None)
+    event.add("summary", fields.title)
+    _set_times(event, fields)
+    _set_text(event, "location", fields.location)
+    _set_text(event, "description", fields.description)
+    _stamp(event, now, sequence)
+    return _with_zones(calendar)
+
+
+def cancel_occurrence(text: str, occurrence: str, now: datetime) -> str:
+    """The series with one date taken out (EXDATE), and any override of that date dropped."""
+    calendar = Calendar.from_ical(text)
+    master, overrides = _series_parts(calendar)
+    gone = _override_for(overrides, occurrence)
+    if gone is not None:
+        calendar.subcomponents = [c for c in calendar.subcomponents if c is not gone]
+    if occurrence not in _exdates(master):
+        master.add("exdate", _in_form_of(master, occurrence))
+    _stamp(master, now, _parse_component(master).sequence + 1)
+    return _with_zones(calendar)
+
+
+def occurrence_of(text: str, occurrence: str) -> ParsedEvent | None:
+    """The override component for one date, as written (None when that date is not changed)."""
+    for parsed in parse_events(text):
+        if parsed.recurrence_id == occurrence:
+            return parsed
+    return None
 
 
 def apply_answer(text: str, address: str, partstat: str, now: datetime) -> str:

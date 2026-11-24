@@ -10,7 +10,7 @@ import json
 import re
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from typing import Any, cast
 
@@ -420,21 +420,27 @@ class Lab:
         start, end = self.calendar_window()
         self.used_probe("calendar events including cancelled")
         removed = 0
+        deleted: set[str] = set()
         for item in self.env.probe.events(source, text, start, end):
             if item.status == "cancelled" or not carries_marker(item.title):
                 continue
+            if item.series is not None:
+                # A date of a series: the series goes once, through its own handle (P-25).
+                if item.series in deleted:
+                    continue
+                deleted.add(item.series)
+                item = replace(item, locator=item.series)
             handle = self.event_handle(item)
             opened = self.ok("open", handle=handle)
-            etag = str(opened["view"]["etag"])
-            done = self.write(
-                {
-                    "kind": "calendar.delete",
-                    "source": source,
-                    "event_ref": handle,
-                    "expected_etag": etag,
-                }
-            )
-            self.confirmed(done, "delete event")
+            intent: JSON = {
+                "kind": "calendar.delete",
+                "source": source,
+                "event_ref": handle,
+                "expected_etag": str(opened["view"]["etag"]),
+            }
+            if opened["view"].get("repeats") == "series":
+                intent["scope"] = "series"
+            self.confirmed(self.write(intent), "delete event")
             removed += 1
         return removed
 

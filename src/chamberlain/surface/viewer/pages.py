@@ -107,6 +107,7 @@ def _event_row(
         "start_time": times[0],
         "end_time": times[1],
         "start": _stored(fields.start),
+        "repeats": event.series_locator is not None,
         "local": False,
     }
 

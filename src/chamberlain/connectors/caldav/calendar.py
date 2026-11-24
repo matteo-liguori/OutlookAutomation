@@ -10,7 +10,7 @@ means the write may have happened and is settled only by reconcile.
 import base64
 import hashlib
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from urllib.parse import quote, urlsplit
 
 from pydantic import JsonValue
@@ -27,6 +27,7 @@ from chamberlain.connectors.calendar_support.http import (
     require_secure,
     write_may_have_landed,
 )
+from chamberlain.connectors.calendar_support.rrule import same_rule
 from chamberlain.domain.calendar import (
     CalendarEvent,
     CalendarQuery,
@@ -60,6 +61,7 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
     Verification,
 )
+from chamberlain.domain.recurrence import parse_occurrence_id
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.page import Gap, Page
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -125,6 +127,17 @@ class CalDavCalendar:
                     absence_provable=_PROVABLE,
                 ),
                 *self._invite_capability(binding),
+                *(
+                    Capability(
+                        name=name,
+                        level=VerificationLevel.IMPLEMENTED,
+                        absence_provable=_PROVABLE,
+                    )
+                    for name in (
+                        CapabilityName.CALENDAR_RECURRENCE,
+                        CapabilityName.CALENDAR_OCCURRENCE,
+                    )
+                ),
             ),
         )
 
@@ -219,7 +232,12 @@ class CalDavCalendar:
         for parsed in ics.parse_events(text):
             if parsed.recurrence_id == recurrence:
                 return _event(source, locator, etag, parsed, own_address(binding))
-        moment = datetime.strptime(recurrence, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
+        named = parse_occurrence_id(recurrence)
+        if named is None:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_UNKNOWN_HANDLE, "That occurrence is not there."
+            )
+        moment = named[0]
         body = dav.query_window(moment, moment + timedelta(seconds=1), expand=True)
         for other, _, expanded in self._report(binding, self._collection(binding), body):
             if other != name:
@@ -252,8 +270,8 @@ class CalDavCalendar:
                     "guests": organiser is not None,
                 }
             case CalendarUpdate():
-                name, text, parsed = self._current(
-                    binding, refs, intent.event_ref, intent.expected_etag
+                name, text, parsed, occurrence = self._current(
+                    binding, refs, intent.event_ref, intent.expected_etag, scope=intent.scope
                 )
                 organiser = (
                     _need_address(binding)
@@ -262,17 +280,30 @@ class CalDavCalendar:
                 )
                 data = {
                     "name": name,
+                    "occurrence": occurrence,
                     "expected_etag": intent.expected_etag,
-                    "ics": ics.apply_fields(text, intent.event, now, organiser),
+                    "ics": (
+                        ics.apply_occurrence(text, occurrence, intent.event, now)
+                        if occurrence is not None
+                        else ics.apply_fields(text, intent.event, now, organiser)
+                    ),
                     "fields": intent.event.model_dump(mode="json"),
                     "guests": organiser is not None,
                 }
             case CalendarDelete():
-                name, _, _ = self._current(binding, refs, intent.event_ref, intent.expected_etag)
-                data = {"name": name, "expected_etag": intent.expected_etag}
+                name, text, _, occurrence = self._current(
+                    binding, refs, intent.event_ref, intent.expected_etag, scope=intent.scope
+                )
+                data = {
+                    "name": name,
+                    "occurrence": occurrence,
+                    "expected_etag": intent.expected_etag,
+                }
+                if occurrence is not None:  # one date is taken out of the series (EXDATE)
+                    data["ics"] = ics.cancel_occurrence(text, occurrence, now)
             case CalendarRespond():
                 me = _need_address(binding)
-                name, text, parsed = self._current(
+                name, text, parsed, _ = self._current(
                     binding, refs, intent.event_ref, intent.expected_etag, answering=True
                 )
                 data = {
@@ -316,7 +347,7 @@ class CalDavCalendar:
         name = _text(data, "name")
         url = self._resource(binding, name)
         headers: dict[str, str]
-        if kind is IntentKind.CALENDAR_DELETE:
+        if kind is IntentKind.CALENDAR_DELETE and "ics" not in data:
             method, body, headers = "DELETE", None, {"If-Match": _text(data, "expected_etag")}
         else:
             method, body = "PUT", _text(data, "ics").encode("utf-8")
@@ -349,6 +380,14 @@ class CalDavCalendar:
             return DispatchResult(
                 outcome=DispatchOutcome.UNKNOWN, detail=f"not verified: {_why(error)}"
             )
+        if _is_occurrence(prepared.data) and kind is not IntentKind.CALENDAR_RESPOND:
+            if fetched is None or not _occurrence_done(fetched[0], kind, prepared.data):
+                return DispatchResult(
+                    outcome=DispatchOutcome.UNKNOWN, detail="read-back differs from the request"
+                )
+            return DispatchResult(
+                outcome=DispatchOutcome.APPLIED, receipt=_receipt(name, fetched[1])
+            )
         if kind is IntentKind.CALENDAR_DELETE:
             if fetched is None:
                 return DispatchResult(
@@ -380,6 +419,16 @@ class CalDavCalendar:
             return self._reconcile_create(binding, prepared)
         name = _text(data, "name")
         fetched = self._fetch(binding, name)
+        if _is_occurrence(data):
+            if fetched is None:
+                return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="event not found")
+            if fetched[1] == _text(data, "expected_etag"):
+                return ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
+            if _occurrence_done(fetched[0], kind, data):
+                return ReconcileResult(
+                    status=ReconcileStatus.PRESENT, receipt=_receipt(name, fetched[1])
+                )
+            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")
         if kind is IntentKind.CALENDAR_DELETE:
             if fetched is None:
                 return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=_receipt(name, None))
@@ -489,15 +538,16 @@ class CalDavCalendar:
         expected_etag: str,
         *,
         answering: bool = False,
-    ) -> tuple[str, str, ics.ParsedEvent]:
+        scope: str | None = None,
+    ) -> tuple[str, str, ics.ParsedEvent, str | None]:
         locator = refs.get(ref)
         if locator is None:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not known.")
         name, recurrence = ics.split_locator(locator)
-        if recurrence is not None:
+        if recurrence is not None and answering:
             raise ChamberlainError(
                 ErrorCode.CAPABILITY_UNSUPPORTED,
-                "A single occurrence of a recurring event cannot be written.",
+                "A single occurrence of a recurring event cannot be answered.",
             )
         fetched = self._fetch(binding, name)
         if fetched is None:
@@ -506,6 +556,15 @@ class CalDavCalendar:
         if etag != expected_etag:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event changed since it was read.")
         parsed = ics.master_of(text)
+        if not answering:
+            part = "occurrence" if recurrence else "series" if parsed.recurring else None
+            if scope != part:
+                raise ChamberlainError(
+                    ErrorCode.CAPABILITY_UNSUPPORTED,
+                    "A repeating event is written only with the scope that names it.",
+                )
+        if recurrence is not None:
+            self._require_date(binding, name, recurrence)
         me = own_address(binding)
         if answering:
             if me is None or not _is_invitee_copy(parsed, me) or me not in dict(parsed.partstats):
@@ -518,7 +577,19 @@ class CalDavCalendar:
                 "Only the organiser can change that event.",
                 detail="invitee-copy",
             )
-        return name, text, parsed
+        return name, text, parsed, recurrence
+
+    def _require_date(self, binding: CalDavBinding, name: str, occurrence: str) -> None:
+        """The date is one the series still has (not taken out, not past its end)."""
+        named = parse_occurrence_id(occurrence)
+        if named is not None:
+            body = dav.query_window(named[0], named[0] + timedelta(seconds=1), expand=True)
+            for other, _, expanded in self._report(binding, self._collection(binding), body):
+                if other == name and any(
+                    p.recurrence_id == occurrence for p in ics.parse_events(expanded)
+                ):
+                    return
+        raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That occurrence is not there.")
 
 
 def _check(reply: HttpReply, accepted: tuple[int, ...]) -> None:
@@ -557,12 +628,31 @@ def _is_invitee_copy(parsed: ics.ParsedEvent, me: str | None) -> bool:
 
 
 def _same(parsed: ics.ParsedEvent, wanted: EventFields, binding: CalDavBinding) -> bool:
-    """The read-back carries what was written, guests included (W-36). The organiser's own
-    entry is ignored: servers list the organiser among the attendees or not."""
+    """The read-back carries what was written, guests included (W-36) and the repeat rule when
+    one was written (P-27). The organiser's own entry is ignored: servers list the organiser among
+    the attendees or not."""
     ignore = [a for a in (own_address(binding), parsed.organiser_address) if a]
+    if wanted.recurrence is not None and not same_rule(
+        parsed.rule, wanted.recurrence, parsed.fields.start.date(), all_day=wanted.all_day
+    ):
+        return False
     return same_content(parsed.fields, wanted) and attendees_match(
         parsed.fields.attendees, wanted.attendees, ignore=ignore
     )
+
+
+def _is_occurrence(data: Mapping[str, JsonValue]) -> bool:
+    return isinstance(data.get("occurrence"), str)
+
+
+def _occurrence_done(text: str, kind: IntentKind, data: Mapping[str, JsonValue]) -> bool:
+    """One date reads as written: changed to the wanted fields, or taken out of the series."""
+    occurrence = _text(data, "occurrence")
+    changed = ics.occurrence_of(text, occurrence)
+    if kind is IntentKind.CALENDAR_DELETE:
+        return changed is None and occurrence in ics.master_of(text).cancelled_dates
+    wanted = EventFields.model_validate(data["fields"])
+    return changed is not None and same_content(changed.fields, wanted)
 
 
 def _answered(parsed: ics.ParsedEvent, data: Mapping[str, JsonValue]) -> bool:
@@ -579,7 +669,11 @@ def _event(
         update={"attendees": tuple(a for a in parsed.fields.attendees if a not in hidden)}
     )
     answers = dict(parsed.partstats)
+    series = ics.split_locator(locator)[0] if parsed.recurring or parsed.recurrence_id else None
+    if parsed.recurrence_id is None and parsed.rule is not None:
+        fields = fields.model_copy(update={"recurrence": parsed.rule})
     return CalendarEvent(
+        series_locator=series,
         source=source,
         locator=locator,
         uid=parsed.uid,

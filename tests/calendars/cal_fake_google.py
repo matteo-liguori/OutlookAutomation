@@ -8,13 +8,15 @@ and a deleted event stays readable as `cancelled`.
 import copy
 import json
 from collections.abc import Callable, Mapping
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from chamberlain.connectors.calendar_support.http import HttpReply, TransportFailure
+from chamberlain.connectors.calendar_support.rrule import parse_rrule
 from chamberlain.connectors.fake.world import Fault
 from chamberlain.connectors.google_calendar import mapping
+from chamberlain.domain.recurrence import expand, occurrence_id, parse_occurrence_id
 from chamberlain.ports.clock import ManualClock
 
 Json = dict[str, Any]
@@ -139,13 +141,87 @@ class FakeGoogleApi:
         if path == base:
             return self._list(params)
         if path.startswith(base + "/"):
-            found = self.events.get(path[len(base) + 1 :])
+            found = self._resolve(path[len(base) + 1 :])
             return _reply(200, copy.deepcopy(found)) if found else _reply(404, {"error": "none"})
         return _reply(404, {"error": "no such path"})
 
+    # --- repeating events: Google expands a series into instances ---------------------
+
+    def _slots(
+        self, master: Json, low: datetime, high: datetime
+    ) -> list[tuple[datetime, datetime]]:
+        line = next((x for x in master.get("recurrence", []) if x.upper().startswith("RRULE:")), "")
+        rule = parse_rrule(line, zone=master["start"].get("timeZone"))
+        if rule is None:
+            return []
+        start, all_day = mapping.parse_time(master["start"])
+        end = mapping.parse_time(master["end"])[0]
+        return expand(rule, start, end, all_day=all_day, window_start=low, window_end=high)
+
+    @staticmethod
+    def _time(moment: datetime, all_day: bool, zone: str | None) -> Json:
+        if all_day:
+            return {"date": moment.date().isoformat()}
+        return mapping.time_object(moment, False, {"timeZone": zone} if zone else None)
+
+    def _instance(self, master: Json, begin: datetime, finish: datetime) -> Json:
+        _, all_day = mapping.parse_time(master["start"])
+        name = f"{master['id']}_{occurrence_id(begin, all_day=all_day)}"
+        stored = self.events.get(name)
+        if stored is not None:
+            return stored
+        zone = master["start"].get("timeZone")
+        item = {k: v for k, v in master.items() if k not in ("recurrence", "etag", "id")}
+        start = self._time(begin, all_day, zone)
+        item.update(
+            id=name,
+            recurringEventId=master["id"],
+            start=start,
+            end=self._time(finish, all_day, zone),
+            originalStartTime=start,
+            etag=f'"{master["etag"]}/{name}"',
+        )
+        return item
+
+    def _resolve(self, event_id: str) -> Json | None:
+        """A stored event, or an instance of a stored series that has no stored copy yet."""
+        found = self.events.get(event_id)
+        if found is not None:
+            return found
+        master_id, _, name = event_id.rpartition("_")
+        master = self.events.get(master_id)
+        parsed = parse_occurrence_id(name)
+        if master is None or not master.get("recurrence") or parsed is None:
+            return None
+        for begin, finish in self._slots(master, parsed[0], parsed[0]):
+            if begin == parsed[0]:
+                return self._instance(master, begin, finish)
+        return None
+
+    def _expanded(self, params: dict[str, str]) -> list[Json]:
+        low, _ = mapping.parse_time({"dateTime": params["timeMin"]})
+        high, _ = mapping.parse_time({"dateTime": params["timeMax"]})
+        pad = timedelta(days=30)
+        found: list[Json] = []
+        for item in self.events.values():
+            if item.get("recurringEventId"):
+                continue  # an exception is listed through its series
+            if not item.get("recurrence"):
+                found.append(item)
+            elif item["status"] != "cancelled":
+                found.extend(
+                    self._instance(item, b, f) for b, f in self._slots(item, low - pad, high + pad)
+                )
+        return found
+
     def _list(self, params: dict[str, str]) -> HttpReply:
         deleted = params.get("showDeleted") == "true"
-        matches = [e for e in self.events.values() if deleted or e["status"] != "cancelled"]
+        pool = (
+            self._expanded(params)
+            if params.get("singleEvents") == "true" and "timeMin" in params
+            else list(self.events.values())
+        )
+        matches = [e for e in pool if deleted or e["status"] != "cancelled"]
         if "iCalUID" in params:
             matches = [e for e in matches if e["iCalUID"] == params["iCalUID"]]
         else:
@@ -232,7 +308,7 @@ class FakeGoogleApi:
             self.events[item["id"]] = item
             return _reply(200, item)
         event_id = path[len(base) + 1 :] if path.startswith(base + "/") else ""
-        found = self.events.get(event_id)
+        found = self._resolve(event_id)
         if found is None:
             return _reply(404, {"error": "none"})
         if if_match is not None and found["etag"] != if_match:
@@ -243,6 +319,9 @@ class FakeGoogleApi:
             item.setdefault("iCalUID", found["iCalUID"])
             if "organizer" in found:
                 item["organizer"] = found["organizer"]
+            for key in ("recurringEventId", "originalStartTime"):
+                if key in found:
+                    item.setdefault(key, found[key])
             self._touch(item)
             self.events[found["id"]] = item
             return _reply(200, item)
@@ -251,5 +330,10 @@ class FakeGoogleApi:
         if method == "DELETE":
             found["status"] = "cancelled"
             self._touch(found)
+            self.events[found["id"]] = found
+            if found.get("recurrence"):
+                for other in self.events.values():
+                    if other.get("recurringEventId") == found["id"]:
+                        other["status"] = "cancelled"
             return _reply(204)
         return _reply(405)

@@ -115,6 +115,16 @@ class GoogleCalendar:
                 Capability(
                     name=CapabilityName.CALENDAR_INVITE, level=VerificationLevel.IMPLEMENTED
                 ),
+                Capability(
+                    name=CapabilityName.CALENDAR_RECURRENCE,
+                    level=VerificationLevel.IMPLEMENTED,
+                    absence_provable=_PROVABLE,
+                ),
+                Capability(
+                    name=CapabilityName.CALENDAR_OCCURRENCE,
+                    level=VerificationLevel.IMPLEMENTED,
+                    absence_provable=_PROVABLE,
+                ),
             ),
         )
 
@@ -203,7 +213,9 @@ class GoogleCalendar:
                     body = mapping.import_body(intent.uid, intent.event)
                     data = {"body": body, "fields": fields}
             case CalendarUpdate():
-                before = self._current(binding, refs, intent.event_ref, intent.expected_etag)
+                before = self._current(
+                    binding, refs, intent.event_ref, intent.expected_etag, scope=intent.scope
+                )
                 body = mapping.merge_update(before, mapping.wanted_body(intent.event, before))
                 notify = bool(intent.event.attendees) or _has_guests(before)
                 data = {
@@ -214,7 +226,9 @@ class GoogleCalendar:
                     "notify": notify,
                 }
             case CalendarDelete():
-                before = self._current(binding, refs, intent.event_ref, intent.expected_etag)
+                before = self._current(
+                    binding, refs, intent.event_ref, intent.expected_etag, scope=intent.scope
+                )
                 data = {
                     "locator": str(before["id"]),
                     "expected_etag": intent.expected_etag,
@@ -480,6 +494,7 @@ class GoogleCalendar:
         expected_etag: str,
         *,
         answering: bool = False,
+        scope: str | None = None,
     ) -> Json:
         locator = refs.get(ref)
         if locator is None:
@@ -495,7 +510,7 @@ class GoogleCalendar:
                     ErrorCode.REQUEST_INVALID, "That event is not an invitation to this calendar."
                 )
             return item
-        mapping.refuse_if_unwritable(item)
+        mapping.refuse_if_unwritable(item, scope)
         return item
 
 
