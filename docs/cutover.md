@@ -32,9 +32,14 @@ that was imported before this was carried over; the report counts them as
   `chamberlain config validate`.
 - Google and iCloud secrets are copied into the operating system credential store. The old
   files stay where they are. An existing secret is never replaced.
-- iCloud arrives as a disabled CalDAV source: run
-  `python -m chamberlain.connectors.caldav.setup register` to find the calendar collection;
-  it writes the source enabled.
+- iCloud: the saved app-specific password is found whichever way the old harness kept it
+  (the Mac file, or the Windows encrypted file in the old data folder or the older
+  `%LOCALAPPDATA%\Codex\OutlookAutomation`). The import checks it against iCloud and adds every
+  iCloud calendar, enabled: the main one ("Calendar" or "Home") as `calendar:icloud`, the
+  others as `calendar:icloud-<name>`. Switch one off with `enabled: false`. If iCloud cannot be
+  reached, the report says so and the calendar stays off.
+- Then, or if you imported before this existed, one step does it:
+  `python -m chamberlain.connectors.caldav.setup import-old --old-data <old data folder>`.
 - Sources the old profile bound to Outlook COM or native Outlook, or that lack a folder id,
   are listed as skipped. Bind them in Thunderbird and add them to the profile by hand.
 

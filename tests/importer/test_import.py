@@ -612,3 +612,65 @@ def test_g15_the_import_seeds_known_recipients_from_sent_history_and_reports_cou
         ("friend@example.org", "sent-history", None),
     ]
     assert rows(data_root, "SELECT * FROM grants WHERE title LIKE '%sent-history%'") == []
+
+
+def test_s17_the_old_windows_icloud_password_moves_and_its_calendars_connect(
+    old_root: Path,
+    data_root: Path,
+    secrets: MemorySecrets,
+    clock: ManualClock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Upgrading on Windows: the DPAPI file is read, checked, stored and every calendar added."""
+    import base64
+
+    from chamberlain.connectors.caldav.setup import Discovered, adopt_old_credential
+    from chamberlain.importer import dpapi
+
+    (old_root / "icloud-app-password.json").unlink()
+    (old_root / "icloud-caldav.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 2,
+                "appleAccount": "owner@icloud.example",
+                "protectionScope": "LocalMachine",
+                "encryptedPassword": base64.b64encode(b"sealed").decode(),
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def unseal(data: bytes, entropy: bytes | None) -> bytes:
+        assert data == b"sealed"
+        assert entropy == b"OutlookAutomation-iCloud-CalDAV-v2"
+        return b"wxyz-wxyz-wxyz-wxyz"
+
+    monkeypatch.setattr(dpapi, "unprotect", unseal)
+    signed_in: list[tuple[str, str]] = []
+
+    def icloud(username: str, password: str) -> list[Discovered]:
+        signed_in.append((username, password))
+        return [
+            Discovered("Family", "https://caldav.example/1/family/"),
+            Discovered("Home", "https://caldav.example/1/home/"),
+        ]
+
+    report = run_import(old_root, data_root, clock=clock, secrets=secrets, caldav_check=icloud)
+    assert signed_in == [("owner@icloud.example", "wxyz-wxyz-wxyz-wxyz")]
+    assert secrets.get("chamberlain.caldav", "password:owner@icloud.example") == (
+        "wxyz-wxyz-wxyz-wxyz"
+    )
+    sources = load_connections(data_root).sources
+    home, family = sources["calendar:icloud"], sources["calendar:icloud-family"]
+    assert home.enabled
+    assert family.enabled
+    assert home.model_dump()["url"] == "https://caldav.example/1/home/"
+    assert "calendar:icloud-family" in report.sources
+    for path in data_root.rglob("*"):
+        if path.is_file() and path.suffix != ".sqlite3":
+            assert "wxyz-wxyz" not in path.read_text(encoding="utf-8", errors="ignore")
+
+    # A user who imported before this existed runs one step; it is idempotent.
+    again = adopt_old_credential(data_root, old_root, secrets, check=icloud)
+    assert again[0] == "owner@icloud.example"
+    assert [sid for sid, _ in again[1]] == ["calendar:icloud", "calendar:icloud-family"]

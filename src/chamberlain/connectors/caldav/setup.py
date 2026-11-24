@@ -4,6 +4,7 @@
     python -m chamberlain.connectors.caldav.setup check [--apple-id ...]
     python -m chamberlain.connectors.caldav.setup register [--apple-id ...] [--calendar NAME]
     python -m chamberlain.connectors.caldav.setup forget [--apple-id ...]
+    python -m chamberlain.connectors.caldav.setup import-old --old-data OLD_DATA_ROOT
 
 Apple has no sign-in flow for outside tools: create an app-specific password for your
 Apple account and this command checks it against iCloud before it saves anything. The
@@ -37,6 +38,7 @@ from chamberlain.connectors.calendar_support.http import (
 )
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
 from chamberlain.dataroot import refuse_inside_checkout
+from chamberlain.importer.credentials import icloud_credential
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -184,29 +186,121 @@ def register(
     clock: Clock | None = None,
 ) -> bool:
     """Add the calendar to the private connection profile, keeping a backup. Idempotent."""
-    entry: dict[str, Any] = {
-        "kind": "caldav",
-        "url": calendar.url,
-        "username": username,
-        "credential": credential_name(username),
-    }
+    return register_all(path, username, [(source, calendar)], clock)
+
+
+def register_all(
+    path: Path,
+    username: str,
+    calendars: list[tuple[str, Discovered]],
+    clock: Clock | None = None,
+) -> bool:
+    """Add calendars to the profile in one write with one backup. True when anything changed."""
     profile: dict[str, Any] = {"version": PROFILE_VERSION, "sources": {}}
     if path.is_file():
         loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
         if isinstance(loaded, dict):
             profile = cast(dict[str, Any], loaded)
     sources = profile.setdefault("sources", {})
-    if sources.get(source) == entry:
+    changed = False
+    for source, calendar in calendars:
+        entry: dict[str, Any] = {
+            "kind": "caldav",
+            "url": calendar.url,
+            "username": username,
+            "credential": credential_name(username),
+        }
+        if calendar.name.strip():
+            entry["label"] = calendar.name.strip()[:80]
+        if sources.get(source) != entry:
+            sources[source] = entry
+            changed = True
+    if not changed:
         return False
-    sources[source] = entry
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_file():
         stamp = (clock or SystemClock()).now().strftime("%Y%m%d-%H%M%S")
-        shutil.copy2(path, path.with_name(f"{path.name}.bak-{stamp}"))
+        backup = path.with_name(f"{path.name}.bak-{stamp}")
+        if not backup.exists():
+            shutil.copy2(path, backup)
     pending = path.with_suffix(".tmp")
     pending.write_text(_dump(profile), encoding="utf-8")
     pending.replace(path)
     return True
+
+
+_PRIMARY_NAMES = ("calendar", "home")
+
+
+def _slug(name: str, room: int = 22) -> str:
+    """Lowercase words joined by hyphens, cut at a whole word to fit `room` characters."""
+    words = [w for w in re.split(r"[^a-z0-9]+", name.lower()) if w]
+    kept = ""
+    for word in words:
+        joined = f"{kept}-{word}" if kept else word
+        if len(joined) > room:
+            break
+        kept = joined
+    return kept or (words[0][:room] if words else "other")
+
+
+def connect_icloud(
+    path: Path,
+    store: SecretStore,
+    username: str,
+    *,
+    check: Check = verify,
+    source: str = ICLOUD_SOURCE,
+    clock: Clock | None = None,
+) -> list[tuple[str, str]]:
+    """Sign in with the saved password and add every iCloud event calendar to the profile.
+
+    The main calendar ("Calendar" or "Home", else the first by name) gets `source`; each other
+    one gets `source-<name>`. Returns (source id, calendar name) pairs. Idempotent; a calendar
+    the owner does not want can be switched off in the profile (`enabled: false`).
+    """
+    found = check(username, saved_password(store, username))
+    if not found:
+        raise ChamberlainError(
+            ErrorCode.SOURCE_UNAVAILABLE, "iCloud accepted the password but listed no calendars."
+        )
+    primary = next((c for c in found if c.name.strip().casefold() in _PRIMARY_NAMES), found[0])
+    chosen: list[tuple[str, Discovered]] = []
+    used = {source}
+    limit = source.index(":") + 1 + 32
+    for calendar in [primary, *(c for c in found if c is not primary)]:
+        sid = source
+        if calendar is not primary:
+            base = f"{source}-{_slug(calendar.name, limit - len(source) - 4)}"
+            sid, number = base, 2
+            while sid in used:
+                sid = f"{base}-{number}"
+                number += 1
+        used.add(sid)
+        chosen.append((sid, calendar))
+    register_all(path, username, chosen, clock)
+    return [(sid, calendar.name) for sid, calendar in chosen]
+
+
+def adopt_old_credential(
+    root: Path,
+    old_root: Path,
+    store: SecretStore,
+    *,
+    check: Check = verify,
+) -> tuple[str, list[tuple[str, str]]]:
+    """Move the old harness's saved iCloud password here and connect the calendars (S-17)."""
+
+    saved = icloud_credential(old_root)
+    if saved is None:
+        raise ChamberlainError(
+            ErrorCode.SOURCE_NOT_CONFIGURED,
+            "No saved iCloud password was found in the old installation.",
+            fix='Run "python -m chamberlain.connectors.caldav.setup credential" instead.',
+        )
+    username, password = saved
+    save_credential(store, username, password, check)
+    return username, connect_icloud(profile_path(root), store, username, check=check)
 
 
 def _dump(profile: dict[str, Any]) -> str:
@@ -237,9 +331,12 @@ def main(argv: list[str] | None = None, *, say: Say = print) -> int:
         ("check", "sign in with the saved credential and list your calendars"),
         ("register", "add an iCloud calendar to your private connection profile"),
         ("forget", "delete the saved credential (revoke the password at account.apple.com too)"),
+        ("import-old", "move the old harness's saved iCloud password here and connect calendars"),
     ):
         step = sub.add_parser(name, help=text)
         step.add_argument("--apple-id")
+        if name == "import-old":
+            step.add_argument("--old-data", required=True, help="the old harness's data folder")
         if name == "register":
             step.add_argument("--calendar", help="the calendar's name (default: the only one)")
             step.add_argument("--source", default=ICLOUD_SOURCE)
@@ -247,6 +344,12 @@ def main(argv: list[str] | None = None, *, say: Say = print) -> int:
     try:
         root = _data_root(args.data)
         store = default_store(root)
+        if args.step == "import-old":
+            apple_id, connected = adopt_old_credential(root, Path(args.old_data), store)
+            say(f"Moved the saved iCloud password for {apple_id} to the credential store.")
+            for sid, name in connected:
+                say(f"Connected {name or 'a calendar'} as {sid}.")
+            return 0
         apple_id = args.apple_id or input("Apple ID email: ")
         if args.step == "credential":
             say("Create an app-specific password at https://account.apple.com/account/manage")

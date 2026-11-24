@@ -51,6 +51,9 @@ Python; on macOS or Linux use `.venv/bin/python`.
    .venv/Scripts/python -m chamberlain.connectors.caldav.setup register
    ```
 
+   Upgrading from the old harness? Skip these: the import (step 4) moves the saved Google and
+   iCloud secrets and connects the calendars.
+
 4. Import your old data, if you have any:
 
    ```

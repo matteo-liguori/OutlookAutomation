@@ -38,6 +38,7 @@ from chamberlain.connections import (
 )
 from chamberlain.connections.demo import demo_document
 from chamberlain.connections.load import profile_path
+from chamberlain.connectors.caldav.setup import verify as icloud_verify
 from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.importer.run import run_import
 from chamberlain.livetest.commands import main as live_test_main
@@ -296,7 +297,7 @@ def _import(args: argparse.Namespace, out: TextIO) -> int:
                 "No data root is set.",
                 fix=f"Set {DATA_ENV} or pass --data before the tool name.",
             )
-        report = run_import(Path(args.old_root), Path(data))
+        report = run_import(Path(args.old_root), Path(data), caldav_check=icloud_verify)
     except ChamberlainError as error:
         _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
         return EXIT_FAILED

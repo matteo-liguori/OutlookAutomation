@@ -4,7 +4,11 @@ The old files are copied and left where they are (the old data root is the fallb
 secret that is already in the store is never overwritten, even by a different value.
 """
 
+import base64
+import binascii
 import json
+import os
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
@@ -12,12 +16,23 @@ from chamberlain.connectors.caldav.credentials import SERVICE as CALDAV_SERVICE
 from chamberlain.connectors.caldav.credentials import credential_name
 from chamberlain.connectors.calendar_support.secrets import SecretStore
 from chamberlain.connectors.google_calendar import auth
+from chamberlain.importer import dpapi
 from chamberlain.importer.report import ImportReport
 from chamberlain.schema.errors import ChamberlainError
 
 GOOGLE_CLIENT = Path("google") / "client.json"
 GOOGLE_TOKENS = Path("google") / "tokens"
 ICLOUD_FILE = "icloud-app-password.json"
+"""The old harness's plain file (the Mac setup)."""
+ICLOUD_WINDOWS_FILE = "icloud-caldav.json"
+"""The old harness's DPAPI-encrypted file (the Windows setup)."""
+_WINDOWS_ENTROPY = b"OutlookAutomation-iCloud-CalDAV-v2"
+
+
+def legacy_windows_dirs() -> list[Path]:
+    """Where the oldest Windows setup kept its file, outside the data root."""
+    local = os.environ.get("LOCALAPPDATA")
+    return [Path(local) / "Codex" / "OutlookAutomation"] if local else []
 
 
 def _read(path: Path) -> dict[str, Any] | None:
@@ -28,20 +43,64 @@ def _read(path: Path) -> dict[str, Any] | None:
     return value if isinstance(value, dict) else None  # pyright: ignore[reportUnknownVariableType]
 
 
-def icloud_credential(root: Path) -> tuple[str, str] | None:
-    """The saved iCloud Apple ID and app-specific password, or None."""
-    data = _read(root / ICLOUD_FILE)
+def _windows_credential(path: Path, unprotect: dpapi.Unprotect) -> tuple[str, str] | None:
+    data = _read(path)
     if data is None:
         return None
-    username, password = (
-        str(data.get("username", "")).strip(),
-        str(data.get("password", "")).strip(),
-    )
-    return (username, password) if username and password else None
+    username = str(data.get("appleAccount", "")).strip()
+    blob = str(data.get("encryptedPassword", "")).strip()
+    version = data.get("schemaVersion")
+    if not username or not blob:
+        return None
+    try:
+        if version == 2:
+            password = unprotect(base64.b64decode(blob, validate=True), _WINDOWS_ENTROPY)
+            text = password.decode("utf-8")
+        elif version == 1:
+            text = unprotect(bytes.fromhex(blob), None).decode("utf-16-le")
+        else:
+            return None
+    except (OSError, ValueError, binascii.Error):
+        return None
+    return (username, text.strip()) if text.strip() else None
 
 
-def move_secrets(root: Path, store: SecretStore, report: ImportReport) -> bool:
-    """Copy every old secret that the store does not hold yet. True when it wrote any."""
+def icloud_credential(
+    root: Path,
+    *,
+    unprotect: dpapi.Unprotect | None = None,
+    extra_dirs: Sequence[Path] | None = None,
+) -> tuple[str, str] | None:
+    """The saved iCloud Apple ID and app-specific password, or None.
+
+    Looks for the old Mac file, then the old Windows file in the old data root, then the oldest
+    Windows location. The first readable one wins.
+    """
+    data = _read(root / ICLOUD_FILE)
+    if data is not None:
+        username, password = (
+            str(data.get("username", "")).strip(),
+            str(data.get("password", "")).strip(),
+        )
+        if username and password:
+            return username, password
+    dirs = [root, *(legacy_windows_dirs() if extra_dirs is None else extra_dirs)]
+    for folder in dirs:
+        found = _windows_credential(folder / ICLOUD_WINDOWS_FILE, unprotect or dpapi.unprotect)
+        if found is not None:
+            return found
+    return None
+
+
+def move_secrets(
+    root: Path,
+    store: SecretStore,
+    report: ImportReport,
+    icloud: tuple[str, str] | None = None,
+) -> bool:
+    """Copy every old secret that the store does not hold yet. True when it wrote any.
+
+    `icloud` is the credential the caller already found (`icloud_credential`)."""
     wrote = False
 
     client = _read(root / GOOGLE_CLIENT)
@@ -80,7 +139,7 @@ def move_secrets(root: Path, store: SecretStore, report: ImportReport) -> bool:
         report.secrets[label] = "copied"
         wrote = True
 
-    saved = icloud_credential(root)
+    saved = icloud
     if saved is not None:
         username, password = saved
         name = credential_name(username)

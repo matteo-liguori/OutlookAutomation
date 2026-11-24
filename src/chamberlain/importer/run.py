@@ -18,6 +18,7 @@ from chamberlain.connections.build import build_router
 from chamberlain.connections.load import dump_connections, profile_path
 from chamberlain.connections.model import GoogleCalendarSource
 from chamberlain.connections.repo import sync_sources
+from chamberlain.connectors.caldav.setup import Check, connect_icloud
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
 from chamberlain.connectors.google_calendar import auth
 from chamberlain.importer import authority, records
@@ -98,6 +99,7 @@ def _import_all(
     the_clock: Clock,
     secrets: SecretStore | None,
     report: ImportReport,
+    caldav_check: Check | None = None,
 ) -> MappedProfile:
     icloud = icloud_credential(old_root)
     mapped = map_profile(old, report, icloud[0] if icloud else None)
@@ -105,12 +107,30 @@ def _import_all(
     _private_guidance(old, report)
 
     store = secrets or default_store(data_root)
-    move_secrets(old_root, store, report)
+    move_secrets(old_root, store, report, icloud)
     _check_google_accounts(mapped, store, report)
     _write_profile(data_root, mapped, report)
+    if icloud is not None and caldav_check is not None:
+        _connect_icloud(data_root, store, icloud[0], caldav_check, report)
     write_template(old, data_root, mapped.connections.timezone, report)
     _write_rows(old, mapped, zone, data_root, the_clock, report)
     return mapped
+
+
+def _connect_icloud(
+    data_root: Path, store: SecretStore, username: str, check: Check, report: ImportReport
+) -> None:
+    """Sign in to iCloud with the moved password and connect its calendars; never fails."""
+    try:
+        connected = connect_icloud(profile_path(data_root), store, username, check=check)
+    except (ChamberlainError, OSError) as error:
+        report.warnings.append(
+            f"iCloud was not connected ({error}). Once you are online, run "
+            '"python -m chamberlain.connectors.caldav.setup import-old --old-data <old folder>".'
+        )
+        return
+    for sid, name in connected:
+        report.sources[sid] = f"iCloud calendar {name or '(unnamed)'} (connected)"
 
 
 def _seed_recipients(
@@ -160,7 +180,10 @@ def run_import(
     secrets: SecretStore | None = None,
     mail: Mapping[str, MailPort] | None = None,
     seed_recipients: bool = True,
+    caldav_check: Check | None = None,
 ) -> ImportReport:
+    """Import an old installation. `caldav_check` signs in to iCloud (the CLI passes the
+    real one); without it the iCloud calendar stays a disabled placeholder."""
     the_clock = clock or SystemClock()
     _guard_paths(old_root, data_root)
     old = read_installation(old_root)
@@ -172,7 +195,7 @@ def run_import(
     report.next_steps = list(NEXT_STEPS)
 
     try:
-        mapped = _import_all(old, old_root, data_root, the_clock, secrets, report)
+        mapped = _import_all(old, old_root, data_root, the_clock, secrets, report, caldav_check)
     except ChamberlainError:
         raise
     except (sqlite3.Error, ValidationError, ValueError, KeyError, TypeError) as error:
