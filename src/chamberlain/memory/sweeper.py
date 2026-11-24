@@ -470,14 +470,12 @@ def _rotate_system_files(run: _Run) -> None:
 
 def _check_budgets(run: _Run) -> None:
     total = repo.total_stored_bytes(run.db)
-    state = "0"
+    parts: list[str] = []
     if total > run.budgets.total_bytes:
-        state = f"total:{total}/{run.budgets.total_bytes}"
-    else:
-        over = repo.cards_over_artifact_budget(run.db, run.budgets.per_card_bytes)
-        if over:
-            card, used = over[0]
-            state = f"card:{card}:{used}/{run.budgets.per_card_bytes}"
+        parts.append(f"total:{total}/{run.budgets.total_bytes}")
+    for card, used in repo.cards_over_artifact_budget(run.db, run.budgets.per_card_bytes):
+        parts.append(f"{card}:{used}/{run.budgets.per_card_bytes}")
+    state = ",".join(parts) if parts else "0"
     run.over_budget = state != "0"
     with transaction(run.db):
         set_state(run.db, run.ctx.clock, "memory.over_budget", state)
