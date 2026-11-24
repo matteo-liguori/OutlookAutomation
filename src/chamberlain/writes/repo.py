@@ -5,11 +5,12 @@ plain strings; timestamps are the stored D-7 text. Nothing here decides
 anything: rules live in `authorise.py`, `grants.py` and `engine.py`.
 """
 
+import json
 import sqlite3
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 from chamberlain.domain.grant_rules import format_ts, parse_ts
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
@@ -183,21 +184,70 @@ def delete_compacted_grants(db: sqlite3.Connection, before: str) -> int:
 # --- known recipients -------------------------------------------------------------
 
 
+def own_addresses(db: sqlite3.Connection, source_id: str) -> frozenset[str]:
+    """The mailbox address(es) a source is bound to: always known recipients."""
+    row = db.execute("SELECT binding_json FROM sources WHERE id = ?", (source_id,)).fetchone()
+    if row is None:
+        return frozenset()
+    try:
+        binding = json.loads(str(row["binding_json"]))
+    except ValueError:
+        return frozenset()
+    found: set[str] = set()
+    if isinstance(binding, dict):
+        values = cast(dict[str, object], binding)
+        for key in ("mailbox", "address", "addresses"):
+            value = values.get(key)
+            if isinstance(value, str):
+                found.add(value.strip().lower())
+            elif isinstance(value, list):
+                found.update(str(v).strip().lower() for v in cast(list[object], value))
+    return frozenset(a for a in found if "@" in a)
+
+
 def known_recipients(db: sqlite3.Connection, source_id: str) -> frozenset[str]:
+    """Confirmed, seeded from Sent history, or the source's own address."""
     rows = db.execute(
         "SELECT address FROM known_recipients WHERE source_id = ?", (source_id,)
     ).fetchall()
-    return frozenset(row["address"] for row in rows)
+    return frozenset(row["address"] for row in rows) | own_addresses(db, source_id)
 
 
 def add_known_recipient(
     db: sqlite3.Connection, source_id: str, address: str, grant: str, at: str
 ) -> None:
     db.execute(
-        "INSERT OR IGNORE INTO known_recipients (source_id, address, grant, confirmed_at) "
-        "VALUES (?, ?, ?, ?)",
-        (source_id, address, grant, at),
+        "INSERT OR IGNORE INTO known_recipients (source_id, address, grant, origin, confirmed_at) "
+        "VALUES (?, ?, ?, 'confirmed-grant', ?)",
+        (source_id, address.lower(), grant, at),
     )
+
+
+def seed_known_recipients(
+    db: sqlite3.Connection, source_id: str, addresses: Iterable[str], at: str
+) -> int:
+    """Add Sent-history recipients. Existing rows stay as they are. Returns rows added."""
+    added = 0
+    for address in sorted({a.strip().lower() for a in addresses if "@" in a}):
+        cursor = db.execute(
+            "INSERT OR IGNORE INTO known_recipients (source_id, address, grant, origin, "
+            "confirmed_at) VALUES (?, ?, NULL, 'sent-history', ?)",
+            (source_id, address, at),
+        )
+        added += cursor.rowcount
+    return added
+
+
+def recipient_counts(db: sqlite3.Connection, source_id: str) -> dict[str, int]:
+    """Known recipients by origin, plus the source's own addresses."""
+    counts = {"confirmed-grant": 0, "sent-history": 0}
+    for row in db.execute(
+        "SELECT origin, count(*) AS n FROM known_recipients WHERE source_id = ? GROUP BY origin",
+        (source_id,),
+    ):
+        counts[str(row["origin"])] = int(row["n"])
+    counts["own"] = len(own_addresses(db, source_id))
+    return counts
 
 
 # --- operations -------------------------------------------------------------------
