@@ -15,6 +15,7 @@ class EventKind(StrEnum):
     GRANT_NEEDED = "grant.needed"
     GRANT_REVIEW_DUE = "grant.review_due"
     OPERATION_UNCERTAIN = "operation.uncertain"
+    SEND_MISSING = "send.missing"
     SOURCE_STALE = "source.stale"
     SOURCE_SIGN_IN_NEEDED = "source.sign_in_needed"
     CALENDAR_CONFLICT = "calendar.conflict"
@@ -34,5 +35,7 @@ class EventState(StrEnum):
 
 LIVE_EVENT_STATES = frozenset({EventState.NEW, EventState.DELIVERED})
 
-NOT_AGENT_HANDLEABLE = frozenset({EventKind.OPERATION_UNCERTAIN, EventKind.SOURCE_SIGN_IN_NEEDED})
+NOT_AGENT_HANDLEABLE = frozenset(
+    {EventKind.OPERATION_UNCERTAIN, EventKind.SEND_MISSING, EventKind.SOURCE_SIGN_IN_NEEDED}
+)
 """Events that close only when the condition ends (A-4)."""

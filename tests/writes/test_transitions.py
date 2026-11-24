@@ -33,6 +33,7 @@ ARROWS = {
     (S.UNCERTAIN, S.CONFIRMED),
     (S.UNCERTAIN, S.CONFIRMED_ABSENT),
     (S.UNCERTAIN, S.ABANDONED),
+    (S.UNCERTAIN, S.SUPERSEDED),
     (S.RECONCILING, S.CONFIRMED),
     (S.RECONCILING, S.CONFIRMED_ABSENT),
     (S.RECONCILING, S.UNCERTAIN),
@@ -48,6 +49,7 @@ def test_w6_the_legal_transitions_are_exactly_the_arrows_of_the_diagram() -> Non
         S.CONFIRMED_ABSENT,
         S.CANCELLED,
         S.ABANDONED,
+        S.SUPERSEDED,
     } == TERMINAL_STATES
 
 

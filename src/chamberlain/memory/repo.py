@@ -17,7 +17,8 @@ Row = sqlite3.Row
 LIVE_ACTION = "SELECT handle FROM actions WHERE state = 'open'"
 LIVE_OPERATION = (
     "SELECT handle FROM operations WHERE "
-    "state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', 'cancelled', 'abandoned') "
+    "state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', 'cancelled', 'abandoned', "
+    "'superseded') "
     "OR COALESCE(settled_at, updated_at) > :grace_edge"
 )
 LIVE_GRANT = "SELECT handle FROM grants WHERE state IN ('proposed', 'active', 'suspended')"
@@ -813,7 +814,7 @@ def delete_stale_refs(db: sqlite3.Connection, edge: str) -> int:
         "AND handle NOT IN (SELECT ref FROM evidence WHERE ref IS NOT NULL) "
         "AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.refs_json LIKE '%' || refs.handle "
         "|| '%' AND o.state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', "
-        "'cancelled', 'abandoned'))",
+        "'cancelled', 'abandoned', 'superseded'))",
         (edge,),
     ).rowcount
 
@@ -934,6 +935,14 @@ def get_grant(db: sqlite3.Connection, handle: str) -> Row | None:
 def get_operation(db: sqlite3.Connection, handle: str) -> Row | None:
     row: Row | None = db.execute("SELECT * FROM operations WHERE handle = ?", (handle,)).fetchone()
     return row
+
+
+def resend_handle(db: sqlite3.Connection, original: str) -> str | None:
+    """The live resend of an uncertain send, if one was made (W-38)."""
+    row: Row | None = db.execute(
+        "SELECT handle FROM operations WHERE redo_of = ? AND state <> 'cancelled'", (original,)
+    ).fetchone()
+    return None if row is None else str(row["handle"])
 
 
 def get_event(db: sqlite3.Connection, handle: str) -> Row | None:

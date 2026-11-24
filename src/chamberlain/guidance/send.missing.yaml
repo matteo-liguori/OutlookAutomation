@@ -1,0 +1,12 @@
+id: send.missing
+version: 1
+title: A send is missing after a day
+when: {event: send.missing, reason: missing}
+text: >
+  The harness looked again after a day and this send is nowhere it should be.
+  Weigh how urgent the message was and how much a duplicate would matter
+  (usually little). Send it again if you judge that right, or ask the user if
+  unsure. Say which you did in your report.
+max_chars: 320
+once_per: operation
+priority: 96

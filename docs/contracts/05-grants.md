@@ -69,11 +69,13 @@ proposed -> active -> spent        (one_off, its operation confirmed)
 | --- | --- | --- |
 | `confirmed` | `spent` | use counted |
 | `failed_clean`, `confirmed_absent`, `cancelled` | stays `active` | use released |
+| `superseded` (a missing send, sent again) | held for the resend | use passes to the resend |
 | `uncertain`, `reconciling`, `dispatched` | held; unusable | use counted |
 
 - **G-11** Usage is derived from `operations`, not stored as a counter that
   can drift: reserved or spent uses are operations under the grant in any
-  state except `failed_clean`, `confirmed_absent`, `cancelled`.
+  state except `failed_clean`, `confirmed_absent`, `cancelled`, `superseded`. A resend (04-writes.md
+  W-38) is authorised by the original's grant without new evidence; its use replaces the original's.
 
 ## Who may activate a grant
 
