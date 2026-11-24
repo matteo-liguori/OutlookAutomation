@@ -69,6 +69,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "memory.last_backup_at",
         "memory.last_orphan_scan_at",
         "writes.audit_checkpoint_hash",
+        "writes.audit_head",
         "app.installed_version",
     }
 )
