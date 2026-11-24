@@ -32,6 +32,7 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 SOURCE = "mail:test"
 
+
 def handle(locator: str) -> str:
     return ref_handle(HandleKind.MESSAGE, SOURCE, locator)
 
