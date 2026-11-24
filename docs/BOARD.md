@@ -78,3 +78,14 @@ working session; append to it whenever one of the cases below applies.
    protocols in `app/services.py`; they never import each other
    (`tests/test_layout.py`).
 8. Migration numbers are reserved per track (09-storage.md, S-12).
+
+## 2026-11-24 12:00 UTC | architect | DECISION | Owner rulings on wave-0 open points
+
+Coordinator (Opus) relaying owner decisions. Grants: human confirmation in the viewer is
+mandatory for standing grants, unknown recipients and attendee calendar writes; one-off
+sends to known recipients default to `agent_evidence` (05-grants.md row for
+`grants.send_known` changed). Legacy Outlook is not rebuilt. Audience: owner plus friends.
+Alpha: breaking changes allowed. All other wave-0 decisions stand until a ruling here.
+Wave-1 builders each work in their own worktree and branch (cv2/<track>) with their own
+`.venv`; the coordinator merges into `chamberlain-v2` in the order memory, writes,
+attention, thunderbird. On merge conflicts in this file keep both sides.

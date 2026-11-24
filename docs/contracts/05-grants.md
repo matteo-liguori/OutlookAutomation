@@ -82,7 +82,7 @@ proposed -> active -> spent        (one_off, its operation confirmed)
 | Any standing grant | `human_confirmation` (mandatory) |
 | `mail.send` with any recipient not in `known_recipients` for that source | `human_confirmation` (mandatory) |
 | `calendar.*` with attendees who are not known recipients | `human_confirmation` (mandatory) |
-| `mail.send` to known recipients only | config `grants.send_known`, default `human_confirmation` |
+| `mail.send` to known recipients only | config `grants.send_known`, default `agent_evidence` (owner decision 2026-11-24) |
 | `mail.draft_*`, `mail.move`, `mail.trash`, `mail.mark_read`, `calendar.*` without attendees | config `grants.other`, default `agent_evidence` |
 
 - **G-12** Config may tighten any row to `human_confirmation`. It MUST NOT
