@@ -69,22 +69,56 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
 ### New mail (watermark and triage)
 
 - **A-20** Each mail source has a covered-through watermark (`mail_watermarks`). A tick
-  scans the inbox from a little before it (`MAIL_OVERLAP`), whatever the read state, pages
-  until the connector says it is complete, and only then moves the watermark to the scan's
-  start. A scan that cannot finish in one tick (page budget, connector gap, failure, stale
-  health) keeps what it found, resumes below the oldest date reached, and raises
-  `source.stale` naming the uncovered span. Mail read on another device is still seen once.
-  A source never watched starts `MAIL_BOOTSTRAP` back; `watching_since` records it. Known
-  residue: mail whose Date header is older than the required overlap (1 hour) and that
-  arrives after a scan that could not finish the overlap.
-- **A-21** New messages are stored once (`mail_seen`: identity, time, suggested card; no
-  sender or subject). The detector raises one `mail.new_unmatched` event per source, keyed by
-  the oldest waiting row, whose next call is a `find` of the inbox since then. Handling the
-  event triages only the rows shown with it; mail that arrived later raises a fresh event.
-  `mail.new_for_card` is retired as a trigger. A mail event no longer ends because the
-  message was marked read; it ends when the agent handles it.
+  scans the whole mailbox, not only the inbox: every folder except Trash, Junk and Drafts
+  (Outbox is not part of the mailbox). It starts a little before the watermark
+  (`MAIL_REQUIRED_OVERLAP`, one hour, with one best-effort page back to `MAIL_OVERLAP`), takes
+  any read state, and reads **oldest first in time slices**. A slice counts only when every
+  page of it was read with no connector gap; only then does the frontier move. A slice that
+  needs more pages than one tick may use, or that the connector says to narrow (`Gap.narrow`,
+  the Thunderbird scan limit), is halved, down to one second, and the width is kept for the next
+  tick. A big window therefore always advances. The watermark moves to the scan's start only
+  when the whole window is done. A scan that cannot finish (page budget, connector gap, failure,
+  stale health) keeps what it found, keeps its frontier, and raises `source.stale` naming the
+  uncovered span (frontier to now). Mail read or filed on another device is still seen once. A
+  source never watched starts `MAIL_BOOTSTRAP` back; `watching_since` records it, and that first
+  look back is not a question (A-23). Known residue: mail whose Date header is older than the
+  required overlap and that arrives after a scan.
+- **A-21** A message is stored once per source, whatever folders hold copies of it
+  (`mail_seen`, unique on `message_key`, the bare lower-cased Message-ID, else the locator).
+  Gmail's All Mail copy, a message moved between folders and a label copy are one item. A row
+  holds identity, time and suggested card; no sender or subject. Mail the owner sent (a copy in
+  a Sent folder and none in the inbox, or sent from the source's own address) is `sent`: it adds
+  its recipients to the known recipients (`WriteControl.learn_recipients`, origin
+  `sent-history`) and never counts as new mail. If it matches an open card (thread headers, or
+  recipients that all point to one card) it is kept for one quiet, low-priority
+  `mail.new_unmatched` line with reason `sent` ("N sent by you"), whose next call lists the
+  Sent folder; otherwise it needs no triage and goes with the window. The detector raises
+  one `mail.new_unmatched` event per source for received mail, keyed by the oldest waiting
+  row, whose next call is a `find` of that source since then, in every folder. Handling the
+  event triages only the rows shown with it, in its own direction (received or sent); mail that
+  arrived later raises a fresh event. `mail.new_for_card` is retired as a trigger. A mail
+  event no longer ends because the message was marked read; it ends when the agent handles it.
 - **A-22** The harness only suggests a card (reply headers first, then a sender who
-  corresponds with exactly one open card). It MUST NOT write `card_links`; the agent links.
+  corresponds with exactly one open card; for sent mail, recipients that all point to one
+  card). It MUST NOT write `card_links`; the agent links. `find` shows the suggestion on every
+  copy of the message, found by message key.
+- **A-23** Older mail needs the owner's word. When a scan starts and the uncovered span
+  (now minus the watermark) is more than `MAIL_STANDARD` (24 hours), it reads the last 24
+  hours as normal and **holds** the older part (`held_from`..`held_to` on `mail_watermarks`,
+  state `asking`) with an estimate of its size (a few header pages counted, the rest
+  extrapolated by time; never a full read). One event of kind `source.stale`, reason
+  `older_mail`, subject the source and discriminator `older:<held_to>`, tells the agent the
+  exact span and the estimate; its work item's next call is `doctor` (it never carries the
+  answer). The agent asks the owner in chat. A yes is `next` with the question's event
+  listed under `older_mail` (which also marks it handled): the state becomes `approved` and
+  each later tick reads the held span oldest-first with its own page budget, moving
+  `held_from` forward until nothing is left. A question marked handled without being listed
+  there is a no: the state becomes `declined`, nothing more is read, the span stays on record,
+  `doctor sources` (`sources.older_mail`) warns about it, and a later yes still works from the
+  same handle. Every answer is an audit row (`mail.older_yes`, `mail.older_no`). A yes is
+  refused for a question that is not an old-mail question or whose span has changed. A second
+  long gap while a span is held extends it from its start and asks again. The first look back
+  of a never-watched source is not held. Rows are not pruned inside a held span.
 
 ## Delivery
 

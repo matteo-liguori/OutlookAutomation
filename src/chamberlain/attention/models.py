@@ -138,6 +138,8 @@ class MailBatch:
     oldest_received: str
     suggested: int
     """How many of the messages come with a suggested open card."""
+    sent: bool = False
+    """Mail the owner sent from another device that matches an open card (a low-priority line)."""
 
 
 @dataclass(frozen=True)
@@ -147,6 +149,18 @@ class MailGap:
     source: str
     start: str
     end: str
+
+
+@dataclass(frozen=True)
+class HeldMail:
+    """Mail of `source` dated between `start` and `end` (UTC) was not read: it is more than a
+    day back. `state` says where the owner's answer stands (A-23)."""
+
+    source: str
+    start: str
+    end: str
+    state: str
+    estimate: int | None
 
 
 @dataclass(frozen=True)
@@ -181,6 +195,7 @@ class DetectorInput:
     sources: tuple[SourceSnapshot, ...] = ()
     mail: tuple[MailBatch, ...] = ()
     mail_gaps: tuple[MailGap, ...] = ()
+    mail_held: tuple[HeldMail, ...] = ()
     actions: tuple[ActionRow, ...] = ()
     cards: tuple[CardRow, ...] = ()
     open_cards: tuple[CardRow, ...] = ()

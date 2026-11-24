@@ -1,13 +1,17 @@
-"""Per-source new-mail watermark: every message is seen once, or a gap is named.
+"""Per-source new-mail watermark over every folder: each message is seen once, or a gap is named.
 
-Contract: docs/contracts/07-attention.md (A-6, A-7). A scan lists the inbox from a
-little before the watermark, whatever the read state, pages until the connector says it
-is complete, and only then moves the watermark. A scan that cannot finish keeps what it
-found, remembers how far it got, and records the span still uncovered (`source.stale`).
-Nothing here changes remote state (P-3) or stores a sender or subject.
+Contract: docs/contracts/07-attention.md (A-6, A-7, A-20 to A-23). A scan lists the whole mailbox
+(every folder except Trash, Junk and Drafts) from a little before the watermark, oldest first, in
+time slices that shrink until each one is read to the end. The watermark moves only over slices
+that were read completely; a scan that cannot finish keeps what it found and records the span still
+uncovered (`source.stale`). One message is one item, whatever folders hold copies of it. Mail the
+owner sent is learned from and offered as context, never as new mail. A span more than a day
+behind is read for the last day only; the older part waits for the owner's word. Nothing here
+changes remote state (P-3) or stores a sender or subject.
 """
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -16,20 +20,26 @@ from chamberlain.attention import repo
 from chamberlain.attention.suggest import Suggester
 from chamberlain.attention.tuning import (
     MAIL_BOOTSTRAP,
+    MAIL_ESTIMATE_PAGES,
     MAIL_MAX_PAGES,
     MAIL_OVERLAP,
     MAIL_PAGE_LIMIT,
     MAIL_REQUIRED_OVERLAP,
+    MAIL_STANDARD,
 )
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.handles import HandleKind
-from chamberlain.domain.mail import FolderRole, MailQuery, MessageSummary
+from chamberlain.domain.mail import FolderRole, MailQuery, MessageSummary, message_key
+from chamberlain.ports.mail import MailPort
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 
 log = logging.getLogger("chamberlain.attention")
 
 _FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+_SKIPPED = frozenset({FolderRole.TRASH, FolderRole.JUNK, FolderRole.DRAFTS})
+"""Folders whose mail the owner does not want triaged. Outbox is not part of the mailbox."""
+_MIN_SLICE = timedelta(seconds=1)
 
 
 def _fmt(when: datetime) -> str:
@@ -46,9 +56,100 @@ class Scanned:
     """True when the whole range was covered and the watermark moved."""
 
 
+@dataclass
+class _Walk:
+    """How far one oldest-first walk got."""
+
+    frontier: datetime
+    width: int | None
+    clean: bool = True
+    """False after a failure or a gap the walk could not narrow away."""
+
+
+Take = Callable[[list[MessageSummary]], None]
+
+
+def _walk(
+    port: MailPort,
+    source: str,
+    lo: datetime,
+    hi: datetime,
+    width: int | None,
+    take: Take,
+) -> _Walk:
+    """Read [lo, hi] oldest slice first. Items are handed to `take` even from a slice that did not
+    finish; the frontier moves only over slices read to the end with no gap (A-20).
+
+    A slice that needs more pages than the budget allows, or that the connector says to narrow,
+    is halved. The width is kept so the next tick starts from a slice that fits.
+    """
+    walk = _Walk(lo, width)
+    pages_left = MAIL_MAX_PAGES
+    while walk.frontier < hi and pages_left > 0:
+        span = hi - walk.frontier
+        step = span if walk.width is None else min(span, timedelta(seconds=walk.width))
+        slice_end = walk.frontier + step
+        last = slice_end >= hi
+        # Timestamps are whole seconds (D-7): take the whole last second of the slice.
+        query = MailQuery(since=walk.frontier, until=slice_end + _MIN_SLICE, limit=MAIL_PAGE_LIMIT)
+        cursor: str | None = None
+        used = 0
+        finished = other = False
+        while pages_left > 0:
+            page = port.search(source, query, cursor)
+            pages_left -= 1
+            used += 1
+            take(list(page.items))
+            if page.gaps:
+                other = not any(g.narrow for g in page.gaps)
+                break
+            if page.cursor is None:
+                finished = True
+                break
+            cursor = page.cursor
+        if finished:
+            walk.frontier = hi if last else slice_end
+            if walk.width is not None and used == 1:
+                walk.width = None if walk.width * 2 >= span.total_seconds() else walk.width * 2
+            continue
+        if other or step <= _MIN_SLICE:
+            walk.clean = False
+            return walk
+        walk.width = max(1, int(step.total_seconds()) // 2)
+    return walk
+
+
+def _estimate(
+    port: MailPort, source: str, skipped: frozenset[str], lo: datetime, hi: datetime
+) -> int | None:
+    """About how many messages a span holds: a few pages counted, the rest extrapolated by time.
+
+    Reads only headers, newest first, and never pages through the whole span.
+    """
+    keys: set[str] = set()
+    cursor: str | None = None
+    oldest = hi
+    try:
+        for _ in range(MAIL_ESTIMATE_PAGES):
+            page = port.search(source, MailQuery(since=lo, until=hi, limit=MAIL_PAGE_LIMIT), cursor)
+            for item in page.items:
+                if item.folder_id not in skipped:
+                    keys.add(message_key(item.internet_message_id, item.locator))
+                oldest = min(oldest, item.date)
+            if page.cursor is None:
+                return len(keys)
+            cursor = page.cursor
+    except Exception:
+        log_failure(log, "estimating older mail failed for %s", source)
+        return None
+    covered = max((hi - oldest).total_seconds(), 1.0)
+    return round(len(keys) * (hi - lo).total_seconds() / covered)
+
+
 def scan(ctx: Context, source: str, health: HealthState | None, suggester: Suggester) -> Scanned:
-    now = ctx.clock.now()
+    now = ctx.clock.now().replace(microsecond=0)
     state = repo.watermark(ctx.db, source)
+    first = state is None
     if state is None:
         with transaction(ctx.db):
             repo.begin_watching(
@@ -58,110 +159,181 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
         if state is None:
             return Scanned(False)
     through = _parse(state.covered_through)
-    since = through - MAIL_OVERLAP
-    started = _parse(state.scan_started_at) if state.scan_started_at else now
-    until = _parse(state.scan_until) if state.scan_until else None
-    frontier = until if until is not None else started
+    fresh = state.scan_started_at is None
+    started = now if fresh else _parse(state.scan_started_at or _fmt(now))
+    resume = _parse(state.scan_from) if state.scan_from else None
 
     if health in (HealthState.UNAVAILABLE, HealthState.SIGN_IN_NEEDED):
-        _record(
-            ctx,
-            source,
-            state.covered_through,
-            state.scan_started_at,
-            state.scan_until,
-            (_fmt(through), _fmt(max(frontier, through))),
-        )
+        begin = max(through, resume or through)
+        _record(ctx, source, state, (_fmt(begin), _fmt(max(now, begin))))
         return Scanned(False)
 
-    found: list[MessageSummary] = []
+    held = state.held
+    hold_from: datetime | None = None
+    if fresh and now - through > MAIL_STANDARD:
+        # More than a day uncovered: read the last day, hold the older part for the owner (A-23).
+        hold_from = through - MAIL_REQUIRED_OVERLAP
+        if held is not None:
+            hold_from = min(hold_from, _parse(held.start))
+        through = now - MAIL_STANDARD
+
+    found: dict[str, list[MessageSummary]] = {}
+    roles: dict[str, FolderRole] = {}
     failed = False
-    exhausted = False
-    gapped = False
+    width = state.scan_width
+    estimate: int | None = None
+    catch_up: _Walk | None = None
+    port: MailPort | None = None
+    frontier = through - MAIL_REQUIRED_OVERLAP
+    if first:
+        frontier = now - MAIL_BOOTSTRAP
+    elif resume is not None:
+        frontier = resume
+    if hold_from is not None:
+        frontier = max(frontier, through)
+    elif held is not None:
+        frontier = max(frontier, _parse(held.end))
     try:
         port = ctx.sources.mail_port(source)
-        inbox = [f for f in port.folders(source) if f.role is FolderRole.INBOX]
-        if not inbox:
-            raise LookupError("no inbox")
-        query = MailQuery(
-            folder_id=inbox[0].id,
-            since=since,
-            # Timestamps are whole seconds (D-7): include the whole frontier second.
-            until=None if until is None else until + timedelta(seconds=1),
-            limit=MAIL_PAGE_LIMIT,
-        )
-        cursor: str | None = None
-        for _ in range(MAIL_MAX_PAGES):
-            page = port.search(source, query, cursor)
-            found.extend(page.items)
-            if page.gaps:
-                gapped = True
-                break
-            if page.cursor is None:
-                exhausted = True
-                break
-            cursor = page.cursor
+        roles = {f.id: f.role for f in port.folders(source)}
+        skipped = frozenset(i for i, role in roles.items() if role in _SKIPPED)
+
+        def take(items: list[MessageSummary]) -> None:
+            for item in items:
+                if item.folder_id not in skipped:
+                    key = message_key(item.internet_message_id, item.locator)
+                    found.setdefault(key, []).append(item)
+
+        if fresh and not first:
+            # Late arrivals dated up to a day before the watermark: best effort, one page.
+            early = through - MAIL_OVERLAP
+            if early < frontier:
+                page = port.search(
+                    source, MailQuery(since=early, until=frontier, limit=MAIL_PAGE_LIMIT)
+                )
+                take(list(page.items))
+        if hold_from is not None:
+            estimate = _estimate(port, source, skipped, hold_from, through)
+        walked = _walk(port, source, frontier, started, width, take)
+        frontier, width, failed = walked.frontier, walked.width, not walked.clean
+        current = held
+        if hold_from is not None:
+            current = repo.Held(_fmt(hold_from), _fmt(through), "asking", estimate, None)
+        if (
+            current is not None
+            and current.state == "approved"
+            and not failed
+            and health is HealthState.OK
+        ):
+            try:
+                catch_up = _walk(
+                    port,
+                    source,
+                    _parse(current.start),
+                    _parse(current.end),
+                    current.width,
+                    take,
+                )
+            except Exception:
+                log_failure(log, "reading older mail failed for %s", source)
     except Exception:
         log_failure(log, "mail scan failed for %s", source)
         failed = True
 
     # Connector round trips (reply headers, correspondents) happen before the write lock.
-    rows: list[tuple[str, str, str, str | None]] = []
-    if found:
-        port = ctx.sources.mail_port(source)
-        for item in found:
-            if repo.is_seen(ctx.db, source, item.locator):
+    own = ctx.services.writes.own_addresses(source)
+    rows: list[tuple[str, str, str, str, str | None, bool]] = []
+    learned: set[str] = set()
+    if found and port is not None:
+        known = repo.seen_keys(ctx.db, source, list(found))
+        for key, copies in found.items():
+            if key in known:
                 continue
-            handle = ctx.services.refs.remember(
-                HandleKind.MESSAGE, source, item.locator, item.internet_message_id
+            inbox = [c for c in copies if roles.get(c.folder_id) is FolderRole.INBOX]
+            chosen = (inbox or copies)[0]
+            sent = not inbox and (
+                any(roles.get(c.folder_id) is FolderRole.SENT for c in copies)
+                or chosen.sender.address.lower() in own
             )
-            card = suggester.suggest(port, source, handle, item)
-            rows.append((item.locator, handle, _fmt(item.date), card))
+            handle = ctx.services.refs.remember(
+                HandleKind.MESSAGE, source, chosen.locator, chosen.internet_message_id
+            )
+            if sent:
+                card = suggester.suggest_sent(port, source, handle, chosen)
+                learned.update(a.address for c in copies for a in (*c.to, *c.cc))
+            else:
+                card = suggester.suggest(port, source, handle, chosen)
+            rows.append((key, chosen.locator, handle, _fmt(chosen.date), card, sent))
+
+    complete = not failed and health is HealthState.OK and frontier >= started
+    held_now = _held_after(held, hold_from, through, estimate, catch_up)
+    boundary = _fmt(started - MAIL_OVERLAP)
+    if held_now is not None:
+        boundary = min(boundary, held_now.start)
 
     with transaction(ctx.db):
-        for locator, handle, received, card in rows:
-            repo.add_seen(ctx.db, source, locator, handle, received, _fmt(now), card)
-
-        # The overlap below the watermark only catches late arrivals. Once a page reaches the
-        # required part of it, the scan is complete enough for a mailbox bigger than one tick.
-        reached = bool(found) and min(i.date for i in found) <= through - MAIL_REQUIRED_OVERLAP
-        if (exhausted or reached) and not failed and not gapped and health is HealthState.OK:
-            moved = max(through, started)
-            repo.save_scan(ctx.db, source, through=_fmt(moved), started=None, until=None, gap=None)
-            repo.prune_seen(ctx.db, source, _fmt(moved - MAIL_OVERLAP))
+        for key, locator, handle, received, card, sent in rows:
+            repo.add_seen(
+                ctx.db, source, key, locator, handle, received, _fmt(now), card, sent=sent
+            )
+        if learned:
+            ctx.services.writes.learn_recipients(source, learned)
+        if held_now != held:
+            repo.save_held(ctx.db, source, held_now)
+        if complete:
+            repo.save_scan(
+                ctx.db,
+                source,
+                through=_fmt(started),
+                started=None,
+                frontier=None,
+                width=None,
+                gap=None,
+            )
+            repo.prune_seen(ctx.db, source, boundary)
             return Scanned(True)
 
-        # Not finished: keep how far a sound scan got. Pages come newest first, so the oldest
-        # date reached is a frontier, except after a connector gap, where nothing is promised.
-        keep_started = state.scan_started_at
-        keep_until = state.scan_until
-        if gapped:
-            pass
-        elif exhausted:
-            keep_started = keep_until = None
-        elif found:
-            keep_started, keep_until = _fmt(started), _fmt(min(i.date for i in found))
-        end = _parse(keep_until) if keep_until else (frontier if not exhausted else now)
-        # Only mail newer than the watermark can be unseen; rescanning the overlap is not a gap.
-        gap = (_fmt(through), _fmt(end)) if end > through else None
+        # Not finished: keep how far a sound scan got. A scan held back by health (stale) promises
+        # nothing new, so its old frontier stays. Only mail newer than the watermark is a gap.
+        keep = frontier if health is HealthState.OK else (resume or frontier)
+        begin = max(keep, through)
         repo.save_scan(
             ctx.db,
             source,
-            through=state.covered_through,
-            started=keep_started,
-            until=keep_until,
-            gap=gap,
+            through=_fmt(through),
+            started=_fmt(started),
+            frontier=_fmt(keep),
+            width=width,
+            gap=(_fmt(begin), _fmt(max(now, begin))),
         )
     return Scanned(False)
 
 
-def _record(
-    ctx: Context,
-    source: str,
-    through: str,
-    started: str | None,
-    until: str | None,
-    gap: tuple[str, str],
-) -> None:
+def _held_after(
+    held: repo.Held | None,
+    hold_from: datetime | None,
+    cut: datetime,
+    estimate: int | None,
+    catch_up: _Walk | None,
+) -> repo.Held | None:
+    """The held span once this tick is done: new, extended, advanced by the catch-up, or gone."""
+    if hold_from is not None:
+        return repo.Held(_fmt(hold_from), _fmt(cut), "asking", estimate, None)
+    if held is None or catch_up is None:
+        return held
+    if catch_up.frontier >= _parse(held.end):
+        return None
+    return repo.Held(_fmt(catch_up.frontier), held.end, held.state, held.estimate, catch_up.width)
+
+
+def _record(ctx: Context, source: str, state: repo.Watermark, gap: tuple[str, str]) -> None:
     with transaction(ctx.db):
-        repo.save_scan(ctx.db, source, through=through, started=started, until=until, gap=gap)
+        repo.save_scan(
+            ctx.db,
+            source,
+            through=state.covered_through,
+            started=state.scan_started_at,
+            frontier=state.scan_from,
+            width=state.scan_width,
+            gap=gap,
+        )

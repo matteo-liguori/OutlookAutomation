@@ -4,7 +4,7 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-38 rules, about 6,970 characters in total (budget 12,000).
+40 rules, about 7,390 characters in total (budget 12,000).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
@@ -97,6 +97,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'event': 'action.due'}`; shown session; priority 65; cap 250 chars
 
 > An action is due. Read it with its card, then do it, ask the user, or move it with a reason. Do not mark it finished until the user confirms or you have checked that it happened. Reading a reminder does not complete it.
+
+## mail.older: Older mail was not read
+
+- Trigger: `{'event': 'source.stale', 'reason': 'older_mail'}`; shown event; priority 62; cap 340 chars
+
+> Mail from before the last day was not read, because reading it costs tokens. Tell the owner the dates and roughly how many messages, and ask whether to read it. Only the owner's yes counts: give this event as the answer in next. Any other answer, mark it handled and leave the mail.
 
 ## error.conflict: Something changed
 
@@ -211,6 +217,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'event': 'mail.new_unmatched'}`; shown session; priority 40; cap 180 chars
 
 > List the new mail and open only what you need. Suggested cards are guesses; you decide each link. A deadline, promise or expected reply needs a card; routine mail can be left.
+
+## mail.sent: Mail the owner sent elsewhere
+
+- Trigger: `{'event': 'mail.new_unmatched', 'reason': 'sent'}`; shown session; priority 35; cap 170 chars
+
+> The owner sent these from another device. If one answers or settles a card, say so on the card and stop chasing it. It is not new mail.
 
 ## appointments.important: Important appointments
 

@@ -96,6 +96,7 @@ _ROLE_BY_USE: Final = {
     "sent": FolderRole.SENT,
     "drafts": FolderRole.DRAFTS,
     "trash": FolderRole.TRASH,
+    "junk": FolderRole.JUNK,
     "archive": FolderRole.ARCHIVE,
 }
 
@@ -462,7 +463,11 @@ class ThunderbirdMail:
         if not result.complete:
             gaps.append(
                 Gap.model_validate(
-                    {"source": source, "reason": "The search stopped at its scan limit."}
+                    {
+                        "source": source,
+                        "reason": "The search stopped at its scan limit.",
+                        "narrow": True,
+                    }
                 )
             )
         next_cursor = None

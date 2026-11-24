@@ -113,26 +113,26 @@
         "title": "Storing things"
       },
       {
+        "id": "mail.older",
+        "version": 1,
+        "title": "Older mail was not read"
+      },
+      {
         "id": "mail.read_state",
         "version": 2,
         "title": "Reading mail"
       },
       {
-        "id": "mail.unmatched",
-        "version": 2,
-        "title": "New mail to triage"
-      },
-      {
-        "id": "propose.check",
-        "version": 2,
-        "title": "Proposing a change"
+        "id": "mail.sent",
+        "version": 1,
+        "title": "Mail the owner sent elsewhere"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 38,
+    "total": 40,
     "cursor": "ZzI1",
     "gaps": []
   },

@@ -7,6 +7,7 @@ where it carries an old incident across, says which. Runs the real add-on under 
 import pytest
 from thunderbird_rig import ACCOUNT, MAILBOX, Stack
 
+from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.identity import encode_locator
 from chamberlain.connectors.thunderbird.mail import ALLOW_DUPLICATE_REF, DISPLAY_ONLY_REF
 from chamberlain.domain.canonical import sha256_bytes
@@ -134,6 +135,16 @@ def test_p4_an_empty_search_of_a_stale_store_is_incomplete_not_nothing(stack: St
     assert page.items == ()
     assert not page.complete
     assert page.gaps
+
+
+def test_p4_a_search_that_hit_the_scan_limit_says_a_smaller_window_would_finish(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    stopped = protocol.QueryResult(messages=(), more=False, complete=False, scanned=2000)
+    monkeypatch.setattr(stack.mail, "_query", lambda *args, **kwargs: stopped)
+    page = stack.mail.search(SOURCE, MailQuery(text="x"))
+    assert not page.complete
+    assert any(gap.narrow for gap in page.gaps)
 
 
 def test_p9_prepare_issues_no_write_of_any_kind(stack: Stack) -> None:

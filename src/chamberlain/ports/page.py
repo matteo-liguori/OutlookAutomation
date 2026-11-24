@@ -15,6 +15,8 @@ class Gap(Model):
 
     source: SourceId
     reason: str
+    narrow: bool = False
+    """True when asking for a smaller time window would let the connector finish."""
 
 
 class Page[ItemT: BaseModel](Model):

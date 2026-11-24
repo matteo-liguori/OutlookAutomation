@@ -44,9 +44,17 @@ MAIL_OVERLAP: Final = timedelta(hours=24)
 MAIL_REQUIRED_OVERLAP: Final = timedelta(hours=1)
 """The part of the overlap a scan must always finish; the rest is best effort when a mailbox is
 larger than one tick's page budget. Mail dated older than this that arrives later may be missed."""
+MAIL_STANDARD: Final = timedelta(hours=24)
+"""Mail up to this far behind now is read without asking. A longer uncovered span is read for the
+most recent day only; the older part is held until the owner says yes (A-23)."""
 MAIL_PAGE_LIMIT: Final = 200
 MAIL_MAX_PAGES: Final = 5
-"""Bounds one scan of one source in one tick (A-6); a larger backlog resumes next tick."""
+"""Bounds one scan of one source in one tick (A-6); a larger backlog resumes next tick, oldest
+mail first, in time slices that shrink until each one fits (A-20)."""
+MAIL_ESTIMATE_PAGES: Final = 3
+"""Pages read to estimate how much mail an older span holds; the rest is extrapolated."""
+MAIL_SENT_PRIORITY: Final = 25
+"""Mail the owner sent that matches a card: a quiet line, never a triage item by itself."""
 MAIL_HEADER_READS: Final = 20
 """Messages per source and tick that may be read in full to get their reply headers."""
 MAIL_CORRESPONDENT_LOOKUPS: Final = 30

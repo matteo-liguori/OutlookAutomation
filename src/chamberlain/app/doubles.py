@@ -4,6 +4,7 @@ Contract: src/chamberlain/app/services.py. A track tests against these so it
 never needs another track's unfinished code.
 """
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 
 from chamberlain.app.services import ArtifactInfo, Services
@@ -126,12 +127,20 @@ class MemoryRefResolver:
 class RecordingWriteControl:
     revoked: list[str] = field(default_factory=lambda: [])
     cancelled: list[str] = field(default_factory=lambda: [])
+    learned: list[tuple[str, str]] = field(default_factory=lambda: [])
 
     def revoke_grant(self, handle: str, *, actor: str) -> None:
         self.revoked.append(handle)
 
     def cancel_operation(self, handle: str, *, actor: str) -> None:
         self.cancelled.append(handle)
+
+    def own_addresses(self, source: str) -> frozenset[str]:
+        return frozenset()
+
+    def learn_recipients(self, source: str, addresses: Iterable[str]) -> int:
+        self.learned.extend((source, a) for a in addresses)
+        return 0
 
 
 def unwired_services() -> Services:

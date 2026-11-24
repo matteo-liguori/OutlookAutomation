@@ -53,6 +53,11 @@ or recorded transport only), `known_broken`.
   `complete: false` with a gap when it could not see everything (a folder
   not synchronised, a stale store, a scan that stopped early). An empty
   result from an incomplete scan is not "no mail" (E-3).
+  A gap may say `narrow: true`: a smaller time window would let the connector finish (for
+  example Thunderbird stopping at its scan limit of 2,000 messages). The watermark scan uses
+  it to halve its time slices (A-20). `Folder.role` is one of `inbox`, `sent`, `drafts`,
+  `trash`, `junk`, `archive`, `other`; a scan that covers every folder skips trash, junk and
+  drafts.
 - **P-5** `health` returns `{state: ok | stale | sign_in_needed |
   unavailable, checked_at, fresh_as_of?}`. `fresh_as_of` is the time up to
   which the connector can vouch for completeness; a connector that cannot

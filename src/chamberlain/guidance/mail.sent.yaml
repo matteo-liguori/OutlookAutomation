@@ -1,0 +1,10 @@
+id: mail.sent
+version: 1
+title: Mail the owner sent elsewhere
+when: {event: mail.new_unmatched, reason: sent}
+text: >
+  The owner sent these from another device. If one answers or settles a
+  card, say so on the card and stop chasing it. It is not new mail.
+max_chars: 170
+once_per: session
+priority: 35

@@ -43,6 +43,23 @@ class Suggester:
             return card
         return self._by_correspondent(port, source, summary.sender.address)
 
+    def suggest_sent(
+        self, port: MailPort, source: str, handle: str, summary: MessageSummary
+    ) -> str | None:
+        """The card a message the owner sent probably belongs to: the thread it answers, else
+        the one card its recipients all point to."""
+        found = self._by_handle.get(handle)
+        if found is not None:
+            return found
+        card = self._by_reply_headers(port, source, summary)
+        if card is not None:
+            return card
+        people = self._correspondents(port, source)
+        cards: set[str] = set()
+        for person in (*summary.to, *summary.cc):
+            cards |= people.get(person.address.casefold(), set())
+        return next(iter(cards)) if len(cards) == 1 else None
+
     def _by_reply_headers(self, port: MailPort, source: str, summary: MessageSummary) -> str | None:
         if not self._by_id:
             return None
