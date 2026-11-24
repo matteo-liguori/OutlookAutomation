@@ -162,7 +162,7 @@ def compactable_grants(db: sqlite3.Connection, before: str) -> list[str]:
         "AND ended_at IS NOT NULL AND ended_at <= ? "
         "AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.grant = grants.handle "
         "AND o.state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', 'cancelled', "
-        "'abandoned'))",
+        "'abandoned', 'superseded'))",
         (before,),
     ).fetchall()
     return [row["handle"] for row in rows]
@@ -305,6 +305,10 @@ def _operation(row: sqlite3.Row) -> OperationRow:
         summary_json=row["summary_json"],
         attempted_at=_ts(row["attempted_at"]),
         redo_at=_ts(row["redo_at"]),
+        rechecked_at=_ts(row["rechecked_at"]),
+        recheck_result=row["recheck_result"],
+        recheck_json=row["recheck_json"],
+        redo_of=row["redo_of"],
     )
 
 
@@ -321,11 +325,12 @@ def insert_operation(
     intent_json: str,
     refs_json: str,
     at: str,
+    redo_of: str | None = None,
 ) -> None:
     db.execute(
         "INSERT INTO operations (handle, idempotency_key, kind, source_id, state, card, "
-        "session, intent_sha256, intent_json, refs_json, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?)",
+        "session, intent_sha256, intent_json, refs_json, created_at, updated_at, redo_of) "
+        "VALUES (?, ?, ?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             handle,
             idempotency_key,
@@ -338,6 +343,7 @@ def insert_operation(
             refs_json,
             at,
             at,
+            redo_of,
         ),
     )
 
@@ -432,32 +438,47 @@ def attempts_under(db: sqlite3.Connection, grant: str, intent_sha256: str, other
     return int(row[0])
 
 
-def live_uses(db: sqlite3.Connection, grants: Iterable[str], other_than: str) -> dict[str, int]:
-    """Reserved or spent uses per grant, derived from operations (G-11)."""
+def _but(other_than: str | tuple[str, ...]) -> tuple[str, ...]:
+    return (other_than,) if isinstance(other_than, str) else other_than
+
+
+def live_uses(
+    db: sqlite3.Connection, grants: Iterable[str], other_than: str | tuple[str, ...]
+) -> dict[str, int]:
+    """Reserved or spent uses per grant, derived from operations (G-11).
+
+    `other_than` may name two operations: a resend and the send it replaces (W-38).
+    """
     wanted = list(grants)
     if not wanted:
         return {}
+    skip = _but(other_than)
     rows = db.execute(
         f"SELECT grant, COUNT(*) AS n FROM operations WHERE grant IN ({_marks(wanted)}) "
-        f"AND handle <> ? AND state NOT IN ({_marks(_RELEASING)}) AND state <> 'proposed' "
-        "GROUP BY grant",
-        (*wanted, other_than, *_RELEASING),
+        f"AND handle NOT IN ({_marks(skip)}) AND state NOT IN ({_marks(_RELEASING)}) "
+        "AND state <> 'proposed' GROUP BY grant",
+        (*wanted, *skip, *_RELEASING),
     ).fetchall()
     return {row["grant"]: int(row["n"]) for row in rows}
 
 
 def recent_uses(
-    db: sqlite3.Connection, grants: Iterable[str], since: str, other_than: str
+    db: sqlite3.Connection,
+    grants: Iterable[str],
+    since: str,
+    other_than: str | tuple[str, ...],
 ) -> dict[str, int]:
     """Uses that count against `max_per_day`: dispatched since, or reserved and waiting."""
     wanted = list(grants)
     if not wanted:
         return {}
+    skip = _but(other_than)
     rows = db.execute(
         f"SELECT grant, COUNT(*) AS n FROM operations WHERE grant IN ({_marks(wanted)}) "
-        f"AND handle <> ? AND state NOT IN ({_marks(_RELEASING)}) AND state <> 'proposed' "
+        f"AND handle NOT IN ({_marks(skip)}) AND state NOT IN ({_marks(_RELEASING)}) "
+        "AND state <> 'proposed' "
         "AND (dispatched_at IS NULL OR dispatched_at >= ?) GROUP BY grant",
-        (*wanted, other_than, *_RELEASING, since),
+        (*wanted, *skip, *_RELEASING, since),
     ).fetchall()
     return {row["grant"]: int(row["n"]) for row in rows}
 
@@ -484,10 +505,16 @@ def live_by_hash(db: sqlite3.Connection, source_id: str, intent_sha256: str) -> 
 
 
 def stale_uncertain(db: sqlite3.Connection, before: str) -> list[OperationRow]:
-    """Uncertain since `before` with no way left to send them again (owner ruling)."""
+    """Uncertain since `before` with no way left to send them again (owner ruling).
+
+    A mail send whose text the harness holds is never listed: it stays visible until the
+    agent or the owner settles it (W-40). Imported sends (no text) are still closed.
+    """
     rows = db.execute(
         "SELECT o.* FROM operations o LEFT JOIN grants g ON g.handle = o.grant "
-        "WHERE o.state = 'uncertain' AND o.updated_at <= ? AND (o.intent_json IS NULL "
+        "WHERE o.state = 'uncertain' AND o.updated_at <= ? "
+        "AND NOT (o.kind = 'mail.send' AND o.intent_json IS NOT NULL) "
+        "AND (o.intent_json IS NULL "
         "OR o.grant IS NULL OR g.state IN ('spent', 'expired', 'revoked', 'lapsed', 'declined')) "
         "ORDER BY o.created_at, o.handle",
         (before,),
@@ -495,11 +522,46 @@ def stale_uncertain(db: sqlite3.Connection, before: str) -> list[OperationRow]:
     return [_operation(row) for row in rows]
 
 
+def sends_due_recheck(db: sqlite3.Connection, before: str) -> list[OperationRow]:
+    """Uncertain sends dispatched at or before `before` that have not had their re-check (W-37)."""
+    rows = db.execute(
+        "SELECT * FROM operations WHERE state = 'uncertain' AND kind = 'mail.send' "
+        "AND intent_json IS NOT NULL AND rechecked_at IS NULL AND dispatched_at <= ? "
+        "ORDER BY dispatched_at, handle",
+        (before,),
+    ).fetchall()
+    return [_operation(row) for row in rows]
+
+
+def record_recheck(
+    db: sqlite3.Connection, handle: str, *, result: str, looked_json: str, at: str
+) -> bool:
+    """Store the outcome of the re-check. A later look may overwrite it (a queued copy)."""
+    return (
+        db.execute(
+            "UPDATE operations SET rechecked_at = COALESCE(rechecked_at, ?), recheck_result = ?, "
+            "recheck_json = ? WHERE handle = ? AND state = 'uncertain'",
+            (at, result, looked_json, handle),
+        ).rowcount
+        == 1
+    )
+
+
+def resend_of(db: sqlite3.Connection, original: str) -> OperationRow | None:
+    """The live resend of `original`, if any (a cancelled proposal does not count, W-38)."""
+    row = db.execute(
+        "SELECT * FROM operations WHERE redo_of = ? AND state <> 'cancelled' "
+        "ORDER BY created_at DESC LIMIT 1",
+        (original,),
+    ).fetchone()
+    return None if row is None else _operation(row)
+
+
 def compactable_operations(db: sqlite3.Connection, before: str) -> list[OperationRow]:
     rows = db.execute(
         "SELECT * FROM operations WHERE compacted_at IS NULL AND settled_at IS NOT NULL "
         "AND settled_at <= ? AND state IN ('confirmed', 'failed_clean', 'confirmed_absent', "
-        "'cancelled', 'abandoned')",
+        "'cancelled', 'abandoned', 'superseded')",
         (before,),
     ).fetchall()
     return [_operation(row) for row in rows]

@@ -147,6 +147,14 @@ class WriteMachine(RuleBasedStateMachine):
             self.engine().do(op)
 
     @rule(op=ops)
+    def resend_op(self, op: str) -> None:
+        """The agent sends a missing uncertain send again, on its original permission (W-38)."""
+        with contextlib.suppress(ChamberlainError, SimulatedCrash):
+            again = self.engine().propose_redo(op)
+            assert again.operation is not None
+            self.engine().do(again.operation.handle)
+
+    @rule(op=ops)
     def reconcile_op(self, op: str) -> None:
         with contextlib.suppress(ChamberlainError):
             self.engine().reconcile(op)
@@ -262,7 +270,11 @@ class WriteMachine(RuleBasedStateMachine):
         ):
             history.setdefault(row["subject"], []).append(row["kind"].split(".", 1)[1])
         for row in rig.db.execute("SELECT handle, state, receipt_json FROM operations"):
-            states = [OperationState(s) for s in history[row["handle"]] if s != "verified"]
+            states = [
+                OperationState(s)
+                for s in history[row["handle"]]
+                if s not in ("verified", "rechecked")
+            ]
             assert states[0] is OperationState.PROPOSED
             assert states[-1].value == row["state"]
             for before, after in itertools.pairwise(states):

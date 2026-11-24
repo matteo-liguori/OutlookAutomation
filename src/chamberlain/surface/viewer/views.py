@@ -15,7 +15,7 @@ from chamberlain import __version__
 from chamberlain.app.context import Context
 from chamberlain.app.metrics import collect_metrics
 from chamberlain.domain.grants import GrantState
-from chamberlain.domain.operations import OperationState
+from chamberlain.domain.operations import OperationState, recheck_text
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs.reports import read_reports
 from chamberlain.runs.tuning import NOTE_KEEP
@@ -25,6 +25,7 @@ from chamberlain.surface.viewer import repo
 from chamberlain.writes import repo as write_repo
 from chamberlain.writes.engine import Engine
 from chamberlain.writes.imported import advice_for, parse_summary
+from chamberlain.writes.models import OperationRow
 from chamberlain.writes.render import describe_intent
 
 LIST_LIMIT = 50
@@ -134,9 +135,23 @@ def uncertain(ctx: Context) -> dict[str, Any]:
                 "summary": None if summary is None else summary.model_dump(exclude_none=True),
                 "advice": advice_for(op.kind),
                 "rendered": rendered,
+                **_resend_facts(ctx, op),
             }
         )
     return {"operations": found}
+
+
+def _resend_facts(ctx: Context, op: OperationRow) -> dict[str, Any]:
+    """What the harness's one 24-hour look found for a send, and any resend (W-37, W-38)."""
+    resent = write_repo.resend_of(ctx.db, op.handle)
+    return {
+        "recheck": recheck_text(op.recheck_result, op.recheck_json),
+        "rechecked_at": _iso(op.rechecked_at),
+        "redo_of": op.redo_of,
+        "resend": None
+        if resent is None
+        else {"handle": resent.handle, "state": resent.state.value},
+    }
 
 
 def _day_window(ctx: Context, zone: str, day: str | None) -> tuple[str, str, str]:

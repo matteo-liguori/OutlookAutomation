@@ -101,6 +101,14 @@ class OperationRow:
     """When the old journal says the write was tried. Not the import time."""
     redo_at: datetime | None = None
     """When something tried to do the same write again (it makes attention speak again)."""
+    rechecked_at: datetime | None = None
+    """When the harness made its one 24-hour look for an uncertain send (W-37)."""
+    recheck_result: str | None = None
+    """`found`, `queued` (waiting in Outbox or Drafts) or `missing`."""
+    recheck_json: str | None = None
+    """Where that look went: `{"looked": [...]}`. No message text."""
+    redo_of: str | None = None
+    """On a resend: the uncertain send it replaces (W-38)."""
 
 
 class StoredReceipt(Model):

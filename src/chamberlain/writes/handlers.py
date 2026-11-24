@@ -58,6 +58,10 @@ def make_handlers(
             proposal = eng.propose_intent(
                 request.intent, card=request.card, evidence=request.evidence
             )
+        elif request.redo_of is not None:
+            proposal = eng.propose_redo(
+                request.redo_of, card=request.card, evidence=request.evidence
+            )
         elif request.standing is not None:
             proposal = eng.propose_standing(request.standing, card=request.card)
         else:

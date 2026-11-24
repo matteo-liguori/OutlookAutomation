@@ -196,7 +196,7 @@ def test_an_imported_operation_is_abandoned_after_fourteen_days_freeing_nothing(
     assert closed.receipt_json is not None
 
 
-def test_abandoning_never_frees_a_grant_use(rig: WriteRig) -> None:
+def test_a_native_send_is_never_abandoned_and_keeps_its_grant_use(rig: WriteRig) -> None:
     live = rig.ready_send()
     rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
     with pytest.raises(ChamberlainError):
@@ -204,7 +204,7 @@ def test_abandoning_never_frees_a_grant_use(rig: WriteRig) -> None:
     grant = rig.engine().get(live.handle).grant or ""
     rig.clock.advance(hours=24 * 20)
     maintain(rig.ctx, rig.policy)
-    assert state_of(rig, live.handle) is OperationState.ABANDONED
+    assert state_of(rig, live.handle) is OperationState.UNCERTAIN  # a send is never quietly closed
     assert repo.live_uses(rig.db, [grant], "x") == {grant: 1}  # still counted as used
     stored = repo.get_grant(rig.db, grant)
     assert stored is not None

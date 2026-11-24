@@ -336,6 +336,10 @@ class FakeMail:
         if world.take(Fault.LOSE_BEFORE_APPLY):
             world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: lost before apply")
+        if kind is _K.MAIL_SEND and world.take(Fault.QUEUE_INSTEAD_OF_SEND):
+            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
+            world.outbox.setdefault(prepared.source, set()).add(prepared.reconcile_token or "")
+            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: held in Outbox")
         if world.take(Fault.SLOW):
             world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
             world.apply_late(_swallow(apply))
@@ -378,6 +382,8 @@ class FakeMail:
             found = self._matching(source, prepared.reconcile_token or "", folder)
             if len(found) > 1:
                 return unknown
+            if not found and prepared.reconcile_token in world.outbox.get(source, set()):
+                return ReconcileResult(status=ReconcileStatus.QUEUED, detail="fake: in Outbox")
             return self._present(found[0]) if found else absent
         if kind is _K.MAIL_DRAFT_UPDATE:
             folder = world.folder_by_role(source, FolderRole.DRAFTS).id
