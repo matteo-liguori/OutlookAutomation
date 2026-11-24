@@ -20,6 +20,7 @@ from chamberlain.limits import MAX_REPLY_CHARS, NEXT_STEPS_MAX, NOTICE_PRIORITY,
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import GuidanceItem, NextStep, Notice, Reply
 from chamberlain.schema.registry import ToolSpec
+from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import StartRequest, ToolRequest
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
@@ -86,7 +87,7 @@ class AttentionHooks:
         try:
             return self._decorate(ctx, spec, request, reply)
         except Exception:
-            log.exception("decorating the reply failed")
+            log_failure(log, "decorating the reply failed")
             return reply
 
     def _decorate(
@@ -199,7 +200,7 @@ class AttentionHooks:
                 events = [e for e, _ in draft.notices if e.handle in shown]
                 inbox.deliver(ctx.db, ctx.clock, session, events)
         except Exception:
-            log.exception("recording deliveries failed")
+            log_failure(log, "recording deliveries failed")
 
 
 HOOKS = AttentionHooks()

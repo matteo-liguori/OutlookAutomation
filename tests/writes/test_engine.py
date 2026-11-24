@@ -585,3 +585,28 @@ def test_w17_a_racing_do_cannot_fail_clean_a_dispatched_operation(rig: WriteRig)
     with pytest.raises(ChamberlainError):
         eng._fail_clean(after, ErrorCode.SOURCE_BUSY)
     assert eng.get(op.handle).state is S.DISPATCHED
+
+
+def test_logs_carry_the_error_type_and_code_never_message_content(
+    rig: WriteRig, caplog: pytest.LogCaptureFixture
+) -> None:
+    from pydantic import BaseModel
+
+    secret = "SECRET-BODY-Please-wire-the-money"
+
+    class Strict(BaseModel):
+        body: int
+
+    def explode() -> None:
+        Strict.model_validate({"body": secret})
+
+    op = rig.ready_send()
+    rig.mail.before_dispatch = explode
+    caplog.set_level(0)
+    with fails(ErrorCode.OPERATION_UNCERTAIN):
+        rig.engine().do(op.handle)
+    assert "dispatch raised" in caplog.text
+    assert "ValidationError" in caplog.text
+    assert secret not in caplog.text
+    assert not any(secret in str(record.exc_info) for record in caplog.records)
+    assert all(record.exc_info is None for record in caplog.records)

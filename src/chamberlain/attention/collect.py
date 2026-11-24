@@ -21,6 +21,7 @@ from chamberlain.attention.tuning import MAIL_LOOKBACK, MAIL_PAGE_LIMIT, NOTE_OP
 from chamberlain.domain.capabilities import HealthState, SourceHealth
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.mail import FolderRole, MailQuery
+from chamberlain.schema.safelog import log_failure
 from chamberlain.store.migrate import stamp
 
 log = logging.getLogger("chamberlain.attention")
@@ -49,7 +50,7 @@ def source_health(ctx: Context, source: str) -> SourceHealth | None:
             return ctx.sources.calendar_port(source).health(source)
         return ctx.sources.contacts_port(source).health(source)
     except Exception:
-        log.exception("health check failed for %s", source)
+        log_failure(log, "health check failed for %s", source)
         return None
 
 
@@ -107,7 +108,7 @@ def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> tuple[list[Mai
                 unreadable.add(source)
             deltas.append(MailDelta(source, tuple(items), complete))
         except Exception:
-            log.exception("mail delta failed for %s", source)
+            log_failure(log, "mail delta failed for %s", source)
             unreadable.add(source)
     return deltas, unreadable
 

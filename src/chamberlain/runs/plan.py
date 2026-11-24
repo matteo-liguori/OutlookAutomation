@@ -24,6 +24,7 @@ from chamberlain.runs import repo
 from chamberlain.runs.models import RunRow, RunState, ScheduleRow
 from chamberlain.runs.reports import store_report
 from chamberlain.runs.tuning import MAX_LATE
+from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 
@@ -143,7 +144,7 @@ def plan_runs(ctx: Context) -> None:
         try:
             store_report(ctx, run.handle, INCOMPLETE_REPORT)
         except Exception:
-            log.exception("storing the report of %s failed", run.handle)
+            log_failure(log, "storing the report of %s failed", run.handle)
 
 
 def due_passes(ctx: Context) -> list[dict[str, str]]:

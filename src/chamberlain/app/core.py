@@ -16,6 +16,7 @@ from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Reply, error_reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.registry import ToolSpec, check_next_step, get_tool, parse_request
+from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import ToolRequest
 from chamberlain.store.db import transaction
 
@@ -62,7 +63,7 @@ class App:
         except ChamberlainError as error:
             reply = error_reply(error)
         except Exception:
-            log.exception("unexpected failure in tool %s", tool)
+            log_failure(log, "unexpected failure in tool %s", tool)
             reply = error_reply(ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Harness fault."))
         size = _reply_size(reply)
         reply = self._bounded(reply, size)
@@ -107,7 +108,7 @@ class App:
         try:
             self._hooks.tick(ctx)
         except Exception:
-            log.exception("tick failed")
+            log_failure(log, "tick failed")
 
     @staticmethod
     def _bounded(reply: Reply[Model], size: int) -> Reply[Model]:
@@ -140,4 +141,4 @@ class App:
                     payload_sha256=sha256_text(repr(sorted(raw.items(), key=lambda kv: kv[0]))),
                 )
         except Exception:
-            log.exception("could not write the audit row for %s", name)
+            log_failure(log, "could not write the audit row for %s", name)

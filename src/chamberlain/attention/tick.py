@@ -14,6 +14,7 @@ from chamberlain.attention.detectors import DETECTORS
 from chamberlain.attention.models import EventDraft
 from chamberlain.domain.events import EventKind
 from chamberlain.limits import TICK_MIN_INTERVAL_SECONDS
+from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 from chamberlain.store.schema import set_state
 
@@ -36,7 +37,7 @@ def _run_steps(ctx: Context, steps: list[TickStep]) -> None:
         try:
             step(ctx)
         except Exception:
-            log.exception("tick step %s failed", getattr(step, "__name__", "step"))
+            log_failure(log, "tick step %s failed", getattr(step, "__name__", "step"))
 
 
 def _due(ctx: Context) -> bool:
@@ -55,7 +56,7 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
             sessions.touch(ctx.db, ctx.clock, ctx.session)
         sessions.end_idle(ctx.db, ctx.clock)
     except Exception:
-        log.exception("session upkeep failed")
+        log_failure(log, "session upkeep failed")
     try:
         if not force and not _due(ctx):
             return False
@@ -66,7 +67,7 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
             try:
                 found = list(detector(collected.data))
             except Exception:
-                log.exception("detector %s failed", kind.value)
+                log_failure(log, "detector %s failed", kind.value)
                 continue
             drafts.extend(found)
             evaluated.add(kind)
@@ -82,7 +83,7 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
         _run_steps(ctx, EXTRA_STEPS)
         return True
     except Exception:
-        log.exception("tick failed")
+        log_failure(log, "tick failed")
         return False
 
 

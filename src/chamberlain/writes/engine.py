@@ -74,6 +74,7 @@ from chamberlain.limits import (
 )
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import OperationView
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
@@ -345,7 +346,7 @@ class Engine:
         except ChamberlainError:
             raise
         except Exception as error:
-            log.exception("prepare failed while proposing a send")
+            log_failure(log, "prepare failed while proposing a send")
             raise ChamberlainError(
                 ErrorCode.SOURCE_UNAVAILABLE, "The source could not check the send."
             ) from error
@@ -727,7 +728,7 @@ class Engine:
             self._fail_clean(op, error.code)
             raise
         except Exception as error:
-            log.exception("prepare failed for %s", op.handle)
+            log_failure(log, "prepare failed for %s", op.handle)
             self._fail_clean(op, ErrorCode.SOURCE_UNAVAILABLE)
             raise ChamberlainError(
                 ErrorCode.SOURCE_UNAVAILABLE, "The source could not prepare the write."
@@ -788,7 +789,7 @@ class Engine:
         try:
             result = self._port_dispatch(intent, prepared, journal.idempotency_key, payloads)
         except Exception:
-            log.exception("dispatch raised for %s", journal.handle)
+            log_failure(log, "dispatch raised for %s", journal.handle)
             result = DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="exception")
         return self._settle_dispatch(journal, prepared, result)
 
@@ -921,7 +922,7 @@ class Engine:
             try:
                 self.ctx.services.refs.repoint(old, receipt.locator, source=op.source_id)
             except Exception:
-                log.exception("could not repoint the handle of %s", op.handle)
+                log_failure(log, "could not repoint the handle of %s", op.handle)
         self._release_attachments(op)
 
     def _upgrade_verification(self, op: OperationRow, prepared: Prepared) -> None:
@@ -935,7 +936,7 @@ class Engine:
         try:
             reading = self._reconcile_loop(op, intent, prepared, self._window(op))
         except Exception:
-            log.exception("verification upgrade failed for %s", op.handle)
+            log_failure(log, "verification upgrade failed for %s", op.handle)
             return
         found = reading.present
         if found is not None and found.verification.server_verified:
@@ -1195,7 +1196,7 @@ class Engine:
                 return self.ctx.sources.calendar_port(intent.source).reconcile(prepared, key)
             return self.ctx.sources.mail_port(intent.source).reconcile(prepared, key)
         except Exception:
-            log.exception("reconcile failed")
+            log_failure(log, "reconcile failed")
             return ReconcileResult(status=ReconcileStatus.UNKNOWN)
 
 
