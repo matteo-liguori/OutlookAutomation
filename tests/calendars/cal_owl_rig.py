@@ -39,6 +39,9 @@ class OwlRig:
         self.bridge.items[uid] = ics.build_new(uid, fields, self.clock.now())
         return uid
 
+    def seed_invitation(self, organiser: str, fields: EventFields) -> str | None:
+        return None  # Owl cannot send or answer invitations, so there is nothing to seed
+
     def count(self, uid: str) -> int:
         text = self.bridge.items.get(uid)
         if text is None:

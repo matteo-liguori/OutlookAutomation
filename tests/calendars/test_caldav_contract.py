@@ -4,7 +4,7 @@ import base64
 
 import pytest
 from cal_radicale import PASSWORD, USER, RadicaleServer
-from cal_rigs import CalDavRig, FaultyTransport
+from cal_rigs import CALDAV_ADDRESS, CalDavRig, FaultyTransport
 
 from chamberlain.connectors.caldav.calendar import CalDavCalendar
 from chamberlain.connectors.caldav.config import CalDavBinding, CalDavConfig
@@ -21,7 +21,11 @@ def build(
     collection = server.new_calendar()
     transport = FaultyTransport(UrllibTransport())
     config = CalDavConfig(
-        bindings={"calendar:test": CalDavBinding(url=collection, username=USER, credential="test")}
+        bindings={
+            "calendar:test": CalDavBinding(
+                url=collection, username=USER, credential="test", address=CALDAV_ADDRESS
+            )
+        }
     )
     port = CalDavCalendar(config, lambda binding: PASSWORD, clock, transport)
     return port, transport, collection

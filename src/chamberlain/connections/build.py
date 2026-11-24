@@ -136,7 +136,12 @@ def build_router(
         dav = CalDavCalendar(
             CalDavConfig(
                 bindings={
-                    sid: CalDavBinding(url=s.url, username=s.username, credential=s.credential)
+                    sid: CalDavBinding(
+                        url=s.url,
+                        username=s.username,
+                        credential=s.credential,
+                        address=s.address,
+                    )
                     for sid, s in caldav_sources.items()
                 }
             ),

@@ -368,7 +368,9 @@ class FakeCalendar:
         """Only the organiser changes or cancels an invitation (the answer is `respond`)."""
         if stored.my_response is not None:
             raise ChamberlainError(
-                ErrorCode.CAPABILITY_UNSUPPORTED, "Only the organiser can change that event."
+                ErrorCode.CAPABILITY_UNSUPPORTED,
+                "Only the organiser can change that event.",
+                detail="invitee-copy",
             )
 
     def _owner_source(self, address: str, *, not_source: str) -> str | None:
