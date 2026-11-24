@@ -86,9 +86,22 @@ def _close_old_days(ctx: Context) -> None:
         repo.set_run_state(ctx.db, run.handle, state.value, finished_at=stamp(ctx.clock))
 
 
+def _day_end(day: str, zone: ZoneInfo) -> str:
+    """The instant the local day `day` ends, as a stored timestamp."""
+    year, month, date = (int(part) for part in day.split("-"))
+    midnight = datetime(year, month, date, tzinfo=zone) + timedelta(days=1)
+    return _utc(midnight.astimezone(ZoneInfo("UTC")))
+
+
 def _attach_sessions(ctx: Context) -> None:
+    zones = {schedule.name: schedule.zone for schedule in repo.schedules(ctx.db)}
     for run in repo.runs_in_states(ctx.db, (RunState.DUE.value,)):
-        session = repo.scheduled_session_since(ctx.db, run.due_at)
+        zone = zones.get(run.schedule)
+        if zone is None:
+            continue
+        session = repo.scheduled_session_between(
+            ctx.db, run.due_at, _day_end(run.day, ZoneInfo(zone))
+        )
         if session is not None:
             repo.set_run_state(
                 ctx.db,
@@ -123,8 +136,8 @@ def plan_runs(ctx: Context) -> None:
     now = ctx.clock.now()
     with transaction(ctx.db):
         _create_due(ctx, now)
-        _close_old_days(ctx)
         _attach_sessions(ctx)
+        _close_old_days(ctx)
         ended = _settle_running(ctx, now)
     for run in ended:
         try:

@@ -135,12 +135,12 @@ def delete_runs_before(db: sqlite3.Connection, day: str) -> int:
     return db.execute("DELETE FROM runs WHERE day < ?", (day,)).rowcount
 
 
-def scheduled_session_since(db: sqlite3.Connection, since: str) -> str | None:
-    """The first scheduled session started at or after `since` (read of attention's table)."""
+def scheduled_session_between(db: sqlite3.Connection, since: str, before: str) -> str | None:
+    """The first scheduled session started in `[since, before)` (a read of attention's table)."""
     row = db.execute(
         "SELECT handle FROM sessions WHERE purpose = 'scheduled' AND started_at >= ? "
-        "ORDER BY started_at, handle LIMIT 1",
-        (since,),
+        "AND started_at < ? ORDER BY started_at, handle LIMIT 1",
+        (since, before),
     ).fetchone()
     return None if row is None else str(row["handle"])
 
