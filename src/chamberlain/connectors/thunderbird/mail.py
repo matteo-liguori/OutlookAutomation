@@ -91,9 +91,6 @@ DISPLAY_ONLY_REF: Final = "_display_only"
 _PRE_MUTATION_ITEM_CODES: Final = frozenset(
     {"not_found", "ambiguous", "account_mismatch", "timeout", "busy"}
 )
-_QUEUED: Final = getattr(ReconcileStatus, "QUEUED", None)
-"""R2: `ReconcileStatus.QUEUED` once the shared domain has it; until then `unknown`."""
-
 _ROLE_BY_USE: Final = {
     "inbox": FolderRole.INBOX,
     "sent": FolderRole.SENT,
@@ -987,11 +984,7 @@ class ThunderbirdMail:
             return DispatchResult(
                 outcome=DispatchOutcome.UNKNOWN, detail="the moved copy is not in the destination"
             )
-        detail = ""
-        if result.merged_existing_copy:
-            detail = "merged_existing_copy"
-            if not result.read_state_preserved:
-                detail += " read_state_preserved=false"
+        warnings = ("merged_existing_copy",) if result.merged_existing_copy else ()
         return DispatchResult(
             outcome=DispatchOutcome.APPLIED,
             receipt=ProviderReceipt(
@@ -1001,8 +994,10 @@ class ThunderbirdMail:
                     result.message.internet_message_id,
                 ),
                 verification=Verification(client_verified=True),
+                read_state_preserved=result.read_state_preserved,
+                warnings=warnings,
             ),
-            detail=detail,
+            detail=warnings[0] if warnings else "",
         )
 
     def _dispatch_mark_read(
@@ -1132,10 +1127,8 @@ class ThunderbirdMail:
             # R11: a self-addressed send that reached the sender's own Inbox is delivered.
             return self._present(binding, inbox[0].header, None, refreshed)
         if queued:
-            if _QUEUED is not None:
-                return ReconcileResult(status=_QUEUED, detail="waiting in Outbox or Drafts")
             return ReconcileResult(
-                status=ReconcileStatus.UNKNOWN, detail="queued: waiting in Outbox or Drafts"
+                status=ReconcileStatus.QUEUED, detail="waiting in Outbox or Drafts"
             )
         if not result.complete:
             return ReconcileResult(
