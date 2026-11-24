@@ -23,7 +23,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final
+from typing import Final, cast
 
 from chamberlain.connectors.thunderbird import frames, protocol
 from chamberlain.connectors.thunderbird.frames import Readable, Writable
@@ -46,6 +46,11 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 HOST_VERSION: Final = "2.0.0"
 RUNTIME_FILE: Final = "runtime.json"
+FAULT_FILE: Final = "livetest-fault.json"
+"""Test hook: `<data root>/run/livetest-fault.json` (see `LiveFault`)."""
+FAULT_MAX_AGE_SECONDS: Final = 600
+FAULT_DROP_RESPONSE: Final = "drop_response_after_dispatch"
+LIVE_TEST_MARKER: Final = "CHAMBERLAIN LIVE TEST"
 
 
 @dataclass(frozen=True)
@@ -79,6 +84,54 @@ class Deadlines:
             self.client_read * factor,
             self.client_write * factor,
         )
+
+
+class LiveFault:
+    """A one-shot, safe fault for `chamberlain live-test`: lose one response after dispatch.
+
+    Active only while a fault file names a run id and the fault. It fires for a `send`
+    request whose subject contains `CHAMBERLAIN LIVE TEST <run id>`, so no other request can
+    ever be touched. A file older than ten minutes is ignored. The file is claimed by an
+    atomic rename before the request is forwarded, so it is used at most once, and it is
+    deleted. The request is still sent to the add-on and executed; only the response is not
+    relayed, and the client connection is closed (the client reports an uncertain write).
+    """
+
+    def __init__(self, path: Path, now_seconds: Callable[[], float] | None = None) -> None:
+        self._path = path
+        self._now = now_seconds or (lambda: time.time_ns() / 1e9)
+
+    def claim(self, request: RequestFrame) -> bool:
+        """True when this request must have its response dropped. Consumes the file."""
+        if request.cmd != Command.SEND.value:
+            return False
+        try:
+            if self._now() - self._path.stat().st_mtime > FAULT_MAX_AGE_SECONDS:
+                return False
+            loaded: object = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if not isinstance(loaded, dict):
+            return False
+        spec = cast("dict[str, object]", loaded)
+        run_id = spec.get("run_id")
+        subject = request.args.get("subject")
+        if (
+            not isinstance(run_id, str)
+            or not run_id
+            or spec.get("fault") != FAULT_DROP_RESPONSE
+            or not isinstance(subject, str)
+            or f"{LIVE_TEST_MARKER} {run_id}" not in subject
+        ):
+            return False
+        taken = self._path.with_name(f"{self._path.name}.claimed-{os.getpid()}")
+        try:
+            os.replace(self._path, taken)
+        except OSError:
+            return False
+        with contextlib.suppress(OSError):
+            taken.unlink()
+        return True
 
 
 def private_directory(path: Path, *, restrict: Callable[[Path], None] | None = None) -> None:
@@ -175,6 +228,7 @@ class NativeHost:
         token: str,
         deadlines: Deadlines | None = None,
         monotonic: Callable[[], float] = time.monotonic,
+        fault_file: Path | None = None,
     ) -> None:
         self._native_in = native_in
         self._native_out = native_out
@@ -182,6 +236,7 @@ class NativeHost:
         self._token = token
         self._deadlines = deadlines or Deadlines()
         self._monotonic = monotonic
+        self._fault = None if fault_file is None else LiveFault(fault_file)
         self._write_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._addon: AddonHello | None = None
@@ -372,9 +427,10 @@ class NativeHost:
                 self._refuse(stream, request.id, RefusalCode.DUPLICATE_ID, "Request ID in use.")
                 return
             self._pending[request.id] = pending
+        drop = self._fault is not None and self._fault.claim(request)
         try:
             self._forward(stream, request)
-            self._wait_for_response(stream, request, pending, is_write)
+            self._wait_for_response(stream, request, pending, is_write, drop)
         finally:
             with self._state_lock:
                 self._pending.pop(request.id, None)
@@ -398,7 +454,12 @@ class NativeHost:
             self._to_addon(chunk)
 
     def _wait_for_response(
-        self, stream: SocketStream, request: RequestFrame, pending: _Pending, is_write: bool
+        self,
+        stream: SocketStream,
+        request: RequestFrame,
+        pending: _Pending,
+        is_write: bool,
+        drop: bool = False,
     ) -> None:
         limit = self._deadlines.host_write if is_write else self._deadlines.host_read
         deadline = self._monotonic() + limit
@@ -423,6 +484,8 @@ class NativeHost:
                     mutation,
                 )
                 return
+            if isinstance(item, ResponseFrame) and drop:
+                return  # the write ran; the answer is lost and the connection closes
             self._send(stream, item)
             if isinstance(item, ResponseFrame):
                 return
@@ -447,6 +510,13 @@ class NativeHost:
             self._send(stream, response)
 
 
+def fault_file_for(bridge_dir: Path) -> Path | None:
+    """`<data root>/run/livetest-fault.json`, only in the default layout `<data root>/bridge`."""
+    if bridge_dir.name != "bridge":
+        return None
+    return bridge_dir.parent / "run" / FAULT_FILE
+
+
 def serve(bridge_dir: Path) -> int:
     """Entry point Thunderbird starts: relay between stdio and loopback clients."""
     if sys.platform == "win32":
@@ -458,7 +528,13 @@ def serve(bridge_dir: Path) -> int:
     listener.bind(("127.0.0.1", 0))
     token = secrets.token_hex(32)
     native_out = FdWriter(os.dup(sys.stdout.fileno()))
-    host = NativeHost(FdReader(sys.stdin.fileno()), native_out, listener, token=token)
+    host = NativeHost(
+        FdReader(sys.stdin.fileno()),
+        native_out,
+        listener,
+        token=token,
+        fault_file=fault_file_for(bridge_dir),
+    )
     runtime = write_runtime(bridge_dir, port=host.port, token=token, pid=os.getpid())
     host.start()
     try:
