@@ -5,11 +5,8 @@ connector only through `SourceRouter`. Nothing here connects: every connector op
 transport at the first call, so building is cheap and works with Thunderbird closed.
 """
 
-from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-
-from pydantic import JsonValue
 
 from chamberlain.app.context import SourceRouter
 from chamberlain.connections.model import (
@@ -28,12 +25,11 @@ from chamberlain.connectors.google_calendar.auth import AccessTokens
 from chamberlain.connectors.google_calendar.calendar import GoogleCalendar
 from chamberlain.connectors.google_calendar.config import GoogleBinding, GoogleCalendarConfig
 from chamberlain.connectors.thunderbird.calendar import (
-    BridgeHello,
-    CalendarBridgeFailure,
     OwlBinding,
     OwlCalendarConfig,
     ThunderbirdCalendar,
 )
+from chamberlain.connectors.thunderbird.calendar_bridge import ClientCalendarBridge
 from chamberlain.connectors.thunderbird.client import BridgeClient, RuntimeConnector
 from chamberlain.connectors.thunderbird.contacts import ContactsBinding, ThunderbirdContacts
 from chamberlain.connectors.thunderbird.mail import ThunderbirdBinding, ThunderbirdMail
@@ -43,7 +39,6 @@ from chamberlain.ports.clock import Clock
 from chamberlain.writes.models import WritePolicy
 
 BRIDGE_DIR_NAME = "bridge"
-_NO_CALENDAR = "The Thunderbird add-on does not offer calendar commands yet."
 
 
 @dataclass(frozen=True)
@@ -53,22 +48,6 @@ class Runtime:
     sources: SourceRouter
     policy: WritePolicy
     budgets: Budgets
-
-
-class OwlBridgeNotReady:
-    """The Owl calendar commands are not in bridge v2 yet (calendars INTERFACE entry).
-
-    The source is accepted and routed so it shows up in `doctor` as unavailable, instead of
-    the profile being rejected. Nothing is ever sent.
-    """
-
-    def hello(self) -> BridgeHello:
-        raise CalendarBridgeFailure("bridge.calendar_missing", _NO_CALENDAR, sent=False)
-
-    def request(
-        self, cmd: str, args: Mapping[str, JsonValue], *, write: bool = False
-    ) -> dict[str, JsonValue]:
-        raise CalendarBridgeFailure("bridge.calendar_missing", _NO_CALENDAR, sent=False)
 
 
 def bridge_directory(connections: Connections, data_root: Path) -> Path:
@@ -104,8 +83,8 @@ def build_router(
     contacts: dict[str, ThunderbirdContacts] = {}
     calendar: dict[str, CalendarPort] = {}
 
+    client = BridgeClient(RuntimeConnector(bridge_directory(connections, data_root)))
     if mail_sources or contacts_sources:
-        client = BridgeClient(RuntimeConnector(bridge_directory(connections, data_root)))
         if mail_sources:
             mail_port = ThunderbirdMail(
                 client, {sid: _mail_binding(s) for sid, s in mail_sources.items()}, clock
@@ -129,7 +108,7 @@ def build_router(
                     sid: OwlBinding(calendar_id=s.calendar_id) for sid, s in owl_sources.items()
                 }
             ),
-            OwlBridgeNotReady(),
+            ClientCalendarBridge(client),
             clock,
         )
         calendar.update(dict.fromkeys(owl_sources, owl))

@@ -17,6 +17,13 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Final
 
+from chamberlain.connectors.calendar_support import ics
+from chamberlain.connectors.thunderbird.calendar import (
+    OwlBinding,
+    OwlCalendarConfig,
+    ThunderbirdCalendar,
+)
+from chamberlain.connectors.thunderbird.calendar_bridge import ClientCalendarBridge
 from chamberlain.connectors.thunderbird.client import BridgeClient, RuntimeConnector
 from chamberlain.connectors.thunderbird.contacts import ContactsBinding, ThunderbirdContacts
 from chamberlain.connectors.thunderbird.identity import (
@@ -30,7 +37,9 @@ from chamberlain.connectors.thunderbird.native_host import (
     NativeHost,
     write_runtime,
 )
+from chamberlain.domain.calendar import EventFields, EventStatus
 from chamberlain.domain.mail import FolderRole
+from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
 from chamberlain.ports.contacts import ContactsPort
 from chamberlain.ports.mail import MailPort
@@ -46,6 +55,7 @@ ADDON_DIR: Final = (
 )
 HARNESS: Final = ADDON_DIR / "test" / "harness.mjs"
 ACCOUNT: Final = "account1"
+CALENDAR_ID: Final = "cal1"
 MAILBOX: Final = "owner@example.org"
 TOKEN: Final = "t" * 64
 DEADLINES: Final = Deadlines(
@@ -79,6 +89,15 @@ _FAULTS: Final = {
     Fault.SLOW: "slow",
     Fault.STALE: "stale",
 }
+
+
+_CALENDAR_FAULTS: Final = {
+    Fault.LOSE_RESPONSE_AFTER_APPLY: "lose_response",
+    Fault.BUSY_BEFORE_APPLY: "busy",
+    Fault.SLOW: "calendar_slow",
+    Fault.STALE: "calendar_offline",
+}
+# LOSE_BEFORE_APPLY is declined: the client calendar is a cache, so absence is never proven.
 
 
 def node_available() -> bool:
@@ -145,6 +164,7 @@ class Stack:
         self.contacts = ThunderbirdContacts(
             self.client, {"contacts:test": ContactsBinding(("book1",))}, self.clock
         )
+        self.calendar = self.calendar_for(CALENDAR_ID)
         self._wait_for_addon()
 
     def _wait_for_addon(self) -> None:
@@ -238,6 +258,30 @@ class Stack:
         self.clock.advance(seconds=seconds)
         self.control("advance")
 
+    # --- the CalendarRig surface --------------------------------------------------------
+
+    def calendar_for(self, calendar_id: str) -> ThunderbirdCalendar:
+        return ThunderbirdCalendar(
+            OwlCalendarConfig(bindings={"calendar:test": OwlBinding(calendar_id=calendar_id)}),
+            ClientCalendarBridge(self.client),
+            self.clock,
+        )
+
+    def new_event_uid(self) -> str:
+        self._serial += 1
+        return f"owl-contract-{self._serial}"
+
+    def seed_event(self, fields: EventFields, uid: str) -> str:
+        text = ics.build_new(uid, fields, self.clock.now())
+        self.control("calendar_seed", calendar_id=CALENDAR_ID, id=uid, icalendar=text)
+        return uid
+
+    def event_count(self, uid: str) -> int:
+        text = self.control("calendar_text", calendar_id=CALENDAR_ID, id=uid)
+        if text is None:
+            return 0
+        return int(ics.master_of(str(text)).status is not EventStatus.CANCELLED)
+
     # --- the ContactsRig surface --------------------------------------------------------
 
     def seed_contact(self, name: str, *emails: str) -> str:
@@ -265,6 +309,29 @@ class MailRigAdapter:
         self.advance = stack.advance
 
 
+class CalendarRigAdapter:
+    """`CalendarRig` over a `Stack`: the real add-on and a scripted calendar provider."""
+
+    source = "calendar:test"
+
+    def __init__(self, stack: Stack) -> None:
+        self._stack = stack
+        self.port: CalendarPort = stack.calendar
+        self.count = stack.event_count
+        self.advance = stack.advance
+        self.restart = stack.restart
+
+    def new_uid(self) -> str:
+        return self._stack.new_event_uid()
+
+    def seed(self, fields: EventFields) -> str:
+        return self._stack.seed_event(fields, self.new_uid())
+
+    def inject(self, fault: Fault) -> bool:
+        name = _CALENDAR_FAULTS.get(fault)
+        return name is not None and bool(self._stack.control("inject", fault=name))
+
+
 class ContactsRigAdapter:
     def __init__(self, stack: Stack) -> None:
         self.port: ContactsPort = stack.contacts
@@ -281,4 +348,12 @@ def running(workdir: Path) -> Iterator[Stack]:
         stack.close()
 
 
-__all__ = ["ContactsRigAdapter", "MailRigAdapter", "Stack", "node_available", "running"]
+__all__ = [
+    "CALENDAR_ID",
+    "CalendarRigAdapter",
+    "ContactsRigAdapter",
+    "MailRigAdapter",
+    "Stack",
+    "node_available",
+    "running",
+]
