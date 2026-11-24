@@ -87,7 +87,7 @@ def test_the_cli_tick_and_doctor_metrics_run_against_a_data_root(tmp_path: Path)
     root = str(tmp_path / "data")
     out = io.StringIO()
     assert main(["--data", root, "tick"], out) == 0
-    assert json.loads(out.getvalue()) == {"ran": True, "wake": False}
+    assert json.loads(out.getvalue()) == {"ran": True, "wake": False, "due": []}
     out = io.StringIO()
     assert main(["--data", root, "doctor", "--metrics"], out) == 0
     figures = json.loads(out.getvalue())["data"]["metrics"]

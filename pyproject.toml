@@ -33,7 +33,7 @@ chamberlain = "chamberlain.surface.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-chamberlain = ["py.typed", "store/migrations/*.sql", "guidance/*.yaml"]
+chamberlain = ["py.typed", "store/migrations/*.sql", "guidance/*.yaml", "surface/viewer/static/*"]
 
 # --- ruff: formatter and linter -------------------------------------------
 [tool.ruff]
