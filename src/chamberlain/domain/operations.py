@@ -89,6 +89,10 @@ class ProviderReceipt(Model):
     remote_sha256: Sha256 | None = None
     verification: Verification = Verification()
     items: tuple[ItemResult, ...] = ()
+    read_state_preserved: bool | None = None
+    """False when a merge into an existing copy could not keep the flag (R7)."""
+    warnings: tuple[str, ...] = ()
+    """Harness-safe warning codes such as `merged_existing_copy` (R7)."""
 
 
 class Prepared(Model):
