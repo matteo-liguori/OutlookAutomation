@@ -19,6 +19,7 @@ from chamberlain.connectors.calendar_support.http import (
     HttpTransport,
     TransportFailure,
     UrllibTransport,
+    write_may_have_landed,
 )
 from chamberlain.connectors.google_calendar import mapping
 from chamberlain.connectors.google_calendar.config import GoogleBinding, GoogleCalendarConfig
@@ -60,7 +61,6 @@ _PROVABLE = frozenset(
         IntentKind.CALENDAR_DELETE.value,
     }
 )
-_MAY_HAVE_LANDED = frozenset({408, 429})
 
 TokenSource = Callable[[str], str]
 Json = dict[str, Any]
@@ -68,11 +68,6 @@ Json = dict[str, Any]
 
 def _quote(value: str) -> str:
     return quote(value, safe="")
-
-
-def may_have_landed(status: int) -> bool:
-    """A write answer that does not prove the server refused it."""
-    return status >= 500 or status in _MAY_HAVE_LANDED or status < 400
 
 
 def _text(data: Mapping[str, JsonValue], key: str) -> str:
@@ -270,7 +265,7 @@ class GoogleCalendar:
         if reply.status not in (200, 204, 410) or (reply.status == 410 and method != "DELETE"):
             outcome = (
                 DispatchOutcome.UNKNOWN
-                if may_have_landed(reply.status)
+                if write_may_have_landed(reply.status)
                 else DispatchOutcome.NOT_APPLIED
             )
             return DispatchResult(outcome=outcome, detail=f"google http {reply.status}")

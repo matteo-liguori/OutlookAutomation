@@ -11,6 +11,8 @@ from keyring.backend import KeyringBackend
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from cal_radicale import RadicaleServer
+
 
 class MemoryKeyring(KeyringBackend):
     """An in-memory credential store so tests never touch the real one."""
@@ -40,3 +42,10 @@ def memory_keyring() -> Iterator[MemoryKeyring]:
     keyring.set_keyring(backend)
     yield backend
     keyring.set_keyring(previous)
+
+
+@pytest.fixture(scope="session")
+def radicale(tmp_path_factory: pytest.TempPathFactory) -> Iterator[RadicaleServer]:
+    server = RadicaleServer(tmp_path_factory.mktemp("radicale"))
+    yield server
+    server.stop()

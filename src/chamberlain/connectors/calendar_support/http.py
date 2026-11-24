@@ -71,7 +71,8 @@ class UrllibTransport:
             with self._opener.open(request, timeout=timeout) as response:
                 return _reply(response.status, response.headers.items(), response.read())
         except urllib.error.HTTPError as error:
-            return _reply(error.code, error.headers.items(), error.read())
+            with error:
+                return _reply(error.code, error.headers.items(), error.read())
         except urllib.error.URLError as error:
             refused = isinstance(error.reason, ConnectionRefusedError | socket.gaierror)
             raise TransportFailure(type(error.reason).__name__, sent=not refused) from None
@@ -93,3 +94,14 @@ def require_secure(url: str) -> str:
         "The calendar address must use https.",
         field="url",
     )
+
+
+_MAY_HAVE_LANDED = frozenset({408, 429})
+
+
+def write_may_have_landed(status: int) -> bool:
+    """A write answer that does not prove the server refused it (P-10).
+
+    5xx, 408 and 429 follow writes that sometimes did land; any other 4xx is a refusal.
+    """
+    return status >= 500 or status in _MAY_HAVE_LANDED or status < 400
