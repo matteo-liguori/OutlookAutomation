@@ -105,16 +105,22 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
         log_failure(log, "mail scan failed for %s", source)
         failed = True
 
-    with transaction(ctx.db):
-        port = ctx.sources.mail_port(source) if found else None
+    # Connector round trips (reply headers, correspondents) happen before the write lock.
+    rows: list[tuple[str, str, str, str | None]] = []
+    if found:
+        port = ctx.sources.mail_port(source)
         for item in found:
-            if port is None or repo.is_seen(ctx.db, source, item.locator):
+            if repo.is_seen(ctx.db, source, item.locator):
                 continue
             handle = ctx.services.refs.remember(
                 HandleKind.MESSAGE, source, item.locator, item.internet_message_id
             )
             card = suggester.suggest(port, source, handle, item)
-            repo.add_seen(ctx.db, source, item.locator, handle, _fmt(item.date), _fmt(now), card)
+            rows.append((item.locator, handle, _fmt(item.date), card))
+
+    with transaction(ctx.db):
+        for locator, handle, received, card in rows:
+            repo.add_seen(ctx.db, source, locator, handle, received, _fmt(now), card)
 
         # The overlap below the watermark only catches late arrivals. Once a page reaches the
         # required part of it, the scan is complete enough for a mailbox bigger than one tick.
