@@ -1,0 +1,30 @@
+{
+  "ok": true,
+  "data": {
+    "card": {
+      "kind": "card",
+      "handle": "card_#1",
+      "title": "Supplier quote",
+      "goal": "Agree price",
+      "position": "",
+      "rules": "",
+      "state": "open",
+      "version": 2,
+      "over_cap": false,
+      "actions": [
+        {
+          "kind": "action",
+          "handle": "act_#2",
+          "card": "card_#1",
+          "title": "Send the quote",
+          "state": "open",
+          "due_at": "2026-01-09T09:00:00Z",
+          "notes": []
+        }
+      ]
+    }
+  },
+  "next": [],
+  "guidance": [],
+  "notices": []
+}

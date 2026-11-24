@@ -1,0 +1,20 @@
+{
+  "ok": true,
+  "data": {
+    "card": {
+      "kind": "card",
+      "handle": "card_#1",
+      "title": "Supplier quote",
+      "goal": "Agree price",
+      "position": "",
+      "rules": "",
+      "state": "open",
+      "version": 1,
+      "over_cap": false,
+      "actions": []
+    }
+  },
+  "next": [],
+  "guidance": [],
+  "notices": []
+}

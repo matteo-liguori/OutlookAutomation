@@ -4,10 +4,14 @@ import re
 import sqlite3
 from pathlib import Path
 
+from chamberlain.app.context import Context, SourceRouter
+from chamberlain.app.doubles import unwired_services
 from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.timeutil import minus, ts
 from chamberlain.ports.clock import ManualClock
+from chamberlain.store.db import MEMORY, connect
+from chamberlain.store.migrate import migrate
 
 SESSION = "ses_aaaaaaaa0001"
 OTHER_SESSION = "ses_aaaaaaaa0002"
@@ -109,3 +113,12 @@ def normalise(text: str) -> str:
 
 def ago(clock: ManualClock, **kw: float) -> str:
     return minus(clock.now(), **kw)
+
+
+def make_context(root: Path, clock: ManualClock) -> Context:
+    """A fresh in-memory store over a data root, for tests that build their own."""
+    db = connect(MEMORY)
+    migrate(db, clock, backup_dir=None)
+    return Context(
+        db=db, clock=clock, data_root=root, sources=SourceRouter(), services=unwired_services()
+    )
