@@ -121,6 +121,14 @@ def test_a_scheduled_pass_produces_one_report_owned_by_its_run(rig: Rig) -> None
     assert [r["owner_kind"] for r in rig.rows("SELECT owner_kind FROM artifact_owners")] == ["run"]
     assert pass_events(rig) == []  # the condition ended, so the event expired (A-2)
     assert store_report(rig.ctx, run.handle, "ignored") == reports[0].handle  # one report only
+    sha = rig.rows("SELECT sha256 FROM artifacts WHERE handle = ?", reports[0].handle)[0]["sha256"]
+    assert blob_path(rig.ctx.data_root, sha).exists()
+    rig.clock.advance(hours=31 * 24)  # past the 30-day default, before the run row goes (35 days)
+    sweep(rig.ctx, rig.clock.now(), compactors=COMPACTORS)
+    sweep(rig.ctx, rig.clock.now(), compactors=COMPACTORS)
+    assert repo.get_run(rig.ctx.db, run.handle) is not None  # the report expired on its own
+    assert read_reports(rig.ctx, run.handle) == []
+    assert not blob_path(rig.ctx.data_root, sha).exists()
 
 
 def test_a_run_owned_report_survives_sweeps_until_its_lifetime_then_the_sweeper_removes_it(
