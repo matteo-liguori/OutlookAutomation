@@ -6,6 +6,7 @@ append and no history on the card (M-14).
 """
 
 import sqlite3
+from typing import Literal
 
 from chamberlain.domain.cards import card_over_cap, card_size
 from chamberlain.domain.handles import HandleKind, new_handle
@@ -16,7 +17,6 @@ from chamberlain.limits import (
     CARD_MAX_CHARS,
     CARD_OPEN_ACTIONS_MAX,
     CARD_OUTCOME_DAYS,
-    CARD_POSITION_MAX,
     CARD_RULES_MAX,
     CARD_TITLE_MAX,
     NOTE_MAX,
@@ -24,18 +24,24 @@ from chamberlain.limits import (
     OUTCOME_MAX,
 )
 from chamberlain.memory import repo
+from chamberlain.memory.caps import NORMAL, Caps, caps_for, status_of
 from chamberlain.memory.timeutil import parse, plus, ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import ActionView, CardView, NoteView
 from chamberlain.store.db import transaction
 
-_FIELD_CAPS = {
-    "title": CARD_TITLE_MAX,
-    "goal": CARD_GOAL_MAX,
-    "position": CARD_POSITION_MAX,
-    "rules": CARD_RULES_MAX,
-}
+
+def _field_caps(caps: Caps) -> dict[str, int]:
+    return {
+        "title": CARD_TITLE_MAX,
+        "goal": CARD_GOAL_MAX,
+        "position": caps.position,
+        "rules": CARD_RULES_MAX,
+    }
+
+
+_FIELD_NAMES = ("title", "goal", "position", "rules")
 
 
 def _over(field: str, size: int, limit: int) -> ChamberlainError:
@@ -45,6 +51,12 @@ def _over(field: str, size: int, limit: int) -> ChamberlainError:
         fix=f"Shorten {field} to {limit} characters; keep current facts only.",
         field=field,
     )
+
+
+def _complex_state(state: str | None) -> Literal["pending", "approved", "declined"] | None:
+    if state == "pending" or state == "approved" or state == "declined":
+        return state
+    return None
 
 
 class CardService:
@@ -69,6 +81,8 @@ class CardService:
             review_at=None if row["review_at"] is None else parse(str(row["review_at"])),
             outcome=None if row["outcome"] is None else str(row["outcome"]),
             actions=actions,
+            context=repo.card_context_artifact(self._db, handle, ts(self._clock.now())),
+            complex=_complex_state(status_of(self._db, handle)),
         )
 
     def action_view(self, row: repo.Row) -> ActionView:
@@ -129,7 +143,7 @@ class CardService:
     ) -> CardView:
         """Create a card. An imported one over a cap is stored flagged (M-13)."""
         fields = {"title": title, "goal": goal, "position": position, "rules": rules}
-        flagged = self._fields_over(fields)
+        flagged = self._fields_over(fields, NORMAL)
         if flagged and not imported:
             name, size, limit = flagged[0]
             raise _over(name, size, limit)
@@ -166,11 +180,12 @@ class CardService:
     ) -> CardView:
         """Replace the named fields. A card flagged over cap must come under (M-13)."""
         row = self._open_card(handle, expected_version)
-        merged = {name: str(row[name]) for name in _FIELD_CAPS}
+        caps = caps_for(self._db, handle)
+        merged = {name: str(row[name]) for name in _FIELD_NAMES}
         for name, value in fields.items():
             if value is not None:
                 merged[name] = value
-        flagged = self._fields_over(merged)
+        flagged = self._fields_over(merged, caps)
         if flagged:
             name, size, limit = flagged[0]
             raise _over(name, size, limit)
@@ -188,8 +203,8 @@ class CardService:
                 now=ts(now),
             )
             view = self.view(handle)
-            if card_over_cap(view):
-                raise _over("card", card_size(view), CARD_MAX_CHARS)
+            if card_over_cap(view, caps.card):
+                raise _over("card", card_size(view), caps.card)
         return self.view(handle)
 
     def close(self, handle: str, expected_version: int | None, outcome: str) -> CardView:
@@ -209,7 +224,8 @@ class CardService:
                     plus(now, days=ACTION_OUTCOME_DAYS),
                 )
             repo.remove_evidence_refs_of(self._db, [handle, *actions])
-            self._release_owned(actions)
+            self._release_owned([*actions, handle])
+            repo.delete_complex(self._db, handle)
             repo.delete_unreferenced_evidence(self._db)
             repo.delete_card_links(self._db, handle)
             repo.close_card(self._db, handle, outcome, ts(now), plus(now, days=CARD_OUTCOME_DAYS))
@@ -265,8 +281,9 @@ class CardService:
             )
             repo.bump_card(self._db, card, ts(now))
             view = self.view(card)
-            if card_over_cap(view):
-                raise _over("card", card_size(view), CARD_MAX_CHARS)
+            limit = caps_for(self._db, card).card
+            if card_over_cap(view, limit):
+                raise _over("card", card_size(view), limit)
         return self.view(card)
 
     def update_action(
@@ -298,8 +315,9 @@ class CardService:
             )
             repo.bump_card(self._db, card, ts(now))
             view = self.view(card)
-            if card_over_cap(view):
-                raise _over("card", card_size(view), CARD_MAX_CHARS)
+            limit = caps_for(self._db, card).card
+            if card_over_cap(view, limit):
+                raise _over("card", card_size(view), limit)
         return self.view(card)
 
     def finish_action(self, action: str, expected_version: int | None, outcome: str) -> CardView:
@@ -340,10 +358,10 @@ class CardService:
         return outcome
 
     @staticmethod
-    def _fields_over(fields: dict[str, str]) -> list[tuple[str, int, int]]:
+    def _fields_over(fields: dict[str, str], caps: Caps) -> list[tuple[str, int, int]]:
         return [
             (name, len(fields[name]), limit)
-            for name, limit in _FIELD_CAPS.items()
+            for name, limit in _field_caps(caps).items()
             if len(fields[name]) > limit
         ]
 

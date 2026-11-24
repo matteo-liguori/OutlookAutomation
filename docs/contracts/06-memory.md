@@ -34,6 +34,8 @@ Every table and every file under the data root belongs to exactly one class.
 | Evidence | while referenced | Deleted at once when unreferenced |
 | Artifact | owner live and before `expires_at` | Released; bytes deleted when no owner remains |
 | Artifact default expiry | 30 days; maximum 180 days | An open action renews its artifacts on review, never automatically |
+| Context carried over from the old harness | 60 days (`IMPORTED_CONTEXT_DAYS`), or until the agent forgets it, or the card closes | Released, bytes deleted. Never renewed; never brought back by a later import (M-35) |
+| Larger-limit request (`complex_cards`) | until the card closes | Deleted with the card. A declined row is kept, so the 30-day wait holds (M-37) |
 | Session-owned artifact | session end or 24 hours | Deleted |
 | Ref (`msg`, `cev`, `con`) | 30 days after last seen, unless referenced by a live record | Delete row |
 | Session | idle 4 hours | Ended; its ephemeral rows deleted |
@@ -68,7 +70,7 @@ An artifact row: `handle`, `kind` (`mail_body`, `attachment`, `download`,
   | Owner | Live while |
   | --- | --- |
   | action | `state = open` |
-  | card | `state = open` (evidence only; artifacts are owned by actions) |
+  | card | `state = open`. Evidence, and the one stored text item the importer keeps (M-35). The agent cannot name a card as an owner of `keep`; artifacts it stores are owned by actions |
   | operation | not terminal, plus 24 hours after terminal |
   | grant | `proposed`, `active` or `suspended` |
   | session | not ended |
@@ -128,6 +130,37 @@ An artifact row: `handle`, `kind` (`mail_body`, `attachment`, `download`,
   authority: evidence whose referrers are gone is gone.
 - **M-16** Card updates carry `expected_version`; a stale one fails with
   `card.version_conflict`.
+
+### Larger limits for a complex card
+
+The normal caps above stay. For a genuinely demanding card the agent may ask, and
+the owner may agree, to raise two of them for that one card:
+
+| Field | Normal | Complex card |
+| --- | --- | --- |
+| Card `position` | 1,500 | 4,000 |
+| Whole open card, serialised | 3,000 | 6,000 |
+
+- **M-36** The agent asks with `card` (`op: update`, `complex_reason`, no
+  `fields`). That records a `pending` request and changes nothing else. Only the
+  owner, in the viewer, moves it to `approved` or `declined`; no tool can. While a
+  card is `approved`, M-12 uses the larger caps for it. Everything else
+  (`title`, `goal`, `rules`, actions, notes) keeps its normal cap. Every request,
+  approval, decline and revoke is one audit row (`card.complex_requested`,
+  `card.complex_approved`, `card.complex_declined`, `card.complex_revoked`).
+  The owner's rows name `human:viewer`; a request names the agent's session.
+- **M-37** At most 3 cards are `approved` at once. A request that would be the
+  fourth is refused (`request.invalid`) and the message names the three. A
+  declined card may not ask again for 30 days (`COMPLEX_DECLINE_DAYS`); the
+  refusal gives the date. The agent is told of an approval or decline by a
+  `card.review_due` event (reason `complex_approved` or `complex_declined`) for
+  7 days, and `open` shows `complex` on the card (`pending`, `approved`,
+  `declined`). Closing the card ends the request.
+- **M-38** Revoking returns the card to the normal caps at once. If it is then
+  over them, it is flagged `over_cap` and due for review now, and the ordinary
+  over-cap flow (M-13) applies: its next update must bring it under. Nothing is
+  cut. The size of a card never counts `context` or `complex`, which only
+  describe it.
 
 ## Retrieval
 
@@ -219,3 +252,17 @@ crash-mid-sweep, checking after each sweep:
   keeps the handle and replaces the locator after a move or draft update.
 - **M-34** `con_` handles open to the contact's name and addresses, read live
   with `ContactsPort.read`; an unreachable source is an error, never a stale view.
+- **M-35** Context carried over from the old harness. `chamberlain import` stores
+  each open old case's free-text `context` (up to 6,000 characters in the old
+  harness) as one text artifact owned by the new card. Its `reason` says what it
+  is ("Context from the old harness...") and its name is `context-from-old-harness.txt`.
+  The card is made due for review now; while it holds the item its review event has
+  reason `context` (not `review`), so the agent is not nudged to close it before
+  the notes are used. A repeat import adds the item to cards that
+  already exist and lack it, never twice: the `imported_context` table records each
+  old case once, so it also stays gone after the agent has forgotten it. Cards the
+  owner has closed since get nothing. The item expires 60 days after import
+  (`IMPORTED_CONTEXT_DAYS`) and is never renewed. `open` on the card shows its
+  handle as `context`, and the rule `card.context` tells the agent to fold what
+  still matters into the position (within the cap) and then `forget` it. The
+  import report counts them as `context_artifacts`.

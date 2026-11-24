@@ -17,6 +17,7 @@ from chamberlain.memory import refs
 from chamberlain.memory.artifacts import ArtifactService, Kept, read_import, refuse_data_root
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.checks import storage_checks
+from chamberlain.memory.complex_cards import ComplexCards
 from chamberlain.memory.evidence import EvidenceService
 from chamberlain.memory.find import find
 from chamberlain.memory.reading import open_handle
@@ -246,6 +247,12 @@ def card(ctx: Context, request: CardRequest) -> Result:
     service = CardService(ctx.db, ctx.clock)
     fields = {} if request.fields is None else request.fields.model_dump(exclude_none=True)
     action_fields = request.action_fields
+    if request.complex_reason is not None:
+        assert request.card is not None
+        ComplexCards(ctx.db, ctx.clock, ctx.services.audit).request(
+            request.card, request.complex_reason, _actor(ctx)
+        )
+        return Result(CardResponse(card=service.view(request.card)))
     match request.op:
         case CardOp.CREATE:
             view = service.create(

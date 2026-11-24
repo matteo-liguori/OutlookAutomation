@@ -57,12 +57,19 @@ Python; on macOS or Linux use `.venv/bin/python`.
 
    The import only reads the old folder and never modifies it. Import a copy taken while
    the old harness is closed. It writes `config/connections.yaml` (once, never
-   overwritten), your cards, and the report at `<data root>/import/report.json`. Then run
+   overwritten), your cards, and the report at `<data root>/import/report.json`. The long
+   free-text context the old harness kept on each open card is stored with its card as a
+   note called "context from the old harness". The card is marked due for review, and the
+   assistant folds what still matters into the card and forgets the note. Unread notes
+   expire after 60 days. Running the import again adds this context to cards that were
+   imported before it was carried over, and never twice. Then run
    `chamberlain config validate`. The full steps are in [docs/cutover.md](docs/cutover.md);
    settings are in [docs/configuration.md](docs/configuration.md).
 
 5. Viewer. `chamberlain viewer` opens a local page where you confirm grants, settle
-   uncertain operations and read reports.
+   uncertain operations, answer requests for larger cards (see
+   [docs/permissions.md](docs/permissions.md#larger-cards)) and read reports. The page keeps
+   its token for the tab, so a reload works; a new browser session needs the token link again.
 
 6. Scheduling. See [docs/scheduling.md](docs/scheduling.md) for the five-minute tick and
    the passes in `connections.yaml`.

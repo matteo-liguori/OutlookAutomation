@@ -24,6 +24,7 @@ LIVE_GRANT = "SELECT handle FROM grants WHERE state IN ('proposed', 'active', 's
 LIVE_SESSION = "SELECT handle FROM sessions WHERE ended_at IS NULL AND last_seen_at > :idle_edge"
 
 LIVE_RUN = "SELECT handle FROM runs"
+LIVE_CARD = "SELECT handle FROM cards WHERE state = 'open'"
 
 _LIVE_BY_KIND = {
     "action": LIVE_ACTION,
@@ -31,6 +32,7 @@ _LIVE_BY_KIND = {
     "grant": LIVE_GRANT,
     "session": LIVE_SESSION,
     "run": LIVE_RUN,
+    "card": LIVE_CARD,
 }
 
 
@@ -134,6 +136,84 @@ def reopen_card(db: sqlite3.Connection, handle: str, now: str) -> None:
         "version = version + 1, updated_at = ? WHERE handle = ?",
         (now, handle),
     )
+
+
+def set_card_review(db: sqlite3.Connection, handle: str, review_at: str, over_cap: bool) -> None:
+    """Make a card due for review now (or flag it over cap) without changing its content."""
+    db.execute(
+        "UPDATE cards SET review_at = ?, over_cap = ? WHERE handle = ? AND state = 'open'",
+        (review_at, int(over_cap), handle),
+    )
+
+
+# --- context carried over from the old harness (M-35) ----------------------------
+
+
+def imported_context_done(db: sqlite3.Connection, case_id: str) -> bool:
+    row = db.execute("SELECT 1 FROM imported_context WHERE case_id = ?", (case_id,)).fetchone()
+    return row is not None
+
+
+def record_imported_context(
+    db: sqlite3.Connection, case_id: str, card: str, artifact: str, now: str
+) -> None:
+    db.execute(
+        "INSERT OR IGNORE INTO imported_context (case_id, card, artifact, imported_at) "
+        "VALUES (?, ?, ?, ?)",
+        (case_id, card, artifact, now),
+    )
+
+
+def card_context_artifact(db: sqlite3.Connection, card: str, now: str) -> str | None:
+    """The live, unexpired imported-context item a card holds, if any."""
+    row = db.execute(
+        "SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
+        "JOIN imported_context i ON i.artifact = a.handle "
+        "WHERE o.owner_kind = 'card' AND o.owner = ? AND a.state = 'live' AND a.expires_at > ? "
+        "ORDER BY a.created_at DESC, a.handle LIMIT 1",
+        (card, now),
+    ).fetchone()
+    return None if row is None else str(row["handle"])
+
+
+# --- larger limits for complex cards (M-36) -------------------------------------------
+
+
+def get_complex(db: sqlite3.Connection, card: str) -> Row | None:
+    row: Row | None = db.execute("SELECT * FROM complex_cards WHERE card = ?", (card,)).fetchone()
+    return row
+
+
+def complex_rows(db: sqlite3.Connection, state: str) -> list[Row]:
+    rows: list[Row] = db.execute(
+        "SELECT x.*, c.title AS title FROM complex_cards x JOIN cards c ON c.handle = x.card "
+        "WHERE x.state = ? AND c.state = 'open' ORDER BY x.requested_at, x.card",
+        (state,),
+    ).fetchall()
+    return rows
+
+
+def set_complex(
+    db: sqlite3.Connection,
+    *,
+    card: str,
+    state: str,
+    reason: str,
+    requested_at: str,
+    decided_at: str | None,
+    blocked_until: str | None,
+) -> None:
+    db.execute(
+        "INSERT INTO complex_cards (card, state, reason, requested_at, decided_at, blocked_until) "
+        "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (card) DO UPDATE SET state = excluded.state, "
+        "reason = excluded.reason, requested_at = excluded.requested_at, "
+        "decided_at = excluded.decided_at, blocked_until = excluded.blocked_until",
+        (card, state, reason, requested_at, decided_at, blocked_until),
+    )
+
+
+def delete_complex(db: sqlite3.Connection, card: str) -> None:
+    db.execute("DELETE FROM complex_cards WHERE card = ?", (card,))
 
 
 def delete_card_links(db: sqlite3.Connection, card: str) -> None:
@@ -499,7 +579,8 @@ def dead_holds(db: sqlite3.Connection, edges: Edges) -> list[Row]:
         f"(owner_kind = 'operation' AND owner IN ({LIVE_OPERATION})) OR "
         f"(owner_kind = 'grant' AND owner IN ({LIVE_GRANT})) OR "
         f"(owner_kind = 'session' AND owner IN ({LIVE_SESSION})) OR "
-        f"(owner_kind = 'run' AND owner IN ({LIVE_RUN})))",
+        f"(owner_kind = 'run' AND owner IN ({LIVE_RUN})) OR "
+        f"(owner_kind = 'card' AND owner IN ({LIVE_CARD})))",
         params,
     ).fetchall()
     return rows
@@ -515,7 +596,8 @@ def count_artifacts_without_live_owner(db: sqlite3.Connection, edges: Edges) -> 
         f"(o.owner_kind = 'operation' AND o.owner IN ({LIVE_OPERATION})) OR "
         f"(o.owner_kind = 'grant' AND o.owner IN ({LIVE_GRANT})) OR "
         f"(o.owner_kind = 'session' AND o.owner IN ({LIVE_SESSION})) OR "
-        f"(o.owner_kind = 'run' AND o.owner IN ({LIVE_RUN}))))",
+        f"(o.owner_kind = 'run' AND o.owner IN ({LIVE_RUN})) OR "
+        f"(o.owner_kind = 'card' AND o.owner IN ({LIVE_CARD}))))",
         params,
     ).fetchone()
     return int(row[0])
@@ -618,9 +700,10 @@ def card_live_bytes(db: sqlite3.Connection, card: str) -> int:
     return scalar(
         db,
         "SELECT COALESCE(SUM(a.size), 0) FROM artifacts a WHERE a.state = 'live' AND "
-        "a.handle IN (SELECT o.artifact FROM artifact_owners o WHERE o.owner_kind = 'action' "
-        "AND o.owner IN (SELECT handle FROM actions WHERE card = ?))",
-        (card,),
+        "a.handle IN (SELECT o.artifact FROM artifact_owners o WHERE "
+        "(o.owner_kind = 'action' AND o.owner IN (SELECT handle FROM actions WHERE card = ?)) "
+        "OR (o.owner_kind = 'card' AND o.owner = ?))",
+        (card, card),
     )
 
 
@@ -631,10 +714,13 @@ def card_of_action(db: sqlite3.Connection, action: str) -> str | None:
 
 def cards_over_artifact_budget(db: sqlite3.Connection, limit: int) -> list[tuple[str, int]]:
     rows = db.execute(
-        "SELECT ac.card AS card, SUM(a.size) AS n FROM artifacts a "
+        "SELECT card, SUM(size) AS n FROM ("
+        "SELECT ac.card AS card, a.size AS size FROM artifacts a "
         "JOIN artifact_owners o ON o.artifact = a.handle AND o.owner_kind = 'action' "
-        "JOIN actions ac ON ac.handle = o.owner "
-        "WHERE a.state = 'live' GROUP BY ac.card HAVING SUM(a.size) > ?",
+        "JOIN actions ac ON ac.handle = o.owner WHERE a.state = 'live' "
+        "UNION ALL SELECT o.owner AS card, a.size AS size FROM artifacts a "
+        "JOIN artifact_owners o ON o.artifact = a.handle AND o.owner_kind = 'card' "
+        "WHERE a.state = 'live') GROUP BY card HAVING SUM(size) > ?",
         (limit,),
     )
     return [(str(row["card"]), int(row["n"])) for row in rows]

@@ -25,6 +25,7 @@ from chamberlain.importer.credentials import icloud_credential, move_secrets
 from chamberlain.importer.old import SKIPPED_TABLES, OldInstallation, read_installation
 from chamberlain.importer.profile_map import MappedProfile, map_profile
 from chamberlain.importer.report import ImportReport
+from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.ports.mail import MailPort
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -208,7 +209,8 @@ def _write_rows(
         now = stamp(the_clock)
         services = build_services(db, the_clock, data_root)
         with transaction(db):
-            imported = records.import_cards(db, old, zone, now, report)
+            artifacts = ArtifactService(db, the_clock, data_root)
+            imported = records.import_cards(db, old, zone, now, report, artifacts)
             ctx = authority.Context(
                 db=db,
                 audit=services.audit,

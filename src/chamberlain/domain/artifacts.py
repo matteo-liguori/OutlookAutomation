@@ -21,13 +21,15 @@ class ArtifactState(StrEnum):
 
 
 class OwnerKind(StrEnum):
-    """Who may hold an artifact (M-4). A card holds evidence only."""
+    """Who may hold an artifact (M-4). A card holds only the context carried over from the old
+    harness (M-35); the agent cannot name a card as an owner."""
 
     ACTION = "action"
     OPERATION = "operation"
     GRANT = "grant"
     SESSION = "session"
     RUN = "run"
+    CARD = "card"
 
 
 OWNER_PREFIX: dict[OwnerKind, str] = {
@@ -36,6 +38,7 @@ OWNER_PREFIX: dict[OwnerKind, str] = {
     OwnerKind.GRANT: "grant",
     OwnerKind.SESSION: "ses",
     OwnerKind.RUN: "run",
+    OwnerKind.CARD: "card",
 }
 """Handle prefix of each owner kind. A run is owned by the runs track (`runs` table)."""
 

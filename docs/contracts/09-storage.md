@@ -46,6 +46,8 @@ Binding for every track that touches SQLite. Code:
 | `evidence_refs` | Evidence | memory | Who refers to each evidence row |
 | `artifacts` | Working set | memory | Artifact rows |
 | `artifact_owners` | Working set | memory | Owner holds |
+| `imported_context` | Records | memory | Which old cases already had their context carried over (M-35) |
+| `complex_cards` | Records | memory | Requests for, and owner answers on, a larger card limit (M-36 to M-38) |
 | `refs` | Working set | memory | Handle to source and locator |
 | `leases` | Ephemeral | memory | Leased file paths |
 | `cursors` | Ephemeral | memory | Page cursors |

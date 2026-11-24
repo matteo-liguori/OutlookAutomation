@@ -20,7 +20,10 @@ chamberlain --data <new data root> import <copy of old data root>
 ```
 
 Read the printed summary, then `<new data root>/import/report.json` (private; it also
-holds the old private guidance text). Running the import again changes nothing.
+holds the old private guidance text). Running the import again changes nothing, except
+that it adds the old card context (stored as "context from the old harness") to any card
+that was imported before this was carried over; the report counts them as
+`context_artifacts`.
 
 - `config/connections.yaml` is created if absent, never overwritten. Run
   `chamberlain config validate`.

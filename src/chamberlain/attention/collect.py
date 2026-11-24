@@ -98,6 +98,7 @@ def collect(ctx: Context) -> Collected:
         actions=tuple(repo.due_actions(ctx.db, now)),
         cards=tuple(repo.cards_needing_review(ctx.db, now)),
         open_cards=tuple(repo.open_cards(ctx.db)),
+        complex_decisions=tuple(repo.complex_decisions(ctx.db, stamp_before(ctx, NOTE_OPEN))),
         linked_ids=frozenset(links),
         linked_cards=links,
         grants=tuple(repo.grants_awaiting_human(ctx.db)),

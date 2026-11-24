@@ -1,0 +1,11 @@
+id: card.context
+version: 1
+title: Notes from the old system
+when: {result: data.view.context != null}
+text: >
+  This card still holds notes carried over from the old system. Read them,
+  fold what still matters into the position (within its limit), then forget
+  them. Left alone they expire after 60 days.
+max_chars: 220
+once_per: session
+priority: 52
