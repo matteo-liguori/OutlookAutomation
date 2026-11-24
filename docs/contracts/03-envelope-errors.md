@@ -97,7 +97,7 @@ field?, example?}`.
 | --- | --- |
 | `request.invalid`, `request.unknown_tool`, `request.unknown_handle`, `request.wrong_kind`, `request.bad_cursor`, `request.too_large` | `invalid_request` |
 | `card.over_cap`, `evidence.over_cap`, `note.over_cap`, `artifact.no_owner`, `artifact.owner_ended`, `artifact.hash_mismatch`, `storage.over_budget` | `invalid_request` |
-| `source.not_configured`, `session.required`, `config.invalid` | `not_configured` |
+| `source.not_configured`, `session.required`, `session.stale`, `config.invalid` | `not_configured` |
 | `capability.unsupported`, `tool.not_implemented` | `unsupported` |
 | `grant.required`, `grant.human_confirmation_required`, `grant.not_active`, `grant.scope_mismatch`, `grant.content_mismatch`, `grant.limit_reached`, `recipient.unknown` | `not_authorised` |
 | `card.version_conflict`, `operation.already_settled`, `operation.intent_changed`, `remote.changed`, `remote.ambiguous`, `artifact.expired`, `cursor.expired` | `conflict` |

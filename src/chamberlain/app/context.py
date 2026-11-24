@@ -82,6 +82,10 @@ DoctorCheckFn = Callable[[Context], list[CheckResult]]
 class Hooks(Protocol):
     """Implemented by attention (07-attention.md, A-6, A-19)."""
 
+    def guard(self, ctx: Context, spec: ToolSpec, request: ToolRequest) -> None:
+        """Raise `ChamberlainError` to stop any tool before its handler (R10)."""
+        ...
+
     def tick(self, ctx: Context) -> None:
         """Run before every handler. Must not raise (A-7)."""
         ...

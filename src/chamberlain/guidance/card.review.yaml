@@ -1,0 +1,12 @@
+id: card.review
+version: 1
+title: A card is due for review
+when: {event: card.review_due, reason: review}
+text: >
+  A card is due for review. Judge from its date, context and risk of error
+  whether it still earns its place. Close it unless there is a concrete
+  current reason to track it; being incomplete is not a reason. Record why in
+  one line.
+max_chars: 250
+once_per: card
+priority: 50

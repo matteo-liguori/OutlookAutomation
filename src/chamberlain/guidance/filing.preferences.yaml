@@ -1,0 +1,11 @@
+id: filing.preferences
+version: 1
+title: Filing mail
+when: {}
+text: >
+  Before filing mail, establish where the user wants it to go, and keep it
+  unread unless the owner has said otherwise. Never delete, report as junk or
+  unsubscribe on your own. Record what was moved and what failed.
+max_chars: 250
+once_per: session
+priority: 30

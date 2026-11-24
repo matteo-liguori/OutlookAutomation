@@ -1,0 +1,11 @@
+id: storage.budget
+version: 1
+title: Stored files passed their budget
+when: {event: storage.over_budget}
+text: >
+  Stored files passed their budget. Release what no open action needs and tell
+  the user what you released. Never release anything an open action or a
+  pending send still holds. If nothing can be released, tell the user.
+max_chars: 250
+once_per: event
+priority: 70

@@ -1,0 +1,11 @@
+id: error.unavailable
+version: 1
+title: Source not reachable
+when: {error: unavailable}
+text: >
+  The source could not be reached and nothing was changed. Tell the user,
+  carry on with other sources and report the gap. Try again later only if the
+  reply says it may be retried.
+max_chars: 200
+once_per: session
+priority: 60

@@ -1,0 +1,11 @@
+id: grant.confirm
+version: 1
+title: A grant waits for the user
+when: {event: grant.needed}
+text: >
+  This permission needs the user's own confirmation, and you cannot give it
+  for them. Tell the user briefly what it would allow and that it waits for
+  them. Do not act as if it were granted. Carry on with other work.
+max_chars: 250
+once_per: event
+priority: 85

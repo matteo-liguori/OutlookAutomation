@@ -1,0 +1,10 @@
+id: write.attempted
+version: 1
+title: An attempt with no proof
+when: {error: uncertain}
+text: >
+  The change was attempted and the outcome is not proven. Never repeat it.
+  Call reconcile, then tell the user the true state in plain words.
+max_chars: 150
+once_per: operation
+priority: 93

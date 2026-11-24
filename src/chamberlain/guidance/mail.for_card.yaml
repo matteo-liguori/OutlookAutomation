@@ -1,0 +1,11 @@
+id: mail.for_card
+version: 1
+title: New mail for a card
+when: {event: mail.new_for_card}
+text: >
+  New mail seems to belong to a card. Read the card first, then the mail, and
+  update the card only with what changed. Keep evidence to a short statement
+  and never paste a message body into a card.
+max_chars: 200
+once_per: session
+priority: 60

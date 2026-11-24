@@ -128,6 +128,9 @@ class _Hooks:
         self.ticks = 0
         self.fail_tick = fail_tick
 
+    def guard(self, ctx: Context, spec: ToolSpec, request: ToolRequest) -> None:
+        return None
+
     def tick(self, ctx: Context) -> None:
         self.ticks += 1
         if self.fail_tick:
@@ -178,7 +181,7 @@ def test_doctor_reports_the_schema_checks(ctx: Context) -> None:
 def test_wiring_collects_the_track_modules(clock: ManualClock) -> None:
     handlers, hooks = load_tracks()
     assert ToolName.DOCTOR in handlers
-    assert hooks is None
+    assert hooks is not None
     assert len(TRACK_MODULES) == 3
 
 
@@ -192,3 +195,23 @@ def test_build_app_opens_a_store_under_the_data_root(
     finally:
         app.close()
     assert (root / "chamberlain.sqlite3").exists()
+
+
+def test_r10_a_guard_that_raises_stops_the_tool_before_tick_and_handler(ctx: Context) -> None:
+    class Stopper(_Hooks):
+        def guard(self, ctx: Context, spec: ToolSpec, request: ToolRequest) -> None:
+            raise ChamberlainError(ErrorCode.SESSION_STALE, "Stop.")
+
+    hooks = Stopper()
+    called: list[str] = []
+
+    def handler(c: Context, request: StartRequest) -> Result:
+        called.append("ran")
+        return start(c, request)
+
+    reply = App(ctx, {ToolName.START: handler}, hooks).call("start", {})
+    assert reply.error is not None
+    assert reply.error.code is ErrorCode.SESSION_STALE
+    assert hooks.ticks == 0
+    assert called == []
+    assert [item.id for item in reply.guidance] == ["start.first"]

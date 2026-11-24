@@ -1,0 +1,10 @@
+id: storage.orphans
+version: 1
+title: Unknown files set aside
+when: {event: storage.orphans}
+text: >
+  Files the harness does not recognise were set aside and will be deleted
+  after a grace period. Mention it to the user once. Do not touch them.
+max_chars: 150
+once_per: event
+priority: 30

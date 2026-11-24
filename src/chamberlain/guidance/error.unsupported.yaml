@@ -1,0 +1,10 @@
+id: error.unsupported
+version: 1
+title: Not supported
+when: {error: unsupported}
+text: >
+  This source cannot do that. Stop. Do not try another route to get the same
+  effect. Tell the user what is not available.
+max_chars: 150
+once_per: session
+priority: 80

@@ -1,0 +1,12 @@
+id: session.scheduled
+version: 1
+title: A scheduled run
+when: {tool: start, purpose: scheduled}
+text: >
+  This run was started by a schedule and the user may not be watching. Do only
+  what the items ask and do not wait for answers. Record anything that needs
+  the user on its card and report it; never assume a permission. End with a
+  short report of what was done and not covered.
+max_chars: 300
+once_per: session
+priority: 75

@@ -1,0 +1,12 @@
+id: propose.check
+version: 1
+title: Proposing a change
+when: {tool: propose}
+text: >
+  Describe exactly what you will do and check it against what the user asked:
+  recipients, attachments, times and wording. If the reply says the user must
+  confirm, tell them what it would do and wait. A permission for one thing
+  covers nothing else.
+max_chars: 250
+once_per: session
+priority: 60

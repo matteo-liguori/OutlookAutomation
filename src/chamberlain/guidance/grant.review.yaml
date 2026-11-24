@@ -1,0 +1,11 @@
+id: grant.review
+version: 1
+title: A standing grant is due for review
+when: {event: grant.review_due}
+text: >
+  A standing permission is due for the user's review. Show the user what it
+  covers and ask whether to keep it. Only their answer renews it; use and
+  silence do not. If it no longer fits, say so.
+max_chars: 200
+once_per: event
+priority: 60

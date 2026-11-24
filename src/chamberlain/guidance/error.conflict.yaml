@@ -1,0 +1,10 @@
+id: error.conflict
+version: 1
+title: Something changed
+when: {error: conflict}
+text: >
+  Something changed since you last looked. Read it again before deciding. Do
+  not reapply your earlier change blindly.
+max_chars: 150
+once_per: session
+priority: 60

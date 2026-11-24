@@ -1,0 +1,11 @@
+id: action.due
+version: 1
+title: An action is due
+when: {event: action.due}
+text: >
+  An action is due. Read it with its card, then do it, ask the user, or move
+  it with a reason. Do not mark it finished until the user confirms or you
+  have checked that it happened. Reading a reminder does not complete it.
+max_chars: 250
+once_per: session
+priority: 65

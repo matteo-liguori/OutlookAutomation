@@ -1,0 +1,11 @@
+id: forget.grant
+version: 1
+title: Withdrawing a permission
+when: {tool: forget}
+text: >
+  Forgetting a grant withdraws it for good, and forgetting a proposal cancels
+  it. Do this only when the user asks or the work is plainly finished.
+  Releasing your own notes is routine.
+max_chars: 200
+once_per: session
+priority: 55

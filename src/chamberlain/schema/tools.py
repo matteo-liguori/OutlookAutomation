@@ -84,6 +84,8 @@ class StartRequest(ToolRequest):
     agent: str | None = Field(default=None, max_length=40)
     purpose: Literal["interactive", "scheduled"] = "interactive"
     resume: SessionHandle | None = None
+    scheduled_day: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$")
+    """The local day a scheduled run was meant for, given by the wake adapter (R10)."""
 
 
 class StartResponse(Model):

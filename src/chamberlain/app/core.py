@@ -58,14 +58,16 @@ class App:
     def _run(self, spec: ToolSpec, request: ToolRequest) -> Reply[Model]:
         if spec.needs_session and request.session is None:
             raise ChamberlainError(ErrorCode.SESSION_REQUIRED, "This tool needs a session.")
-        handler = self._handlers.get(spec.name)
-        if handler is None:
-            raise ChamberlainError(
-                ErrorCode.TOOL_NOT_IMPLEMENTED, f"{spec.name.value} is not built yet."
-            )
         ctx = replace(self._context, session=request.session)
-        self._tick(ctx)
         try:
+            if self._hooks is not None:
+                self._hooks.guard(ctx, spec, request)
+            handler = self._handlers.get(spec.name)
+            if handler is None:
+                raise ChamberlainError(
+                    ErrorCode.TOOL_NOT_IMPLEMENTED, f"{spec.name.value} is not built yet."
+                )
+            self._tick(ctx)
             result = handler(ctx, request)
         except ChamberlainError as error:
             reply = error_reply(error)

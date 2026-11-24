@@ -1,0 +1,11 @@
+id: calendar.checks
+version: 1
+title: Offering or accepting a time
+when: {tool: find, scope: calendar}
+text: >
+  Before offering or accepting a time, check every calendar, with travel and
+  all-day entries around it. Say plainly if any calendar could not be read.
+  Judge availability only from complete results.
+max_chars: 200
+once_per: session
+priority: 50

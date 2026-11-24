@@ -1,0 +1,11 @@
+id: source.sign_in
+version: 1
+title: A source needs sign-in
+when: {event: source.sign_in_needed}
+text: >
+  A source needs the user to sign in. Sign-in is theirs to handle; never ask
+  for or enter credentials. Tell the user which source it is, carry on with
+  the others, and say in your report that this one was not covered.
+max_chars: 250
+once_per: event
+priority: 80
