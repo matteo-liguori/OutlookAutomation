@@ -118,7 +118,13 @@ def test_a_scheduled_pass_produces_one_report_owned_by_its_run(rig: Rig) -> None
     assert done.state is RunState.FINISHED
     reports = read_reports(rig.ctx, run.handle)
     assert [r.text for r in reports] == ["3 new."]
-    assert [r["owner_kind"] for r in rig.rows("SELECT owner_kind FROM artifact_owners")] == ["run"]
+    assert [
+        r["owner_kind"]
+        for r in rig.rows(
+            "SELECT o.owner_kind FROM artifact_owners o JOIN artifacts a ON a.handle = o.artifact "
+            "WHERE a.filename IS NOT 'report-outline.txt'"
+        )
+    ] == ["run"]
     assert pass_events(rig) == []  # the condition ended, so the event expired (A-2)
     assert store_report(rig.ctx, run.handle, "ignored") == reports[0].handle  # one report only
     sha = rig.rows("SELECT sha256 FROM artifacts WHERE handle = ?", reports[0].handle)[0]["sha256"]

@@ -28,7 +28,7 @@ from chamberlain.limits import (
     SESSION_IDLE_HOURS,
     SUMMARY_MAX,
 )
-from chamberlain.memory import backups, repo
+from chamberlain.memory import backups, labels, repo
 from chamberlain.memory.artifacts import (
     ARTIFACTS_DIR,
     LEASES_DIR,
@@ -285,6 +285,7 @@ def _compact_records(run: _Run) -> None:
         run.add("notes_with_ended_action", repo.delete_notes_of_ended_actions(run.db))
         run.add("notes_idle", repo.delete_idle_notes(run.db, minus(run.now, days=NOTE_IDLE_DAYS)))
         run.add("refs_stale", repo.delete_stale_refs(run.db, minus(run.now, days=REF_DAYS)))
+        run.add("event_labels_trimmed", labels.trim(run.ctx))
         run.add(
             "artifact_rows_purged",
             repo.purge_tombstones(run.db, minus(run.now, days=TOMBSTONE_DAYS)),

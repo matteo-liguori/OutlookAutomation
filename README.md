@@ -68,7 +68,8 @@ Python; on macOS or Linux use `.venv/bin/python`.
 
 5. Viewer. `chamberlain viewer` opens a local page where you confirm grants, settle
    uncertain operations, answer requests for larger cards (see
-   [docs/permissions.md](docs/permissions.md#larger-cards)) and read reports. The page keeps
+   [docs/permissions.md](docs/permissions.md#larger-cards)) and read the report, which is the
+   front page (see [The report](#the-report)). The page keeps
    its token for the tab, so a reload works; a new browser session needs the token link again.
 
 6. Scheduling. See [docs/scheduling.md](docs/scheduling.md) for the five-minute tick and
@@ -76,6 +77,29 @@ Python; on macOS or Linux use `.venv/bin/python`.
 
 Check the result with `chamberlain doctor --metrics`. Real-account checks before cutover
 are in [docs/live-validation.md](docs/live-validation.md).
+
+## The report
+
+The written report of each scheduled pass is the first thing the viewer shows. The newest is on
+the front page; earlier ones are one click below it, and the Calendar page shows each day's.
+
+- **Who writes what.** The harness writes the sections it can prove from its own records, when the
+  pass ends: access problems per source (red, labelled), important appointments (orange,
+  labelled), permission reviews that are due, and a verification table (newest mail, how far mail
+  was read, calendar freshness, filing counts, and **Partially verified** when anything is short).
+  The assistant writes only the rest, usually the status of each item and what you must do next.
+  It is told when its report is due and given an outline of its sections; it keeps the text under
+  the run, and the harness never lets that text pose as a red or orange block.
+- **Your layout.** The standard layout is `src/chamberlain/runs/report_default.yaml`. Your own is
+  one private file, `config/report-template.yaml` in the data root; `chamberlain import` writes it
+  from your old report template (once, never over an existing file). It names the sections, their
+  order, headings and styles, and the wording the assistant gets for its own sections.
+- **Calendar.** Events show in the colour of their category (work, personal, social, travel,
+  health, occasion, home; grey until the assistant gives one, with a short title if the invite is
+  vague). **Add local event** keeps an event only in the viewer; no calendar is changed.
+- **Important appointments.** A reminder the assistant sets for an important appointment opens by
+  itself when it is due. Hold the button for five seconds (pointer, Space or Enter) to acknowledge
+  it. That finishes the reminder and the audit log records you, not the assistant.
 
 ## Development setup
 

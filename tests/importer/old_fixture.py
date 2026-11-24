@@ -96,11 +96,39 @@ def profile() -> dict[str, Any]:
     }
 
 
+OLD_REPORT_TEMPLATE = """# Pass summary DD/MM/YYYY
+
+Write briefly. Use {{timezone}} times.
+
+**🟥 ACCESS PROBLEM - CHECK NEEDED**
+
+Source; what is wrong; last good time.
+
+**🟧 IMPORTANT APPOINTMENT - PLEASE ACKNOWLEDGE**
+
+Title; start; place.
+
+## Open items
+
+List what changed and the next step.
+Include the {{schedule.roundup_day}} roundup when due.
+
+## Permission reviews
+
+Say which are due. In the written report mention calendar items only when action is needed.
+
+## Verification
+
+Per source results.
+"""
+
+
 def customisations() -> dict[str, Any]:
     return {
         "schedule": {"morning": "08:00", "continuations": [840, 1140], "calendar_days_ahead": 3},
         "updates": {"enabled": True, "remote": "upstream", "interval_hours": 24},
         "instructions": {"reporting": "Private reporting rule: lead with calendar clashes."},
+        "templates": {"report": OLD_REPORT_TEMPLATE, "morning": "Start the morning pass."},
     }
 
 

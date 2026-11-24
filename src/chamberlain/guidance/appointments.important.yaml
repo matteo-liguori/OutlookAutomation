@@ -1,12 +1,13 @@
 id: appointments.important
-version: 1
+version: 2
 title: Important appointments
-when: {}
+when: {tool: card, op: add_action}
 text: >
-  For medical or user-marked important appointments, remind the user seven,
-  two and one day ahead, each as its own action snoozed to that day. Repeat
-  until acknowledged. Stop at the start or on cancellation. Show one marker on
-  the actual date.
-max_chars: 250
+  For medical or user-marked important appointments, add one action per
+  reminder, titled Important then the appointment, due at its start and
+  snoozed to the day it should surface: seven, two and one day ahead. The
+  owner acknowledges it in the viewer; do not finish it unless the
+  appointment is cancelled.
+max_chars: 380
 once_per: session
-priority: 30
+priority: 35

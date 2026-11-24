@@ -1,0 +1,12 @@
+id: calendar.label
+version: 1
+title: Giving calendar events a category
+when: {tool: find, scope: calendar}
+text: >
+  Give each upcoming event one category by why it is on the calendar: work,
+  personal, social, travel, health, occasion or home. Add a short title when
+  the invite is vague: what the owner is doing and with whom. Only the viewer
+  shows it; the calendar is not changed.
+max_chars: 320
+once_per: session
+priority: 25

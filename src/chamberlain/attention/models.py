@@ -177,6 +177,10 @@ class DueRun:
     schedule: str
     kind: str
     day: str
+    outline: str | None = None
+    """The stored item that tells the agent what to write; set once a session works the pass."""
+    state: str = "due"
+    has_report: bool = False
 
 
 @dataclass(frozen=True)

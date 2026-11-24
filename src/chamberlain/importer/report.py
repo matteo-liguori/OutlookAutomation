@@ -27,6 +27,8 @@ class ImportReport:
     """Per mail source: Sent-history seeding result (added, scanned, known, complete)."""
     config_written: str = ""
     """`created`, `already identical` or `kept existing (differs)`."""
+    report_template: str = ""
+    """The same for `config/report-template.yaml`; empty when the old install had no template."""
     where: str = ""
     """The old record being read now, so a failure can name it. Not part of the document."""
 
@@ -56,6 +58,7 @@ class ImportReport:
             "recipients_seeded": dict(sorted(self.recipients.items())),
             "next_steps": self.next_steps,
             "config": self.config_written,
+            "report_template": self.report_template,
         }
 
     def summary(self) -> dict[str, Any]:

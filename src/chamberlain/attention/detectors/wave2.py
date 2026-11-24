@@ -56,3 +56,17 @@ def schedule_pass_due(data: DetectorInput) -> Iterable[EventDraft]:
             PRIORITY[EventKind.SCHEDULE_PASS_DUE],
             EventAttrs(reason=run.kind),
         )
+
+
+def report_due(data: DetectorInput) -> Iterable[EventDraft]:
+    """The last item of a pass being worked: its report. It ends when a report is kept."""
+    for run in data.runs_due:
+        if run.state == "running" and not run.has_report and run.outline is not None:
+            yield EventDraft(
+                EventKind.REPORT_DUE,
+                run.outline,
+                f"Last step of the {run.schedule} pass for {run.day}: write its report and "
+                f"keep it under {run.handle}. Open this item for what to write.",
+                PRIORITY[EventKind.REPORT_DUE],
+                EventAttrs(reason=run.kind),
+            )

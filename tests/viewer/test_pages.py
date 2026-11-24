@@ -106,11 +106,12 @@ def test_the_calendar_asks_for_a_sane_window(rig: Rig) -> None:
     assert rig.call("GET", "/api/calendar?start=nope").status == 400
 
 
-def test_due_actions_show_as_important_dates_on_the_calendar(rig: Rig) -> None:
+def test_dated_actions_show_on_the_calendar_but_are_not_important_appointments(rig: Rig) -> None:
     card = make_card(rig, "Tax return")
     add_action(rig, "act_0123456789abcdef", card, "File it", "2026-01-06T12:00:00Z")
     data = get(rig, "/api/calendar?start=2026-01-03&until=2026-01-10")
-    assert [(m["day"], m["title"], m["card_title"], m["due"]) for m in data["important"]] == [
+    assert data["important"] == []
+    assert [(m["day"], m["title"], m["card_title"], m["due"]) for m in data["dated"]] == [
         ("2026-01-06", "File it", "Tax return", False)
     ]
 
@@ -134,7 +135,10 @@ def test_reports_are_listed_by_day_and_read_below_the_calendar(rig: Rig) -> None
     assert data["report_days"] == [run.day]
     shown = get(rig, f"/api/reports?day={run.day}")
     assert shown["runs"][0]["schedule"] == "morning"
-    assert shown["runs"][0]["reports"] == ["# Morning\n- Three messages filed."]
+    blocks = shown["runs"][0]["report"]["blocks"]
+    assert [b["markdown"] for b in blocks if b["by"] == "agent"] == [
+        "# Morning\n- Three messages filed."
+    ]
     assert get(rig, "/api/reports?day=2020-01-01")["runs"] == []
     assert rig.call("GET", "/api/reports?day=bad").status == 400
 

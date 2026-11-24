@@ -52,6 +52,12 @@ def next_step(event: EventRow) -> NextStep:
             args={},
             why="Do the pass. Keep its short report with the run named in the item.",
         )
+    if kind is EventKind.REPORT_DUE and subject is not None:
+        return NextStep(
+            tool=ToolName.OPEN,
+            args={"handle": subject, "part": "body"},
+            why="Read what to write, then keep the report under the run.",
+        )
     if kind is EventKind.USER_NOTE:
         return NextStep(
             tool=ToolName.NEXT,

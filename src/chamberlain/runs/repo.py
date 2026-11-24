@@ -7,6 +7,7 @@ artifacts, artifact_owners) are only read (S-3). Callers wrap writes in
 
 import sqlite3
 
+from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME
 from chamberlain.runs.models import NoteRow, PassKind, RunRow, RunState, ScheduleRow
 
 
@@ -158,13 +159,24 @@ def session_has_ended(db: sqlite3.Connection, handle: str, idle_edge: str) -> bo
 
 
 def report_handles(db: sqlite3.Connection, run: str) -> list[str]:
+    """The run's live stored items that are reports (not the outline the harness keeps)."""
     rows = db.execute(
         "SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
         "WHERE o.owner_kind = 'run' AND o.owner = ? AND a.state = 'live' "
-        "ORDER BY a.created_at, a.handle",
-        (run,),
+        "AND a.filename IS NOT ? ORDER BY a.created_at, a.handle",
+        (run, REPORT_OUTLINE_FILENAME),
     )
     return [str(row["handle"]) for row in rows]
+
+
+def outline_handle(db: sqlite3.Connection, run: str) -> str | None:
+    row = db.execute(
+        "SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
+        "WHERE o.owner_kind = 'run' AND o.owner = ? AND a.state = 'live' AND a.filename = ? "
+        "ORDER BY a.created_at DESC LIMIT 1",
+        (run, REPORT_OUTLINE_FILENAME),
+    ).fetchone()
+    return None if row is None else str(row["handle"])
 
 
 # --- notes ---------------------------------------------------------------------------------

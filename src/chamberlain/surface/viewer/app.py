@@ -8,6 +8,8 @@ Contract: docs/contracts/05-grants.md (G-14, G-17 to G-19). Routes:
 - `/api/grants...` and `/api/operations/...`: handed to the writes track's `ConfirmationApp`
   (list, exact content, confirm with the content hash, decline, revoke, keep, resolve).
 - `/api/complex...`: the owner's answers on larger card limits (`complex_api.py`).
+- `/api/report`, `/api/local-events...`, `/api/appointments/...`: the report front page and the
+  owner's own calendar actions (`report_api.py`).
 - every other `/api/...` route is a read-only view, plus the person's notes.
 
 Every API request carries the token in `X-Chamberlain-Token`; a POST also needs the viewer's own
@@ -26,7 +28,7 @@ from chamberlain.domain.canonical import sha256_text
 from chamberlain.livetest.viewer import recent_runs
 from chamberlain.runs.notes import add_note, withdraw_note
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
-from chamberlain.surface.viewer import complex_api, pages, views
+from chamberlain.surface.viewer import complex_api, pages, report_api, views
 from chamberlain.surface.viewer.gate import SECURITY_HEADERS, Refusal, check_api, check_basics
 from chamberlain.writes.confirm import MAX_BODY, ConfirmationApp
 from chamberlain.writes.models import WritePolicy
@@ -42,6 +44,9 @@ STATIC_FILES: dict[str, tuple[str, str]] = {
     "/static/calendar.css": ("calendar.css", "text/css; charset=utf-8"),
     "/static/complex.js": ("complex.js", "text/javascript; charset=utf-8"),
     "/static/livetest.js": ("livetest.js", "text/javascript; charset=utf-8"),
+    "/static/report.js": ("report.js", "text/javascript; charset=utf-8"),
+    "/static/appointments.js": ("appointments.js", "text/javascript; charset=utf-8"),
+    "/static/report.css": ("report.css", "text/css; charset=utf-8"),
 }
 _DELEGATED = ("/api/grants", "/api/operations/")
 _SAFE_PATH = re.compile(r"^/api/[A-Za-z0-9_/.-]{0,70}$")
@@ -156,6 +161,9 @@ class ViewerApp:
             return 200, self._read(ctx, path, query)
         if path.startswith("/api/complex/"):
             return 200, complex_api.decide(ctx, path)
+        done = report_api.post(ctx, path, _json(body), self._zone)
+        if done is not None:
+            return 200, done
         if path == "/api/notes":
             text = _json(body).get("text")
             if not isinstance(text, str):
@@ -181,6 +189,8 @@ class ViewerApp:
                 (query.get("start") or [None])[0],
                 (query.get("until") or [None])[0],
             )
+        if path == "/api/report":
+            return report_api.front(ctx, (query.get("run") or [None])[0], self._zone)
         if path == "/api/reports":
             return pages.reports_of_day(ctx, (query.get("day") or [""])[0])
         if path == "/api/cards":

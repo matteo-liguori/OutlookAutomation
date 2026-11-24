@@ -9,7 +9,7 @@ and operations (T-11).
 import sqlite3
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
-from chamberlain.domain.artifacts import ArtifactKind
+from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME, ArtifactKind
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.domain.senders import AuthorisedSenders, Refusal, evaluate, instruction_ref
@@ -20,6 +20,7 @@ from chamberlain.memory.checks import storage_checks
 from chamberlain.memory.complex_cards import ComplexCards
 from chamberlain.memory.evidence import EvidenceService
 from chamberlain.memory.find import find
+from chamberlain.memory.labels import keep_label
 from chamberlain.memory.reading import open_handle
 from chamberlain.memory.timeutil import parse, ts
 from chamberlain.schema.base import ToolName
@@ -46,7 +47,9 @@ def _actor(ctx: Context) -> str:
 
 
 def keep(ctx: Context, request: KeepRequest) -> Result:
-    """Store a note, evidence or an artifact under an owner (T-10, M-4)."""
+    """Store a note, evidence, a label or an artifact under an owner (T-10, M-4)."""
+    if request.kind is KeepKind.LABEL:
+        return keep_label(ctx, request)
     if request.kind is KeepKind.NOTE:
         assert request.text is not None
         handle = CardService(ctx.db, ctx.clock).add_note(request.owner, request.text)
@@ -68,6 +71,10 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
             KeepResponse(
                 handle=handle, kind=KeepKind.EVIDENCE, size=len(data), sha256=sha256_bytes(data)
             )
+        )
+    if request.filename == REPORT_OUTLINE_FILENAME:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_INVALID, "That file name is the harness's own.", field="filename"
         )
     store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
     store.require_owner(request.owner)

@@ -30,5 +30,6 @@ DETECTORS: dict[EventKind, Detector] = {
     EventKind.STORAGE_ORPHANS: storage.orphans,
     EventKind.UPDATE_AVAILABLE: wave2.update_available,
     EventKind.SCHEDULE_PASS_DUE: wave2.schedule_pass_due,
+    EventKind.REPORT_DUE: wave2.report_due,
 }
 """Exactly one detector for every `EventKind` (A-5)."""

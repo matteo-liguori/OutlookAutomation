@@ -5,6 +5,10 @@ Contract: docs/contracts/06-memory.md (Artifacts and owners, M-4).
 
 from enum import StrEnum
 
+REPORT_OUTLINE_FILENAME = "report-outline.txt"
+"""The stored item the harness keeps under a running pass: what the agent writes in its report.
+It is not a report; every reader of a run's reports leaves it out (docs/contracts/06-memory.md)."""
+
 
 class ArtifactKind(StrEnum):
     MAIL_BODY = "mail_body"

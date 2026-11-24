@@ -9,7 +9,7 @@
       },
       {
         "id": "appointments.important",
-        "version": 1,
+        "version": 2,
         "title": "Important appointments"
       },
       {
@@ -21,6 +21,11 @@
         "id": "calendar.invite",
         "version": 1,
         "title": "Guests and answers reach other people"
+      },
+      {
+        "id": "calendar.label",
+        "version": 1,
+        "title": "Giving calendar events a category"
       },
       {
         "id": "card.complex",
@@ -121,18 +126,13 @@
         "id": "mail.unmatched",
         "version": 2,
         "title": "New mail to triage"
-      },
-      {
-        "id": "propose.check",
-        "version": 2,
-        "title": "Proposing a change"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 40,
+    "total": 42,
     "cursor": "ZzI1",
     "gaps": []
   },

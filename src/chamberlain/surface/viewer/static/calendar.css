@@ -127,3 +127,20 @@ dialog::backdrop { background: #0006; }
   #calendar.four .calendar-week { min-width: 28rem; }
   #calendar.week .calendar-week { min-width: 49rem; }
 }
+
+/* Event categories (the agent gives each event one); grey while an event has none. */
+.cat-none { --event-colour: #596767; }
+.cat-work { --event-colour: #315aaf; }
+.cat-personal { --event-colour: #187b77; }
+.cat-social { --event-colour: #7751a5; }
+.cat-travel { --event-colour: #a04d24; }
+.cat-health { --event-colour: #a93d64; }
+.cat-occasion { --event-colour: #875b14; }
+.cat-home { --event-colour: #416e3a; }
+.local-event { border-inline-start-style: dashed; }
+.local-remove { font-size: 0.72rem; margin-top: 0.2rem; background: none; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
+.dated-action { margin: 0.25rem 0; padding: 0.28rem 0.35rem; border-left: 2px solid #6684b8; background: var(--soft); font-size: 0.76rem; overflow-wrap: anywhere; }
+.appointment-event-title { all: unset; cursor: pointer; display: block; width: 100%; font-weight: 650; font-size: 0.82rem; }
+.appointment-event-title:hover { text-decoration: underline; }
+.event-band.important-event { overflow: visible; }
+.event-band a, .calendar-event a { color: inherit; }

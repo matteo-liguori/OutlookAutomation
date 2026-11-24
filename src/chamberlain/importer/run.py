@@ -25,6 +25,7 @@ from chamberlain.importer.credentials import icloud_credential, move_secrets
 from chamberlain.importer.old import SKIPPED_TABLES, OldInstallation, read_installation
 from chamberlain.importer.profile_map import MappedProfile, map_profile
 from chamberlain.importer.report import ImportReport
+from chamberlain.importer.report_template import write_template
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.ports.mail import MailPort
@@ -107,6 +108,7 @@ def _import_all(
     move_secrets(old_root, store, report)
     _check_google_accounts(mapped, store, report)
     _write_profile(data_root, mapped, report)
+    write_template(old, data_root, mapped.connections.timezone, report)
     _write_rows(old, mapped, zone, data_root, the_clock, report)
     return mapped
 

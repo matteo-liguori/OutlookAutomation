@@ -25,6 +25,9 @@ that it adds the old card context (stored as "context from the old harness") to 
 that was imported before this was carried over; the report counts them as
 `context_artifacts`.
 
+- `config/report-template.yaml` (your report layout) is created from the old report template
+  if absent, never overwritten. A line of the old template that needs a value the new harness
+  has no way to fill (the weekly roundup) is left out and named in the import report.
 - `config/connections.yaml` is created if absent, never overwritten. Run
   `chamberlain config validate`.
 - Google and iCloud secrets are copied into the operating system credential store. The old

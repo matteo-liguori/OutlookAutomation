@@ -978,3 +978,35 @@ def _like(text: str | None) -> str:
     if text is None:
         return ""
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+# --- event labels (the category the agent gave a calendar event; migration 0130) -----------------
+
+
+def upsert_event_label(
+    db: sqlite3.Connection,
+    *,
+    identity: str,
+    category: str,
+    title: str,
+    last_day: str,
+    now: str,
+) -> None:
+    db.execute(
+        "INSERT INTO event_labels (identity, category, title, last_day, labelled_at) "
+        "VALUES (?, ?, ?, ?, ?) ON CONFLICT (identity) DO UPDATE SET category = excluded.category, "
+        "title = excluded.title, last_day = excluded.last_day, labelled_at = excluded.labelled_at",
+        (identity, category, title, last_day, now),
+    )
+
+
+def event_labels_since(db: sqlite3.Connection, day: str) -> list[Row]:
+    """Labels of events that end on or after `day` (a civil date)."""
+    rows: list[Row] = db.execute(
+        "SELECT identity, category, title FROM event_labels WHERE last_day >= ?", (day,)
+    ).fetchall()
+    return rows
+
+
+def delete_event_labels_before(db: sqlite3.Connection, day: str) -> int:
+    return db.execute("DELETE FROM event_labels WHERE last_day < ?", (day,)).rowcount

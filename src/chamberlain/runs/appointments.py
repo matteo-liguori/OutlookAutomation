@@ -1,0 +1,82 @@
+"""Important appointments: the owner's reminders that stay until the owner acknowledges them.
+
+Contract: docs/contracts/06-memory.md (the report section) and 05-grants.md (G-17, the viewer is
+the owner's channel). An important appointment is an open action on an open card whose title
+starts with "Important:", whose due time is the appointment's start and whose snooze time is when
+that reminder should surface (the agent sets one action per reminder). No schema or tool carries
+it: the title is the marker, and the two times are the actions' own.
+
+A reminder waits for the owner while its snooze time has passed and the appointment has not
+started. The owner acknowledges it in the viewer by holding a button; that finishes the action,
+and the audit log names the owner (`human:viewer`). Nothing in the agent's tools calls
+`acknowledge`: the viewer's own route is the only caller, behind its token and Origin checks.
+"""
+
+import re
+from dataclasses import dataclass
+
+from chamberlain.app.context import Context
+from chamberlain.memory.cards import CardService
+from chamberlain.runs import report_repo as repo
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.store.db import transaction
+from chamberlain.store.migrate import stamp
+
+ACTOR = "human:viewer"
+OUTCOME = "Acknowledged by the owner in the viewer."
+_DASHES = "\N{EN DASH}\N{EM DASH}"
+_MARKER = re.compile(rf"^\s*important\s*[:\-{_DASHES}]\s*(?P<rest>.+)$", re.IGNORECASE | re.DOTALL)
+
+
+@dataclass(frozen=True)
+class Appointment:
+    action: str
+    card: str
+    card_title: str
+    title: str
+    start: str
+    """The appointment's start, as a stored timestamp."""
+    reminder_from: str | None
+    due: bool
+    """True while this reminder waits for the owner's acknowledgement."""
+
+
+def upcoming(ctx: Context) -> list[Appointment]:
+    """Important appointments that have not started, soonest first."""
+    now = stamp(ctx.clock)
+    found: list[Appointment] = []
+    for row in repo.appointment_rows(ctx.db, now):
+        marker = _MARKER.match(row.title)
+        if marker is None:
+            continue
+        waiting = row.snooze_until is None or row.snooze_until <= now
+        found.append(
+            Appointment(
+                row.action,
+                row.card,
+                row.card_title,
+                " ".join(marker.group("rest").split()),
+                row.start,
+                row.snooze_until,
+                waiting,
+            )
+        )
+    return found
+
+
+def acknowledge(ctx: Context, action: str) -> None:
+    """The owner acknowledges one waiting reminder: it is finished and the audit says who."""
+    match = next((a for a in upcoming(ctx) if a.action == action), None)
+    if match is None or not match.due:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_INVALID,
+            "That reminder is not waiting for you any more. Refresh the page.",
+        )
+    with transaction(ctx.db):
+        CardService(ctx.db, ctx.clock).finish_action(action, None, OUTCOME)
+        ctx.services.audit.append(
+            actor=ACTOR,
+            kind="appointment.acknowledged",
+            subject=action,
+            summary="The owner acknowledged an important appointment reminder.",
+        )

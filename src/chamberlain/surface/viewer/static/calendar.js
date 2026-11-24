@@ -79,12 +79,97 @@
     return out;
   }
 
+  V.markdown = reportContents;
+
+  function normal(text) { return text.toLowerCase().replace(/\s+/g, " ").trim(); }
+
+  // A real calendar event is the same appointment when it starts together with an important
+  // reminder and either title holds the other.
+  function matches(mark, event) {
+    if (event.start !== mark.start) return false;
+    var a = normal(event.display_title || event.title);
+    var b = normal(mark.title);
+    return !!a && !!b && (a.indexOf(b) >= 0 || b.indexOf(a) >= 0 || normal(event.title).indexOf(b) >= 0);
+  }
+
   function importanceClasses(mark, today) {
     var classes = " important-event";
     var away = (civil(mark.day) - civil(today)) / 86400000;
     if (away >= 0 && away <= 2) classes += " important-near";
     if (mark.due || away === 0) classes += " important-now";
     return classes;
+  }
+
+  // The dialog that adds an event only this viewer keeps. A repeat of the same save (a double
+  // click) carries the same key, so it saves once.
+  function localEventDialog(saved) {
+    var dialog = el("dialog", { "aria-labelledby": "local-title" });
+    var title = el("input", { type: "text", maxlength: "180", required: "required", "aria-label": "Title" });
+    var allDay = el("input", { type: "checkbox", id: "local-all-day" });
+    var starts = el("input", { type: "datetime-local", required: "required", "aria-label": "Starts" });
+    var ends = el("input", { type: "datetime-local", required: "required", "aria-label": "Ends" });
+    var endLabel = el("span", { text: "Ends" });
+    var place = el("input", { type: "text", maxlength: "600", "aria-label": "Link or location" });
+    var status = el("p", { class: "muted", role: "status" });
+    var save = el("button", { type: "submit", class: "act primary", text: "Save event" });
+    var cancel = el("button", { type: "button", class: "act", text: "Cancel", onclick: function () { dialog.close(); } });
+    var attempt = null;
+    var form = el("form", { class: "local-form" },
+      el("h2", { id: "local-title", text: "Add local event" }),
+      el("p", { class: "muted", text: "Kept only in this viewer. No calendar is changed." }),
+      el("label", {}, "Title ", title),
+      el("label", {}, allDay, " All day"),
+      el("label", {}, "Starts ", starts),
+      el("label", {}, endLabel, " ", ends),
+      el("label", {}, "Link or location ", place),
+      el("div", {}, save, cancel),
+      status);
+    dialog.appendChild(form);
+
+    function setKinds(day) {
+      var whole = allDay.checked;
+      [[starts, "09:00"], [ends, "10:00"]].forEach(function (pair) {
+        var date = pair[0].value.slice(0, 10) || day;
+        pair[0].type = whole ? "date" : "datetime-local";
+        pair[0].value = whole ? date : date + "T" + pair[1];
+      });
+      endLabel.textContent = whole ? "Last day" : "Ends";
+    }
+    allDay.addEventListener("change", function () { setKinds(iso(new Date())); });
+    form.addEventListener("submit", function (event) {
+      event.preventDefault();
+      var whole = allDay.checked;
+      var end = whole ? iso(plus(civil(ends.value), 1)) : ends.value;
+      var body = { title: title.value, location: place.value, start: starts.value, end: end, all_day: whole };
+      var fingerprint = JSON.stringify(body);
+      if (!attempt || attempt.fingerprint !== fingerprint) {
+        var key = window.crypto && crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random();
+        attempt = { fingerprint: fingerprint, key: key };
+      }
+      body.key = attempt.key;
+      save.disabled = cancel.disabled = true;
+      status.textContent = "Saving\u2026";
+      V.api("POST", "/api/local-events", body).then(function (data) {
+        attempt = null;
+        form.reset();
+        dialog.close();
+        status.textContent = "";
+        saved(data.event);
+      }, function (error) {
+        status.textContent = error.message;
+      }).then(function () { save.disabled = cancel.disabled = false; });
+    });
+    return {
+      node: dialog,
+      open: function (day) {
+        allDay.checked = false;
+        starts.value = ends.value = "";
+        starts.type = ends.type = "datetime-local";
+        setKinds(iso(day));
+        status.textContent = "";
+        dialog.showModal();
+      },
+    };
   }
 
   function build() {
@@ -106,16 +191,12 @@
     failure.hidden = true;
     var reports = el("select", { id: "reports", "aria-label": "Select report date" });
     var reportBox = el("div", { "aria-live": "polite" });
-    var dialog = el("dialog", { "aria-labelledby": "mark-title" });
-    var dialogTitle = el("h2", { id: "mark-title" });
-    var dialogBody = el("div", {});
-    dialog.appendChild(el("p", { class: "appointment-kicker", text: "Important date" }));
-    dialog.appendChild(dialogTitle);
-    dialog.appendChild(dialogBody);
-    dialog.appendChild(el("button", { class: "act", text: "Close", onclick: function () { dialog.close(); } }));
+    var addLocal = el("button", { text: "Add local event" });
+    var localDialog = localEventDialog(function (event) { go(civil(event.start.slice(0, 10))); });
+    addLocal.addEventListener("click", function () { localDialog.open(state.selected); });
 
     page.appendChild(el("div", { class: "calendar-heading" }, el("h2", { text: "Calendar" }),
-      el("div", { class: "controls" }, todayButton, prev, next, date, mode)));
+      el("div", { class: "controls" }, addLocal, todayButton, prev, next, date, mode)));
     page.appendChild(range);
     page.appendChild(legend);
     page.appendChild(failure);
@@ -123,7 +204,7 @@
     page.appendChild(coverage);
     page.appendChild(el("section", { class: "report-panel", "aria-labelledby": "reports-title" },
       el("div", { class: "calendar-heading" }, el("h2", { id: "reports-title", text: "Reports" }), reports), reportBox));
-    page.appendChild(dialog);
+    page.appendChild(localDialog.node);
 
     function window_() {
       var m = mode.value;
@@ -133,26 +214,51 @@
       return { start: start, end: plus(start, Number(m)) };
     }
 
-    function showMark(mark) {
-      dialogTitle.textContent = mark.title;
-      while (dialogBody.firstChild) dialogBody.removeChild(dialogBody.firstChild);
-      dialogBody.appendChild(el("p", { text: "Card: " + mark.card_title }));
-      dialogBody.appendChild(el("p", { class: "muted", text: "Due " + mark.day + (mark.due ? " (now due)" : "") }));
-      dialog.showModal();
-    }
-
     function markButton(mark) {
       var b = el("button", { class: "milestone" + importanceClasses(mark, state.today), text: mark.title });
-      b.addEventListener("click", function () { showMark(mark); });
+      b.addEventListener("click", function () { V.appointments.show(mark); });
       return b;
     }
 
-    function eventCard(event) {
-      var item = el("div", { class: "calendar-event tone-" + event.tone });
-      item.appendChild(el("div", { class: "event-time", text: event.start_time + "–" + event.end_time }));
-      item.appendChild(el("div", { text: event.title }));
-      if (event.location) item.appendChild(el("div", { class: "event-time", text: event.location }));
-      item.title = event.calendars.join(" · ");
+    function label(event) { return event.display_title || event.title; }
+    function catClass(event) { return "cat-" + (event.category || "none") + (event.local ? " local-event" : ""); }
+    function tip(event) {
+      var parts = event.calendars.slice();
+      if (event.display_title) parts.push(event.title);
+      return parts.join(" \u00b7 ");
+    }
+
+    // The event's title: a link when its location is a web link, a button when it is an important
+    // appointment (which opens the reminder), else plain text.
+    function titleNode(event, mark) {
+      if (mark) {
+        var b = el("button", { class: "appointment-event-title", text: label(event) });
+        b.addEventListener("click", function () { V.appointments.show(mark); });
+        return b;
+      }
+      if (event.url) return safeLink(label(event), event.url);
+      return el("div", { text: label(event) });
+    }
+
+    function removeButton(event) {
+      var b = el("button", { class: "local-remove", text: "Remove" });
+      b.addEventListener("click", function () {
+        if (b.dataset.sure !== "yes") { b.dataset.sure = "yes"; b.textContent = "Click again to remove"; return; }
+        V.post("/api/local-events/" + encodeURIComponent(event.id) + "/remove", {}, function () { load(); });
+      });
+      return b;
+    }
+
+    function eventCard(event, mark) {
+      var item = el("div", { class: "calendar-event " + catClass(event) + (mark ? importanceClasses(mark, state.today) : "") });
+      item.appendChild(el("div", { class: "event-time", text: event.all_day ? "All day" : event.start_time + "\u2013" + event.end_time }));
+      item.appendChild(titleNode(event, mark));
+      if (event.location && !event.url) item.appendChild(el("div", { class: "event-time", text: event.location }));
+      if (event.local) {
+        item.appendChild(el("div", { class: "event-time", text: "Local event, only in this viewer" }));
+        item.appendChild(removeButton(event));
+      }
+      item.title = tip(event);
       return item;
     }
 
@@ -178,9 +284,21 @@
         if (d.id === state.today) head.setAttribute("aria-current", "date");
         headers.appendChild(head);
         var cell = el("div", { class: "calendar-day" + (read ? "" : " unchecked") });
-        d.timed.forEach(function (event) { cell.appendChild(eventCard(event)); });
-        d.marks.forEach(function (mark) { cell.appendChild(markButton(mark)); });
-        var note = status || (!d.timed.length && !d.bands.length && !d.marks.length ? "No events" : "");
+        var matched = {};
+        d.timed.forEach(function (event) {
+          var mark = d.marks.find(function (m) { return matches(m, event); });
+          if (mark) matched[mark.action] = true;
+          cell.appendChild(eventCard(event, mark));
+        });
+        d.bands.forEach(function (event) {
+          var mark = d.marks.find(function (m) { return matches(m, event); });
+          if (mark) matched[mark.action] = true;
+        });
+        d.marks.forEach(function (mark) { if (!matched[mark.action]) cell.appendChild(markButton(mark)); });
+        d.dated.forEach(function (item) {
+          cell.appendChild(el("div", { class: "dated-action", title: item.card_title, text: (item.due ? "Due \u00b7 " : "Reminder \u00b7 ") + item.title }));
+        });
+        var note = status || (!d.timed.length && !d.bands.length && !d.marks.length && !d.dated.length ? "No events" : "");
         if (note) cell.appendChild(el("p", { class: "day-note", text: note }));
         cells.appendChild(cell);
         d.bands.forEach(function (event) {
@@ -198,11 +316,16 @@
         var lane = lanes.findIndex(function (lastEnd) { return lastEnd <= seg.start; });
         if (lane === -1) lane = lanes.length;
         lanes[lane] = seg.end;
-        var bar = el("div", { class: "event-band tone-" + seg.event.tone + (seg.event.all_day ? "" : " timed-band"), title: seg.event.calendars.join(" · ") });
+        var mark = (days[seg.start] ? days[seg.start].marks : []).find(function (m) { return matches(m, seg.event); });
+        var bar = el("div", { class: "event-band " + catClass(seg.event) + (seg.event.all_day ? "" : " timed-band") + (mark ? importanceClasses(mark, state.today) : ""), title: tip(seg.event) });
         bar.style.gridColumn = (seg.start + 1) + " / " + (seg.end + 1);
         bar.style.gridRow = String(lane + 1);
-        bar.setAttribute("aria-label", seg.event.title + (seg.event.all_day ? ", all day" : ", spans multiple days"));
-        if (!labelled[seg.key]) { bar.appendChild(el("span", { text: seg.event.title })); labelled[seg.key] = true; }
+        bar.setAttribute("aria-label", label(seg.event) + (seg.event.all_day ? ", all day" : ", spans multiple days"));
+        if (!labelled[seg.key]) {
+          var inner = mark ? titleNode(seg.event, mark) : seg.event.url ? safeLink(label(seg.event), seg.event.url) : el("span", { text: label(seg.event) });
+          bar.appendChild(inner);
+          labelled[seg.key] = true;
+        }
         bands.appendChild(bar);
       });
       wrap.appendChild(headers);
@@ -224,6 +347,7 @@
           bands: inDay.filter(isBand),
           timed: inDay.filter(function (e) { return !isBand(e); }),
           marks: data.important.filter(function (m) { return m.day === id; }),
+          dated: data.dated.filter(function (m) { return m.day === id; }),
         });
       }
       var width = mode.value === "4" ? 4 : 7;
@@ -233,8 +357,9 @@
       grid.replaceChildren.apply(grid, weeks);
       range.textContent = mode.value === "month" ? monthFormat.format(state.selected) : dateFormat.format(start) + " – " + dateFormat.format(plus(end, -1));
       legend.replaceChildren();
-      data.sources.forEach(function (s) { legend.appendChild(el("li", { class: "tone-" + s.tone, text: s.label })); });
-      legend.appendChild(el("li", { class: "importance-key", text: "Important date" }));
+      data.categories.forEach(function (c) { legend.appendChild(el("li", { class: "cat-" + c.id, text: c.label })); });
+      legend.appendChild(el("li", { class: "cat-none", text: "Not yet categorised" }));
+      legend.appendChild(el("li", { class: "importance-key", text: "Important appointment" }));
       var problems = data.sources.filter(function (s) { return s.note; }).map(function (s) { return s.label + ": " + s.note; });
       coverage.textContent = "Times in " + data.timezone + "." + (data.sources.length ? "" : " No calendar is connected.") + (problems.length ? " " + problems.join(" ") : "");
     }
@@ -248,6 +373,7 @@
       V.api("GET", "/api/calendar?start=" + iso(w.start) + "&until=" + iso(w.end)).then(function (data) {
         if (ticket !== state.ticket) return;
         state.today = data.today;
+        V.zone = data.timezone;
         state.reportDays = data.report_days;
         draw(data, w.start, w.end);
         var current = reports.value;
@@ -258,6 +384,7 @@
         else if (data.report_days.indexOf(data.today) >= 0) reports.value = data.today;
         reports.disabled = !data.report_days.length;
         loadReports();
+        if (V.appointments) V.appointments.check(data.appointments_due);
       }, function (error) { if (ticket === state.ticket) showError(error); });
     }
 
@@ -269,12 +396,7 @@
         if (ticket !== state.reportTicket) return;
         var articles = [];
         data.runs.forEach(function (run) {
-          run.reports.forEach(function (text, index) {
-            var article = el("article", { class: "report-content" });
-            article.appendChild(el("h3", { class: "report-time", text: run.schedule + " · " + (run.started_at ? V.when(run.started_at) : run.state) + (run.state === "incomplete" ? " · Partial" : "") + (index ? " · part " + (index + 1) : "") }));
-            article.appendChild(reportContents(text));
-            articles.push(article);
-          });
+          if (run.report) articles.push(V.drawReport(run.report));
         });
         reportBox.replaceChildren.apply(reportBox, articles.length ? articles : [el("p", { class: "muted", text: "The reports of this day have expired." })]);
       }, function (error) { if (ticket === state.reportTicket) reportBox.replaceChildren(V.problem(error)); });

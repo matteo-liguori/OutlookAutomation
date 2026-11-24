@@ -4,8 +4,8 @@
   "version": 1
  },
  "appointments.important": {
-  "hash": "85183224e5bad7f1e0f8623db66d5f8e929893f9f5d8d1a6b1654003bca2e490",
-  "version": 1
+  "hash": "2347b15ad250ec99e2399e92f011c6945494fc3dcd8cc8731b1b722f3c3ed24d",
+  "version": 2
  },
  "calendar.checks": {
   "hash": "d1331ef8f64933810d530b0e204f1307ff42914dbe2e50cd4457a798fbcab7e3",
@@ -13,6 +13,10 @@
  },
  "calendar.invite": {
   "hash": "75308f999151dda3062b983650d3a32a142d285b6798d868052b2d1015b3a336",
+  "version": 1
+ },
+ "calendar.label": {
+  "hash": "4ea35645d85c53259c37e52d10840018b3be73f950e77568c4defc7e6ddb7de9",
   "version": 1
  },
  "card.complex": {
@@ -109,6 +113,10 @@
  },
  "report.summary": {
   "hash": "738269020fc19c4164085f31047e73a287c7f34132b048a41437e6b41dd67026",
+  "version": 1
+ },
+ "report.write": {
+  "hash": "dc262c8a9db9d1b8d2e51e662f634e8f9103979281b0fb794dc70f9f86ec52cb",
   "version": 1
  },
  "send.missing": {

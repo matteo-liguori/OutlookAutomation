@@ -454,6 +454,12 @@
     problem: problem,
     empty: empty,
     register: function (id, title, build, after) {
+      if (after === "first") {
+        // The report is the front page: it comes first and is the page the viewer opens on.
+        VIEWS.unshift([id, title, build]);
+        current = id;
+        return;
+      }
       var at = VIEWS.findIndex(function (entry) { return entry[0] === after; });
       VIEWS.splice(at < 0 ? VIEWS.length : at + 1, 0, [id, title, build]);
     },

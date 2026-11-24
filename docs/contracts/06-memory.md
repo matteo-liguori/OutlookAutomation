@@ -44,6 +44,10 @@ Every table and every file under the data root belongs to exactly one class.
 | Seen mail | triaged and older than the overlap behind the watermark | Deleted (untriaged rows are never deleted) |
 | Schedule | until the person removes it | Kept (a record) |
 | Run | 35 days after its day | Deleted by the sweeper's records step (`runs_trimmed`); its report artifacts follow their own `expires_at` (30 days by default) |
+| Report outline | 72 hours, kept under a running pass | A stored item the harness writes; not a report (M-39) |
+| Pass report, harness part (`run_reports`) | with its run, 35 days after the run's day | Deleted with the run row (cascade) |
+| Local event (`local_events`) | 365 days after it ends | Deleted (`local_events_trimmed`) |
+| Event label (`event_labels`) | 365 days after the event ends | Deleted (`event_labels_trimmed`) |
 | User note | 7 days open, 14 days kept | Stops raising `user.note` after 7 days; deleted after 14 (`notes_trimmed`) |
 | Event | condition true | `expired` when false; row deleted 14 days after terminal |
 | Operation | 30 days after terminal | Compacted (W-25) |
@@ -265,3 +269,29 @@ crash-mid-sweep, checking after each sweep:
   handle as `context`, and the rule `card.context` tells the agent to fold what
   still matters into the position (within the cap) and then `forget` it. The
   import report counts them as `context_artifacts`.
+
+### The pass report (track d-dashboard)
+
+The written report is the owner's front page in the viewer. Three parts make it:
+
+- **The layout.** `runs/report_default.yaml` ships in Git; the owner's own layout is the one private
+  file `config/report-template.yaml` (written by `chamberlain import` from the old report template,
+  never overwritten). It lists sections in order. Each is written by the harness or by the agent,
+  and has a heading and a style (`plain`, `red` or `orange`).
+- **The harness part.** When a pass settles (a report is kept, or its session ended without one) the
+  harness writes the sections it can from its own records, and keeps them in `run_reports`: access
+  problems per source, important appointments, permission reviews due, and verification (newest
+  mail, how far it was read, calendar freshness, filing counts). They are facts as of that moment.
+- **The agent part.** The agent keeps its text with `keep` (`kind: artifact`, `owner` the run). It is
+  never copied into the database; it is read from the stored item (hash-checked) and expires with it.
+
+- **M-39** While a pass is `running` the harness keeps one stored item under the run, named
+  `report-outline.txt` (72 hours), that says which sections are the agent's and the owner's wording
+  for each. It is not a report: readers of a run's reports leave it out, and it never finishes a run.
+  The viewer draws the callouts from the layout's `style`, so text from the agent or from an email can
+  never pose as one. An important appointment is an open action on an open card whose title starts
+  with "Important:", due at the appointment's start, snoozed until its reminder shows. The owner
+  acknowledges a waiting reminder in the viewer (`POST /api/appointments/<action>/acknowledge`, the
+  viewer's usual token and Origin checks); that finishes the action and writes an audit row
+  (`appointment.acknowledged`) whose actor is `human:viewer`. No tool reaches it. Local events and
+  their removal are audited the same way (`local_event.added`, `local_event.removed`).

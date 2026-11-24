@@ -24,6 +24,7 @@ class EventKind(StrEnum):
     STORAGE_ORPHANS = "storage.orphans"
     UPDATE_AVAILABLE = "update.available"
     SCHEDULE_PASS_DUE = "schedule.pass_due"
+    REPORT_DUE = "report.due"
 
 
 class EventState(StrEnum):
