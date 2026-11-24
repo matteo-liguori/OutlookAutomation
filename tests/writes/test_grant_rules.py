@@ -27,8 +27,8 @@ from chamberlain.domain.intents import (
     MailTrash,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.testing.write_rig import CALENDAR, MAIL, WriteRig
 from chamberlain.writes.models import WritePolicy
-from chamberlain.writes.rig import CALENDAR, MAIL, WriteRig
 
 LONDON = ZoneInfo("Europe/London")
 UTC_ZONE = ZoneInfo("UTC")
@@ -80,7 +80,9 @@ def test_g8_an_unreviewed_grant_is_suspended_fourteen_days_after_review_is_due()
 
 
 @given(
-    granted=st.datetimes(min_value=datetime(2025, 1, 1), max_value=datetime(2030, 1, 1)),
+    granted=st.datetimes(
+        min_value=datetime(2025, 1, 1, tzinfo=UTC), max_value=datetime(2030, 1, 1, tzinfo=UTC)
+    ),
     months=st.integers(min_value=1, max_value=40),
     zone=st.sampled_from(("UTC", "Europe/London", "America/New_York")),
 )
@@ -88,7 +90,7 @@ def test_g6_property_the_schedule_never_drifts_from_the_grant_date(
     granted: datetime, months: int, zone: str
 ) -> None:
     tz = ZoneInfo(zone)
-    start = granted.replace(tzinfo=UTC)
+    start = granted
     local = start.astimezone(tz)
     got = anniversary(start, months, tz).astimezone(tz)
     index = local.year * 12 + local.month - 1 + months

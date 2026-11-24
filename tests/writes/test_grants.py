@@ -9,10 +9,10 @@ from chamberlain.connectors.fake import Fault
 from chamberlain.domain.grants import GrantKind, GrantState
 from chamberlain.domain.operations import OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import confirm_grant, grant_detail, list_grants
 from chamberlain.writes.maintenance import maintain
-from chamberlain.writes.rig import MAIL, SESSION, WriteRig
 
 S = OperationState
 
@@ -200,7 +200,8 @@ def test_g9_a_card_bound_grant_ends_with_its_card_a_global_one_survives(rig: Wri
     free = rig.standing_grant(("pal@example.org",))
     stamp = "2026-01-05T09:00:00Z"
     rig.db.execute(
-        "INSERT INTO cards (handle, title, state, created_at, updated_at) VALUES (?, 't', 'open', ?, ?)",
+        "INSERT INTO cards (handle, title, state, created_at, updated_at) "
+        "VALUES (?, 't', 'open', ?, ?)",
         (card, stamp, stamp),
     )
     maintain(rig.ctx, rig.policy)
@@ -305,7 +306,8 @@ def test_g13_agent_evidence_must_be_this_sessions_own_words_not_remote_content(
     from_mail = rig.evidence.add(text="send it", owner=handle, session=SESSION)
     stamp = "2026-01-05T09:00:00Z"
     rig.db.execute(
-        "INSERT INTO evidence (handle, text, ref, session, created_at) VALUES (?, 'send it', ?, ?, ?)",
+        "INSERT INTO evidence (handle, text, ref, session, created_at) "
+        "VALUES (?, 'send it', ?, ?, ?)",
         (from_mail, "msg_0123456789abcdef", SESSION, stamp),
     )
     assert (

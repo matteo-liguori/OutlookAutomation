@@ -11,9 +11,11 @@ fake provider with every `Fault` armed at random. After every step:
    every transition is an arrow of `TRANSITIONS`, and the hash chain verifies.
 """
 
+import contextlib
+import itertools
 from collections import Counter
 
-from hypothesis import HealthCheck, settings
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import (
     Bundle,
@@ -34,11 +36,11 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
 )
 from chamberlain.schema.errors import ChamberlainError
+from chamberlain.testing.write_rig import CALENDAR, MAIL, SimulatedCrash, WriteRig, make_rig
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
 from chamberlain.writes.maintenance import maintain
-from chamberlain.writes.rig import CALENDAR, MAIL, SimulatedCrash, WriteRig, make_rig
 
 ADDRESSES = ("amy@example.org", "bob@example.org", "new@example.org")
 KNOWN = ADDRESSES[:2]
@@ -120,10 +122,8 @@ class WriteMachine(RuleBasedStateMachine):
         if row is None:
             return
         evidence = self.r.evidence.add(text="Yes, go ahead.", owner=op, session="ses_testsession01")
-        try:
+        with contextlib.suppress(ChamberlainError):
             self.engine().attach_approval(op, evidence)
-        except ChamberlainError:
-            pass
 
     @rule(op=ops, honest=st.booleans())
     def human_confirms(self, op: str, honest: bool) -> None:
@@ -137,32 +137,26 @@ class WriteMachine(RuleBasedStateMachine):
         try:
             confirm_grant(self.engine().ctx, grant.handle, {"content_sha256": shown})
         except ChamberlainError:
-            assert not honest or True
+            assert True
         if not honest:
             assert repo.get_grant(self.r.db, grant.handle).state.value == "proposed"  # type: ignore[union-attr]
 
     @rule(op=ops)
     def do_op(self, op: str) -> None:
-        try:
+        with contextlib.suppress(ChamberlainError, SimulatedCrash):
             self.engine().do(op)
-        except (ChamberlainError, SimulatedCrash):
-            pass
 
     @rule(op=ops)
     def reconcile_op(self, op: str) -> None:
-        try:
+        with contextlib.suppress(ChamberlainError):
             self.engine().reconcile(op)
-        except ChamberlainError:
-            pass
 
     @rule(op=ops, odds=st.integers(0, 3))
     def cancel_op(self, op: str, odds: int) -> None:
         if odds:
             return
-        try:
+        with contextlib.suppress(ChamberlainError):
             self.engine().cancel(op, actor="agent:test")
-        except ChamberlainError:
-            pass
 
     @rule(op=ops, odds=st.integers(0, 3))
     def revoke_its_grant(self, op: str, odds: int) -> None:
@@ -185,10 +179,8 @@ class WriteMachine(RuleBasedStateMachine):
             any(m.internet_message_id == token for m in world.mail[MAIL])
             or self.r.fake.calendar.count(CALENDAR, token) > 0
         )
-        try:
+        with contextlib.suppress(ChamberlainError):
             self.engine().resolve(op, happened=landed, actor="human:viewer")
-        except ChamberlainError:
-            pass
 
     # --- the world misbehaves ----------------------------------------------------------
 
@@ -273,7 +265,7 @@ class WriteMachine(RuleBasedStateMachine):
             states = [OperationState(s) for s in history[row["handle"]] if s != "verified"]
             assert states[0] is OperationState.PROPOSED
             assert states[-1].value == row["state"]
-            for before, after in zip(states, states[1:], strict=False):
+            for before, after in itertools.pairwise(states):
                 assert after in TRANSITIONS[before], (before, after)
             if OperationState(row["state"]) in TERMINAL_STATES:
                 assert row["receipt_json"], row["handle"]
@@ -297,3 +289,54 @@ WriteMachine.TestCase.settings = settings(
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
 )
 TestWriteMachine = WriteMachine.TestCase
+
+
+@given(
+    steps=st.lists(
+        st.sampled_from(
+            ["do", "propose_same", "propose_other", "reconcile", "restart", "approve_other"]
+        ),
+        min_size=1,
+        max_size=14,
+    ),
+    lost=st.sampled_from([Fault.LOSE_RESPONSE_AFTER_APPLY, Fault.LOSE_BEFORE_APPLY]),
+)
+@settings(max_examples=60, deadline=None, suppress_health_check=[HealthCheck.too_slow])
+def test_w8_w17_an_uncertain_send_followed_by_any_calls_never_makes_a_second_copy(
+    steps: list[str], lost: Fault
+) -> None:
+    rig = make_rig()
+    try:
+        first = rig.ready_send()
+        rig.fake.arm(lost)
+        rig.fake.arm(Fault.STALE, 20)  # reads cannot settle it while this lasts
+        with contextlib.suppress(ChamberlainError):
+            rig.engine().do(first.handle)
+        key = rig.engine().get(first.handle).idempotency_key
+        for step in steps:
+            with contextlib.suppress(ChamberlainError):
+                if step == "do":
+                    rig.engine().do(first.handle)
+                elif step == "propose_same":
+                    again = rig.engine().propose_intent(rig.send())
+                    assert again.operation is not None
+                    assert again.operation.handle == first.handle
+                elif step == "propose_other":
+                    rig.engine().propose_intent(rig.send(subject="Different"))
+                elif step == "approve_other":
+                    other = rig.engine().propose_intent(rig.send(subject="Different"))
+                    rig.agent_approves(other)
+                elif step == "reconcile":
+                    rig.engine().reconcile(first.handle)
+                else:
+                    rig.engine(worker="restarted").recover()
+        assert rig.fake.dispatch_count(key) == 1
+        mine = [
+            m
+            for m in rig.fake.world.mail[MAIL]
+            if m.internet_message_id == rig.engine().get(first.handle).reconcile_token
+        ]
+        assert len(mine) <= 1
+        assert rig.sent_copies() <= 1
+    finally:
+        rig.close()

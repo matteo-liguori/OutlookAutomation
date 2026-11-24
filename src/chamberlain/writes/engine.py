@@ -244,8 +244,7 @@ class Engine:
         completed = self._complete(intent, refs)
         self._check_limits(completed, capability)
         sha = intent_hash(completed)
-        now = self.ctx.clock.now()
-        existing = self._existing(completed, sha, now)
+        existing = self._existing(completed, sha)
         if existing is not None:
             return self._proposal_for(existing, completed)
         handle = new_handle(HandleKind.OPERATION)
@@ -396,7 +395,7 @@ class Engine:
             origin=op.handle,
         )
 
-    def _existing(self, intent: WriteIntent, sha: str, now: object) -> OperationRow | None:
+    def _existing(self, intent: WriteIntent, sha: str) -> OperationRow | None:
         """An identical live operation, or a recent one that may not repeat (W-18, W-19)."""
         window = self.ctx.clock.now() - timedelta(hours=REPEAT_WINDOW_HOURS)
         repeat_ok = self._repeat_allowed(intent)

@@ -20,8 +20,8 @@ from chamberlain.app.doubles import (
 )
 from chamberlain.app.services import Services
 from chamberlain.connectors.fake import FakeProvider
-from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.grants import StandingScope
+from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import CalendarCreate, IntentKind, MailSend
 from chamberlain.domain.mail import FolderRole
 from chamberlain.domain.operations import (
@@ -29,8 +29,8 @@ from chamberlain.domain.operations import (
     Prepared,
     ReconcileResult,
 )
-from chamberlain.ports.clock import ManualClock
 from chamberlain.ports.calendar import CalendarPort
+from chamberlain.ports.clock import ManualClock
 from chamberlain.ports.mail import MailPort
 from chamberlain.store.db import MEMORY, connect
 from chamberlain.store.migrate import migrate, stamp

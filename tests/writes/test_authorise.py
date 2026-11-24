@@ -9,6 +9,7 @@ from hypothesis import strategies as st
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind, MailSend
 from chamberlain.schema.errors import ErrorCode
+from chamberlain.testing.write_rig import MAIL
 from chamberlain.writes.authorise import (
     Allow,
     Decision,
@@ -18,7 +19,6 @@ from chamberlain.writes.authorise import (
     authorise,
 )
 from chamberlain.writes.models import GrantRow, WritePolicy
-from chamberlain.writes.rig import MAIL
 
 NOW = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 SEND = MailSend(source=MAIL, to=("friend@example.org",), subject="s", body="b")
@@ -233,4 +233,4 @@ def test_w20_property_never_allows_what_the_grant_does_not_cover(
         assert chosen.scope is not None
         assert chosen.scope.max_per_day is not None
         assert recent < chosen.scope.max_per_day
-        assert chosen.review_at is None or NOW < chosen.review_at + timedelta(days=14)
+        assert chosen.review_at is None or chosen.review_at + timedelta(days=14) > NOW

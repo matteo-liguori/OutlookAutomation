@@ -1,7 +1,5 @@
 """Board rulings R1 to R7 and R11 as tests (docs/BOARD.md, 2026-11-24 12:40 UTC)."""
 
-from datetime import timedelta
-
 import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
@@ -21,6 +19,7 @@ from chamberlain.domain.operations import (
     Verification,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.testing.write_rig import MAIL, WriteRig, make_rig
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
@@ -30,7 +29,6 @@ from chamberlain.writes.engine import (
     MAIL_SETTLE_ATTEMPTS,
     MAIL_SETTLE_WINDOW_SECONDS,
 )
-from chamberlain.writes.rig import MAIL, WriteRig, make_rig
 
 S = OperationState
 NO_FIXTURES = settings(
@@ -330,7 +328,7 @@ def test_r5_property_only_an_expired_lease_is_recovered(elapsed: int) -> None:
     try:
         op = rig.ready_send()
         rig.mail.crash_after_dispatch = True
-        from chamberlain.writes.rig import SimulatedCrash
+        from chamberlain.testing.write_rig import SimulatedCrash
 
         with pytest.raises(SimulatedCrash):
             rig.engine(worker="doomed").do(op.handle)
@@ -460,7 +458,3 @@ def test_r11_a_present_answer_confirms_whatever_made_it_present() -> None:
         assert after.state is S.CONFIRMED
     finally:
         rig.close()
-
-
-def test_every_test_here_keeps_the_clock_honest() -> None:
-    assert timedelta(minutes=5).total_seconds() == 300
