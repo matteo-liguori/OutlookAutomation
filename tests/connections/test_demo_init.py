@@ -42,3 +42,9 @@ def test_demo_init_refuses_a_folder_that_holds_anything(tmp_path: Path) -> None:
     assert code == cli.EXIT_FAILED
     assert reply["error"]["code"] == "config.invalid"  # type: ignore[index]
     assert [p.name for p in keep.iterdir()] == ["notes.txt"]
+
+
+def test_the_readme_documents_the_demo_command() -> None:
+    readme = (Path(__file__).parents[2] / "README.md").read_text(encoding="utf-8")
+    assert "## Try it without real accounts" in readme
+    assert "demo init" in readme
