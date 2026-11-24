@@ -61,6 +61,8 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "audit_log": (_D.SYSTEM, _T.WRITES),
     "mail_watermarks": (_D.RECORDS, _T.ATTENTION),
     "mail_seen": (_D.RECORDS, _T.ATTENTION),
+    "mail_sync": (_D.RECORDS, _T.ATTENTION),
+    "mail_sync_folders": (_D.RECORDS, _T.ATTENTION),
     "schedules": (_D.RECORDS, _T.RUNS),
     "runs": (_D.RECORDS, _T.RUNS),
     "user_notes": (_D.EPHEMERAL, _T.RUNS),
@@ -86,6 +88,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "writes.audit_head",
         "app.installed_version",
         "app.authorised_senders",
+        "app.mail_sync",
         "importer.last_import",
         "runs.update_tag",
         "runs.update_checked_at",
@@ -94,6 +97,8 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""
 AUTHORISED_SENDERS_KEY = "app.authorised_senders"
 """The profile's `authorised_senders`, mirrored at every start for the tools that check email."""
+MAIL_SYNC_KEY = "app.mail_sync"
+"""The profile's `mail_sync` (how fresh folders must be, the sync time limit), mirrored at start."""
 
 
 def get_state(connection: sqlite3.Connection, key: str) -> str | None:

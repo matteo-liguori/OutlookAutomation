@@ -41,6 +41,7 @@ Every table and every file under the data root belongs to exactly one class.
 | Session | idle 4 hours | Ended; its ephemeral rows deleted |
 | Cursor, lease | 2 hours, 30 minutes | Deleted; leased file removed |
 | Mail watermark | per source, until the source is removed | Kept (a record) |
+| Mail folder sync (`mail_sync`, `mail_sync_folders`) | per source, until the source is removed; a folder row goes when the folder is gone or no longer read | Kept (a record) |
 | Seen mail | triaged and older than the overlap behind the watermark | Deleted (untriaged rows are never deleted) |
 | Schedule | until the person removes it | Kept (a record) |
 | Run | 35 days after its day | Deleted by the sweeper's records step (`runs_trimmed`); its report artifacts follow their own `expires_at` (30 days by default) |

@@ -77,6 +77,29 @@ or recorded transport only), `known_broken`.
   transfer whose bytes do not match the announced hash raises and yields
   nothing.
 
+## Syncing folders
+
+A connector that reads from a client's local index (Thunderbird) also implements `FolderSync`
+(`ports/sync.py`); a connector that reads the server directly does not.
+
+```python
+def sync_folders(self, source, folder_ids, time_limit, retry=frozenset()) -> SyncReport
+```
+
+- **P-20** `sync_folders` asks the client to bring each named folder up to date, in as many calls
+  as its limits need (Thunderbird: 3 folders a call, 8 seconds each, so one call answers inside
+  the add-on's 30-second read deadline), and **waits** for each answer. It returns one
+  `FolderOutcome {folder_id, synced, code, at}` per folder.
+- **P-21** It never raises for a folder that would not sync: the folder is reported with a
+  `code` (`sync-callback-timeout`, `time-limit` for a folder not asked before `time_limit` ended,
+  `unavailable` when the client could not be reached, `no-answer`). A folder in `retry` that does
+  not finish is asked again until the limit; any other folder is asked once. A folder that holds
+  no mail (account root, container, saved search) is reported `not-selectable` and counts as in
+  sync. Like a read it changes no remote state (P-3).
+- **P-22** `time_limit` bounds the whole call. The loop is `run_sync`, shared by Thunderbird and
+  the fake, which models a client that lags (`add_message(unsynced=True)` is hidden from search
+  until its folder syncs) and a stuck folder (`stick_folder`).
+
 ## Writing
 
 Three methods on each writing port, called by the engine in this order and

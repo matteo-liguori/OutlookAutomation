@@ -140,7 +140,12 @@ captures the flag before and after and fails with `changed` if it moved):
 - `resolve` returns every physical copy of one Message-ID in one folder.
 - `refresh` asks the provider to synchronise exactly the named folders (at
   most 8) and reports the provider callback per folder. It is a read: it
-  pulls remote state and changes none.
+  pulls remote state and changes none. The harness sends 3 folders a call with
+  `timeout_ms` 8000, so a call answers inside the add-on's 30-second read deadline even when
+  every folder is stuck (08-ports P-20). An account root, a container with no mail (Gmail's
+  `[Gmail]`) and a saved search answer `success: false, code: "not-selectable"` at once; the
+  harness counts that as in sync. Add-on 2.0.1 added this answer; with 2.0.0 such a folder
+  times out and is reported as not synced, so the add-on needs reinstalling.
 
 **Writes**: `send`, `draft_save`, `draft_update`, `draft_discard`, `move`,
 `trash`, `mark_read`. Each performs exactly one logical mutation.

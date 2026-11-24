@@ -78,8 +78,8 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
 
 ### New mail (watermark and triage)
 
-- **A-20** Each mail source has a covered-through watermark (`mail_watermarks`). A tick
-  scans the whole mailbox, not only the inbox: every folder except Trash, Junk and Drafts
+- **A-20** Each mail source has a covered-through watermark (`mail_watermarks`). Folders are
+  synced first (A-24). A tick scans the whole mailbox, not only the inbox: every folder except Trash, Junk and Drafts
   (Outbox is not part of the mailbox). It starts a little before the watermark
   (`MAIL_REQUIRED_OVERLAP`, one hour, with one best-effort page back to `MAIL_OVERLAP`), takes
   any read state, and reads **oldest first in time slices**. A slice counts only when every
@@ -131,6 +131,40 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   refused for a question that is not an old-mail question or whose span has changed. A second
   long gap while a span is held extends it from its start and asks again. The first look back
   of a never-watched source is not held. Rows are not pruned inside a held span.
+
+### Folder sync (before any read of a mail source)
+
+Thunderbird reads from its own local index. It syncs Inbox, Sent, Drafts and Trash when the bridge
+asks, but All Mail, label folders and filing folders lag until Thunderbird syncs them. So the
+harness syncs every folder the scan reads and waits (owner ruling 2026-11-24 night). Code:
+`attention/sync.py`; the connector side is `FolderSync` in 08-ports.md (P-20 to P-22).
+
+- **A-24** Before a scan reads a source, and when an agent starts, the harness syncs each folder
+  the scan reads (A-20: every folder except Trash, Junk and Drafts) whose last sync is older than
+  `mail_sync.fresh_minutes` (default 10), plus any that failed last time, and waits for the answer.
+  A connector that does not implement `FolderSync` reads the server directly and is not asked.
+  Each folder's last sync is recorded (`mail_sync_folders`), and per source the time all folders
+  were last in sync (`mail_sync.complete_at`: the oldest folder's sync time, set only when every
+  folder has synced and none is failing).
+- **A-25** A folder that will not sync never blocks the scan for long and is never silent. One
+  sync of one source stops at `mail_sync.time_limit_seconds` (default 180). The scan then reads on
+  with what it has, and one `source.stale` event (reason `sync`, discriminator `sync`) names how
+  many folders did not sync and their roles. Folder names are remote text (E-8), so the names go
+  to `doctor sources` (`sources.sync`, counts) and to the pass report, which says "Partially
+  verified" and lists them. The failed folders are asked again on the next scan, tick or agent
+  start; the event ends when they sync. A folder that has not failed before is asked again inside
+  the same run until the limit; a folder that failed on an earlier run is asked once per run, so
+  one stuck folder costs one short wait per tick, not the whole limit. Roots, containers and saved
+  searches hold no mail and count as in sync.
+- **A-26** A few minutes before a scheduled pass (`schedules[].presync_minutes`, default 5, 0 turns
+  it off) the tick syncs every folder last synced longer ago than that, so the agent's pass finds
+  them fresh. Several ticks in the window sync once. The lead should be at least the time between
+  two ticks. A pass noticed after its time is covered by A-24 when the agent starts.
+- **A-27** While a folder would not sync, mail may have reached it dated before the watermark moved
+  on. When it syncs again the scan reads that one folder on its own, from its last good sync (an
+  hour earlier, at most a day back) to now, over as many ticks as it takes. Mail that sat in a
+  stuck folder for more than a day is not recovered by this (the older-mail question A-23 is about
+  the whole source): known residue.
 
 ## Delivery
 
