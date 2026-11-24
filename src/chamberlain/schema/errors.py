@@ -41,6 +41,7 @@ class ErrorCode(StrEnum):
     # not_configured
     SOURCE_NOT_CONFIGURED = "source.not_configured"
     SESSION_REQUIRED = "session.required"
+    SESSION_STALE = "session.stale"
     CONFIG_INVALID = "config.invalid"
     # unsupported
     CAPABILITY_UNSUPPORTED = "capability.unsupported"
@@ -128,6 +129,9 @@ ERROR_TABLE: dict[ErrorCode, ErrorSpec] = {
         _C.NOT_CONFIGURED, False, "Tell the user this source is not set up."
     ),
     _E.SESSION_REQUIRED: ErrorSpec(_C.NOT_CONFIGURED, False, "Call start first."),
+    _E.SESSION_STALE: ErrorSpec(
+        _C.NOT_CONFIGURED, False, "Stop. This scheduled run belongs to an earlier day."
+    ),
     _E.CONFIG_INVALID: ErrorSpec(
         _C.NOT_CONFIGURED, False, "Tell the user the configuration needs correcting; run doctor."
     ),
