@@ -298,6 +298,25 @@ def search_notes(db: sqlite3.Connection, text: str | None, limit: int) -> list[R
     return rows
 
 
+def mail_suggestions(
+    db: sqlite3.Connection, source: str, handles: list[str]
+) -> dict[str, tuple[str, str]]:
+    """Message handle to (open card handle, title), read from the attention track's batch rows."""
+    found: dict[str, tuple[str, str]] = {}
+    for start in range(0, len(handles), 200):
+        chunk = handles[start : start + 200]
+        marks = ",".join("?" * len(chunk))
+        rows = db.execute(
+            "SELECT s.handle AS message, c.handle AS card, c.title AS title FROM mail_seen s "
+            "JOIN cards c ON c.handle = s.suggested_card AND c.state = 'open' "
+            f"WHERE s.source_id = ? AND s.handle IN ({marks})",
+            (source, *chunk),
+        )
+        for row in rows:
+            found[str(row["message"])] = (str(row["card"]), str(row["title"]))
+    return found
+
+
 # --- evidence ----------------------------------------------------------------
 
 

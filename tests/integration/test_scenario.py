@@ -56,11 +56,12 @@ def test_the_whole_scenario_confirms_a_send_exactly_once(stack: Stack) -> None:
     started = stack.start()
     assert [item["kind"] for item in started["work"]] == ["mail.new_unmatched"]
     work = started["work"][0]
-    assert work["next"]["tool"] == "open"
+    assert work["next"]["tool"] == "find"
+    assert work["subject"] == MAIL
 
-    # find, then open the message (read-only: it stays unread, P-3)
-    hits = stack.ok("find", scope="mail", unread=True)["hits"]
-    assert [hit["handle"] for hit in hits] == [work["subject"]]
+    # the batch lists the mail; open only what is needed (read-only: it stays unread, P-3)
+    hits = stack.ok("find", **work["next"]["args"])["hits"]
+    assert len(hits) == 1
     message = hits[0]["handle"]
     opened = stack.ok("open", handle=message, part="body")
     assert "7pm" in opened["content"]["text"]

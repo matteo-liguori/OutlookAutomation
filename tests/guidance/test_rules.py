@@ -171,12 +171,12 @@ def test_a18_append_replace_and_disable_each_change_one_rule(data_root: Path):
     put_patch(
         data_root,
         "a",
-        {"id": "do.once", "base_version": 1, "op": "append", "text": "Also tell me."},
+        {"id": "do.once", "base_version": 2, "op": "append", "text": "Also tell me."},
     )
     put_patch(
         data_root,
         "b",
-        {"id": "keep.owner", "base_version": 1, "op": "replace", "text": "Own words."},
+        {"id": "keep.owner", "base_version": 2, "op": "replace", "text": "Own words."},
     )
     put_patch(data_root, "c", {"id": "storage.orphans", "base_version": 1, "op": "disable"})
     applied = apply_overrides(RULES, data_root)
@@ -194,7 +194,7 @@ def test_a18_a_patch_for_an_older_version_still_applies_and_is_reported(
 ):
     bumped = tuple(r.model_copy(update={"version": 3}) if r.id == "do.once" else r for r in RULES)
     put_patch(
-        data_root, "a", {"id": "do.once", "base_version": 1, "op": "replace", "text": "Mine."}
+        data_root, "a", {"id": "do.once", "base_version": 2, "op": "replace", "text": "Mine."}
     )
     applied = apply_overrides(bumped, data_root)
     assert text_of(applied.rules, "do.once") == "Mine."
@@ -203,10 +203,10 @@ def test_a18_a_patch_for_an_older_version_still_applies_and_is_reported(
 
 def test_a18_a_patched_text_obeys_the_same_rules(data_root: Path):
     put_patch(
-        data_root, "a", {"id": "do.once", "base_version": 1, "op": "replace", "text": "Run {it}."}
+        data_root, "a", {"id": "do.once", "base_version": 2, "op": "replace", "text": "Run {it}."}
     )
     put_patch(
-        data_root, "b", {"id": "keep.owner", "base_version": 1, "op": "append", "text": "x" * 700}
+        data_root, "b", {"id": "keep.owner", "base_version": 2, "op": "append", "text": "x" * 700}
     )
     put_patch(data_root, "c", {"id": "no.such.rule", "base_version": 1, "op": "disable"})
     (data_root / "config" / "guidance" / "d.yaml").write_text("not: [a patch", encoding="utf-8")
@@ -218,13 +218,13 @@ def test_a18_a_patched_text_obeys_the_same_rules(data_root: Path):
 
 def test_a18_overrides_reach_the_agent_and_doctor_reports_them(ctx: Context, data_root: Path):
     put_patch(
-        data_root, "a", {"id": "do.once", "base_version": 1, "op": "replace", "text": "Mine."}
+        data_root, "a", {"id": "do.once", "base_version": 2, "op": "replace", "text": "Mine."}
     )
     app = App(ctx, HANDLERS, HOOKS)
     reply = app.call("guide", {"id": "do.once"})
     assert reply.data.rules[0].text == "Mine."  # type: ignore[union-attr]
     put_patch(
-        data_root, "b", {"id": "keep.owner", "base_version": 1, "op": "replace", "text": "{bad}"}
+        data_root, "b", {"id": "keep.owner", "base_version": 2, "op": "replace", "text": "{bad}"}
     )
     status = {c.id: c.status for c in guidance_checks(ctx)}
     assert status["guidance.overrides"] == "warn"

@@ -3,6 +3,8 @@
 Contract: docs/contracts/07-attention.md (Delivery) and 03-envelope-errors.md.
 """
 
+from pydantic import JsonValue
+
 from chamberlain.attention.models import EventRow
 from chamberlain.domain.events import EventKind
 from chamberlain.schema.base import ToolName
@@ -43,6 +45,14 @@ def next_step(event: EventRow) -> NextStep:
             tool=ToolName.NEXT,
             args={},
             why="The note is in the line above. Act on it, then mark it handled.",
+        )
+    if kind is EventKind.MAIL_NEW_UNMATCHED and subject is not None:
+        args: dict[str, JsonValue] = {"scope": "mail", "source": subject, "folder": "inbox"}
+        if event.attrs.since is not None:
+            args["since"] = event.attrs.since
+        args["limit"] = 25
+        return NextStep(
+            tool=ToolName.FIND, args=args, why="List the new mail; open only what you need."
         )
     if subject is not None:
         return NextStep(

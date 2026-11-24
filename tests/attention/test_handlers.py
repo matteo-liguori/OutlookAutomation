@@ -114,7 +114,7 @@ def test_golden_guide_by_id_and_the_first_index_page(app: App):
             "rules": [
                 {
                     "id": "do.once",
-                    "version": 1,
+                    "version": 2,
                     "title": "Carrying out a change",
                     "text": one.data.rules[0].text,
                 }
@@ -131,5 +131,5 @@ def test_golden_guide_by_id_and_the_first_index_page(app: App):
         "appointments.important",
         "calendar.checks",
     ]
-    assert index.coverage.total == 36
+    assert index.coverage.total == 35
     assert index.coverage.returned == 25

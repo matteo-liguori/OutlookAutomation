@@ -159,11 +159,20 @@ def test_e3_a_source_that_cannot_answer_becomes_a_gap(app: App, fake: FakeProvid
     assert reply.coverage.gaps[0].source == "mail:test"
 
 
-def test_m20_distinct_copies_get_distinct_handles(app: App, fake: FakeProvider) -> None:
+def test_m20_distinct_copies_keep_distinct_handles_but_show_as_one_hit(
+    app: App, fake: FakeProvider
+) -> None:
     fake.mail.add_message("mail:test", internet_message_id="<dup@x>", folder_id="f-inbox")
     fake.mail.add_message("mail:test", internet_message_id="<dup@x>", folder_id="f-archive")
-    found = hits(call(app, "find", scope="mail"))
-    assert len({h.handle for h in found}) == 2
+    everywhere = hits(call(app, "find", scope="mail"))
+    assert len(everywhere) == 1
+    assert everywhere[0].content is not None
+    assert "[" in everywhere[0].content.text
+    inbox = hits(call(app, "find", scope="mail", folder="inbox"))
+    archive = hits(call(app, "find", scope="mail", folder="archive"))
+    assert len(inbox) == len(archive) == 1
+    assert inbox[0].handle != archive[0].handle
+    assert everywhere[0].handle == inbox[0].handle
 
 
 def test_t8_within_returns_matching_lines_with_offsets_that_open_can_read(

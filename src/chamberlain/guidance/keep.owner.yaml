@@ -1,11 +1,11 @@
 id: keep.owner
-version: 1
+version: 2
 title: Storing things
 when: {tool: keep}
 text: >
   Keep only what an open action needs, for as long as it needs it. Prefer a
-  short note to a copy of a message. Evidence holds a statement, never a
-  message body or a whole card.
-max_chars: 200
+  short note to a message copy. Evidence is a statement, never a body or a
+  whole card.
+max_chars: 160
 once_per: session
 priority: 45

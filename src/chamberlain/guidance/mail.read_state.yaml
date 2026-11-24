@@ -1,11 +1,10 @@
 id: mail.read_state
-version: 1
+version: 2
 title: Reading mail
 when: {tool: find, scope: mail}
 text: >
-  Searching and reading mail leaves it unread. Do not mark mail read, move it
-  or delete it unless a grant covers exactly that. Filing and reporting follow
-  the owner's permissions, not your preference.
-max_chars: 200
+  Reading mail leaves it unread. Never mark mail read, move or delete it
+  unless a grant covers exactly that.
+max_chars: 110
 once_per: session
 priority: 50

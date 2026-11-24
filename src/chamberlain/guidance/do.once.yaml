@@ -1,11 +1,11 @@
 id: do.once
-version: 1
+version: 2
 title: Carrying out a change
 when: {tool: do}
 text: >
   Run it once. If the reply is uncertain or says it may have happened, never
-  run it again. Tell the user the outcome as the harness reports it; submitted
-  is not the same as delivered.
-max_chars: 200
+  run it again. Report the outcome as the harness gives it; submitted is not
+  delivered.
+max_chars: 160
 once_per: session
 priority: 80

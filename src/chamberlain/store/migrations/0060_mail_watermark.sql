@@ -3,7 +3,7 @@
 -- No sender, subject or body is stored here: only identities, times and a suggested card handle.
 
 CREATE TABLE mail_watermarks (
-    source_id        TEXT PRIMARY KEY REFERENCES sources (id) ON DELETE CASCADE,
+    source_id        TEXT PRIMARY KEY,
     covered_through  TEXT NOT NULL,
     watching_since   TEXT NOT NULL,
     scan_started_at  TEXT,
@@ -14,7 +14,7 @@ CREATE TABLE mail_watermarks (
 
 CREATE TABLE mail_seen (
     seq              INTEGER PRIMARY KEY AUTOINCREMENT,
-    source_id        TEXT NOT NULL REFERENCES sources (id) ON DELETE CASCADE,
+    source_id        TEXT NOT NULL,
     locator          TEXT NOT NULL,
     handle           TEXT NOT NULL,
     received_at      TEXT NOT NULL,

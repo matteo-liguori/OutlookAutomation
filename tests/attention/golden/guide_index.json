@@ -34,7 +34,7 @@
       },
       {
         "id": "card.upkeep",
-        "version": 1,
+        "version": 2,
         "title": "Keeping a card"
       },
       {
@@ -44,7 +44,7 @@
       },
       {
         "id": "do.once",
-        "version": 1,
+        "version": 2,
         "title": "Carrying out a change"
       },
       {
@@ -94,27 +94,22 @@
       },
       {
         "id": "keep.owner",
-        "version": 1,
+        "version": 2,
         "title": "Storing things"
       },
       {
-        "id": "mail.for_card",
-        "version": 1,
-        "title": "New mail for a card"
-      },
-      {
         "id": "mail.read_state",
-        "version": 1,
+        "version": 2,
         "title": "Reading mail"
       },
       {
         "id": "mail.unmatched",
-        "version": 1,
-        "title": "New mail with no card"
+        "version": 2,
+        "title": "New mail to triage"
       },
       {
         "id": "propose.check",
-        "version": 1,
+        "version": 2,
         "title": "Proposing a change"
       },
       {
@@ -126,13 +121,18 @@
         "id": "reminder.back",
         "version": 1,
         "title": "A snoozed action is back"
+      },
+      {
+        "id": "report.summary",
+        "version": 1,
+        "title": "Writing a report"
       }
     ]
   },
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 36,
+    "total": 35,
     "cursor": "ZzI1",
     "gaps": []
   },

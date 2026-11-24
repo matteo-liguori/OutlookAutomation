@@ -36,7 +36,19 @@ RERAISE: Final[dict[EventKind, timedelta]] = {
 
 NOTE_OPEN: Final = timedelta(days=7)
 """A viewer note keeps raising `user.note` this long (runs track `user_notes`)."""
-MAIL_LOOKBACK: Final = timedelta(hours=48)
-MAIL_PAGE_LIMIT: Final = 25
+MAIL_BOOTSTRAP: Final = timedelta(hours=48)
+"""How far back the first scan of a never-watched source looks; recorded as `watching_since`."""
+MAIL_OVERLAP: Final = timedelta(hours=24)
+"""Each scan starts this far before the watermark: a message dated earlier than it arrived
+(Date headers are the sender's) is still caught. Older-dated late arrivals are the known residue."""
+MAIL_REQUIRED_OVERLAP: Final = timedelta(hours=1)
+"""The part of the overlap a scan must always finish; the rest is best effort when a mailbox is
+larger than one tick's page budget. Mail dated older than this that arrives later may be missed."""
+MAIL_PAGE_LIMIT: Final = 200
+MAIL_MAX_PAGES: Final = 5
+"""Bounds one scan of one source in one tick (A-6); a larger backlog resumes next tick."""
+MAIL_HEADER_READS: Final = 20
+"""Messages per source and tick that may be read in full to get their reply headers."""
+MAIL_CORRESPONDENT_LOOKUPS: Final = 30
 SESSIONS_KEEP_ENDED: Final = timedelta(hours=24)
 GUIDE_PAGE: Final = 25
