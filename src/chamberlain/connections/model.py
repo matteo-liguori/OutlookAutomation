@@ -13,6 +13,7 @@ from pydantic import Field, model_validator
 from chamberlain.domain.grants import Requirement
 from chamberlain.domain.senders import AuthorisedSenders
 from chamberlain.limits import CARD_ARTIFACT_BYTES, SENDS_PER_HOUR, TOTAL_ARTIFACT_BYTES
+from chamberlain.livetest.config import LiveTestConfig
 from chamberlain.schema.base import Model, SourceId
 
 PROFILE_VERSION = 1
@@ -146,6 +147,8 @@ class Connections(Model):
     schedules: tuple[ScheduleConfig, ...] = ()
     updates: UpdatesConfig = UpdatesConfig()
     authorised_senders: AuthorisedSenders = AuthorisedSenders()
+    live_test: LiveTestConfig = LiveTestConfig()
+    """Which sources `chamberlain live-test` may use (docs/live-test.md). Off by default."""
     sources: dict[SourceId, SourceConfig] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -157,6 +160,23 @@ class Connections(Model):
                     raise ValueError(f"{source_id}: a demo source is mail, calendar or contacts")
             elif ROLE_OF_KIND[source.kind] != role:
                 raise ValueError(f"{source_id}: a {source.kind} source cannot be a {role} source")
+        return self
+
+    @model_validator(mode="after")
+    def _live_test_names_real_sources(self) -> Self:
+        live = self.live_test
+        for source_id, box in live.mail.items():
+            source = self.sources.get(source_id)
+            if source is None:
+                raise ValueError(f"live_test.mail: {source_id} is not a configured source")
+            if isinstance(source, ThunderbirdMailSource) and source.mailbox.lower() != box.address:
+                raise ValueError(
+                    f"live_test.mail: {source_id} is the mailbox {source.mailbox}, "
+                    f"not {box.address}"
+                )
+        for source_id in live.calendars:
+            if source_id not in self.sources:
+                raise ValueError(f"live_test.calendars: {source_id} is not a configured source")
         return self
 
     def of_kind[S: _Source](self, model: type[S]) -> dict[str, S]:

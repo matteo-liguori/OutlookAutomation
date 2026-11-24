@@ -52,3 +52,34 @@ the first time and never overwrites it afterwards. The old `schedule.morning` an
 `updates.enabled` and `updates.remote` carry over; other old settings are listed as unmapped in
 the import report. The scheduler side is described in
 [scheduling](scheduling.md); cutover in [cutover](cutover.md).
+
+## `live_test`: what `chamberlain live-test` may touch
+
+Off by default. When `enabled` is true the command may create clearly marked mail and events
+on the sources listed here, and only these. Details and cleanup rules: `docs/live-test.md`.
+
+```yaml
+live_test:
+  enabled: true
+  mail:                              # mailboxes a test may use (each must be a configured source)
+    mail:work:
+      address: you@example.com       # this mailbox's own address; tests send ONLY to owned addresses
+      scratch_folder: Archive        # optional folder id or name for the file-and-back test
+    mail:home:
+      address: you@example.org
+  pairs:                             # cross-account sends between owned mailboxes
+    - {source: mail:work, to: mail:home}
+    - {source: mail:home, to: mail:work}
+  calendars:                         # writable calendars a test may use
+    calendar:primary:
+      invitee_mail: mail:home        # optional: the owned mailbox the invitation scenarios invite
+      invitee_calendar: calendar:home  # optional: that account's calendar (answers the invitation)
+    calendar:home: {}
+  approve_calendar_edits: false      # true: the runner records per-operation evidence citing this
+                                     # setting, so calendar update and delete tests run unattended
+  arrival_wait_seconds: 120          # how long to wait for a sent message to arrive
+```
+
+Unknown keys are rejected. A `mail` entry for a Thunderbird source must carry that source's
+own mailbox address. `pairs`, `invitee_mail` and `invitee_calendar` may only name sources
+listed here.
