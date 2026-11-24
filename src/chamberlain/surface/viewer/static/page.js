@@ -1,7 +1,8 @@
 "use strict";
 // The viewer page. It builds every element with textContent and never parses markup, so nothing
-// from a mail or a note can become markup. The token comes from the URL fragment, is kept only
-// in this variable, and is removed from the address bar at once.
+// from a mail, a calendar or a note can become markup. The token comes from the URL fragment, is
+// kept only in this variable, and is removed from the address bar at once. calendar.js adds the
+// calendar page through `window.ChamberlainViewer.register`.
 (function () {
   var token = "";
   var hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -65,10 +66,18 @@
     return stamp ? stamp.replace("T", " ").replace("Z", " UTC") : "never";
   }
 
+  function day(stamp) {
+    return stamp ? stamp.slice(0, 10) : "";
+  }
+
   function post(path, body, done) {
     api("POST", path, body).then(done, function (error) {
       main.insertBefore(problem(error), main.firstChild);
     });
+  }
+
+  function empty(text) {
+    return el("div", { class: "empty", text: text });
   }
 
   // --- grants ----------------------------------------------------------------------------
@@ -86,7 +95,7 @@
 
   function openGrant(handle) {
     api("GET", "/api/grants/" + encodeURIComponent(handle)).then(function (grant) {
-      var box = el("div", {});
+      var box = el("section", { class: "panel" });
       box.appendChild(el("h2", { text: grant.title }));
       box.appendChild(
         el("p", { class: "muted", text: grant.kind + ", " + grant.state + ", needs " + grant.requirement + ", source " + grant.source })
@@ -123,40 +132,72 @@
     }, function (error) { show(problem(error)); });
   }
 
-  function grantsList(states, empty) {
+  function grantsList(states, emptyText) {
     var box = el("div", {});
     var queries = states.map(function (state) { return api("GET", "/api/grants?state=" + state); });
     Promise.all(queries).then(function (results) {
       var rows = [];
       results.forEach(function (result) { rows = rows.concat(result.grants); });
-      if (!rows.length) box.appendChild(el("p", { class: "muted", text: empty }));
+      if (!rows.length) box.appendChild(el("p", { class: "muted", text: emptyText }));
       rows.forEach(function (row) { box.appendChild(grantCard(row)); });
     }, function (error) { box.appendChild(problem(error)); });
     return box;
   }
 
-  // --- views -----------------------------------------------------------------------------
+  // --- uncertain operations ---------------------------------------------------------------
+
+  var KIND_NAMES = {
+    "mail.send": "Email send",
+    "mail.draft_save": "Draft save",
+    "mail.draft_update": "Draft update",
+    "mail.draft_discard": "Draft discard",
+    "mail.move": "Email move",
+    "mail.trash": "Email trash",
+    "mail.mark_read": "Mark read",
+    "calendar.create": "Calendar event created",
+    "calendar.update": "Calendar event changed",
+    "calendar.delete": "Calendar event deleted",
+  };
+
+  function uncertainCard(op) {
+    var s = op.summary || {};
+    var title = s.title || KIND_NAMES[op.kind] || op.kind;
+    var card = el("section", { class: "card" }, el("h3", { text: title }));
+    card.appendChild(el("div", { class: "muted", text: (KIND_NAMES[op.kind] || op.kind) + " on " + op.source + " (" + op.state + ")" }));
+    var facts = el("ul", { class: "facts" });
+    if (s.start) facts.appendChild(el("li", { text: "When: " + (s.start.length === 10 ? s.start : when(s.start)) }));
+    if (s.calendar) facts.appendChild(el("li", { text: "Calendar: " + s.calendar }));
+    if (s.to && s.to.length) facts.appendChild(el("li", { text: "To: " + s.to.join(", ") }));
+    if (s.cc && s.cc.length) facts.appendChild(el("li", { text: "Cc: " + s.cc.join(", ") }));
+    if (facts.firstChild) card.appendChild(facts);
+    if (op.attempted_at) {
+      card.appendChild(el("p", { text: "Tried at " + when(op.attempted_at) + (op.imported ? " (from the old journal)." : ".") }));
+    } else if (op.imported) {
+      card.appendChild(el("p", { class: "muted", text: "The old journal does not say when it was tried. It was imported at " + when(op.imported_at) + "." }));
+    }
+    if (op.rendered) card.appendChild(el("pre", { text: op.rendered }));
+    card.appendChild(el("p", { class: "advice", text: op.advice }));
+    card.appendChild(el("p", { class: "muted", text: "The assistant looks for it itself and closes it if nothing can send it again. You can settle it now:" }));
+    [["happened", "It happened"], ["did_not_happen", "It did not happen"]].forEach(function (pair) {
+      card.appendChild(
+        el("button", {
+          class: "act",
+          text: pair[1],
+          onclick: function () { post("/api/operations/" + op.handle + "/resolve", { outcome: pair[0] }, render); },
+        })
+      );
+    });
+    return card;
+  }
 
   function uncertainCards(box) {
     api("GET", "/api/uncertain").then(function (data) {
-      data.operations.forEach(function (op) {
-        var card = el("section", { class: "card" }, el("h3", { text: op.kind + " (" + op.state + ")" }));
-        card.appendChild(el("div", { class: "muted", text: op.source + ", sent at " + when(op.dispatched_at) }));
-        card.appendChild(el("pre", { text: op.rendered || "(its content has been compacted)" }));
-        card.appendChild(el("p", { class: "muted", text: "Check your Sent folder, then tell the harness what happened." }));
-        ["happened", "did_not_happen"].forEach(function (outcome) {
-          card.appendChild(
-            el("button", {
-              class: "act",
-              text: outcome === "happened" ? "It happened" : "It did not happen",
-              onclick: function () { post("/api/operations/" + op.handle + "/resolve", { outcome: outcome }, render); },
-            })
-          );
-        });
-        box.appendChild(card);
-      });
+      if (!data.operations.length) box.appendChild(el("p", { class: "muted", text: "Nothing is waiting to be settled." }));
+      data.operations.forEach(function (op) { box.appendChild(uncertainCard(op)); });
     }, function (error) { box.appendChild(problem(error)); });
   }
+
+  // --- views -----------------------------------------------------------------------------
 
   function needsView() {
     var box = el("div", {});
@@ -184,36 +225,56 @@
     return box;
   }
 
-  function todayView() {
+  function cardsView() {
     var box = el("div", {});
-    api("GET", "/api/activity").then(function (data) {
-      box.appendChild(el("h2", { text: "What the assistant did on " + data.day }));
-      var names = Object.keys(data.tool_calls);
-      box.appendChild(
-        el("p", { class: "muted", text: names.length ? names.map(function (n) { return n + " x" + data.tool_calls[n]; }).join(", ") : "No tool calls." })
-      );
-      var table = el("table", {}, el("tr", {}, el("th", { text: "When" }), el("th", { text: "Who" }), el("th", { text: "What" })));
-      data.events.forEach(function (row) {
-        table.appendChild(el("tr", {}, el("td", { text: when(row.at) }), el("td", { text: row.actor }), el("td", { text: row.kind + ": " + row.summary })));
+    box.appendChild(el("h2", { text: "Open cards" }));
+    var grid = el("div", { class: "grid" });
+    box.appendChild(grid);
+    api("GET", "/api/cards").then(function (data) {
+      if (!data.cards.length) { box.replaceChild(empty("No open cards."), grid); return; }
+      data.cards.forEach(function (c) {
+        var strip = c.status === "over its size cap" ? "cap" : c.status === "action overdue" ? "overdue" : c.status === "review due" ? "review" : "";
+        var card = el("section", { class: "thread-card" }, el("span", { class: "colour-strip " + strip }));
+        card.appendChild(el("div", { class: "card-top" }, el("span", { class: "status-label", text: c.status }), el("span", { text: c.open_actions + (c.open_actions === 1 ? " action" : " actions") })));
+        card.appendChild(el("span", { class: "thread-title", text: c.title }));
+        if (c.goal) card.appendChild(el("span", { class: "purpose", text: c.goal }));
+        if (c.position) card.appendChild(el("span", { class: "purpose", text: c.position }));
+        if (c.actions.length) {
+          var preview = el("div", { class: "action-preview" });
+          c.actions.forEach(function (a) {
+            preview.appendChild(el("div", { class: "action-line", text: (a.due_at ? day(a.due_at) + ": " : "") + a.title }));
+          });
+          if (c.open_actions > c.actions.length) preview.appendChild(el("span", { class: "more", text: "and " + (c.open_actions - c.actions.length) + " more" }));
+          card.appendChild(preview);
+        }
+        card.appendChild(el("div", { class: "card-date" }, el("span", { text: "Updated " + day(c.updated_at) }), c.review_at ? el("span", { class: "badge", text: "Review " + day(c.review_at) }) : null));
+        grid.appendChild(card);
       });
-      box.appendChild(table);
-    }, function (error) { box.appendChild(problem(error)); });
+    }, function (error) { box.replaceChild(problem(error), grid); });
     return box;
   }
 
-  function workView() {
+  function timelineView() {
     var box = el("div", {});
-    api("GET", "/api/work").then(function (data) {
-      box.appendChild(el("h2", { text: "Actions due this week" }));
-      if (!data.actions.length) box.appendChild(el("p", { class: "muted", text: "None." }));
-      data.actions.forEach(function (a) {
-        box.appendChild(el("section", { class: "card" }, el("h3", { text: a.title }), el("div", { class: "muted", text: "Due " + when(a.due_at) + ", card: " + a.card_title })));
+    box.appendChild(el("h2", { text: "Timeline" }));
+    var list = el("div", { class: "timeline" });
+    box.appendChild(list);
+    api("GET", "/api/timeline?days=14").then(function (data) {
+      if (!data.days.length) { list.appendChild(empty("Nothing happened in the last two weeks.")); return; }
+      var names = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short", timeZone: "UTC" });
+      data.days.forEach(function (d) {
+        var items = el("div", { class: "day-items" });
+        d.items.forEach(function (item) {
+          items.appendChild(
+            el("div", { class: "event " + item.kind },
+              el("div", { class: "event-top" }, el("span", { class: "kind", text: item.kind === "action" ? "Action closed" : "Harness" }), el("span", { text: when(item.at) })),
+              el("h3", { text: item.title }),
+              el("div", { class: "event-bottom" }, el("span", { text: item.detail }), item.card ? el("span", { text: item.card }) : null))
+          );
+        });
+        list.appendChild(el("div", { class: "day" }, el("div", { class: "day-title" }, el("strong", { text: names.format(new Date(d.day + "T00:00:00Z")) })), items));
       });
-      box.appendChild(el("h2", { text: "Open cards" }));
-      data.cards.forEach(function (c) {
-        box.appendChild(el("section", { class: "card" }, el("h3", { text: c.title }), el("div", { class: "muted", text: c.open_actions + " open actions" + (c.over_cap ? ", over its size cap" : "") })));
-      });
-    }, function (error) { box.appendChild(problem(error)); });
+    }, function (error) { list.appendChild(problem(error)); });
     return box;
   }
 
@@ -291,9 +352,9 @@
 
   var VIEWS = [
     ["needs", "Needs you", needsView],
+    ["cards", "Cards", cardsView],
+    ["timeline", "Timeline", timelineView],
     ["grants", "Grants", grantsView],
-    ["today", "Today", todayView],
-    ["work", "Cards", workView],
     ["runs", "Runs and reports", runsView],
     ["storage", "Storage", storageView],
     ["notes", "Notes", notesView],
@@ -317,11 +378,26 @@
     render();
   }
 
-  if (token) {
-    start();
-  } else {
-    var input = el("input", { type: "password", "aria-label": "Viewer token" });
-    show(el("div", {}, el("h2", { text: "Viewer token" }), el("p", { class: "muted", text: "Paste the contents of the viewer.token file from the run folder of your data folder." }), input,
-      el("button", { class: "act primary", text: "Open", onclick: function () { token = input.value.trim(); start(); } })));
-  }
+  // calendar.js registers its page here, after the second tab (`after` names the tab before it).
+  window.ChamberlainViewer = {
+    el: el,
+    api: api,
+    when: when,
+    problem: problem,
+    empty: empty,
+    register: function (id, title, build, after) {
+      var at = VIEWS.findIndex(function (entry) { return entry[0] === after; });
+      VIEWS.splice(at < 0 ? VIEWS.length : at + 1, 0, [id, title, build]);
+    },
+  };
+
+  document.addEventListener("DOMContentLoaded", function () {
+    if (token) {
+      start();
+    } else {
+      var input = el("input", { type: "password", "aria-label": "Viewer token" });
+      show(el("div", {}, el("h2", { text: "Viewer token" }), el("p", { class: "muted", text: "Paste the contents of the viewer.token file from the run folder of your data folder." }), input,
+        el("button", { class: "act primary", text: "Open", onclick: function () { token = input.value.trim(); start(); } })));
+    }
+  });
 })();

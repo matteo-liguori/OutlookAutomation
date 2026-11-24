@@ -62,6 +62,8 @@ QUARANTINE_DAYS: Final = 14
 CARD_OUTCOME_DAYS: Final = 365
 ACTION_OUTCOME_DAYS: Final = 90
 OPERATION_COMPACT_DAYS: Final = 30
+UNCERTAIN_ABANDON_DAYS: Final = 14
+"""An uncertain operation nothing can resend is closed unsettled after this many days."""
 OPERATION_OWNER_GRACE_HOURS: Final = 24
 GRANT_COMPACT_DAYS: Final = 90
 AUDIT_DAYS: Final = 730

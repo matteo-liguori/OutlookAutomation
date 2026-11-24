@@ -259,7 +259,13 @@ def build_old_root(root: Path) -> Path:
         {
             "stage": "attempting",
             "fingerprint": HASH_D,
-            "request": {"mailbox": OWNER, "to": ["a@example.test"]},
+            "request": {
+                "mailbox": OWNER,
+                "to": ["a@example.test"],
+                "cc": ["b@example.test"],
+                "subject": "Inflight subject",
+                "body": "Never kept.",
+            },
         },
     )
     journal("outlook-send:oa-com", {"stage": "attempting"})
@@ -268,7 +274,25 @@ def build_old_root(root: Path) -> Path:
     journal("thunderbird:move:m-1", {"stage": "not-attempted"})
     journal(
         "thunderbird:calendar-create:c-1",
-        {"stage": "attempting", "request": {"calendar_id": "owl-cal-1"}},
+        {
+            "stage": "attempting",
+            "request": {
+                "calendar_id": "owl-cal-1",
+                "icalendar": (
+                    "BEGIN:VCALENDAR\r\n"
+                    "VERSION:2.0\r\n"
+                    "PRODID:-//t//EN\r\n"
+                    "BEGIN:VEVENT\r\n"
+                    "UID:c-1@test\r\n"
+                    "DTSTAMP:20260101T000000Z\r\n"
+                    "DTSTART:20260301T100000Z\r\n"
+                    "DTEND:20260301T110000Z\r\n"
+                    "SUMMARY:Dentist\r\n"
+                    "END:VEVENT\r\n"
+                    "END:VCALENDAR\r\n"
+                ),
+            },
+        },
     )
 
     cur.execute("INSERT INTO runs VALUES('run-1','2026-01-01T09:00:00+00:00','done','{}')")

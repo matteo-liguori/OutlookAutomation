@@ -2,8 +2,9 @@
 
 Contract: docs/contracts/05-grants.md (G-14, G-17 to G-19). Routes:
 
-- `GET /` and `GET /static/page.js|page.css`: the shell. They hold no records, so they need no
-  token, but they still need a loopback peer and the viewer's own Host (a rebinding page gets 403).
+- `GET /` and `GET /static/page.js|page.css|calendar.js|calendar.css`: the shell. They hold no
+  records, so they need no token, but they still need a loopback peer and the viewer's own
+  Host (a rebinding page gets 403).
 - `/api/grants...` and `/api/operations/...`: handed to the writes track's `ConfirmationApp`
   (list, exact content, confirm with the content hash, decline, revoke, keep, resolve).
 - every other `/api/...` route is a read-only view, plus the person's notes.
@@ -23,7 +24,7 @@ from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.runs.notes import add_note, withdraw_note
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
-from chamberlain.surface.viewer import views
+from chamberlain.surface.viewer import pages, views
 from chamberlain.surface.viewer.gate import SECURITY_HEADERS, Refusal, check_api, check_basics
 from chamberlain.writes.confirm import MAX_BODY, ConfirmationApp
 from chamberlain.writes.models import WritePolicy
@@ -35,6 +36,8 @@ STATIC_FILES: dict[str, tuple[str, str]] = {
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/static/page.js": ("page.js", "text/javascript; charset=utf-8"),
     "/static/page.css": ("page.css", "text/css; charset=utf-8"),
+    "/static/calendar.js": ("calendar.js", "text/javascript; charset=utf-8"),
+    "/static/calendar.css": ("calendar.css", "text/css; charset=utf-8"),
 }
 _DELEGATED = ("/api/grants", "/api/operations/")
 _SAFE_PATH = re.compile(r"^/api/[A-Za-z0-9_/.-]{0,70}$")
@@ -165,6 +168,21 @@ class ViewerApp:
             return views.work(ctx)
         if path == "/api/uncertain":
             return views.uncertain(ctx)
+        if path == "/api/calendar":
+            return pages.calendar(
+                ctx,
+                self._zone,
+                (query.get("start") or [None])[0],
+                (query.get("until") or [None])[0],
+            )
+        if path == "/api/reports":
+            return pages.reports_of_day(ctx, (query.get("day") or [""])[0])
+        if path == "/api/cards":
+            return pages.cards(ctx)
+        if path == "/api/timeline":
+            return pages.timeline(
+                ctx, self._zone, (query.get("until") or [None])[0], _count(query, "days", 7)
+            )
         if path == "/api/activity":
             return views.activity(ctx, self._zone, (query.get("day") or [None])[0])
         if path == "/api/runs":
@@ -215,6 +233,13 @@ def _status(error: ChamberlainError) -> int:
     if error.category in (ErrorCategory.CONFLICT, ErrorCategory.NOT_AUTHORISED):
         return 409
     return 400
+
+
+def _count(query: dict[str, list[str]], name: str, default: int) -> int:
+    text = (query.get(name) or [str(default)])[0]
+    if not text.isdigit() or len(text) > 3:
+        raise ChamberlainError(ErrorCode.REQUEST_INVALID, f"{name} is a whole number.", field=name)
+    return int(text)
 
 
 def _json(body: bytes) -> dict[str, Any]:

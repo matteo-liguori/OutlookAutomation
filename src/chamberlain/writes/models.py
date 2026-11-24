@@ -94,6 +94,13 @@ class OperationRow:
     dispatched_at: datetime | None
     settled_at: datetime | None
     compacted_at: datetime | None
+    updated_at: datetime | None = None
+    summary_json: str | None = None
+    """Display and matching text of an operation imported from an old journal. Never an intent."""
+    attempted_at: datetime | None = None
+    """When the old journal says the write was tried. Not the import time."""
+    redo_at: datetime | None = None
+    """When something tried to do the same write again (it makes attention speak again)."""
 
 
 class StoredReceipt(Model):

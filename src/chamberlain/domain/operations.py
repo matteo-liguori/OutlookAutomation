@@ -25,6 +25,7 @@ class OperationState(StrEnum):
     RECONCILING = "reconciling"
     CONFIRMED_ABSENT = "confirmed_absent"
     CANCELLED = "cancelled"
+    ABANDONED = "abandoned"
 
 
 _S = OperationState
@@ -34,12 +35,13 @@ TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
     _S.AUTHORISED: frozenset({_S.PREPARED, _S.FAILED_CLEAN, _S.CANCELLED}),
     _S.PREPARED: frozenset({_S.DISPATCHED, _S.FAILED_CLEAN}),
     _S.DISPATCHED: frozenset({_S.CONFIRMED, _S.FAILED_CLEAN, _S.UNCERTAIN}),
-    _S.UNCERTAIN: frozenset({_S.RECONCILING, _S.CONFIRMED, _S.CONFIRMED_ABSENT}),
+    _S.UNCERTAIN: frozenset({_S.RECONCILING, _S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.ABANDONED}),
     _S.RECONCILING: frozenset({_S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.UNCERTAIN}),
     _S.CONFIRMED: frozenset(),
     _S.FAILED_CLEAN: frozenset(),
     _S.CONFIRMED_ABSENT: frozenset(),
     _S.CANCELLED: frozenset(),
+    _S.ABANDONED: frozenset(),
 }
 """Exactly the arrows of the state diagram (W-6).
 
