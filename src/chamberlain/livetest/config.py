@@ -79,7 +79,10 @@ class LiveTestConfig(Model):
                 calendar.invitee_calendar not in self.calendars
                 or calendar.invitee_calendar == source
             ):
-                raise ValueError(f"{source}: invitee_calendar is another live_test calendar")
+                raise ValueError(
+                    f"{source}: invitee_calendar must be another calendar listed in "
+                    "live_test.calendars"
+                )
             if calendar.invitee_calendar is not None and calendar.invitee_mail is None:
                 raise ValueError(f"{source}: invitee_calendar needs invitee_mail")
         if self.enabled and not self.mail and not self.calendars:
