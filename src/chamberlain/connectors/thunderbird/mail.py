@@ -84,6 +84,8 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 _K = IntentKind
 _M = TypeVar("_M", bound=Model)
 
+HEALTH_SAMPLE_DAYS: Final = 7
+"""The freshness samples look at the Inbox's last week only (a bounded, complete read)."""
 ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
 """Reserved key in `refs`: the engine sets it to "1" when the grant allows a duplicate send (R3)."""
 DISPLAY_ONLY_REF: Final = "_display_only"
@@ -295,7 +297,15 @@ class ThunderbirdMail:
             for attempt in range(2):
                 if attempt:
                     self._sleep(self._limits.sample_interval_seconds)
-                result = self._query(binding, folder_id=binding.inbox_folder_id, limit=1)
+                # Recent mail only: Thunderbird lists a folder oldest first and the add-on stops
+                # at `max_scan`, so an unbounded sample of a large Inbox never reaches its
+                # newest message and is never complete (found live, 2026-11-25).
+                result = self._query(
+                    binding,
+                    folder_id=binding.inbox_folder_id,
+                    limit=1,
+                    since_ms=_ms(checked) - HEALTH_SAMPLE_DAYS * 86_400_000,
+                )
                 if not result.complete:
                     return self._state(source, HealthState.STALE, checked)
                 newest = result.messages[0] if result.messages else None

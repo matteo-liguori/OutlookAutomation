@@ -130,11 +130,15 @@
       box.appendChild(
         el("p", { class: "muted", text: grant.kind + ", " + grant.state + ", needs " + grant.requirement + ", source " + grant.source })
       );
-      if (grant.why_a_click) {
+      if (grant.why_a_click && grant.state === "proposed") {
         box.appendChild(el("p", { class: "muted", text: "A click is needed for: " + grant.why_a_click + "." }));
       }
-      box.appendChild(el("p", { text: "This is exactly what you would be allowing:" }));
-      box.appendChild(el("pre", { text: grant.rendered || "(nothing to show: do not confirm)" }));
+      box.appendChild(
+        el("p", { text: grant.state === "proposed" ? "This is exactly what you would be allowing:" : "This is what it allows:" })
+      );
+      box.appendChild(
+        el("pre", { text: grant.rendered || (grant.state === "proposed" ? "(nothing to show: do not confirm)" : "(no details stored)") })
+      );
       box.appendChild(el("p", { class: "muted" }, "Content fingerprint: ", el("code", { text: grant.content_sha256 })));
       var buttons = el("p", {});
       if (grant.state === "proposed" && grant.rendered) {

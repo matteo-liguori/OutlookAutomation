@@ -281,7 +281,21 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
         detail["rendered"] = describe_intent(
             intent, limit=None, refs=json.loads(shown.refs_json or "{}")
         )[0]
+    elif grant.confirmed_via == "import":
+        detail["rendered"] = _imported_wording(ctx, grant)
     return detail
+
+
+def _imported_wording(ctx: Context, grant: GrantRow) -> str:
+    """An approval carried over from the old harness: its own recorded wording (G-6)."""
+    rows = ctx.db.execute(
+        "SELECT e.text FROM evidence e JOIN evidence_refs r ON r.evidence = e.handle "
+        "WHERE r.owner_kind = 'grant' AND r.owner = ? ORDER BY e.created_at",
+        (grant.handle,),
+    ).fetchall()
+    said = "\n".join(str(row[0])[:1000] for row in rows[:5])
+    head = "Carried over from the old harness."
+    return f"{head} What you approved there:\n{said}" if said else f"{head} {grant.title}."
 
 
 def _grant(ctx: Context, handle: str) -> GrantRow:
