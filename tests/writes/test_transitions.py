@@ -53,12 +53,12 @@ def test_w6_the_legal_transitions_are_exactly_the_arrows_of_the_diagram() -> Non
     } == TERMINAL_STATES
 
 
-def _make(rig: WriteRig, state: OperationState) -> str:
-    handle = f"op_{state.value.replace('_', '')[:12]:0<12}abcd"
+def _make(rig: WriteRig, state: OperationState, n: int = 0) -> str:
+    handle = f"op_{n:012x}abcd"
     repo.insert_operation(
         rig.db,
         handle=handle,
-        idempotency_key=f"key-{state.value}",
+        idempotency_key=f"key-{n}-{state.value}",
         kind=IntentKind.MAIL_SEND,
         source_id=MAIL,
         card=None,
@@ -72,37 +72,47 @@ def _make(rig: WriteRig, state: OperationState) -> str:
     return handle
 
 
-@pytest.mark.parametrize(
-    ("before", "after"), list(itertools.product(list(S), list(S))), ids=lambda s: s.value
-)
-def test_w6_w7_every_pair_is_taken_or_refused_before_touching_the_store(
-    rig: WriteRig, before: OperationState, after: OperationState
-) -> None:
-    handle = _make(rig, before)
-    row = repo.get_operation(rig.db, handle)
-    assert row is not None
-    audit_before = repo.audit_count(rig.db)
-    receipt = (
-        build_receipt(row, after, "2026-01-05T09:00:00Z") if after in TERMINAL_STATES else None
-    )
-    columns = {} if receipt is None else {"receipt_json": receipt}
-    if (before, after) in ARROWS:
-        moved = move_operation(
-            rig.db, rig.clock, rig.ctx.services.audit, row, after, actor="t", summary="s", **columns
+def test_w6_w7_every_pair_is_taken_or_refused_before_touching_the_store(rig: WriteRig) -> None:
+    for n, (before, after) in enumerate(itertools.product(list(S), list(S))):
+        handle = _make(rig, before, n)
+        row = repo.get_operation(rig.db, handle)
+        assert row is not None
+        audit_before = repo.audit_count(rig.db)
+        receipt = (
+            build_receipt(row, after, "2026-01-05T09:00:00Z") if after in TERMINAL_STATES else None
         )
-        assert moved is not None
-        assert moved.state is after
-        assert repo.audit_count(rig.db) == audit_before + 1
-        return
-    with pytest.raises(ChamberlainError) as raised:
-        move_operation(
-            rig.db, rig.clock, rig.ctx.services.audit, row, after, actor="t", summary="s", **columns
-        )
-    assert raised.value.code is ErrorCode.INTERNAL_UNEXPECTED
-    assert repo.get_operation(rig.db, handle) == row
-    assert repo.audit_count(rig.db) == audit_before
-    with pytest.raises(ChamberlainError):
-        check_transition(before, after)
+        columns = {} if receipt is None else {"receipt_json": receipt}
+        if (before, after) in ARROWS:
+            moved = move_operation(
+                rig.db,
+                rig.clock,
+                rig.ctx.services.audit,
+                row,
+                after,
+                actor="t",
+                summary="s",
+                **columns,
+            )
+            assert moved is not None, (before, after)
+            assert moved.state is after, (before, after)
+            assert repo.audit_count(rig.db) == audit_before + 1, (before, after)
+            continue
+        with pytest.raises(ChamberlainError) as raised:
+            move_operation(
+                rig.db,
+                rig.clock,
+                rig.ctx.services.audit,
+                row,
+                after,
+                actor="t",
+                summary="s",
+                **columns,
+            )
+        assert raised.value.code is ErrorCode.INTERNAL_UNEXPECTED, (before, after)
+        assert repo.get_operation(rig.db, handle) == row, (before, after)
+        assert repo.audit_count(rig.db) == audit_before, (before, after)
+        with pytest.raises(ChamberlainError):
+            check_transition(before, after)
 
 
 def test_w7_a_terminal_transition_without_a_receipt_is_refused(rig: WriteRig) -> None:
