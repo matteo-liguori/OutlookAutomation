@@ -6,8 +6,6 @@ These tests guard the boundaries that let four tracks build in parallel.
 import ast
 from pathlib import Path
 
-import pytest
-
 SRC = Path(__file__).resolve().parents[1] / "src" / "chamberlain"
 
 FORBIDDEN: dict[str, tuple[str, ...]] = {
@@ -110,14 +108,11 @@ def _violations(package: str, banned: tuple[str, ...]) -> list[str]:
     return problems
 
 
-@pytest.mark.parametrize("package", sorted(FORBIDDEN))
-def test_d9_d10_d11_layering(package: str) -> None:
-    assert not _violations(package, FORBIDDEN[package])
-
-
-@pytest.mark.parametrize("package", sorted(TRACK_PEERS))
-def test_s3_tracks_do_not_import_each_other(package: str) -> None:
-    assert not _violations(package, TRACK_PEERS[package])
+def test_d9_d10_d11_layering_and_s3_tracks_do_not_import_each_other() -> None:
+    for package in sorted(FORBIDDEN):
+        assert not _violations(package, FORBIDDEN[package]), package
+    for package in sorted(TRACK_PEERS):
+        assert not _violations(package, TRACK_PEERS[package]), package
 
 
 def test_d13_imports_are_at_module_top() -> None:
