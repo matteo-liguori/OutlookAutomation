@@ -326,3 +326,10 @@ After that the harness looks once, and the agent decides.
   resendable) keep the 14-day close of W-13a.
 - **W-41** The owner's viewer lists each uncertain operation with the re-check result, when it
   looked and where, and any resend.
+
+- **W-43** Marking mail read after a report. When a run finishes with a kept report and
+  `read_state.reporting_marks_read` is on, the harness marks read each message of that run's session
+  that was shown to the agent in a mail batch, was triaged, was not sent mail and has not been tried
+  (`mail_seen.read_marked_at`). Mail that arrived after the batch was shown is never in it. The write
+  is an ordinary `mail.mark_read` operation with per-message results (W-24), authorised by the
+  mailbox's standing grant (05, G-24), actor `system:read_state`. A message is tried once.

@@ -318,3 +318,22 @@ The written report is the owner's front page in the viewer. Three parts make it:
   viewer's usual token and Origin checks); that finishes the action and writes an audit row
   (`appointment.acknowledged`) whose actor is `human:viewer`. No tool reaches it. Local events and
   their removal are audited the same way (`local_event.added`, `local_event.removed`).
+
+### Carrying the owner's old rules across (track f-import)
+
+- **M-41** `chamberlain import` carries more than cards. Each item is written once and recorded in
+  `imported_items` (kind, old id), so a repeat import adds only what is missing, never overwrites a
+  change made in v2 since, and never brings back what the owner removed.
+  1. *Card rules.* An open old card's own instructions (its `customisations.instructions`) and its
+     per-card decisions become the new card's `rules` (decisions as "Decided: ..." lines). Over the
+     600 character cap the card is flagged and due for review (M-13). On a card that already exists
+     the rules are filled in only while they are still empty.
+  2. *Important appointments.* An old action marked important (its flag, `-important-` in its id, or
+     a next step that starts "IMPORTANT:") gets `important = 1`; its due time is the appointment's
+     start and its snooze time the old reminder time. A repeat import changes an existing action
+     only while it is open, not yet important and still has the due time the first import gave it.
+  3. *Owner instructions, standing facts and keyword watches* go to the private file
+     `config/owner-instructions.yaml` (07, A-28). A topic already in the file is never replaced.
+  4. *The old read-state settings* become profile options (docs/configuration.md, `read_state`) and
+     a proposed standing grant per mailbox (05, G-24).
+  Not carried: the weekly sign-in notice roundup (docs/cutover.md).

@@ -295,3 +295,15 @@ rule IDs and these notices are delivered. Budget tests for A-12 and A-13.
 Inbox property tests for A-1 to A-3 (random detect, deliver, handle,
 condition-clears sequences never produce two live events for one key and
 never lose a true condition).
+
+### Owner instructions (track f-import)
+
+- **A-28** The owner's own rules live in the private file `<data root>/config/owner-instructions.yaml`
+  (a mapping `topics`, each with `text` and an optional `where`: `start`, `mail`, `report` or
+  `calendar`; a topic with no `where` is placed by its name, else `start`). They are the owner's
+  words, not untrusted text, so the A-11 and A-14 content checks do not apply to them. Topics with
+  the same `where` form ONE rule (`owner.<where>`), priority 66, delivered once per session at that
+  trigger (`start`; a mail batch to triage; `report.due`; a calendar `find`). A group whose text is
+  over `RULE_MAX_CHARS` is never put in a reply: it arrives as a pointer (`guide owner.<where>`
+  returns the whole text), so one pass carries at most 60 characters per group until the agent reads
+  it. A file that cannot be read is skipped and shows in `doctor --check guidance`.
