@@ -29,6 +29,8 @@ sources:                         # id prefix gives the role: mail:, calendar:, c
     address: you@icloud.com      # optional; the address invitations are sent from and answered as.
                                  # Needed only when the username is not an email address.
                                  # Without any address the calendar sends no invitations.
+    commitments: true            # default true. false: a calendar kept for information (a
+                                 # family or shared calendar); read and reported, never a clash.
 
 write_policy: {}                 # optional overrides of the grant rules (G-12a defaults)
 budgets: {}                      # optional storage budgets (M-27 defaults)
