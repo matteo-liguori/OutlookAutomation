@@ -50,7 +50,8 @@ class TestOwlContract(CalendarPortContract):
         return OwlRig(port, bridge, clock)
 
 
-def test_the_capability_set_is_narrow_and_honest() -> None:
+def test_p5_p16_the_capability_set_is_narrow_and_honest_and_3_related_checks() -> None:
+    # the_capability_set_is_narrow_and_honest
     port, _, _ = build()
     declared = port.capabilities(SOURCE)
     write = declared.get(CapabilityName.CALENDAR_WRITE)
@@ -58,8 +59,7 @@ def test_the_capability_set_is_narrow_and_honest() -> None:
     assert write.level.value == "implemented"
     assert not write.absence_provable
 
-
-def test_the_version_handshake_withholds_capabilities_from_a_bridge_without_calendar() -> None:
+    # the_version_handshake_withholds_capabilities_from_a_bridge_without_calendar
     for args in ({"version": 1}, {"capabilities": frozenset({"read"})}):
         port, _, _ = build(**args)
         assert port.capabilities(SOURCE).names() == []
@@ -73,8 +73,7 @@ def test_the_version_handshake_withholds_capabilities_from_a_bridge_without_cale
     with pytest.raises(ChamberlainError):
         port.events(SOURCE, CalendarQuery(start=START, end=START + timedelta(days=1)))
 
-
-def test_p5_a_client_cache_is_stale_unless_it_says_when_it_last_synchronised() -> None:
+    # p5_a_client_cache_is_stale_unless_it_says_when_it_last_synchronised
     port, bridge, clock = build()
     assert port.health(SOURCE).state.value == "stale"
     bridge.fresh_as_of = clock.now().isoformat()
@@ -82,8 +81,7 @@ def test_p5_a_client_cache_is_stale_unless_it_says_when_it_last_synchronised() -
     assert health.state.value == "ok"
     assert health.fresh_as_of is not None
 
-
-def test_p16_events_with_attendees_or_an_organiser_are_refused_without_sending() -> None:
+    # p16_events_with_attendees_or_an_organiser_are_refused_without_sending
     port, bridge, _ = build()
     bridge.items["invite"] = (
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\nUID:invite\r\n"
@@ -147,15 +145,6 @@ def test_p16_an_edit_by_the_user_after_prepare_stops_the_update() -> None:
     assert port.read(SOURCE, "e1").fields.title == "Theirs"
 
 
-def occurrence_text(uid: str, day: int) -> str:
-    return (
-        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\n"
-        f"UID:{uid}\r\nDTSTAMP:20270101T000000Z\r\nRECURRENCE-ID:2027030{day}T100000Z\r\n"
-        f"DTSTART:2027030{day}T100000Z\r\nDTEND:2027030{day}T103000Z\r\nSUMMARY:Standup\r\n"
-        "END:VEVENT\r\nEND:VCALENDAR\r\n"
-    )
-
-
 def test_p6_a_series_is_read_by_date_and_never_written() -> None:
     port, bridge, _ = build()
     master = (
@@ -190,6 +179,15 @@ def test_p6_a_series_is_read_by_date_and_never_written() -> None:
     with pytest.raises(ChamberlainError) as raised:
         port.prepare(delete, {handle: page.items[1].locator})
     assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
+
+
+def occurrence_text(uid: str, day: int) -> str:
+    return (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\n"
+        f"UID:{uid}\r\nDTSTAMP:20270101T000000Z\r\nRECURRENCE-ID:2027030{day}T100000Z\r\n"
+        f"DTSTART:2027030{day}T100000Z\r\nDTEND:2027030{day}T103000Z\r\nSUMMARY:Standup\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
 
 
 def test_p4_paging_through_the_limit_is_not_reported_as_a_coverage_gap() -> None:

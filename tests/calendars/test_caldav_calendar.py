@@ -74,7 +74,10 @@ def prepare_edit(
     return port.prepare(intent, {handle: locator})
 
 
-def test_p16_a_stale_update_is_refused_by_the_server_not_just_by_prepare(world: World) -> None:
+def test_p16_a_stale_update_is_refused_by_the_server_not_and_1_related_checks(
+    world: World,
+) -> None:
+    # p16_a_stale_update_is_refused_by_the_server_not_just_by_prepare
     port, rig = world
     locator = rig.seed(fields("Contract event"))
     old = port.read(SOURCE, locator)
@@ -89,8 +92,7 @@ def test_p16_a_stale_update_is_refused_by_the_server_not_just_by_prepare(world: 
     assert port.read(SOURCE, locator).fields.title == "Theirs"
     assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
 
-
-def test_p16_a_create_that_exists_under_another_name_is_found_by_uid(world: World) -> None:
+    # p16_a_create_that_exists_under_another_name_is_found_by_uid
     port, rig = world
     uid = "elsewhere@t"
     put(rig, "other-client-name.ics", raw("From another client", uid))
@@ -101,7 +103,10 @@ def test_p16_a_create_that_exists_under_another_name_is_found_by_uid(world: Worl
     assert settled.receipt.locator == "other-client-name.ics"
 
 
-def test_p16_update_keeps_alarms_recurrence_and_time_zone(world: World) -> None:
+def test_p16_p4_update_keeps_alarms_recurrence_and_time_zone_and_1_related_checks(
+    world: World,
+) -> None:
+    # p16_update_keeps_alarms_recurrence_and_time_zone
     port, rig = world
     series = raw(
         "Daily",
@@ -131,10 +136,7 @@ def test_p16_update_keeps_alarms_recurrence_and_time_zone(world: World) -> None:
     assert "SUMMARY:Renamed" in text
     assert "DTSTART:20270301T100000Z" in text
 
-
-def test_p4_a_recurring_series_is_listed_as_occurrences_and_written_only_with_its_scope(
-    world: World,
-) -> None:
+    # p4_a_recurring_series_is_listed_as_occurrences_and_written_only_with_its_scope
     port, rig = world
     put(rig, "series.ics", raw("Daily", "series@t", "RRULE:FREQ=DAILY;COUNT=3\r\n"))
     page = port.events(SOURCE, window())
@@ -194,7 +196,8 @@ def test_p4_pages_and_text_filter(world: World) -> None:
     assert bad.value.code is ErrorCode.REQUEST_BAD_CURSOR
 
 
-def test_p18_odd_events_read_without_raising(world: World) -> None:
+def test_p18_p16_odd_events_read_without_raising_and_1_related_checks(world: World) -> None:
+    # p18_odd_events_read_without_raising
     port, rig = world
     odd = (
         "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//x//EN\r\nBEGIN:VEVENT\r\nUID:odd@t\r\n"
@@ -207,8 +210,7 @@ def test_p18_odd_events_read_without_raising(world: World) -> None:
     assert event.fields.start == datetime(2027, 3, 27, 12, 0, tzinfo=UTC)
     assert event.fields.end >= event.fields.start
 
-
-def test_p16_all_day_events_round_trip(world: World) -> None:
+    # p16_all_day_events_round_trip
     port, _ = world
     day = EventFields(
         title="Holiday",

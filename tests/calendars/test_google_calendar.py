@@ -70,7 +70,8 @@ def locator_of(result: DispatchResult) -> str:
     return result.receipt.locator
 
 
-def test_p16_create_read_update_round_trip(world: World) -> None:
+def test_p16_create_read_update_round_trip_and_3_related_checks(world: World) -> None:
+    # p16_create_read_update_round_trip
     port, api, _ = world
     _, result = create(port, "u1@t", fields("First"))
     assert result.outcome is DispatchOutcome.APPLIED
@@ -84,8 +85,7 @@ def test_p16_create_read_update_round_trip(world: World) -> None:
     assert port.read(SOURCE, locator).fields.title == "Edited"
     assert ("PUT", api.calls[-3][1]) in api.calls
 
-
-def test_p16_all_day_events_keep_their_shape(world: World) -> None:
+    # p16_all_day_events_keep_their_shape
     port, api, _ = world
     day = EventFields(
         title="All day",
@@ -99,9 +99,7 @@ def test_p16_all_day_events_keep_their_shape(world: World) -> None:
     assert api.events[locator]["start"] == {"date": "2027-03-03"}
     assert port.read(SOURCE, locator).fields.all_day
 
-
-def test_p16_update_keeps_what_the_fields_do_not_describe(world: World) -> None:
-    """Ported: reminders, colour, the series and its EXDATE survive a PUT (2026-11-24 fix)."""
+    # p16_update_keeps_what_the_fields_do_not_describe: Ported: reminders, colour, the series an
     port, api, _ = world
     locator = api.seed(
         {
@@ -124,10 +122,7 @@ def test_p16_update_keeps_what_the_fields_do_not_describe(world: World) -> None:
     assert after["recurrence"] == ["RRULE:FREQ=DAILY;COUNT=5", "EXDATE:20270302T120000Z"]
     assert after["start"]["timeZone"] == "Europe/London"
 
-
-def test_p16_occurrences_and_invitations_from_others_are_refused_without_sending(
-    world: World,
-) -> None:
+    # p16_occurrences_and_invitations_from_others_are_refused_without_sending
     port, api, _ = world
     guest = api.seed(
         item("Invite", "2027-03-01T10:00:00Z", "2027-03-01T11:00:00Z")
@@ -149,23 +144,20 @@ def test_p16_occurrences_and_invitations_from_others_are_refused_without_sending
     assert port.read(SOURCE, guest).fields.attendees == ("other@example.test",)
 
 
-@pytest.mark.parametrize(
-    ("status", "may_have_happened"),
-    [(500, True), (503, True), (408, True), (429, True), (400, False), (403, False), (409, False)],
-)
-def test_w10_server_errors_may_have_landed_client_errors_did_not(
-    world: World, status: int, may_have_happened: bool
+def test_w10_server_errors_may_have_landed_client_errors_and_1_related_checks(
+    world: World,
 ) -> None:
+    # w10_server_errors_may_have_landed_client_errors_did_not
     port, api, _ = world
-    api.fail_next["POST"] = status
-    _, result = create(port, f"e{status}@t")
-    expected = DispatchOutcome.UNKNOWN if may_have_happened else DispatchOutcome.NOT_APPLIED
-    assert result.outcome is expected
-    assert not api.live(f"e{status}@t")
+    cases = [(500, True), (503, True), (408, True), (429, True)]
+    for status, may_have_happened in [*cases, (400, False), (403, False), (409, False)]:
+        api.fail_next["POST"] = status
+        _, result = create(port, f"e{status}@t")
+        expected = DispatchOutcome.UNKNOWN if may_have_happened else DispatchOutcome.NOT_APPLIED
+        assert result.outcome is expected, status
+        assert not api.live(f"e{status}@t"), status
 
-
-def test_w10_an_unreadable_verification_after_a_write_is_unknown(world: World) -> None:
-    """Ported (2026-11-24): the pre-write lookup works, the read-back does not."""
+    # w10_an_unreadable_verification_after_a_write_is_unknown: Ported (2026-11-24): the pre-writ
     port, api, _ = world
     real = api.send
     gets = {"n": 0}
