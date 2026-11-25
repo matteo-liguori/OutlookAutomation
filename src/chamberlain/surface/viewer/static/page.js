@@ -147,7 +147,7 @@
             class: "act primary",
             text: "Confirm exactly this",
             onclick: function () {
-              post("/api/grants/" + handle + "/confirm", { content_sha256: grant.content_sha256 }, function () { openGrant(handle); });
+              post("/api/grants/" + handle + "/confirm", { content_sha256: grant.content_sha256 }, function () { render(); });
             },
           })
         );
@@ -157,10 +157,10 @@
       }
       if (grant.state === "active" || grant.state === "suspended") {
         buttons.appendChild(
-          el("button", { class: "act", text: "Keep (reviewed)", onclick: function () { post("/api/grants/" + handle + "/keep", {}, function () { openGrant(handle); }); } })
+          el("button", { class: "act", text: "Keep (reviewed)", onclick: function () { post("/api/grants/" + handle + "/keep", {}, function () { render(); }); } })
         );
         buttons.appendChild(
-          el("button", { class: "act danger", text: "Revoke", onclick: function () { post("/api/grants/" + handle + "/revoke", {}, function () { openGrant(handle); }); } })
+          el("button", { class: "act danger", text: "Revoke", onclick: function () { post("/api/grants/" + handle + "/revoke", {}, function () { render(); }); } })
         );
       }
       buttons.appendChild(el("button", { class: "act", text: "Back", onclick: function () { render(); } }));
