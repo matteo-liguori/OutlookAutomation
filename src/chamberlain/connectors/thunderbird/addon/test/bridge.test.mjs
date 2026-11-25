@@ -321,6 +321,15 @@ test("P-15 send files the Sent copy with the bound folder and carries the token 
   assert.equal(world.composers.size, 0, "a submitted composer is gone");
 });
 
+test("R8 a prompt the helper answered during the send comes back with the result", async () => {
+  const { addon, world } = setup();
+  world.faults.fccPrompt = true;
+  const res = await call(addon, "send", compose());
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  assert.equal(res.result.dialogs.length, 1);
+  assert.match(res.result.dialogs[0], /copy was not placed/);
+});
+
 test("R8 a manual edit of the managed composer invalidates the send", async () => {
   const { addon, world } = setup();
   const real = world.messenger.compose.getComposeDetails;

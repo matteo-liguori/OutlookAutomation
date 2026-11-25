@@ -124,7 +124,11 @@ def _dispatch(
         out.write(f"Retrying {len(ids)} scenario(s) of {earlier.run_id}.\n")
         options = replace(options, retry_ids=ids)
     if not options.dry_run:
-        options = replace(options, progress=_progress_writer(data_root, env, out))
+        options = replace(
+            options,
+            progress=_progress_writer(data_root, env, out),
+            open_app=lambda: open_app(data_root),
+        )
     report = execute(app, env, config, options)
     if not options.dry_run and not report.stopped:
         json_path, md_path = write_report(data_root, report, env.clock.now())

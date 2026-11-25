@@ -146,6 +146,15 @@ async function verifyComposer(tabId: number, r: ComposeArgs, identityId: string,
   }
 }
 
+/** Prompts Thunderbird showed on this composer, which the helper answered at once. */
+async function answered(tabId: number): Promise<string[]> {
+  try {
+    return (await messenger.chamberlainMail?.takePrompts(tabId))?.prompts ?? [];
+  } catch {
+    return [];
+  }
+}
+
 async function closeQuietly(tabId: number, a: Bound): Promise<void> {
   try {
     await messenger.chamberlainMail?.closeComposer(tabId, a.account_id, a.mailbox);
@@ -215,11 +224,12 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx, kind: "send" | "draft_save" 
     if (kind === "send") {
       markMutation(ctx);
       await messenger.compose.sendMessage(open, { mode: "sendNow" });
-      return { submitted: true, attachment_bytes_verified: true };
+      return { submitted: true, attachment_bytes_verified: true, dialogs: await answered(open) };
     }
     markMutation(ctx);
     const saved = await messenger.compose.saveMessage(open, { mode: "draft" });
-    return await finishDraft(a, ctx, open, saved, update, existing);
+    const dialogs = await answered(open);
+    return { ...(await finishDraft(a, ctx, open, saved, update, existing)), dialogs };
   } catch (error) {
     if (tabId !== null && !ctx.mutationIssued) await closeQuietly(tabId, a);
     throw error;
@@ -255,7 +265,7 @@ async function finishDraft(a: ComposeArgs, ctx: Ctx, tabId: number, saved: any, 
     }
   }
   if (!a.display_only) await closeQuietly(tabId, a);
-  return { header: header(ok.header), raw_sha256: raw, attachment_bytes_verified: true, old_copies_remaining: remaining };
+  return { header: header(ok.header), raw_sha256: raw, attachment_bytes_verified: true, old_copies_remaining: remaining, dialogs: [] };
 }
 
 /**

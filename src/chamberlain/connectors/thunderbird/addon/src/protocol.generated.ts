@@ -231,6 +231,7 @@ interface DraftResult {
   raw_sha256: string;
   attachment_bytes_verified: boolean;
   old_copies_remaining: number;
+  dialogs: string[];
 }
 
 interface DraftSaveArgs {
@@ -619,6 +620,7 @@ interface SendArgs {
 interface SendResult {
   submitted: true;
   attachment_bytes_verified: boolean;
+  dialogs: string[];
 }
 
 interface StatusArgs {
@@ -1851,6 +1853,15 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
    "attachment_bytes_verified": {
     "title": "Attachment Bytes Verified",
     "type": "boolean"
+   },
+   "dialogs": {
+    "default": [],
+    "items": {
+     "maxLength": 500,
+     "type": "string"
+    },
+    "title": "Dialogs",
+    "type": "array"
    },
    "header": {
     "$ref": "#/$defs/Header"
@@ -3950,6 +3961,15 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
    "attachment_bytes_verified": {
     "title": "Attachment Bytes Verified",
     "type": "boolean"
+   },
+   "dialogs": {
+    "default": [],
+    "items": {
+     "maxLength": 500,
+     "type": "string"
+    },
+    "title": "Dialogs",
+    "type": "array"
    },
    "submitted": {
     "const": true,

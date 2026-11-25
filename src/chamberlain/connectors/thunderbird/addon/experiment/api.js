@@ -1,4 +1,4 @@
-/* Narrow privileged helpers (bridge contract B-3): five named functions, no generic execute.
+/* Narrow privileged helpers (bridge contract B-3): six named functions, no generic execute.
  * Every function re-verifies that the account owns the sender identity. Runs only inside
  * Thunderbird; the fake used by the tests lives in test/fake_thunderbird.mjs. */
 /* global ChromeUtils, Ci, Components, Services */
@@ -58,8 +58,60 @@ function composeWindow(context, tabId) {
   return context.extension.tabManager.get(tabId).nativeTab;
 }
 
+/* A Thunderbird prompt on a composer the harness holds must never wait for a click: a
+ * "copy not placed in your Sent folder" dialog once held the only write slot until someone
+ * clicked it (found live, 2026-11-25). Such a prompt is answered at once with its safe
+ * button (cancel: "Don't Save" on that dialog; otherwise OK) and its text kept for the
+ * result, so the harness reports what Thunderbird asked and checks the outcome itself. */
+const answeredPrompts = new Map(); // tab id -> prompt texts
+
+function heldOpener(dialogWindow) {
+  let win = dialogWindow.opener;
+  for (let i = 0; win && i < 3; i++) {
+    if (win.__chamberlainHeld) return win;
+    win = win.opener;
+  }
+  return null;
+}
+
+function answerPrompt(dialogWindow) {
+  const held = heldOpener(dialogWindow);
+  if (!held) return false;
+  const doc = dialogWindow.document;
+  const text = String(doc.getElementById("infoBody")?.textContent ?? doc.title ?? "").trim().slice(0, 500);
+  const list = answeredPrompts.get(held.__chamberlainTab) ?? [];
+  list.push(text);
+  answeredPrompts.set(held.__chamberlainTab, list);
+  const dialog = doc.querySelector("dialog");
+  const cancel = dialog?.getButton?.("cancel");
+  if (cancel && !cancel.hidden) dialog.cancelDialog();
+  else dialog?.acceptDialog();
+  return true;
+}
+
+const promptObserver = {
+  observe(subject) {
+    // The dialog has just loaded; answer it once its buttons are wired.
+    setTimeout(() => {
+      try {
+        answerPrompt(subject);
+      } catch (error) {
+        console.error("Chamberlain could not answer a Thunderbird prompt", error);
+      }
+    }, 0);
+  },
+};
+
 var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
+  onShutdown() {
+    if (this.watching) Services.obs.removeObserver(promptObserver, "common-dialog-loaded");
+  }
+
   getAPI(context) {
+    if (!this.watching) {
+      Services.obs.addObserver(promptObserver, "common-dialog-loaded");
+      this.watching = true;
+    }
     return {
       chamberlainMail: {
         async syncFolders(accountId, mailbox, folderIds, timeoutMs) {
@@ -88,6 +140,8 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           need(sent.accountKey === accountId && sent.folder.canFileMessages, "account_mismatch", "The bound Sent folder is not in this account.");
           need(win.gMsgCompose.compFields.fcc === sent.folder.URI && !win.gMsgCompose.compFields.fcc2, "changed", `The composer files its Sent copy in ${win.gMsgCompose.compFields.fcc}, not the bound Sent folder ${sent.folder.URI}.`);
           win.__chamberlainHeld = true;
+          win.__chamberlainTab = tabId;
+          answeredPrompts.delete(tabId);
           return { held: true };
         },
         async openDraft(accountId, mailbox, messageId, internetMessageId) {
@@ -120,6 +174,11 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           win.clearTimeout(win.gAutoSaveTimeout);
           win.gAutoSaveTimeout = null;
           return { tab_id: context.extension.tabManager.convert(win).id };
+        },
+        async takePrompts(tabId) {
+          const prompts = answeredPrompts.get(tabId) ?? [];
+          answeredPrompts.delete(tabId);
+          return { prompts };
         },
         async findComposers(accountId, mailbox, messageId, internetMessageId) {
           const account = ownerAccount(accountId, mailbox);

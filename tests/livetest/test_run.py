@@ -6,6 +6,8 @@ under test never can (`test_authority.py`).
 
 from tests.livetest.conftest import confirm_all, seed_owner_state
 
+from chamberlain.app.core import App
+from chamberlain.app.wiring import build_app
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.mail import FolderRole
 from chamberlain.livetest.fakeworld import (
@@ -191,3 +193,16 @@ def test_each_scenario_lands_in_the_report_at_once_and_a_retry_runs_only_the_res
     assert all(r.id in left for r in stopped.results if r.reason == NOT_RUN_YET)
     again = run_all(lab, retry_ids=left)
     assert {r.id for r in again.results} == set(left)
+
+
+def test_scenarios_side_by_side_run_green_and_writes_take_turns(lab: FakeLab) -> None:
+    """Sends go out together and waits overlap (owner: never one after the other)."""
+    sources = lab.app.context.sources
+
+    def another_app() -> App:
+        return build_app(lab.root, clock=lab.clock, sources=sources)
+
+    report = run_all(lab, workers=4, open_app=another_app)
+    assert [(r.id, r.reason) for r in report.results if r.status is Status.FAIL] == []
+    assert report.leftovers == ()
+    assert report.score.percent == 100

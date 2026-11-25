@@ -64,6 +64,7 @@ interface HarnessMailApi {
   openDraft(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;
   findComposers(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;
   closeComposer(tabId: number, accountId: string, mailbox: string): Promise<any>;
+  takePrompts(tabId: number): Promise<{ prompts: string[] }>;
 }
 
 interface RawCalendar {

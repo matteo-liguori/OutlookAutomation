@@ -5,10 +5,12 @@ standing grants are missing or unconfirmed the run stops before any scenario, wi
 next step.
 """
 
+import queue
 import secrets
+import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from chamberlain.app.core import App
 from chamberlain.livetest.authority import ensure_card, require_grants
@@ -35,6 +37,8 @@ from chamberlain.livetest.scenarios_harness import doctor_states
 from chamberlain.livetest.timeutil import iso
 from chamberlain.schema.errors import ChamberlainError
 
+DEFAULT_WORKERS = 8
+"""Scenarios a live run runs side by side (`--workers`)."""
 NOT_RUN_YET = "not run yet"
 """The reason on a scenario a report lists before it has run (or after the run was stopped)."""
 APPROVAL_CONFIG = "live_test.approve_calendar_edits in connections.yaml"
@@ -57,6 +61,10 @@ class RunOptions:
     """Only these exact scenario ids (`--retry`: what failed or never ran in an earlier run)."""
     progress: Callable[[RunReport], None] | None = field(default=None, compare=False)
     """Called with the report so far after every scenario, so a stopped run keeps its results."""
+    workers: int = 1
+    """Scenarios run side by side: their sends go out together and their waits overlap."""
+    open_app: Callable[[], App] | None = field(default=None, compare=False)
+    """Opens another app on the same data root, one per extra worker (needed for workers > 1)."""
 
 
 def approval(config: LiveTestConfig, options: RunOptions) -> tuple[bool, str]:
@@ -96,6 +104,74 @@ def open_lab(
     lab.session = str(started["session"])
     lab.card = ensure_card(lab)
     return lab
+
+
+def _fork_lab(main: Lab, app: App) -> Lab:
+    """A lab for one worker: its own app and session, the run's card, action and write lock."""
+    lab = replace(main, app=app, session="", run_handles=set[str](), accepted_uncertain=set[str]())
+    lab.begin()
+    lab.session = str(lab.ok("start", agent="live-test")["session"])
+    return lab
+
+
+def _run_side_by_side(
+    main: Lab,
+    items: Sequence[Planned],
+    options: RunOptions,
+    finished: Callable[[ScenarioResult], None],
+) -> None:
+    """Run `items` on `options.workers` labs at once; every lab's handles join the main lab.
+
+    Each worker thread opens its own app (a store connection belongs to its thread) and
+    takes scenarios from one queue; results come back to this thread in the order they end.
+    """
+    count = min(options.workers, len(items))
+    if count <= 1 or options.open_app is None:
+        for item in items:
+            finished(_run_one(main, item, options.keep))
+        return
+    opener = options.open_app
+    todo: queue.SimpleQueue[Planned] = queue.SimpleQueue()
+    for item in items:
+        todo.put(item)
+    results: queue.SimpleQueue[ScenarioResult | BaseException | None] = queue.SimpleQueue()
+    merge = threading.Lock()
+
+    def worker() -> None:
+        try:
+            app = opener()
+            try:
+                lab = _fork_lab(main, app)
+                while True:
+                    try:
+                        item = todo.get_nowait()
+                    except queue.Empty:
+                        break
+                    results.put(_run_one(lab, item, options.keep))
+                with merge:
+                    main.run_handles |= lab.run_handles
+                    main.accepted_uncertain |= lab.accepted_uncertain
+            finally:
+                app.close()
+        except BaseException as error:  # reported by the main thread
+            results.put(error)
+        finally:
+            results.put(None)
+
+    threads = [threading.Thread(target=worker, daemon=True) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    running = count
+    while running:
+        got = results.get()
+        if got is None:
+            running -= 1
+        elif isinstance(got, BaseException):
+            raise got
+        else:
+            finished(got)
+    for thread in threads:
+        thread.join()
 
 
 def _used_mail_sources(plan: Sequence[Planned], config: LiveTestConfig) -> list[str]:
@@ -262,11 +338,16 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
         options.progress(partial.model_copy(update={"finished": False}))
 
     tell()
-    for item in plan:
-        if item.skip or item.spec.last:
-            continue
-        done.append(_run_one(lab, item, options.keep))
+
+    def finished(result: ScenarioResult) -> None:
+        done.append(result)
         tell()
+
+    together = [p for p in plan if not (p.skip or p.spec.last or p.spec.alone)]
+    _run_side_by_side(lab, together, options, finished)
+    for item in plan:
+        if item.spec.alone and not (item.skip or item.spec.last):
+            finished(_run_one(lab, item, options.keep))
     leftovers: list[str] = []
     if not options.keep and runnable:
         _second_chance(lab, plan)
@@ -324,4 +405,13 @@ def retry_ids(report: RunReport) -> tuple[str, ...]:
     return tuple(r.id for r in report.results if r.status is Status.FAIL or r.reason == NOT_RUN_YET)
 
 
-__all__ = ["MARKER", "NOT_RUN_YET", "RunOptions", "approval", "execute", "open_lab", "retry_ids"]
+__all__ = [
+    "DEFAULT_WORKERS",
+    "MARKER",
+    "NOT_RUN_YET",
+    "RunOptions",
+    "approval",
+    "execute",
+    "open_lab",
+    "retry_ids",
+]

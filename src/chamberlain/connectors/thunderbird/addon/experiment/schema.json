@@ -26,6 +26,14 @@
         ]
       },
       {
+        "name": "takePrompts",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "tabId", "type": "integer" }
+        ]
+      },
+      {
         "name": "openDraft",
         "type": "function",
         "async": true,

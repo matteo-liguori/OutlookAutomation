@@ -15,7 +15,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain recipients seed [--months N]
                                         learn known recipients from each Sent folder (read-only)
     chamberlain live-test [run|grant|sweep|report] [--only P] [--skip P] [--keep] [--dry-run]
-                          [--retry RUN]
+                          [--retry RUN] [--workers N]
                                         exercise the harness against the real accounts
                                         (docs/live-test.md; off until live_test.enabled)
     chamberlain <tool> --json '{...}'   call a tool and print the envelope
@@ -43,7 +43,7 @@ from chamberlain.connectors.caldav.setup import verify as icloud_verify
 from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.importer.run import run_import
 from chamberlain.livetest.commands import main as live_test_main
-from chamberlain.livetest.runner import RunOptions
+from chamberlain.livetest.runner import DEFAULT_WORKERS, RunOptions
 from chamberlain.ports.clock import SystemClock
 from chamberlain.review.claude_guard import add as add_guard
 from chamberlain.review.claude_guard import check as check_guard
@@ -126,6 +126,12 @@ def _parser() -> argparse.ArgumentParser:
         help="run again only what failed or never ran in RUN (a run id, or latest)",
     )
     live.add_argument("--dry-run", action="store_true", help="show the plan and touch nothing")
+    live.add_argument(
+        "--workers",
+        type=int,
+        default=DEFAULT_WORKERS,
+        help=f"scenarios run side by side (default {DEFAULT_WORKERS}; 1 runs them one by one)",
+    )
     live.add_argument(
         "--approve-calendar-edits",
         action="store_true",
@@ -406,6 +412,7 @@ def _live_test(args: argparse.Namespace, out: TextIO) -> int:
         dry_run=args.dry_run,
         approve_calendar_edits=args.approve_calendar_edits,
         retry_from=args.retry_from,
+        workers=max(1, args.workers),
     )
     return live_test_main(
         args.action, Path(data), options, out, as_json=args.as_json, run_id=args.report_run

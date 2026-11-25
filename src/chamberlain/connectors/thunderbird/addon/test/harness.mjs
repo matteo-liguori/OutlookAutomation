@@ -103,6 +103,7 @@ const controls = {
     else if (fault === "calendar_offline") world.calendarOffline = true;
     else if (fault === "duplicate") world.faults.duplicate = 1;
     else if (fault === "stale") world.faults.stale = true;
+    else if (fault === "fcc_prompt") world.faults.fccPrompt = true;
     else if (fault === "no_sent_copy") world.faults.noSentCopy = true;
     else if (fault === "queue_only") world.faults.queueOnly = true;
     else if (fault === "merge") world.faults.merge = true;

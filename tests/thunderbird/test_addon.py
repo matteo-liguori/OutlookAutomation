@@ -69,10 +69,17 @@ def test_b2_the_addon_dispatch_covers_exactly_the_closed_command_list() -> None:
     assert handled == {command.value for command in Command}
 
 
-def test_b2_the_experiment_api_exposes_only_five_named_functions() -> None:
+def test_b2_the_experiment_api_exposes_only_six_named_functions() -> None:
     api = (ADDON_DIR / "experiment" / "api.js").read_text(encoding="utf-8")
     names = set(re.findall(r"^\s{8}async (\w+)\(", api, re.MULTILINE))
-    assert names == {"syncFolders", "holdComposer", "openDraft", "findComposers", "closeComposer"}
+    assert names == {
+        "syncFolders",
+        "holdComposer",
+        "takePrompts",
+        "openDraft",
+        "findComposers",
+        "closeComposer",
+    }
     assert "execute(" not in api
 
 

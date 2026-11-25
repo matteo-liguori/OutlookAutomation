@@ -499,6 +499,16 @@ def test_r8_a_reply_keeps_the_original_unread_and_sets_the_reply_header(stack: S
     assert stack.is_unread(original)
 
 
+def test_r8_a_thunderbird_prompt_during_a_send_is_answered_and_reported(stack: Stack) -> None:
+    stack.control("inject", fault="fcc_prompt")
+    intent = send_intent(stack)
+    result = stack.mail.dispatch(stack.mail.prepare(intent, {}), "k", {})
+    assert result.outcome is DispatchOutcome.APPLIED
+    assert result.receipt is not None
+    assert result.receipt.warnings == ("thunderbird_dialog_answered",)
+    assert "copy was not placed" in result.detail
+
+
 def test_words_match_the_subject_sender_and_recipients_together(stack: Stack) -> None:
     seed(stack, subject="Quarterly plan")  # from Alice (the fake's default sender)
     found = stack.mail.search(SOURCE, MailQuery(text="alice QUARTERLY"))

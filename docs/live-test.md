@@ -59,12 +59,17 @@ chamberlain live-test run --only mail.reply  # only scenarios whose id contains 
 chamberlain live-test run --skip calendar    # leave some out
 chamberlain live-test run --keep             # leave the items for you to look at
 chamberlain live-test run --retry latest     # run again only what failed or never ran
+chamberlain live-test run --workers 1          # one scenario at a time (default 8 side by side)
 chamberlain live-test sweep                  # remove marked items from earlier runs
 chamberlain live-test report                 # print the latest report again
 ```
 
 `--only` and `--skip` take a word (matches inside the scenario id) or a pattern with `*`.
-Both can be repeated. A full run takes a few minutes: mail has to arrive.
+Both can be repeated. Scenarios run side by side (eight at a time by default): their sends
+go out together and they wait for arrivals together. Writes still take turns, because
+Thunderbird has one write slot. A scenario that counts every send of the run, or arms the
+lost-response hook, runs alone afterwards. A full run takes a few minutes, as real mail has
+to arrive.
 
 Each scenario's result is printed and written to the report the moment it finishes; the
 scenarios still to come are listed as "not run yet". A run that is stopped part way keeps
@@ -145,6 +150,10 @@ It works only when the bridge folder is `<data root>/bridge` (the default).
   organiser's copy. The read-only probe fills in the answer if `open` does not show it.
 - **Restart Thunderbird** after updating the harness so the native host loads the
   lost-response hook.
+- **Thunderbird prompts never wait for a click.** If Thunderbird asks something about a
+  composer the harness holds (for example "a copy was not placed in your Sent folder"), the
+  add-on answers at once with the safe button (Don't Save, Cancel, or OK) and the result
+  carries the warning `thunderbird_dialog_answered` with the text.
 - **Drafts folder.** Thunderbird saves a draft where the identity's Copies & Folders setting
   says. If that is not the bound draft folder (on Gmail, a stray top-level `Drafts` instead
   of `[Gmail]/Drafts`), draft saves are refused and the reason names both folders. Sends do

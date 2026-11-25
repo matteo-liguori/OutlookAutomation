@@ -59,6 +59,8 @@ class ScenarioSpec:
     """Steps for a scenario the owner does by hand; it is always skipped."""
     last: bool = False
     """Runs after every other scenario and after the final cleanup audit."""
+    alone: bool = False
+    """Runs by itself, after the scenarios that run side by side (a fault hook, a budget check)."""
 
 
 @dataclass(frozen=True)
@@ -84,6 +86,7 @@ def scenario(
     needs_other: tuple[str, ...] = (),
     manual: tuple[str, ...] = (),
     last: bool = False,
+    alone: bool = False,
 ) -> Callable[[Callable[[Lab, Target], None]], Callable[[Lab, Target], None]]:
     def register(run: Callable[[Lab, Target], None]) -> Callable[[Lab, Target], None]:
         SPECS.append(
@@ -97,6 +100,7 @@ def scenario(
                 needs_other=needs_other,
                 manual=manual,
                 last=last,
+                alone=alone,
             )
         )
         return run

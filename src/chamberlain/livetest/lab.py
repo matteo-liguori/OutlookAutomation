@@ -8,6 +8,7 @@ grant: a write the standing grants do not cover stops the scenario.
 
 import json
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
@@ -102,6 +103,9 @@ class Lab:
     _cleanups: list[tuple[str, Callable[[], object]]] = field(
         default_factory=lambda: list[tuple[str, Callable[[], object]]]()
     )
+    write_lock: Any = field(default_factory=threading.Lock)
+    """Shared by the labs of one run: Thunderbird has one write slot, so writes take turns
+    while reads and waits of scenarios running side by side overlap."""
 
     # --- recording ------------------------------------------------------------------
 
@@ -144,7 +148,11 @@ class Lab:
         if self.session and "session" not in request and tool != "start":
             request["session"] = self.session
         started = time.monotonic()
-        reply = self.app.call(tool, request)
+        if tool == "do":
+            with self.write_lock:
+                reply = self.app.call(tool, request)
+        else:
+            reply = self.app.call(tool, request)
         elapsed = time.monotonic() - started
         raw: JSON = reply.model_dump(mode="json", exclude_none=True)
         text = json.dumps(raw)

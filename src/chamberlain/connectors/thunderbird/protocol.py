@@ -556,6 +556,8 @@ class MarkReadArgs(AccountArgs):
 class SendResult(Model):
     submitted: Literal[True] = True
     attachment_bytes_verified: bool
+    dialogs: tuple[Annotated[str, Field(max_length=500)], ...] = ()
+    """Thunderbird prompts on the composer the add-on answered at once (never left waiting)."""
 
 
 class DraftResult(Model):
@@ -564,6 +566,7 @@ class DraftResult(Model):
     attachment_bytes_verified: bool
     old_copies_remaining: int = 0
     """Draft update: copies of the replaced draft still present after the save."""
+    dialogs: tuple[Annotated[str, Field(max_length=500)], ...] = ()
 
 
 class MoveResult(Model):

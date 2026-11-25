@@ -86,6 +86,8 @@ _M = TypeVar("_M", bound=Model)
 
 HEALTH_SAMPLE_DAYS: Final = 7
 """The freshness samples look at the Inbox's last week only (a bounded, complete read)."""
+DIALOG_ANSWERED: Final = "thunderbird_dialog_answered"
+"""Thunderbird asked something on the composer and the add-on answered it at once (safe button)."""
 ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
 """Reserved key in `refs`: the engine sets it to "1" when the grant allows a duplicate send (R3)."""
 DISPLAY_ONLY_REF: Final = "_display_only"
@@ -972,11 +974,14 @@ class ThunderbirdMail:
             reply = self._client.call(
                 Command.SEND, protocol.SendArgs.model_validate(common), payloads=files
             )
-            _typed(reply, protocol.SendResult)
+            sent = _typed(reply, protocol.SendResult)
             return DispatchResult(
                 outcome=DispatchOutcome.APPLIED,
-                receipt=ProviderReceipt(verification=Verification(client_verified=True)),
-                detail="submitted to Thunderbird",
+                receipt=ProviderReceipt(
+                    verification=Verification(client_verified=True),
+                    warnings=(DIALOG_ANSWERED,) if sent.dialogs else (),
+                ),
+                detail="submitted to Thunderbird" + _dialog_note(sent.dialogs),
             )
         if kind is _K.MAIL_DRAFT_SAVE:
             reply = self._client.call(
@@ -1013,8 +1018,9 @@ class ThunderbirdMail:
                 locator=locator,
                 remote_sha256=result.raw_sha256,
                 verification=Verification(client_verified=True),
+                warnings=(DIALOG_ANSWERED,) if result.dialogs else (),
             ),
-            detail=note,
+            detail=note + _dialog_note(result.dialogs),
         )
 
     def _dispatch_discard(self, binding: ThunderbirdBinding, prepared: Prepared) -> DispatchResult:
@@ -1347,6 +1353,14 @@ def _seconds(value: float) -> timedelta:
 
 def _ms(moment: datetime) -> int:
     return int(moment.timestamp() * 1000)
+
+
+def _dialog_note(dialogs: tuple[str, ...]) -> str:
+    if not dialogs:
+        return ""
+    return "; Thunderbird asked, and the add-on answered at once: " + " | ".join(
+        d[:200] for d in dialogs
+    )
 
 
 def _ms_opt(moment: datetime | None) -> int | None:

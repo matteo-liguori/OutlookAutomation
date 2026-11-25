@@ -370,6 +370,7 @@ def find_by_message_id(lab: Lab, t: Target) -> None:
     "Repeating a do does not send twice",
     Scope.MAILBOX,
     needs=("mail.send", "mail.search"),
+    alone=True,  # counts every dispatch of the run, so no other scenario may send meanwhile
 )
 def repeat_do(lab: Lab, t: Target) -> None:
     address = lab.config.address_of(t.source)
@@ -409,6 +410,7 @@ def repeat_do(lab: Lab, t: Target) -> None:
     "A send to a non-owned address is refused without sending",
     Scope.MAILBOX,
     needs=("mail.send", "mail.search"),
+    alone=True,  # counts every dispatch of the run, so no other scenario may send meanwhile
 )
 def refuse_non_owned(lab: Lab, t: Target) -> None:
     subject = lab.subject(f"refuse_non_owned {t.tag}")
@@ -452,6 +454,7 @@ def refuse_non_owned(lab: Lab, t: Target) -> None:
     "A lost response ends settled or uncertain, with exactly one Sent copy",
     Scope.MAILBOX,
     needs=("mail.send", "mail.search"),
+    alone=True,  # the fault hook fires on the next marked send, whichever scenario makes it
 )
 def fault_lost_response(lab: Lab, t: Target) -> None:
     unavailable = lab.env.faults.why_unavailable()

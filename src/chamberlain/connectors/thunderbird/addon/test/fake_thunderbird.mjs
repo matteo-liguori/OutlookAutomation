@@ -349,6 +349,12 @@ export function createWorld() {
         c.held = true;
         return { held: true };
       },
+      takePrompts: async () => {
+        // A prompt the real helper would have answered (fault "fcc_prompt").
+        const prompts = world.faults.fccPrompt ? ["Your message was sent but a copy was not placed in your sent folder (Sent)."] : [];
+        world.faults.fccPrompt = false;
+        return { prompts };
+      },
       openDraft: async (accountId, mailbox, messageId) => {
         const m = byId(messageId);
         const id = world.nextTab++;

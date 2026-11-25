@@ -19,6 +19,7 @@ def doctor_states(lab: Lab) -> dict[str, str]:
     "harness",
     "start, next and guide stay within the guidance and reply budgets",
     Scope.GLOBAL,
+    alone=True,
 )
 def guidance_budgets(lab: Lab, t: Target) -> None:
     replies = {
