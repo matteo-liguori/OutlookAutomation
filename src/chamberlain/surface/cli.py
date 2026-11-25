@@ -14,6 +14,8 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain recipients seed [--months N]
                                         learn known recipients from each Sent folder (read-only)
+    chamberlain export thread ID... [--file F] [--title T]
+                                        one conversation as clean text + attachments (zip)
     chamberlain addon update [--restart] update the Thunderbird add-on by replacing its file
     chamberlain live-test [run|grant|sweep|report] [--only P] [--skip P] [--keep] [--dry-run]
                           [--retry RUN] [--workers N]
@@ -43,6 +45,7 @@ from chamberlain.connections.load import profile_path
 from chamberlain.connectors.caldav.setup import verify as icloud_verify
 from chamberlain.connectors.thunderbird.update import SystemDesktop, thunderbird_home, update_addon
 from chamberlain.dataroot import refuse_inside_checkout
+from chamberlain.export.thread import export_thread, parse_ids
 from chamberlain.importer.run import run_import
 from chamberlain.livetest.commands import main as live_test_main
 from chamberlain.livetest.runner import DEFAULT_WORKERS, RunOptions
@@ -101,6 +104,17 @@ def _parser() -> argparse.ArgumentParser:
         help="switch the Claude file guard on or off (off by default; docs/review.md)",
     )
     guard.add_argument("action", choices=["on", "off", "status"])
+    export = commands.add_parser(
+        "export",
+        help="a conversation as clean text plus attachments, zipped (exports/, kept a week)",
+    )
+    export.add_argument("what", choices=["thread"])
+    export.add_argument("ids", nargs="*", help="Message-IDs or message handles (msg_...)")
+    export.add_argument("--file", type=Path, help="a text file of Message-IDs, one per line")
+    export.add_argument("--title", default="", help="the heading (default: the first subject)")
+    export.add_argument(
+        "--keep-quotes", action="store_true", help="keep quoted history in each message"
+    )
     addon = commands.add_parser(
         "addon",
         help="update the Thunderbird add-on by replacing its file in the profile (not the UI)",
@@ -351,6 +365,30 @@ def _import(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _export(args: argparse.Namespace, out: TextIO) -> int:
+    """An owner utility: one conversation as a zip under exports/ (read-only on the mail)."""
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
+        return EXIT_FAILED
+    raw = list(args.ids)
+    if args.file is not None:
+        raw += args.file.read_text(encoding="utf-8").splitlines()
+    ids = parse_ids(raw)
+    app = open_app(Path(data))
+    try:
+        result = export_thread(
+            app.context, ids, title=args.title, keep_quotes=args.keep_quotes, zone=None
+        )
+    except ChamberlainError as error:
+        out.write(f"{error.message} {error.fix}".rstrip() + "\n")
+        return EXIT_FAILED
+    finally:
+        app.close()
+    out.write("\n".join(result.lines()) + "\n")
+    return EXIT_OK
+
+
 def _addon(args: argparse.Namespace, out: TextIO) -> int:
     """Build the add-on and put it in place of the installed file in every Thunderbird profile."""
     data = args.data or os.environ.get(DATA_ENV)
@@ -540,6 +578,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _guard(args, stream)
     if args.command == "addon":
         return _addon(args, stream)
+    if args.command == "export":
+        return _export(args, stream)
     if args.command == "viewer":
         return _viewer(args, stream)
     if args.command == "live-test":

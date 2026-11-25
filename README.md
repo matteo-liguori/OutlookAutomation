@@ -86,6 +86,16 @@ Python; on macOS or Linux use `.venv/bin/python`.
 Check the result with `chamberlain doctor --metrics`. Real-account checks before cutover
 are in [docs/live-validation.md](docs/live-validation.md).
 
+
+## Exporting a conversation
+
+`chamberlain export thread <Message-ID> [<Message-ID> ...]` (or `--file ids.txt`, one per
+line) writes one zip to `<data root>/exports/`: `conversation.txt` with every message once,
+in date order, everyone in the conversation listed at the top, quoted history trimmed
+(`--keep-quotes` keeps it), and each attachment stored once under `attachments/` and tagged
+`[A001]` wherever it was sent. `manifest.json` lists the messages, the attachment hashes and
+any Message-ID not found. Messages are looked up in every configured mailbox and only read.
+The cleaner deletes exports after a week: copy the zip elsewhere to keep it.
 ## The report
 
 The written report of each scheduled pass is the first thing the viewer shows. The newest is on

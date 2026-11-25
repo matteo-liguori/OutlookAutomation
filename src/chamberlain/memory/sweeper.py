@@ -19,6 +19,7 @@ from pydantic import Field
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.limits import (
+    EXPORT_DAYS,
     LOG_DAYS,
     LOG_MAX_BYTES,
     NOTE_IDLE_DAYS,
@@ -62,11 +63,12 @@ DATA_ROOT_LAYOUT = frozenset(
         "bridge",
         "import",
         "secrets",
+        "exports",
     }
 )
 """The fixed layout of the data root (M-25, board ruling R9). Anything else is an orphan."""
 NEVER_SCANNED = frozenset(
-    {"config", "backups", "logs", "quarantine", RUN_DIR, "bridge", "import", "secrets"}
+    {"config", "backups", "logs", "quarantine", RUN_DIR, "bridge", "import", "secrets", "exports"}
 )
 
 
@@ -476,6 +478,18 @@ def _rotate_system_files(run: _Run) -> None:
             total -= size
             removed += 1
             freed += size
+    # Owner exports (`chamberlain export thread`) are for use elsewhere: gone after a week.
+    export_cutoff = run.now.timestamp() - EXPORT_DAYS * 86400
+    exports = run.root / "exports"
+    if exports.is_dir() and not exports.is_symlink():
+        for entry in exports.iterdir():
+            if entry.is_file() and not entry.is_symlink() and entry.stat().st_mtime < export_cutoff:
+                try:
+                    entry.unlink()
+                except OSError:
+                    run.failed += 1
+                    continue
+                removed += 1
     temp_cutoff = run.now.timestamp() - RUN_TEMP_MINUTES * 60
     temp_dir = run.root / RUN_DIR
     if temp_dir.is_dir() and not temp_dir.is_symlink():

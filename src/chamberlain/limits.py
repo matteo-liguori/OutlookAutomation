@@ -87,6 +87,10 @@ BACKUP_DAILY_SLOTS: Final = 2
 BACKUP_WEEKLY_SLOTS: Final = 2
 LOG_DAYS: Final = 14
 LOG_MAX_BYTES: Final = 20 * 1024 * 1024
+EXPORT_DAYS: Final = 7
+"""Exports (`exports/`, owner utilities) are deleted by the sweeper after this many days."""
+EXPORT_MAX_BYTES: Final = 200 * 1024 * 1024
+"""The attachments one export may hold."""
 
 # --- Writes and grants (04-writes.md, 05-grants.md) -------------------------
 SETTLE_AFTER_MINUTES: Final = 10

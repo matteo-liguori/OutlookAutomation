@@ -341,6 +341,20 @@ def test_m3_logs_rotate_by_age_and_size_and_stale_temp_files_go(
     assert not fresh.exists()  # the oldest goes first when the folder is over its size
 
 
+def test_exports_go_after_a_week(ctx: Context, clock: ManualClock) -> None:
+    exports = ctx.data_root / "exports"
+    exports.mkdir(parents=True)
+    old, fresh = exports / "old thread.zip", exports / "new thread.zip"
+    old.write_bytes(b"zip")
+    fresh.write_bytes(b"zip")
+    now = clock.now().timestamp()
+    os.utime(old, (now - 8 * 86400, now - 8 * 86400))
+    os.utime(fresh, (now - 86400, now - 86400))
+    sweep(ctx, clock.now())
+    assert not old.exists()
+    assert fresh.exists()
+
+
 def test_m3_other_tracks_compactors_run_inside_the_one_sweep(
     ctx: Context, clock: ManualClock
 ) -> None:
