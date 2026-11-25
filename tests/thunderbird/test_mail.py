@@ -518,5 +518,7 @@ def test_words_match_the_subject_sender_and_recipients_together(stack: Stack) ->
 
 
 def test_words_find_a_reply_by_its_re_subject(stack: Stack) -> None:
-    seed(stack, subject="Re: Quarterly plan")
+    """Thunderbird reports a reply's subject without "Re:" (found live, 2026-11-25)."""
+    seed(stack, subject="Quarterly plan")
     assert len(stack.mail.search(SOURCE, MailQuery(text="Re: Quarterly plan")).items) == 1
+    assert len(stack.mail.search(SOURCE, MailQuery(text="Fwd: quarterly")).items) == 1

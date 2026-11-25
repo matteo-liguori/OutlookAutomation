@@ -115,7 +115,6 @@ interface ScanFilter {
 /** Thunderbird's full-text search is too slow on big mailboxes: words match the headers. */
 function hasEveryWord(h: TbHeader, words: string[]): boolean {
   const people = [h.author, ...(h.recipients ?? []), ...(h.ccList ?? [])].join(" ");
-  // The raw subject: a search for "Re: ..." must find the reply (found live, 2026-11-25).
   const haystack = (String(h.subject ?? "") + " " + people).toLowerCase();
   return words.every((w) => haystack.includes(w));
 }
@@ -186,7 +185,9 @@ async function cmdQuery(a: QueryArgs): Promise<QueryResult> {
     untilMs: a.until_ms ?? undefined,
     subject: a.subject ?? undefined,
     subjectContains: a.subject_contains,
-    words: a.words ? a.words.toLowerCase().split(/\s+/).filter((w) => w.length > 0) : undefined,
+    // Reply and forward prefixes are not words to match: Thunderbird reports a reply's subject
+    // without its "Re:" (found live, 2026-11-25), so "Re: X" must find it by X.
+    words: a.words ? a.words.toLowerCase().split(/\s+/).filter((w) => w.length > 0 && !/^(re|fw|fwd|aw|sv):?$/.test(w)) : undefined,
     ownOnly: a.own_only,
     maxScan: a.max_scan,
   });

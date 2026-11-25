@@ -20,7 +20,7 @@ from chamberlain.app.wiring import run_tick
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.mail import FolderRole
 from chamberlain.livetest.config import LiveTestConfig
-from chamberlain.livetest.env import CalendarCopy, Environment, MailCopy
+from chamberlain.livetest.env import CalendarCopy, Environment, MailCopy, strip_reply_prefix
 from chamberlain.livetest.markers import MARKER, carries_marker, run_marker
 from chamberlain.livetest.model import Timing
 from chamberlain.schema.errors import ChamberlainError
@@ -193,7 +193,9 @@ class Lab:
         if folder is not None:
             request["folder"] = folder
         data = self.ok("find", **request)
-        found = [hit for hit in data.get("hits", []) if query in _line(hit)]
+        # Thunderbird reports a reply's subject without its "Re:" (found live, 2026-11-25).
+        wanted = strip_reply_prefix(query)
+        found = [hit for hit in data.get("hits", []) if wanted in _line(hit)]
         for hit in found:
             self.track(str(hit["handle"]))
         return found

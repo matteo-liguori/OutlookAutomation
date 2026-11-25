@@ -8,6 +8,7 @@ ports for the few checks the tools cannot make. The report names every check tha
 
 import json
 import os
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -146,6 +147,14 @@ class FileFaultInjector:
         self._path.unlink(missing_ok=True)
 
 
+_REPLY_PREFIX = re.compile(r"^(?:(?:re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
+
+
+def strip_reply_prefix(subject: str) -> str:
+    """Thunderbird reports a reply's subject without its "Re:" (found live, 2026-11-25)."""
+    return _REPLY_PREFIX.sub("", subject)
+
+
 class PortProbe:
     """Read-only: lists and reads through the ports, never changes anything (P-3)."""
 
@@ -181,7 +190,7 @@ class PortProbe:
             since = self._ctx.clock.now() - timedelta(days=MARKED_MAIL_DAYS)
             page = port.search(source, MailQuery(text=text, since=since, limit=200), cursor)
             for item in page.items:
-                if text in item.subject:
+                if strip_reply_prefix(text) in item.subject:
                     found.append(
                         MailCopy(
                             source=source,
