@@ -1,10 +1,13 @@
 """The owner's clean-up rules: old mail to Trash, only under the owner's own grant."""
 
+from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
+from chamberlain.app.context import TickSteps
+from chamberlain.attention import tick as attention_tick
 from chamberlain.cleanup.rules import CleanupConfig, CleanupRule, own_folders
-from chamberlain.cleanup.run import propose_grants, run_cleanup
+from chamberlain.cleanup.run import daily_cleanup, propose_grants, run_cleanup
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery
 from chamberlain.livetest.fakeworld import FAKE_MAIL_A, build_fake_lab
 from chamberlain.writes.confirm import confirm_grant
@@ -63,6 +66,52 @@ def test_old_inbox_mail_goes_to_trash_only_after_the_owner_confirms(tmp_path: Pa
         assert run_cleanup(lab.app, RULES, dry_run=True).planned == {
             "Inbox-only mail after three years": 0
         }
+    finally:
+        lab.close()
+
+
+def test_the_background_clean_up_is_off_by_default_and_runs_once_a_day(tmp_path: Path) -> None:
+    lab = build_fake_lab(tmp_path / "data")
+    try:
+        now = lab.clock.now()
+        lab.provider.mail.add_message(
+            FAKE_MAIL_A, internet_message_id="<old@x>", date=now - timedelta(days=4 * 365)
+        )
+        assert CleanupConfig().enabled is False
+        assert daily_cleanup(lab.app, RULES) is None, "not turned on: nothing at all"
+        assert lab.app.context.db.execute("SELECT COUNT(*) FROM grants").fetchone()[0] == 0
+
+        on = RULES.model_copy(update={"enabled": True})
+        first = daily_cleanup(lab.app, on)
+        assert first is not None
+        assert first.waiting == [FAKE_MAIL_A]
+        grant = lab.app.context.db.execute(
+            "SELECT handle, content_sha256 FROM grants WHERE state = 'proposed'"
+        ).fetchone()
+        assert grant is not None, "the background run proposes the grant for the owner"
+        confirm_grant(lab.app.context, grant["handle"], {"content_sha256": grant["content_sha256"]})
+        assert daily_cleanup(lab.app, on) is None, "at most once a day"
+        assert inbox_ids(lab) == {"<old@x>"}
+
+        lab.clock.advance(hours=24)
+        second = daily_cleanup(lab.app, on)
+        assert second is not None
+        assert second.moved == 1
+        assert inbox_ids(lab) == set()
+    finally:
+        lab.close()
+
+
+def test_background_steps_run_only_in_the_schedulers_tick(tmp_path: Path) -> None:
+    lab = build_fake_lab(tmp_path / "data")
+    try:
+        seen: list[str] = []
+        steps = TickSteps(background=(lambda ctx: seen.append("ran"),))
+        ctx = replace(lab.app.context, tick_steps=steps)
+        attention_tick.tick(ctx, force=True)
+        assert seen == [], "a tool call's tick never runs the slow background steps"
+        attention_tick.tick(ctx, force=True, background=True)
+        assert seen == ["ran"]
     finally:
         lab.close()
 

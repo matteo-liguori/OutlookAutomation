@@ -51,8 +51,11 @@ def _claim(ctx: Context) -> bool:
     return True
 
 
-def tick(ctx: Context, *, force: bool = False) -> bool:
-    """Run one tick. Returns True when detectors ran, False when it was skipped."""
+def tick(ctx: Context, *, force: bool = False, background: bool = False) -> bool:
+    """Run one tick. Returns True when detectors ran, False when it was skipped.
+
+    `background` is the scheduler's tick: it also runs the slow `background` steps.
+    """
     _run_steps(ctx, ctx.tick_steps.always)
     try:
         if ctx.session is not None:
@@ -91,6 +94,8 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
         with transaction(ctx.db):
             set_state(ctx.db, ctx.clock, "attention.last_tick_at", _stamp(ctx))
         _run_steps(ctx, ctx.tick_steps.extra)
+        if background:
+            _run_steps(ctx, ctx.tick_steps.background)
         return True
     except Exception:
         log_failure(log, "tick failed")

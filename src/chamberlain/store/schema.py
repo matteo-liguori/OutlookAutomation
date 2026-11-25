@@ -100,6 +100,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "runs.update_tag",
         "runs.update_checked_at",
         "review.last_scan_at",
+        "cleanup.last_run_at",
     }
 )
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""

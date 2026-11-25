@@ -67,6 +67,9 @@ class TickSteps:
     """Every call, even a skipped tick, before detection: crashed-operation recovery (W-9)."""
     extra: tuple[TickStep, ...] = ()
     """After the inbox is reconciled, at most once per interval: the sweeper (M-21)."""
+    background: tuple[TickStep, ...] = ()
+    """Only in the operating system scheduler's tick (`chamberlain tick`), never inside a
+    tool call, because they may take minutes: the owner's mail clean-up."""
 
 
 @dataclass

@@ -80,6 +80,7 @@ def open_app(
         budgets=runtime.budgets,
         update_lister=_update_lister(connections),
         review=_review(connections),
+        cleanup=connections.cleanup,
     )
     try:
         with transaction(app.context.db) as db:

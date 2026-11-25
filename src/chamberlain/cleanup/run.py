@@ -6,7 +6,9 @@ on that card, at most `MAX_PER_DAY` a day), and audited. The grant is the owner'
 confirm in the viewer: this module only proposes it.
 """
 
+import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from typing import Any, Final
 
 from chamberlain.app.core import App
@@ -21,11 +23,17 @@ from chamberlain.domain.grants import GrantState, StandingScope
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import IntentKind
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.store.db import transaction
+from chamberlain.store.schema import get_state, set_state
 from chamberlain.writes import repo
+
+log = logging.getLogger("chamberlain.cleanup")
 
 CARD_TITLE: Final = "Mail clean-up"
 GRANT_TITLE: Final = "Move old mail to Trash"
 MAX_PER_DAY: Final = 500
+CLEANUP_EVERY: Final = timedelta(days=1)
+LAST_RUN_KEY: Final = "cleanup.last_run_at"
 
 
 @dataclass
@@ -188,4 +196,30 @@ def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupRep
     return report
 
 
-__all__ = ["CARD_TITLE", "CleanupReport", "propose_grants", "run_cleanup"]
+def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
+    """The background run: at most once a day, only when the owner turned it on.
+
+    It proposes any missing grant (so the owner sees it in the viewer), then moves what the
+    active grants cover. The day is claimed at the start, so a slow run is never doubled.
+    """
+    ctx = app.context
+    if not config.enabled or not config.rules:
+        return None
+    now = ctx.clock.now()
+    with transaction(ctx.db):
+        last = get_state(ctx.db, LAST_RUN_KEY)
+        if last and now - datetime.fromisoformat(last) < CLEANUP_EVERY:
+            return None
+        set_state(ctx.db, ctx.clock, LAST_RUN_KEY, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+    propose_grants(app, config)
+    report = run_cleanup(app, config, dry_run=False)
+    log.info(
+        "clean-up moved %d to Trash; %d not moved; waiting: %s",
+        report.moved,
+        len(report.failed),
+        ",".join(report.waiting) or "none",
+    )
+    return report
+
+
+__all__ = ["CARD_TITLE", "CleanupReport", "daily_cleanup", "propose_grants", "run_cleanup"]

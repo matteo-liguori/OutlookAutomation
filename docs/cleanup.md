@@ -1,8 +1,8 @@
 # Mail clean-up
 
 Old mail you no longer need goes to Trash by rules you set, so mailboxes do not grow forever.
-Nothing is ever erased by the harness: Trash keeps a message until it is emptied (Gmail empties
-it after 30 days; Exchange keeps Deleted Items until you empty it).
+It is **off by default**. Nothing is ever erased by the harness: Trash keeps a message until it
+is emptied (Gmail empties it after 30 days; Exchange keeps Deleted Items until you empty it).
 
 ## Rules
 
@@ -10,6 +10,7 @@ In `connections.yaml`:
 
 ```yaml
 cleanup:
+  enabled: true        # run by itself once a day; default false
   rules:
   - name: Routine filed mail after a year
     sources: [mail:kcl]
@@ -28,15 +29,21 @@ cleanup:
   starred. On Gmail, moving a message to Trash removes every label, so without this a message
   would also vanish from that label.
 - `sources: ['*']` means every enabled mailbox.
+- `per_run` is the most one run moves per mailbox.
 
-## Running it
+## How it runs
+
+With `enabled: true`, the scheduler's tick (`chamberlain tick`, see scheduling.md) runs the
+rules at most once a day, with no agent involved. It never runs inside an agent's tool call,
+because a large run takes minutes. The first time, it proposes one permission per mailbox:
+move to Trash only, from exactly the rules' folders, at most 500 a day. Confirm each once in
+the viewer's Needs you page; nothing moves before that. Every move is an ordinary harness
+write on the "Mail clean-up" card, so it is audited like any other.
+
+By hand, whether or not it is enabled:
 
 ```
 chamberlain cleanup plan     # count what each rule would move; changes nothing
-chamberlain cleanup grant    # propose the permission; confirm it once in the viewer
-chamberlain cleanup run      # move what the rules name to Trash (at most per_run per mailbox)
+chamberlain cleanup grant    # propose the permissions
+chamberlain cleanup run      # move what the rules name to Trash now
 ```
-
-Each move is an ordinary harness write on the "Mail clean-up" card, covered by one standing
-permission per mailbox: move to Trash only, from exactly the rules' folders, at most 500 a
-day. Only you can confirm it. A large first backlog takes more than one day.
