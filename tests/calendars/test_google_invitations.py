@@ -246,6 +246,32 @@ def test_w33_answering_patches_only_my_entry_and_tells_the_organiser(world: Worl
     assert port.reconcile(prepared, "k-answer").status is ReconcileStatus.PRESENT
 
 
+def test_w33_an_invitation_that_lists_only_me_as_guest_can_be_answered(world: World) -> None:
+    """Google's copy when the organiser is not a guest (found live, 2026-11-25)."""
+    port, api, _ = world
+    locator = api.seed(
+        {
+            "summary": "Just me",
+            "start": {"dateTime": "2027-03-02T10:00:00Z"},
+            "end": {"dateTime": "2027-03-02T11:00:00Z"},
+            "organizer": {"email": "boss@example.test"},
+            "attendees": [{"email": api.owner, "self": True, "responseStatus": "needsAction"}],
+        }
+    )
+    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
+    etag = port.read(SOURCE, locator).etag
+    answer = CalendarRespond(
+        source=SOURCE,
+        event_ref=handle,
+        expected_etag=etag,
+        response="accepted",
+        organiser="boss@example.test",
+    )
+    prepared = port.prepare(answer, {handle: locator})
+    assert port.dispatch(prepared, "k-only-me").outcome is DispatchOutcome.APPLIED
+    assert port.read(SOURCE, locator).my_response is Response.ACCEPTED
+
+
 def test_w8_an_answer_whose_reply_was_lost_settles_from_the_read_back(world: World) -> None:
     port, api, _ = world
     locator = seed_received(api)

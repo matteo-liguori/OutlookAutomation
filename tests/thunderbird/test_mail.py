@@ -515,3 +515,8 @@ def test_words_match_the_subject_sender_and_recipients_together(stack: Stack) ->
     assert len(found.items) == 1
     assert found.complete
     assert stack.mail.search(SOURCE, MailQuery(text="bob quarterly")).items == ()
+
+
+def test_words_find_a_reply_by_its_re_subject(stack: Stack) -> None:
+    seed(stack, subject="Re: Quarterly plan")
+    assert len(stack.mail.search(SOURCE, MailQuery(text="Re: Quarterly plan")).items) == 1

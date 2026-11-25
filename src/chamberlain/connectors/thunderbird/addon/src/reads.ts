@@ -115,7 +115,8 @@ interface ScanFilter {
 /** Thunderbird's full-text search is too slow on big mailboxes: words match the headers. */
 function hasEveryWord(h: TbHeader, words: string[]): boolean {
   const people = [h.author, ...(h.recipients ?? []), ...(h.ccList ?? [])].join(" ");
-  const haystack = (normaliseSubject(h.subject) + " " + people).toLowerCase();
+  // The raw subject: a search for "Re: ..." must find the reply (found live, 2026-11-25).
+  const haystack = (String(h.subject ?? "") + " " + people).toLowerCase();
   return words.every((w) => haystack.includes(w));
 }
 

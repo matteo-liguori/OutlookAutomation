@@ -135,9 +135,15 @@ def _answer(entry: Resource) -> Response:
 
 
 def is_invitee_copy(item: Resource) -> bool:
-    """Someone else organised this event: only its owner's own answer may change."""
-    others = any(not a.get("self") for a in item.get("attendees", []))
-    return others and not item.get("organizer", {}).get("self")
+    """Someone else organised this event: only its owner's own answer may change.
+
+    Google's copy of an invitation may list only this calendar's owner as a guest (the
+    organiser need not be a guest; found live, 2026-11-25), so the organiser decides.
+    """
+    organiser: Resource = item.get("organizer") or {}
+    if organiser.get("email"):
+        return not organiser.get("self")
+    return any(not a.get("self") for a in item.get("attendees", []))
 
 
 def own_entry(item: Resource) -> Resource | None:
