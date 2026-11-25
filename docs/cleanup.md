@@ -21,7 +21,6 @@ cleanup:
     folder: inbox
     older_than_days: 1096
     only_unfiled: true
-  per_run: 500
 ```
 
 - `folder` is `inbox`, or a folder path as Thunderbird shows it.
@@ -29,7 +28,8 @@ cleanup:
   starred. On Gmail, moving a message to Trash removes every label, so without this a message
   would also vanish from that label.
 - `sources: ['*']` means every enabled mailbox.
-- `per_run` is the most one run moves per mailbox.
+- There is no limit on how many move. When more than 100 leave one mailbox in a run, the
+  report line asks the agent to glance at Trash there, in case a rule caught too much.
 
 ## How it runs
 
@@ -39,10 +39,10 @@ calls `start` to get ready for its report. The agent does nothing for it: `start
 years (mail:kcl) 12." for the report. It is silent when nothing moved.
 
 The first time, it proposes one permission per mailbox: move to Trash only, from exactly the
-rules' folders, at most 500 a day. Confirm each once in the viewer's Needs you page; until then
-nothing moves and the line says what is waiting. Every move is an ordinary harness write on the
-"Mail clean-up" card, audited like any other. Steady state is a few messages a day; a large
-first backlog is better moved once by hand (below), so no `start` has to wait for it.
+rules' folders. Confirm each once in the viewer's Needs you page; until then nothing moves and
+the line says what is waiting. Every move is an ordinary harness write on the "Mail clean-up"
+card, audited like any other. Steady state is a few messages a day; a large first backlog is
+better moved once by hand (below), so no `start` has to wait for it.
 
 By hand, whether or not it is enabled:
 

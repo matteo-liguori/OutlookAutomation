@@ -7,7 +7,7 @@ from pathlib import Path
 from chamberlain.app.core import App
 from chamberlain.app.wiring import load_tracks, tick_steps
 from chamberlain.cleanup.rules import CleanupConfig, CleanupRule, own_folders
-from chamberlain.cleanup.run import daily_cleanup, propose_grants, run_cleanup
+from chamberlain.cleanup.run import CleanupReport, daily_cleanup, propose_grants, run_cleanup
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery
 from chamberlain.livetest.fakeworld import FAKE_MAIL_A, build_fake_lab
 from chamberlain.writes.confirm import confirm_grant
@@ -139,6 +139,18 @@ def test_an_agents_start_runs_the_clean_up_and_reports_it(tmp_path: Path) -> Non
         )
     finally:
         lab.close()
+
+
+def test_no_limit_but_a_big_run_asks_the_agent_to_glance_at_trash() -> None:
+    report = CleanupReport(
+        moved_by={"Old (mail:kcl)": 101, "Old (mail:personal)": 100},
+        per_mailbox={"mail:kcl": 101, "mail:personal": 100},
+    )
+    assert report.summary() == [
+        "Clean-up moved 201 emails to Trash: Old (mail:kcl) 101; Old (mail:personal) 100.",
+        "That is more than 100 from mail:kcl: glance at Trash there to check nothing the "
+        "owner wants went with it.",
+    ]
 
 
 def test_a_message_in_one_of_the_owners_folders_or_starred_is_kept() -> None:

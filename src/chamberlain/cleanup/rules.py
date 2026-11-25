@@ -45,8 +45,6 @@ class CleanupConfig(Model):
     """Run the rules by themselves once a day, when an agent calls `start`. Off by default;
     `chamberlain cleanup plan|grant|run` work by hand either way."""
     rules: tuple[CleanupRule, ...] = ()
-    per_run: int = Field(default=500, ge=1, le=5000)
-    """At most this many messages per mailbox go to Trash in one run; the rest wait."""
 
 
 @dataclass(frozen=True)

@@ -2,7 +2,7 @@
 
 Every move is an ordinary `mail.trash` write: proposed on the "Mail clean-up" card,
 authorised by one standing grant per mailbox (trash only, from exactly the rules' folders,
-on that card, at most `MAX_PER_DAY` a day), and audited. The grant is the owner's to
+on that card), and audited. The grant is the owner's to
 confirm in the viewer: this module only proposes it.
 """
 
@@ -10,7 +10,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from chamberlain.app.core import App
 from chamberlain.cleanup.rules import (
@@ -32,7 +32,8 @@ log = logging.getLogger("chamberlain.cleanup")
 
 CARD_TITLE: Final = "Mail clean-up"
 GRANT_TITLE: Final = "Move old mail to Trash"
-MAX_PER_DAY: Final = 500
+LOOK_AT_TRASH_OVER: Final = 100
+"""More than this from one mailbox in one run: the report asks the agent to glance at Trash."""
 CLEANUP_EVERY: Final = timedelta(days=1)
 CLEANUP_AGENT: Final = "cleanup"
 """The clean-up's own session: its `start` never triggers the clean-up again."""
@@ -49,8 +50,8 @@ class CleanupReport:
     """One reason code per message not moved; never mail text (the lines reach the agent)."""
     waiting: list[str] = field(default_factory=lambda: list[str]())
     """Mailboxes whose grant is missing or waiting for the owner."""
-    more: list[str] = field(default_factory=lambda: list[str]())
-    """Mailboxes that reached `per_run`: the rest moves next time."""
+    per_mailbox: dict[str, int] = field(default_factory=lambda: dict[str, int]())
+    """Real run: what moved, per mailbox."""
 
     @property
     def moved(self) -> int:
@@ -67,8 +68,13 @@ class CleanupReport:
         out: list[str] = []
         if self.moved:
             parts = "; ".join(f"{where} {n}" for where, n in self.moved_by.items())
-            more = " (more next time)" if self.more else ""
-            out.append(f"Clean-up moved {self.moved} emails to Trash{more}: {parts}.")
+            out.append(f"Clean-up moved {self.moved} emails to Trash: {parts}.")
+        many = [m for m, n in self.per_mailbox.items() if n > LOOK_AT_TRASH_OVER]
+        if many:
+            out.append(
+                f"That is more than {LOOK_AT_TRASH_OVER} from {', '.join(many)}: glance at "
+                "Trash there to check nothing the owner wants went with it."
+            )
         if self.waiting:
             out.append(
                 "Clean-up is waiting for the owner to confirm "
@@ -127,7 +133,6 @@ def _scope(source: str, folder_ids: frozenset[str], card: str) -> StandingScope:
         "to Trash (recoverable there until Trash is emptied).",
         folders=folder_ids,
         card=card,
-        max_per_day=MAX_PER_DAY,
     )
 
 
@@ -178,7 +183,7 @@ def _grant_state(app: App, source: str, scope: StandingScope) -> tuple[str, str]
 
 
 def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupReport:
-    """Count, or move to Trash, what the rules name; at most `config.per_run` per mailbox."""
+    """Count, or move to Trash, what the rules name."""
     ctx = app.context
     now = ctx.clock.now()
     report = CleanupReport()
@@ -195,39 +200,40 @@ def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupRep
     for source, wanted in sorted(folders.items()):
         state, _ = _grant_state(app, source, _scope(source, frozenset(wanted), card))
         (active.append(source) if state == "active" else report.waiting.append(source))
-    taken: dict[str, int] = {}
     for rule in config.rules:
         for source in active:
-            # Lazy: a mailbox stops being searched once it reaches `per_run`.
             for candidate in candidates(ctx, rule, now, only=source):
-                if taken.get(source, 0) >= config.per_run:
-                    if source not in report.more:
-                        report.more.append(source)
-                    break
-                taken[source] = taken.get(source, 0) + 1
-                if _trash(s, card, candidate, report):
+                outcome = _trash(s, card, candidate, report)
+                if outcome == "moved":
                     where = f"{rule.name} ({source})"
                     report.moved_by[where] = report.moved_by.get(where, 0) + 1
+                    report.per_mailbox[source] = report.per_mailbox.get(source, 0) + 1
+                elif outcome == "refused":
+                    # Not covered: the rest of this mailbox would be refused too.
+                    report.failed.append("not covered by the grant")
+                    break
     return report
 
 
-def _trash(s: _Session, card: str, candidate: Candidate, report: CleanupReport) -> bool:
+def _trash(
+    s: _Session, card: str, candidate: Candidate, report: CleanupReport
+) -> Literal["moved", "failed", "refused"]:
     refs = s.app.context.services.refs
     handle = refs.remember(HandleKind.MESSAGE, candidate.source, candidate.summary.locator)
     intent = {"kind": "mail.trash", "source": candidate.source, "message": handle}
     try:
         proposed = s.ok("propose", intent=intent, card=card)
         if not proposed.get("ready"):
-            report.failed.append("not covered by the grant")
-            return False
+            return "refused"
         done = s.ok("do", operation=proposed["operation"])
     except ChamberlainError as error:
         report.failed.append(error.code.value)
-        return False
+        return "failed"
     state = str(done["operation"]["state"])
     if state != "confirmed":
         report.failed.append(state)
-    return state == "confirmed"
+        return "failed"
+    return "moved"
 
 
 def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
