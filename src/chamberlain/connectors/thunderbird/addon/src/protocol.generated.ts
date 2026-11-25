@@ -547,6 +547,22 @@ interface ReconcileTrashArgs {
   refresh: boolean;
 }
 
+interface ReconcileTrashManyArgs {
+  account_id: string;
+  mailbox: string;
+  folder_id: string;
+  internet_message_ids: string[];
+  destination_folder_id: string;
+  refresh: boolean;
+}
+
+interface ReconcileTrashManyResult {
+  items: TrashCopies[];
+  complete: boolean;
+  refreshed: boolean;
+  refresh_verified: boolean;
+}
+
 interface RefreshArgs {
   account_id: string;
   mailbox: string;
@@ -641,6 +657,31 @@ interface TrashArgs {
   destination_folder_id: string;
 }
 
+interface TrashCopies {
+  internet_message_id: string;
+  source: number;
+  destination: number;
+}
+
+interface TrashManyArgs {
+  account_id: string;
+  mailbox: string;
+  folder_id: string;
+  internet_message_ids: string[];
+  destination_folder_id: string;
+}
+
+interface TrashManyItem {
+  internet_message_id: string;
+  ok: boolean;
+  code: string;
+}
+
+interface TrashManyResult {
+  items: TrashManyItem[];
+  verified: boolean;
+}
+
 interface Welcome {
   t: "welcome";
   v: number;
@@ -667,6 +708,7 @@ interface CommandArgs {
   draft_discard: DraftDiscardArgs;
   move: MoveArgs;
   trash: TrashArgs;
+  trash_many: TrashManyArgs;
   mark_read: MarkReadArgs;
   reconcile_send: ReconcileSendArgs;
   reconcile_draft_save: ReconcileDraftSaveArgs;
@@ -674,6 +716,7 @@ interface CommandArgs {
   reconcile_draft_discard: ReconcileDraftDiscardArgs;
   reconcile_move: ReconcileMoveArgs;
   reconcile_trash: ReconcileTrashArgs;
+  reconcile_trash_many: ReconcileTrashManyArgs;
   reconcile_mark_read: ReconcileMarkReadArgs;
   calendar_list: CalendarListArgs;
   calendar_query: CalendarQueryArgs;
@@ -700,6 +743,7 @@ interface CommandResults {
   draft_discard: DiscardResult;
   move: MoveResult;
   trash: MoveResult;
+  trash_many: TrashManyResult;
   mark_read: MarkReadResult;
   reconcile_send: ReconcileComposeResult;
   reconcile_draft_save: ReconcileComposeResult;
@@ -707,6 +751,7 @@ interface CommandResults {
   reconcile_draft_discard: ReconcileDiscardResult;
   reconcile_move: ReconcileMoveResult;
   reconcile_trash: ReconcileMoveResult;
+  reconcile_trash_many: ReconcileTrashManyResult;
   reconcile_mark_read: ReconcileMarkReadResult;
   calendar_list: CalendarListResult;
   calendar_query: CalendarQueryResult;
@@ -719,8 +764,8 @@ interface CommandResults {
 const PROTOCOL_VERSION = 2;
 const CHUNK_BYTES = 196608;
 const TO_ADDON_LIMIT = 900000;
-const COMMANDS: readonly string[] = ["status", "accounts", "folders", "query", "read", "attachment", "resolve", "refresh", "contacts", "contact_read", "send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read", "reconcile_send", "reconcile_draft_save", "reconcile_draft_update", "reconcile_draft_discard", "reconcile_move", "reconcile_trash", "reconcile_mark_read", "calendar_list", "calendar_query", "calendar_read", "calendar_create", "calendar_update", "calendar_delete"];
-const WRITE_COMMANDS: readonly string[] = ["calendar_create", "calendar_delete", "calendar_update", "draft_discard", "draft_save", "draft_update", "mark_read", "move", "send", "trash"];
+const COMMANDS: readonly string[] = ["status", "accounts", "folders", "query", "read", "attachment", "resolve", "refresh", "contacts", "contact_read", "send", "draft_save", "draft_update", "draft_discard", "move", "trash", "trash_many", "mark_read", "reconcile_send", "reconcile_draft_save", "reconcile_draft_update", "reconcile_draft_discard", "reconcile_move", "reconcile_trash", "reconcile_trash_many", "reconcile_mark_read", "calendar_list", "calendar_query", "calendar_read", "calendar_create", "calendar_update", "calendar_delete"];
+const WRITE_COMMANDS: readonly string[] = ["calendar_create", "calendar_delete", "calendar_update", "draft_discard", "draft_save", "draft_update", "mark_read", "move", "send", "trash", "trash_many"];
 const REQUIRED_CAPABILITIES: readonly string[] = ["attachments", "contacts", "draft", "mark_read", "move", "read", "refresh", "search", "send", "trash"];
 const ADVERTISED_CAPABILITIES: readonly string[] = ["attachments", "calendar", "contacts", "draft", "mark_read", "move", "read", "refresh", "search", "send", "trash"];
 const ARGS_SCHEMA_NAME: { [cmd: string]: string } = {
@@ -740,6 +785,7 @@ const ARGS_SCHEMA_NAME: { [cmd: string]: string } = {
  "draft_discard": "DraftDiscardArgs",
  "move": "MoveArgs",
  "trash": "TrashArgs",
+ "trash_many": "TrashManyArgs",
  "mark_read": "MarkReadArgs",
  "reconcile_send": "ReconcileSendArgs",
  "reconcile_draft_save": "ReconcileDraftSaveArgs",
@@ -747,6 +793,7 @@ const ARGS_SCHEMA_NAME: { [cmd: string]: string } = {
  "reconcile_draft_discard": "ReconcileDraftDiscardArgs",
  "reconcile_move": "ReconcileMoveArgs",
  "reconcile_trash": "ReconcileTrashArgs",
+ "reconcile_trash_many": "ReconcileTrashManyArgs",
  "reconcile_mark_read": "ReconcileMarkReadArgs",
  "calendar_list": "CalendarListArgs",
  "calendar_query": "CalendarQueryArgs",
@@ -3578,6 +3625,88 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
   "title": "ReconcileTrashArgs",
   "type": "object"
  },
+ "ReconcileTrashManyArgs": {
+  "additionalProperties": false,
+  "properties": {
+   "account_id": {
+    "maxLength": 200,
+    "minLength": 1,
+    "title": "Account Id",
+    "type": "string"
+   },
+   "destination_folder_id": {
+    "title": "Destination Folder Id",
+    "type": "string"
+   },
+   "folder_id": {
+    "title": "Folder Id",
+    "type": "string"
+   },
+   "internet_message_ids": {
+    "items": {
+     "maxLength": 1000,
+     "minLength": 1,
+     "type": "string"
+    },
+    "maxItems": 500,
+    "minItems": 1,
+    "title": "Internet Message Ids",
+    "type": "array"
+   },
+   "mailbox": {
+    "maxLength": 320,
+    "minLength": 3,
+    "title": "Mailbox",
+    "type": "string"
+   },
+   "refresh": {
+    "default": true,
+    "title": "Refresh",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "account_id",
+   "mailbox",
+   "folder_id",
+   "internet_message_ids",
+   "destination_folder_id"
+  ],
+  "title": "ReconcileTrashManyArgs",
+  "type": "object"
+ },
+ "ReconcileTrashManyResult": {
+  "additionalProperties": false,
+  "properties": {
+   "complete": {
+    "title": "Complete",
+    "type": "boolean"
+   },
+   "items": {
+    "items": {
+     "$ref": "#/$defs/TrashCopies"
+    },
+    "title": "Items",
+    "type": "array"
+   },
+   "refresh_verified": {
+    "title": "Refresh Verified",
+    "type": "boolean"
+   },
+   "refreshed": {
+    "title": "Refreshed",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "items",
+   "complete",
+   "refreshed",
+   "refresh_verified"
+  ],
+  "title": "ReconcileTrashManyResult",
+  "type": "object"
+ },
  "RefreshArgs": {
   "additionalProperties": false,
   "properties": {
@@ -4052,6 +4181,122 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
    "destination_folder_id"
   ],
   "title": "TrashArgs",
+  "type": "object"
+ },
+ "TrashCopies": {
+  "additionalProperties": false,
+  "properties": {
+   "destination": {
+    "title": "Destination",
+    "type": "integer"
+   },
+   "internet_message_id": {
+    "title": "Internet Message Id",
+    "type": "string"
+   },
+   "source": {
+    "title": "Source",
+    "type": "integer"
+   }
+  },
+  "required": [
+   "internet_message_id",
+   "source",
+   "destination"
+  ],
+  "title": "TrashCopies",
+  "type": "object"
+ },
+ "TrashManyArgs": {
+  "additionalProperties": false,
+  "description": "Move many messages of one folder to Trash in one Thunderbird move (clean-up batches).",
+  "properties": {
+   "account_id": {
+    "maxLength": 200,
+    "minLength": 1,
+    "title": "Account Id",
+    "type": "string"
+   },
+   "destination_folder_id": {
+    "title": "Destination Folder Id",
+    "type": "string"
+   },
+   "folder_id": {
+    "title": "Folder Id",
+    "type": "string"
+   },
+   "internet_message_ids": {
+    "items": {
+     "maxLength": 1000,
+     "minLength": 1,
+     "type": "string"
+    },
+    "maxItems": 500,
+    "minItems": 1,
+    "title": "Internet Message Ids",
+    "type": "array"
+   },
+   "mailbox": {
+    "maxLength": 320,
+    "minLength": 3,
+    "title": "Mailbox",
+    "type": "string"
+   }
+  },
+  "required": [
+   "account_id",
+   "mailbox",
+   "folder_id",
+   "internet_message_ids",
+   "destination_folder_id"
+  ],
+  "title": "TrashManyArgs",
+  "type": "object"
+ },
+ "TrashManyItem": {
+  "additionalProperties": false,
+  "properties": {
+   "code": {
+    "default": "",
+    "title": "Code",
+    "type": "string"
+   },
+   "internet_message_id": {
+    "title": "Internet Message Id",
+    "type": "string"
+   },
+   "ok": {
+    "title": "Ok",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "internet_message_id",
+   "ok"
+  ],
+  "title": "TrashManyItem",
+  "type": "object"
+ },
+ "TrashManyResult": {
+  "additionalProperties": false,
+  "properties": {
+   "items": {
+    "items": {
+     "$ref": "#/$defs/TrashManyItem"
+    },
+    "title": "Items",
+    "type": "array"
+   },
+   "verified": {
+    "title": "Verified",
+    "type": "boolean"
+   }
+  },
+  "required": [
+   "items",
+   "verified"
+  ],
+  "title": "TrashManyResult",
   "type": "object"
  },
  "Welcome": {

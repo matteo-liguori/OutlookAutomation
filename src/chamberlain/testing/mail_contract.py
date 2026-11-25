@@ -186,6 +186,32 @@ class MailPortContract:
         assert rig.copies(message_id, rig.folder_id(FolderRole.TRASH)) == 1
         assert rig.copies(message_id, rig.folder_id(FolderRole.INBOX)) == 0
 
+    def test_p14_a_trash_batch_moves_them_all_in_one_dispatch(self, rig: MailRig) -> None:
+        inbox = rig.folder_id(FolderRole.INBOX)
+        ids = [rig.new_message_id() for _ in range(3)]
+        locators = [rig.seed(internet_message_id=i) for i in ids]
+        handles = [_handle(rig, loc) for loc in locators]
+        gone_locator = rig.seed(internet_message_id=rig.new_message_id())
+        gone = _handle(rig, gone_locator)
+        refs = {**dict(zip(handles, locators, strict=True)), gone: gone_locator}
+
+        def batch(names: list[str]) -> MailTrash:
+            return MailTrash.model_validate(
+                {"source": rig.source, "messages": names, "from_folder": inbox}
+            )
+
+        prepared = rig.port.prepare(batch([*handles, gone]), refs)
+        # One of them leaves before the batch runs: it is reported, the rest still move.
+        rig.port.dispatch(rig.port.prepare(batch([gone]), refs), "k-gone", {})
+        result = rig.port.dispatch(prepared, "k-batch", {})
+        assert result.outcome is DispatchOutcome.APPLIED
+        assert result.receipt is not None
+        assert [item.ok for item in result.receipt.items] == [True, True, True, False]
+        for message_id in ids:
+            assert rig.copies(message_id, rig.folder_id(FolderRole.TRASH)) == 1
+            assert rig.copies(message_id, inbox) == 0
+        assert rig.port.reconcile(prepared, "k-batch").status is ReconcileStatus.PRESENT
+
     def test_p9_prepare_refuses_a_message_that_is_not_where_the_intent_says(
         self, rig: MailRig
     ) -> None:

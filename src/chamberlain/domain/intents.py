@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from chamberlain.domain.calendar import EventFields
-from chamberlain.limits import MARK_READ_MAX
+from chamberlain.limits import MARK_READ_MAX, TRASH_BATCH_MAX
 from chamberlain.schema.base import (
     OUTSIDE_SOURCE,
     ArtifactHandle,
@@ -106,11 +106,28 @@ class MailMove(Model):
 
 
 class MailTrash(Model):
+    """One message (`message`), or a batch from one folder (`messages`) moved together."""
+
     kind: Literal[IntentKind.MAIL_TRASH] = IntentKind.MAIL_TRASH
     source: SourceId
-    message: MessageHandle
+    message: MessageHandle | None = None
+    messages: tuple[MessageHandle, ...] = Field(default=(), max_length=TRASH_BATCH_MAX)
     internet_message_id: str | None = None
+    """Completed by the harness for a single message (W-1)."""
     from_folder: str | None = None
+    """Completed by the harness; every message of a batch must be in this one folder."""
+
+    @model_validator(mode="after")
+    def _one_or_many(self) -> Self:
+        if (self.message is None) == (not self.messages):
+            raise ValueError("give either message or messages")
+        if len(set(self.messages)) != len(self.messages):
+            raise ValueError("messages repeats a handle")
+        return self
+
+    @property
+    def handles(self) -> tuple[str, ...]:
+        return (self.message,) if self.message is not None else self.messages
 
 
 class MailMarkRead(Model):

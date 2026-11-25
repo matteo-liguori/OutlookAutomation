@@ -76,9 +76,18 @@ def sources_of(ctx: Context, rule: CleanupRule) -> list[str]:
 
 
 def candidates(
-    ctx: Context, rule: CleanupRule, now: datetime, only: str | None = None
+    ctx: Context,
+    rule: CleanupRule,
+    now: datetime,
+    only: str | None = None,
+    unsure: set[str] | None = None,
 ) -> Iterator[Candidate]:
-    """Every message the rule would move (in mailbox `only`, if given), lazily. Reads only."""
+    """Every message the rule would move (in mailbox `only`, if given). Reads only.
+
+    Whole folders are read page by page, never one search per message. A mailbox whose
+    keep-folders could not be read completely yields nothing and is added to `unsure`:
+    when in doubt, keep everything.
+    """
     cutoff = now - timedelta(days=rule.older_than_days)
     for source in sources_of(ctx, rule):
         if only is not None and source != only:
@@ -91,28 +100,55 @@ def candidates(
         folder = find_folder(folders, rule.folder)
         if folder is None:
             continue
-        keep = own_folders(folders) - {folder.id}
+        old = [
+            item
+            for item in _all(port, source, MailQuery(folder_id=folder.id, until=cutoff, limit=200))
+            if item.date < cutoff and item.folder_id == folder.id
+        ]
+        if not old:
+            continue
+        kept: set[str] = set()
+        if rule.only_unfiled:
+            # A copy carries the same date in every folder, so only old mail needs reading
+            # (two days' margin for clocks and time zones).
+            margin = cutoff + timedelta(days=2)
+            found = _ids_in(port, source, own_folders(folders) - {folder.id}, margin)
+            if found is None:
+                if unsure is not None:
+                    unsure.add(source)
+                continue
+            kept = found
+        for item in old:
+            if item.internet_message_id not in kept:
+                yield Candidate(rule.name, source, folder.id, item)
+
+
+def _all(port: MailPort, source: str, query: MailQuery) -> Iterator[MessageSummary]:
+    cursor: str | None = None
+    while True:
+        page = port.search(source, query, cursor)
+        yield from page.items
+        if page.cursor is None:
+            return
+        cursor = page.cursor
+
+
+def _ids_in(port: MailPort, source: str, folders: set[str], until: datetime) -> set[str] | None:
+    """Message-IDs dated before `until` in these folders, one paged read each; None if any
+    read was cut short."""
+    ids: set[str] = set()
+    for folder in sorted(folders):
         cursor: str | None = None
         while True:
-            page = port.search(
-                source, MailQuery(folder_id=folder.id, until=cutoff, limit=200), cursor
-            )
-            for item in page.items:
-                if item.date >= cutoff or item.folder_id != folder.id:
-                    continue
-                if rule.only_unfiled and _filed(port, source, item, keep):
-                    continue
-                yield Candidate(rule.name, source, folder.id, item)
+            query = MailQuery(folder_id=folder, until=until, limit=200)
+            page = port.search(source, query, cursor)
+            if not page.complete:
+                return None
+            ids |= {item.internet_message_id for item in page.items}
             if page.cursor is None:
                 break
             cursor = page.cursor
-
-
-def _filed(port: MailPort, source: str, item: MessageSummary, keep: set[str]) -> bool:
-    page = port.search(source, MailQuery(internet_message_id=item.internet_message_id, limit=50))
-    if not page.complete:
-        return True  # unsure: keep it
-    return any(copy.folder_id in keep for copy in page.items)
+    return ids
 
 
 __all__ = [

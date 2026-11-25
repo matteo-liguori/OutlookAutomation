@@ -690,7 +690,19 @@ class Engine:
         for name in ("message_id", "uid"):
             if name in type(intent).model_fields:
                 blank[name] = None
-        if isinstance(intent, MailMove | MailTrash):
+        if isinstance(intent, MailTrash) and intent.messages:
+            # A batch: the folder comes from the locators alone, never one call per message.
+            port = self.ctx.sources.mail_port(intent.source)
+            folders = {port.folder_of(intent.source, refs[h]) for h in intent.messages}
+            if len(folders) != 1:
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID,
+                    "A batch moves messages from one folder at a time.",
+                    field="messages",
+                )
+            blank["from_folder"] = folders.pop()
+        elif isinstance(intent, MailMove | MailTrash):
+            assert intent.message is not None  # a single message: the validator ensures it
             seen = self.ctx.sources.mail_port(intent.source).resolve(
                 intent.source, refs[intent.message]
             )
@@ -1337,7 +1349,7 @@ class Engine:
     ) -> None:
         """Keep handles alive after filing (R4) and release the attachment holds."""
         old: str | None = None
-        if isinstance(intent, MailMove | MailTrash):
+        if isinstance(intent, MailMove | MailTrash) and intent.message is not None:
             old = self._refs(op).get(intent.message)
         elif isinstance(intent, MailDraftUpdate):
             old = self._refs(op).get(intent.draft)

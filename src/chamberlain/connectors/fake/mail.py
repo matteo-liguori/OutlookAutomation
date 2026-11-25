@@ -306,6 +306,9 @@ class FakeMail:
         self._begin_read(source)
         return self._summary(source, self._one(source, locator))
 
+    def folder_of(self, source: str, locator: str) -> str:
+        return locator.split("/", 1)[0]
+
     # --- port: writing --------------------------------------------------------
 
     def prepare(self, intent: MailIntent, refs: Mapping[str, str]) -> Prepared:
@@ -336,7 +339,17 @@ class FakeMail:
                     "draft_locator": self._locator(draft),
                     "expected_sha256": intent.expected_sha256,
                 }
+            case MailTrash() if intent.messages:
+                # A batch: each message is checked where it is moved, as Thunderbird does.
+                locators = [refs[h] for h in intent.messages]
+                data = {
+                    "batch": True,
+                    "locators": cast(list[JsonValue], locators),
+                    "from_folder": intent.from_folder or "",
+                    "to_folder": self._world.folder_by_role(source, FolderRole.TRASH).id,
+                }
             case MailMove() | MailTrash():
+                assert intent.message is not None
                 stored = self._one(source, refs[intent.message])
                 self._check_identity(stored, intent.internet_message_id, intent.from_folder)
                 if isinstance(intent, MailMove):
@@ -408,6 +421,8 @@ class FakeMail:
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: response lost")
         if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH} and not self._move_settled(prepared):
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: move not verified")
+        if receipt.items and not any(item.ok for item in receipt.items):
+            return DispatchResult(outcome=DispatchOutcome.NOT_APPLIED, detail="fake: none moved")
         return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
 
     def reconcile(self, prepared: Prepared, key: str) -> ReconcileResult:
@@ -449,6 +464,22 @@ class FakeMail:
                     status=ReconcileStatus.PRESENT, receipt=ProviderReceipt(verification=_VERIFIED)
                 )
             return absent
+        if data.get("batch") is True:
+            left = [loc for loc in _texts(data, "locators") if self._find(source, loc)]
+            ids = {loc.split("/", 1)[1] for loc in _texts(data, "locators")}
+            target = _text(data, "to_folder")
+            arrived = [
+                m
+                for m in world.mail[source]
+                if m.folder_id == target and m.internet_message_id in ids
+            ]
+            if not left and arrived:
+                return ReconcileResult(
+                    status=ReconcileStatus.PRESENT, receipt=ProviderReceipt(verification=_VERIFIED)
+                )
+            if len(left) == len(ids) and not arrived:
+                return absent
+            return unknown
         if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH}:
             message_id = _text(data, "internet_message_id")
             at_source = self._matching(source, message_id, _text(data, "from_folder"))
@@ -509,6 +540,17 @@ class FakeMail:
             old = self._draft(source, _text(data, "draft_locator"), _text(data, "expected_sha256"))
             world.mail[source].remove(old)
             return ProviderReceipt(verification=_VERIFIED)
+        if data.get("batch") is True:
+            moved: list[ItemResult] = []
+            for locator in _texts(data, "locators"):
+                found = self._find(source, locator)
+                if len(found) == 1:
+                    found[0].folder_id = _text(data, "to_folder")
+                    moved.append(ItemResult(locator=locator, ok=True))
+                else:
+                    code = ErrorCode.REMOTE_AMBIGUOUS if found else ErrorCode.REQUEST_UNKNOWN_HANDLE
+                    moved.append(ItemResult(locator=locator, ok=False, code=code))
+            return ProviderReceipt(verification=_VERIFIED, items=tuple(moved))
         if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH}:
             stored = self._one(source, _text(data, "locator"))
             if world.take(Fault.DUPLICATE_COPY):
@@ -532,6 +574,8 @@ class FakeMail:
     def _move_settled(self, prepared: Prepared) -> bool:
         """Exactly one copy at the destination and none at the source (P-14)."""
         data = prepared.data
+        if data.get("batch") is True:
+            return True  # each item reports its own outcome
         message_id = _text(data, "internet_message_id")
         at_source = self._matching(prepared.source, message_id, _text(data, "from_folder"))
         at_target = self._matching(prepared.source, message_id, _text(data, "to_folder"))

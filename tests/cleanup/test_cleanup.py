@@ -43,9 +43,20 @@ def test_old_inbox_mail_goes_to_trash_only_after_the_owner_confirms(tmp_path: Pa
         lab.provider.mail.add_message(
             FAKE_MAIL_A, internet_message_id="<recent@x>", date=now - timedelta(days=30)
         )
+        # Also filed in one of the owner's own folders: kept (Gmail Trash strips labels).
+        lab.provider.mail.add_folder(FAKE_MAIL_A, "f-bank", "Bank")
+        for folder in ("f-inbox", "f-bank"):
+            lab.provider.mail.add_message(
+                FAKE_MAIL_A,
+                folder_id=folder,
+                internet_message_id="<filed@x>",
+                date=now - timedelta(days=4 * 365),
+            )
         plan = run_cleanup(lab.app, RULES, dry_run=True)
         assert plan.planned == {"Inbox-only mail after three years": 2}
-        assert inbox_ids(lab) == {"<old1@x>", "<old2@x>", "<recent@x>"}, "a plan moves nothing"
+        assert inbox_ids(lab) == {"<old1@x>", "<old2@x>", "<recent@x>", "<filed@x>"}, (
+            "a plan moves nothing"
+        )
 
         before = run_cleanup(lab.app, RULES, dry_run=False)
         assert before.moved == 0
@@ -59,9 +70,12 @@ def test_old_inbox_mail_goes_to_trash_only_after_the_owner_confirms(tmp_path: Pa
         # The test stands in for the owner clicking confirm in the viewer.
         confirm_grant(lab.app.context, grant, {"content_sha256": row["content_sha256"]})
 
+        writes_before = lab.app.context.db.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
         done = run_cleanup(lab.app, RULES, dry_run=False)
         assert (done.moved, done.failed) == (2, [])
-        assert inbox_ids(lab) == {"<recent@x>"}
+        writes = lab.app.context.db.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
+        assert writes - writes_before == 1, "one write moves the whole batch"
+        assert inbox_ids(lab) == {"<recent@x>", "<filed@x>"}
         assert inbox_ids(lab, "f-trash") == {"<old1@x>", "<old2@x>"}
         assert run_cleanup(lab.app, RULES, dry_run=True).planned == {
             "Inbox-only mail after three years": 0

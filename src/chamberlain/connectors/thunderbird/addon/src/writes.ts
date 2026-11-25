@@ -67,6 +67,55 @@ async function cmdMove(a: MoveArgs | TrashArgs, ctx: Ctx, trash: boolean): Promi
   return fail("not_verified", "Exactly one copy at the destination and none at the source was not seen.", "possible");
 }
 
+/** Every message of one folder by bare Message-ID: one scan, however many are asked about. */
+async function byMessageId(r: Bound, folderId: string): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
+  await folderOf(r, folderId);
+  const scan = await scanQuery(r, { folderId, maxScan: 200000 });
+  const map = new Map<string, TbHeader[]>();
+  for (const h of scan.messages) {
+    const id = bare(h.headerMessageId);
+    const list = map.get(id);
+    if (list) list.push(h);
+    else map.set(id, [h]);
+  }
+  return { map, complete: scan.complete };
+}
+
+/** Many messages of one folder to Trash: find them all, one move, one check (clean-up). */
+async function cmdTrashMany(a: TrashManyArgs, ctx: Ctx): Promise<TrashManyResult> {
+  await accountOf(a);
+  await folderOf(a, a.destination_folder_id);
+  check(a.folder_id !== a.destination_folder_id, "changed", "The messages are already in that folder.");
+  const source = await byMessageId(a, a.folder_id);
+  check(source.complete, "ambiguous", "The folder could not be scanned completely.");
+  const items: TrashManyItem[] = [];
+  const ids: number[] = [];
+  const moving: string[] = [];
+  for (const raw of a.internet_message_ids) {
+    const id = bare(raw);
+    const found = source.map.get(id) ?? [];
+    if (found.length === 1) {
+      ids.push(found[0].id);
+      moving.push(id);
+      items.push({ internet_message_id: raw, ok: true, code: "" });
+    } else {
+      items.push({ internet_message_id: raw, ok: false, code: found.length ? "ambiguous" : "not_found" });
+    }
+  }
+  if (ids.length === 0) return fail("not_found", "None of the messages is in that folder.");
+  markMutation(ctx);
+  await messenger.messages.move(ids, a.destination_folder_id);
+  for (let attempt = 0; attempt < TUNING.moveAttempts; attempt++) {
+    const left = await byMessageId(a, a.folder_id);
+    const there = await byMessageId(a, a.destination_folder_id);
+    if (left.complete && there.complete && moving.every((id) => !left.map.has(id) && there.map.has(id))) {
+      return { items, verified: true };
+    }
+    await sleep(TUNING.movePollMs);
+  }
+  return { items, verified: false };
+}
+
 async function cmdMarkRead(a: MarkReadArgs, ctx: Ctx): Promise<MarkReadResult> {
   await accountOf(a);
   const items: MarkReadItem[] = [];
@@ -439,6 +488,27 @@ async function cmdReconcileMove(a: ReconcileMoveArgs): Promise<ReconcileMoveResu
   return {
     source: { folder_id: a.ref.folder_id, messages: source.messages.map(header), complete: source.complete },
     destination: { folder_id: a.destination_folder_id, messages: destination.messages.map(header), complete: destination.complete },
+    refreshed: refresh.refreshed,
+    refresh_verified: refresh.verified,
+  };
+}
+
+async function cmdReconcileTrashMany(a: ReconcileTrashManyArgs): Promise<ReconcileTrashManyResult> {
+  await accountOf(a);
+  const refresh = await maybeRefresh(a, a.refresh, [a.folder_id, a.destination_folder_id]);
+  const source = await byMessageId(a, a.folder_id);
+  const destination = await byMessageId(a, a.destination_folder_id);
+  const items = a.internet_message_ids.map((raw) => {
+    const id = bare(raw);
+    return {
+      internet_message_id: raw,
+      source: (source.map.get(id) ?? []).length,
+      destination: (destination.map.get(id) ?? []).length,
+    };
+  });
+  return {
+    items,
+    complete: source.complete && destination.complete,
     refreshed: refresh.refreshed,
     refresh_verified: refresh.verified,
   };

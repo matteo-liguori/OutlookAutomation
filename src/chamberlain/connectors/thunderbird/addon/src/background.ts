@@ -1,7 +1,7 @@
 // Command bridge (protocol v2). Credentials stay in Thunderbird. No journal, no retry,
 // no command outside the generated closed list (bridge contract B-2 to B-5).
 
-const ADDON_VERSION = "2.0.6";
+const ADDON_VERSION = "2.0.7";
 const HOST_NAME = "chamberlain_thunderbird_bridge";
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 45_000;
@@ -99,6 +99,8 @@ async function runCommand(frame: RequestFrame, ctx: Ctx): Promise<{ result: unkn
       return plain(cmdMove(args, ctx, false));
     case "trash":
       return plain(cmdMove(args, ctx, true));
+    case "trash_many":
+      return plain(cmdTrashMany(args, ctx));
     case "mark_read":
       return plain(cmdMarkRead(args, ctx));
     case "reconcile_send":
@@ -112,6 +114,8 @@ async function runCommand(frame: RequestFrame, ctx: Ctx): Promise<{ result: unkn
     case "reconcile_move":
     case "reconcile_trash":
       return plain(cmdReconcileMove(args));
+    case "reconcile_trash_many":
+      return plain(cmdReconcileTrashMany(args));
     case "reconcile_mark_read":
       return plain(cmdReconcileMarkRead(args));
     case "calendar_list":

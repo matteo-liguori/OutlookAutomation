@@ -124,7 +124,8 @@ def describe_intent(
     if isinstance(intent, MailMove):
         lines.append(f"To folder: {intent.to_folder}; mark read: {intent.mark_read}")
     elif isinstance(intent, MailTrash):
-        lines.append("Destination: the recoverable trash folder")
+        count = f"Messages: {len(intent.messages)}; " if intent.messages else ""
+        lines.append(count + "Destination: the recoverable trash folder")
     elif isinstance(intent, MailMarkRead):
         lines.append(f"Messages: {len(intent.messages)}; mark as read: {intent.read}")
     elif isinstance(intent, MailDraftDiscard):

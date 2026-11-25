@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Final, TypeVar
+from typing import Final, Literal, TypeVar
 
 from pydantic import JsonValue
 
@@ -163,6 +163,12 @@ class ComposePlan(Model):
     expected_raw_sha256: str | None = None
 
 
+_TRASH_ITEM_CODES = {
+    "not_found": ErrorCode.REQUEST_UNKNOWN_HANDLE,
+    "ambiguous": ErrorCode.REMOTE_AMBIGUOUS,
+}
+
+
 class MovePlan(Model):
     ref: MessageRef
     destination_folder_id: str
@@ -170,6 +176,15 @@ class MovePlan(Model):
     source_before: int
     destination_before: int
     was_unread: bool
+
+
+class TrashBatchPlan(Model):
+    """Many messages of one folder to Trash in one move (`mail.trash` with `messages`)."""
+
+    batch: Literal[True] = True
+    folder_id: str
+    internet_message_ids: tuple[str, ...]
+    destination_folder_id: str
 
 
 class MarkPlan(Model):
@@ -575,6 +590,9 @@ class ThunderbirdMail:
         binding, where = self._locate(source, locator)
         return self._summary(source, binding, self._resolve_one(binding, where))
 
+    def folder_of(self, source: str, locator: str) -> str:
+        return self._locate(source, locator)[1].folder_id
+
     def read(self, source: str, locator: str) -> Message:
         binding, where = self._locate(source, locator)
         reply = self._client.call(
@@ -653,9 +671,30 @@ class ThunderbirdMail:
             draft = self._draft_ref(binding, refs, intent.draft, intent.expected_sha256)
             plan = DiscardPlan(draft=draft, expected_raw_sha256=intent.expected_sha256)
             return self._prepared(intent.source, intent.kind, None, plan)
+        if isinstance(intent, MailTrash) and intent.messages:
+            return self._prepare_trash_batch(binding, intent, refs)
         if isinstance(intent, MailMove | MailTrash):
             return self._prepare_move(binding, intent, refs)
         return self._prepare_mark_read(binding, intent, refs)
+
+    def _prepare_trash_batch(
+        self, binding: ThunderbirdBinding, intent: MailTrash, refs: Mapping[str, str]
+    ) -> Prepared:
+        """No call per message: each is found, moved and checked by the add-on in one go."""
+        located = [self._ref_of(binding, refs, handle) for handle in intent.messages]
+        folders = {where.folder_id for where in located}
+        if folders != {intent.from_folder}:
+            raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The messages are not in that folder.")
+        if binding.trash_folder_id in folders:
+            raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The messages are already in Trash.")
+        if binding.trash_folder_id not in {f.id for f in self.folders(intent.source)}:
+            raise ChamberlainError(ErrorCode.SOURCE_UNAVAILABLE, "The trash folder is missing.")
+        plan = TrashBatchPlan(
+            folder_id=located[0].folder_id,
+            internet_message_ids=tuple(where.message_id for where in located),
+            destination_folder_id=binding.trash_folder_id,
+        )
+        return self._prepared(intent.source, intent.kind, None, plan)
 
     @staticmethod
     def _prepared(source: str, kind: IntentKind, token: str | None, plan: Model) -> Prepared:
@@ -819,6 +858,7 @@ class ThunderbirdMail:
     def _prepare_move(
         self, binding: ThunderbirdBinding, intent: MailMove | MailTrash, refs: Mapping[str, str]
     ) -> Prepared:
+        assert intent.message is not None  # a batch goes to _prepare_trash_batch
         where = self._ref_of(binding, refs, intent.message)
         header = self._resolve_one(binding, where)
         if intent.internet_message_id is not None and bare(intent.internet_message_id) != bare(
@@ -896,6 +936,8 @@ class ThunderbirdMail:
                 return self._dispatch_compose(binding, prepared, payloads)
             if kind is _K.MAIL_DRAFT_DISCARD:
                 return self._dispatch_discard(binding, prepared)
+            if prepared.data.get("batch") is True:
+                return self._dispatch_trash_batch(binding, prepared)
             if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH}:
                 return self._dispatch_move(binding, prepared)
             return self._dispatch_mark_read(binding, prepared)
@@ -1078,6 +1120,42 @@ class ThunderbirdMail:
             detail=warnings[0] if warnings else "",
         )
 
+    def _dispatch_trash_batch(
+        self, binding: ThunderbirdBinding, prepared: Prepared
+    ) -> DispatchResult:
+        plan = _plan(prepared, TrashBatchPlan)
+        reply = self._client.call(
+            Command.TRASH_MANY,
+            protocol.TrashManyArgs(
+                account_id=binding.account_id,
+                mailbox=binding.mailbox,
+                folder_id=plan.folder_id,
+                internet_message_ids=plan.internet_message_ids,
+                destination_folder_id=plan.destination_folder_id,
+            ),
+        )
+        result = _typed(reply, protocol.TrashManyResult)
+        items = tuple(
+            ItemResult(
+                locator=encode_locator(
+                    binding.account_id, plan.folder_id, item.internet_message_id
+                ),
+                ok=item.ok,
+                code=None
+                if item.ok
+                else _TRASH_ITEM_CODES.get(item.code, ErrorCode.REMOTE_CHANGED),
+            )
+            for item in result.items
+        )
+        if not result.verified:
+            return DispatchResult(
+                outcome=DispatchOutcome.UNKNOWN, detail="the batch move was not seen to finish"
+            )
+        return DispatchResult(
+            outcome=DispatchOutcome.APPLIED,
+            receipt=ProviderReceipt(verification=Verification(client_verified=True), items=items),
+        )
+
     def _dispatch_mark_read(
         self, binding: ThunderbirdBinding, prepared: Prepared
     ) -> DispatchResult:
@@ -1128,6 +1206,8 @@ class ThunderbirdMail:
                 return self._reconcile_compose(binding, prepared)
             if kind is _K.MAIL_DRAFT_DISCARD:
                 return self._reconcile_discard(binding, prepared)
+            if prepared.data.get("batch") is True:
+                return self._reconcile_trash_batch(binding, prepared)
             if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH}:
                 return self._reconcile_move(binding, prepared)
             return self._reconcile_mark_read(binding, prepared)
@@ -1314,6 +1394,40 @@ class ThunderbirdMail:
             return ReconcileResult(status=ReconcileStatus.ABSENT, proof=proof)
         return ReconcileResult(
             status=ReconcileStatus.UNKNOWN, detail="source and destination disagree"
+        )
+
+    def _reconcile_trash_batch(
+        self, binding: ThunderbirdBinding, prepared: Prepared
+    ) -> ReconcileResult:
+        """Present when none is left in the folder and the moved ones are in Trash."""
+        plan = _plan(prepared, TrashBatchPlan)
+        reply = self._client.call(
+            Command.RECONCILE_TRASH_MANY,
+            protocol.ReconcileTrashManyArgs(
+                account_id=binding.account_id,
+                mailbox=binding.mailbox,
+                folder_id=plan.folder_id,
+                internet_message_ids=plan.internet_message_ids,
+                destination_folder_id=plan.destination_folder_id,
+            ),
+        )
+        result = _typed(reply, protocol.ReconcileTrashManyResult)
+        if not result.complete:
+            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="a folder scan was cut")
+        left = [item for item in result.items if item.source > 0]
+        arrived = [item for item in result.items if item.destination > 0]
+        if not left and arrived:
+            return ReconcileResult(
+                status=ReconcileStatus.PRESENT,
+                receipt=ProviderReceipt(verification=Verification(client_verified=True)),
+            )
+        if len(left) == len(result.items) and not arrived:
+            proof = result.refresh_verified and self._provable(
+                prepared.source, prepared.intent_kind
+            )
+            return ReconcileResult(status=ReconcileStatus.ABSENT, proof=proof)
+        return ReconcileResult(
+            status=ReconcileStatus.UNKNOWN, detail="some of the batch moved, some did not"
         )
 
     def _reconcile_mark_read(

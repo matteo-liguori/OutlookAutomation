@@ -73,6 +73,7 @@ class Command(StrEnum):
     DRAFT_DISCARD = "draft_discard"
     MOVE = "move"
     TRASH = "trash"
+    TRASH_MANY = "trash_many"
     MARK_READ = "mark_read"
     RECONCILE_SEND = "reconcile_send"
     RECONCILE_DRAFT_SAVE = "reconcile_draft_save"
@@ -80,6 +81,7 @@ class Command(StrEnum):
     RECONCILE_DRAFT_DISCARD = "reconcile_draft_discard"
     RECONCILE_MOVE = "reconcile_move"
     RECONCILE_TRASH = "reconcile_trash"
+    RECONCILE_TRASH_MANY = "reconcile_trash_many"
     RECONCILE_MARK_READ = "reconcile_mark_read"
     CALENDAR_LIST = "calendar_list"
     CALENDAR_QUERY = "calendar_query"
@@ -108,6 +110,7 @@ WRITE_COMMANDS: frozenset[Command] = frozenset(
         Command.DRAFT_DISCARD,
         Command.MOVE,
         Command.TRASH,
+        Command.TRASH_MANY,
         Command.MARK_READ,
         Command.CALENDAR_CREATE,
         Command.CALENDAR_UPDATE,
@@ -548,6 +551,20 @@ class TrashArgs(AccountArgs):
     destination_folder_id: str
 
 
+MessageIds = Annotated[
+    tuple[Annotated[str, Field(min_length=1, max_length=1000)], ...],
+    Field(min_length=1, max_length=500),
+]
+
+
+class TrashManyArgs(AccountArgs):
+    """Move many messages of one folder to Trash in one Thunderbird move (clean-up batches)."""
+
+    folder_id: str
+    internet_message_ids: MessageIds
+    destination_folder_id: str
+
+
 class MarkReadArgs(AccountArgs):
     refs: Annotated[tuple[MessageRef, ...], Field(min_length=1, max_length=200)]
     read: bool = True
@@ -586,6 +603,19 @@ class MarkReadItem(Model):
 
 class MarkReadResult(Model):
     items: tuple[MarkReadItem, ...]
+
+
+class TrashManyItem(Model):
+    internet_message_id: str
+    ok: bool
+    code: str = ""
+    """`not_found` or `ambiguous` when it was not moved (checked before the move)."""
+
+
+class TrashManyResult(Model):
+    items: tuple[TrashManyItem, ...]
+    verified: bool
+    """Every moved message left the folder and reached the destination (one scan each)."""
 
 
 class DiscardResult(Model):
@@ -684,6 +714,26 @@ class ReconcileMoveResult(Model):
 
 class ReconcileTrashArgs(ReconcileMoveArgs):
     pass
+
+
+class ReconcileTrashManyArgs(AccountArgs):
+    folder_id: str
+    internet_message_ids: MessageIds
+    destination_folder_id: str
+    refresh: bool = True
+
+
+class TrashCopies(Model):
+    internet_message_id: str
+    source: int
+    destination: int
+
+
+class ReconcileTrashManyResult(Model):
+    items: tuple[TrashCopies, ...]
+    complete: bool
+    refreshed: bool
+    refresh_verified: bool
 
 
 class ReconcileMarkReadArgs(AccountArgs):
@@ -793,6 +843,7 @@ ARGS_MODELS: dict[Command, type[Model]] = {
     Command.DRAFT_DISCARD: DraftDiscardArgs,
     Command.MOVE: MoveArgs,
     Command.TRASH: TrashArgs,
+    Command.TRASH_MANY: TrashManyArgs,
     Command.MARK_READ: MarkReadArgs,
     Command.RECONCILE_SEND: ReconcileSendArgs,
     Command.RECONCILE_DRAFT_SAVE: ReconcileDraftSaveArgs,
@@ -800,6 +851,7 @@ ARGS_MODELS: dict[Command, type[Model]] = {
     Command.RECONCILE_DRAFT_DISCARD: ReconcileDraftDiscardArgs,
     Command.RECONCILE_MOVE: ReconcileMoveArgs,
     Command.RECONCILE_TRASH: ReconcileTrashArgs,
+    Command.RECONCILE_TRASH_MANY: ReconcileTrashManyArgs,
     Command.RECONCILE_MARK_READ: ReconcileMarkReadArgs,
     Command.CALENDAR_LIST: CalendarListArgs,
     Command.CALENDAR_QUERY: CalendarQueryArgs,
@@ -826,6 +878,7 @@ RESULT_MODELS: dict[Command, type[Model]] = {
     Command.DRAFT_DISCARD: DiscardResult,
     Command.MOVE: MoveResult,
     Command.TRASH: MoveResult,
+    Command.TRASH_MANY: TrashManyResult,
     Command.MARK_READ: MarkReadResult,
     Command.RECONCILE_SEND: ReconcileComposeResult,
     Command.RECONCILE_DRAFT_SAVE: ReconcileComposeResult,
@@ -833,6 +886,7 @@ RESULT_MODELS: dict[Command, type[Model]] = {
     Command.RECONCILE_DRAFT_DISCARD: ReconcileDiscardResult,
     Command.RECONCILE_MOVE: ReconcileMoveResult,
     Command.RECONCILE_TRASH: ReconcileMoveResult,
+    Command.RECONCILE_TRASH_MANY: ReconcileTrashManyResult,
     Command.RECONCILE_MARK_READ: ReconcileMarkReadResult,
     Command.CALENDAR_LIST: CalendarListResult,
     Command.CALENDAR_QUERY: CalendarQueryResult,

@@ -46,6 +46,10 @@ class MailPort(Protocol):
         """The current item for a stable locator, after any client restart (P-6)."""
         ...
 
+    def folder_of(self, source: str, locator: str) -> str:
+        """The folder a locator names, read from the locator alone: no client call."""
+        ...
+
     # --- writing: called only by the write engine, in this order -------------
 
     def prepare(self, intent: MailIntent, refs: Mapping[str, str]) -> Prepared:

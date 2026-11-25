@@ -103,6 +103,8 @@ SENDS_PER_HOUR: Final = 200
 """Sends per mailbox per hour (owner, 2026-11-25: 20 was too low). Mail only to the owner's
 own addresses is not capped, so a live test never hits it."""
 MARK_READ_MAX: Final = 200
+TRASH_BATCH_MAX: Final = 500
+"""Messages one `mail.trash` write may move together (one Thunderbird move, one check)."""
 ONE_OFF_GRANT_DAYS: Final = 7
 STANDING_GRANT_MAX_DAYS: Final = 365
 PROPOSAL_LAPSE_DAYS: Final = 7

@@ -10,7 +10,7 @@ import logging
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Final, Literal
+from typing import Any, Final
 
 from chamberlain.app.core import App
 from chamberlain.cleanup.rules import (
@@ -32,6 +32,8 @@ log = logging.getLogger("chamberlain.cleanup")
 
 CARD_TITLE: Final = "Mail clean-up"
 GRANT_TITLE: Final = "Move old mail to Trash"
+BATCH: Final = 250
+"""Messages per write: one Thunderbird move each, well inside the add-on's write deadline."""
 LOOK_AT_TRASH_OVER: Final = 100
 """More than this from one mailbox in one run: the report asks the agent to glance at Trash."""
 CLEANUP_EVERY: Final = timedelta(days=1)
@@ -200,40 +202,49 @@ def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupRep
     for source, wanted in sorted(folders.items()):
         state, _ = _grant_state(app, source, _scope(source, frozenset(wanted), card))
         (active.append(source) if state == "active" else report.waiting.append(source))
+    unsure: set[str] = set()
     for rule in config.rules:
         for source in active:
-            for candidate in candidates(ctx, rule, now, only=source):
-                outcome = _trash(s, card, candidate, report)
-                if outcome == "moved":
+            found = list(candidates(ctx, rule, now, only=source, unsure=unsure))
+            # One write per batch: one Thunderbird move, one check (never one per message).
+            for start in range(0, len(found), BATCH):
+                batch = found[start : start + BATCH]
+                moved = _trash(s, card, source, batch, report)
+                if moved is None:
+                    break  # not covered: the rest of this mailbox would be refused too
+                if moved:
                     where = f"{rule.name} ({source})"
-                    report.moved_by[where] = report.moved_by.get(where, 0) + 1
-                    report.per_mailbox[source] = report.per_mailbox.get(source, 0) + 1
-                elif outcome == "refused":
-                    # Not covered: the rest of this mailbox would be refused too.
-                    report.failed.append("not covered by the grant")
-                    break
+                    report.moved_by[where] = report.moved_by.get(where, 0) + moved
+                    report.per_mailbox[source] = report.per_mailbox.get(source, 0) + moved
+    report.failed += [
+        f"kept all of {source}: its folders could not be read in full" for source in sorted(unsure)
+    ]
     return report
 
 
 def _trash(
-    s: _Session, card: str, candidate: Candidate, report: CleanupReport
-) -> Literal["moved", "failed", "refused"]:
+    s: _Session, card: str, source: str, batch: list[Candidate], report: CleanupReport
+) -> int | None:
+    """Move one batch; how many moved, or None when the grant does not cover it."""
     refs = s.app.context.services.refs
-    handle = refs.remember(HandleKind.MESSAGE, candidate.source, candidate.summary.locator)
-    intent = {"kind": "mail.trash", "source": candidate.source, "message": handle}
+    handles = [refs.remember(HandleKind.MESSAGE, source, c.summary.locator) for c in batch]
+    intent = {"kind": "mail.trash", "source": source, "messages": handles}
     try:
         proposed = s.ok("propose", intent=intent, card=card)
         if not proposed.get("ready"):
-            return "refused"
+            report.failed += ["not covered by the grant"] * len(batch)
+            return None
         done = s.ok("do", operation=proposed["operation"])
     except ChamberlainError as error:
-        report.failed.append(error.code.value)
-        return "failed"
-    state = str(done["operation"]["state"])
-    if state != "confirmed":
-        report.failed.append(state)
-        return "failed"
-    return "moved"
+        report.failed += [error.code.value] * len(batch)
+        return 0
+    operation: dict[str, Any] = done["operation"]
+    if operation["state"] != "confirmed":
+        report.failed += [str(operation["state"])] * len(batch)
+        return 0
+    failed = int(operation.get("items_failed", 0))
+    report.failed += ["no longer there"] * failed
+    return int(operation.get("items_ok", len(batch) - failed))
 
 
 def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
