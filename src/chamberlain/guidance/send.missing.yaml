@@ -1,9 +1,9 @@
 id: send.missing
-version: 2
+version: 3
 title: A send is missing after a day
 when: {event: send.missing, reason: missing}
 text: >
-  The harness looked again after a day and this send is nowhere it should be.
+  The harness looked after a day: this send is not where it should be.
   Look in the folder yourself. If you find it, record that it was sent, with
   what you saw. If it is missing and still wanted, send it again from this one;
   a duplicate costs little. If unsure, ask the user. Say which in your report.

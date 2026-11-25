@@ -1,9 +1,9 @@
 id: report.write
-version: 1
+version: 2
 title: Writing the pass report
 when: {event: report.due}
 text: >
-  The work is done, so write the report now. Open the item to see which
+  The work is done: write the report. Open the item to see which
   sections are yours: the harness fills sources, newest times, filing counts,
   appointments and reviews itself. Say what the owner must do next, then what
   changed, and plainly what you could not cover. Keep it under the named run.

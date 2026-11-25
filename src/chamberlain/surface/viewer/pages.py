@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
+from chamberlain.domain.operations import OUTSIDE_STATE_WORDS
 from chamberlain.domain.same_event import same_event
 from chamberlain.limits import CARD_POSITION_MAX
 from chamberlain.memory import repo as memory_repo
@@ -396,6 +397,18 @@ def timeline(ctx: Context, zone: str, until: str | None, days: int) -> dict[str,
                 "title": row.summary,
                 "detail": f"{row.actor}, {row.kind}",
                 "card": None,
+            }
+        )
+    for line in repo.outside_between(ctx.db, start, end, TIMELINE_LIMIT):
+        day = _stored_to_local(line.at, tz).date().isoformat()
+        said = f" It said: {line.reported}" if line.reported else ""
+        grouped.setdefault(day, []).append(
+            {
+                "at": line.at,
+                "kind": "outside",
+                "title": f"Outside: {line.where} - {line.what}",
+                "detail": OUTSIDE_STATE_WORDS.get(line.state, line.state) + "." + said,
+                "card": line.card_title,
             }
         )
     return {

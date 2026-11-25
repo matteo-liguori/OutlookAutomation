@@ -63,6 +63,12 @@ ContactHandle = Annotated[str, StringConstraints(pattern=handle_pattern("con"))]
 SOURCE_ID_PATTERN = r"^(mail|calendar|contacts):[a-z0-9-]{1,32}$"
 SourceId = Annotated[str, StringConstraints(pattern=SOURCE_ID_PATTERN)]
 
+OUTSIDE_SOURCE = "outside:owner"
+"""The fixed source of an outside action (04-writes W-44). No connector stands behind it."""
+WRITE_SOURCE_PATTERN = r"^((mail|calendar|contacts):[a-z0-9-]{1,32}|outside:owner)$"
+WriteSourceId = Annotated[str, StringConstraints(pattern=WRITE_SOURCE_PATTERN)]
+"""A source a write or a grant may name: a configured source, or the outside source."""
+
 Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 EmailAddress = Annotated[
     str,

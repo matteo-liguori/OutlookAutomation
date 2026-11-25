@@ -51,6 +51,7 @@ from chamberlain.schema.base import (
     Sha256,
     SourceId,
     Timestamp,
+    WriteSourceId,
 )
 from chamberlain.schema.envelope import Content, ContentLine, NextStep
 from chamberlain.schema.errors import ErrorCode
@@ -223,7 +224,7 @@ class GrantView(Model):
     state: GrantState
     title: str = Field(max_length=80)
     summary: str = Field(default="", max_length=300)
-    source: SourceId
+    source: WriteSourceId
     requirement: Requirement
     content_sha256: Sha256
     card: CardHandle | None = None
@@ -236,7 +237,7 @@ class OperationView(Model):
     kind: Literal["operation"] = "operation"
     handle: OperationHandle
     intent_kind: IntentKind
-    source: SourceId
+    source: WriteSourceId
     state: OperationState
     grant: GrantHandle | None = None
     verification: Verification = Verification()
@@ -579,6 +580,15 @@ class ProposeResponse(Model):
 
 class DoRequest(ToolRequest):
     operation: OperationHandle
+    report: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+        description=(
+            "Only for an outside action you have now done: what you did and any confirmation "
+            "number. Leave it out to take the permission before you act."
+        ),
+    )
 
 
 class DoResponse(Model):

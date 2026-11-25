@@ -119,14 +119,14 @@ def _candidates(
     grants: Sequence[GrantRow], operation: OperationFacts, intent: WriteIntent
 ) -> list[GrantRow]:
     """One-offs for exactly this content first, then standing grants narrowest first (W-22)."""
-    live = [g for g in grants if g.source_id == intent.source and g.state is GrantState.ACTIVE]
+    live = [g for g in grants if g.covers(intent.source) and g.state is GrantState.ACTIVE]
     one_offs = [
         g
         for g in live
         if g.kind is GrantKind.ONE_OFF and g.content_sha256 == operation.intent_sha256
     ]
     standing = [g for g in live if g.kind is GrantKind.STANDING and g.scope is not None]
-    standing.sort(key=lambda g: narrowness(g.scope) if g.scope is not None else (0, 0))
+    standing.sort(key=lambda g: narrowness(g.scope) if g.scope is not None else (0, 0, 0))
     return [*sorted(one_offs, key=lambda g: g.handle), *standing]
 
 
@@ -138,7 +138,7 @@ def _verdict(
     now: datetime,
 ) -> ErrorCode | None:
     """None if this grant authorises the intent now, else the reason it does not."""
-    if grant.state is not GrantState.ACTIVE or grant.source_id != intent.source:
+    if grant.state is not GrantState.ACTIVE or not grant.covers(intent.source):
         return ErrorCode.GRANT_NOT_ACTIVE
     if grant.expires_at is None or grant.expires_at <= now:
         return ErrorCode.GRANT_NOT_ACTIVE

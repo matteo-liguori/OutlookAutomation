@@ -110,8 +110,12 @@ def grants_in_states(
     sql = f"SELECT * FROM grants WHERE state IN ({_marks(wanted)})"
     args: list[Any] = list(wanted)
     if source_id is not None:
-        sql += " AND source_id = ?"
-        args.append(source_id)
+        # A grant is for its own source, or for any source its scope lists (G-26).
+        sql += (
+            " AND (source_id = ? OR (scope_json IS NOT NULL AND EXISTS "
+            "(SELECT 1 FROM json_each(scope_json, '$.sources') WHERE value = ?)))"
+        )
+        args += [source_id, source_id]
     rows = db.execute(sql + " ORDER BY proposed_at, handle", args).fetchall()
     return [_grant(row) for row in rows]
 
@@ -148,6 +152,11 @@ def card_is_closed(db: sqlite3.Connection, card: str) -> bool:
     return row is not None and row["state"] == "closed"
 
 
+def card_is_open(db: sqlite3.Connection, card: str) -> bool:
+    row = db.execute("SELECT state FROM cards WHERE handle = ?", (card,)).fetchone()
+    return row is not None and row["state"] == "open"
+
+
 def evidence_facts(db: sqlite3.Connection, handle: str) -> tuple[str | None, str | None] | None:
     """`(session, ref)` of an evidence row, or None if it does not exist (G-13)."""
     row = db.execute("SELECT session, ref FROM evidence WHERE handle = ?", (handle,)).fetchone()
@@ -162,7 +171,7 @@ def compactable_grants(db: sqlite3.Connection, before: str) -> list[str]:
         "AND ended_at IS NOT NULL AND ended_at <= ? "
         "AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.grant = grants.handle "
         "AND o.state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', 'cancelled', "
-        "'abandoned', 'superseded'))",
+        "'abandoned', 'superseded', 'agent_reported'))",
         (before,),
     ).fetchall()
     return [row["handle"] for row in rows]
@@ -558,11 +567,30 @@ def resend_of(db: sqlite3.Connection, original: str) -> OperationRow | None:
     return None if row is None else _operation(row)
 
 
+def operations_for_grant(db: sqlite3.Connection, grant: str, limit: int) -> list[OperationRow]:
+    """Operations that took a use of `grant`, newest first (W-47)."""
+    rows = db.execute(
+        "SELECT * FROM operations WHERE grant = ? ORDER BY created_at DESC, handle LIMIT ?",
+        (grant, limit),
+    ).fetchall()
+    return [_operation(row) for row in rows]
+
+
+def stale_outside(db: sqlite3.Connection, before: str) -> list[OperationRow]:
+    """Outside actions allowed before `before` and still not reported (W-46)."""
+    rows = db.execute(
+        "SELECT * FROM operations WHERE kind = 'outside.action' AND state = 'authorised' "
+        "AND updated_at <= ?",
+        (before,),
+    ).fetchall()
+    return [_operation(row) for row in rows]
+
+
 def compactable_operations(db: sqlite3.Connection, before: str) -> list[OperationRow]:
     rows = db.execute(
         "SELECT * FROM operations WHERE compacted_at IS NULL AND settled_at IS NOT NULL "
         "AND settled_at <= ? AND state IN ('confirmed', 'failed_clean', 'confirmed_absent', "
-        "'cancelled', 'abandoned', 'superseded')",
+        "'cancelled', 'abandoned', 'superseded', 'agent_reported')",
         (before,),
     ).fetchall()
     return [_operation(row) for row in rows]

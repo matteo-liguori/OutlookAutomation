@@ -24,6 +24,7 @@ from chamberlain.domain.intents import (
     CalendarUpdate,
     IntentKind,
     MailSend,
+    OutsideAction,
     WriteIntent,
 )
 
@@ -102,6 +103,12 @@ RULES: tuple[Rule, ...] = (
         lambda f: isinstance(f.intent, MailSend),
     ),
     Rule(
+        "Acting outside Chamberlain's tools for you: a form, a portal, a website "
+        "(never a password, a payment or accepting terms)",
+        Needs.WORD_OTHER,
+        lambda f: isinstance(f.intent, OutsideAction),
+    ),
+    Rule(
         "Everything else: drafts, filing, trash, mark read, other calendar writes",
         Needs.WORD_OTHER,
         lambda _facts: True,
@@ -128,6 +135,8 @@ class Cover:
     never: bool = False
     """No standing permission covers it (it acts on an event the scope cannot see)."""
     folders: bool = False
+    card_bound: bool = False
+    """Only a permission bound to one card may cover it."""
 
 
 STANDING: tuple[Cover, ...] = (
@@ -148,6 +157,11 @@ STANDING: tuple[Cover, ...] = (
         never=True,
     ),
     Cover((IntentKind.MAIL_MOVE, IntentKind.MAIL_TRASH), "Named folders", folders=True),
+    Cover(
+        (IntentKind.OUTSIDE_ACTION,),
+        "One card, one place and the kinds of action named; never a password, payment or terms",
+        card_bound=True,
+    ),
     Cover(
         (
             IntentKind.MAIL_MARK_READ,
@@ -173,12 +187,19 @@ _NEEDS_WORDS = {
 }
 
 
+NEVER_AND_SEVERAL = (
+    "One standing permission can cover several calendars, or several mailboxes, with one click. "
+    "Entering a password, paying and accepting terms are never allowed, whatever is granted."
+)
+
+
 def markdown() -> str:
     """The table as the docs show it (between the permission-table markers)."""
     lines = ["| When | What it takes |", "| --- | --- |"]
     lines += [f"| {r.situation} | {_NEEDS_WORDS[r.needs]} |" for r in RULES]
     lines += ["", "| A standing permission for | May cover |", "| --- | --- |"]
     lines += [f"| {', '.join(f'`{k.value}`' for k in c.kinds)} | {c.covers} |" for c in STANDING]
+    lines += ["", NEVER_AND_SEVERAL]
     return "\n".join(lines)
 
 

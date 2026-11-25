@@ -107,7 +107,7 @@ TOOLS: tuple[ToolSpec, ...] = (
     ),
     ToolSpec(
         _N.DO,
-        "Carry out an authorised operation, once.",
+        "Carry out an authorised operation, once. Outside action: act, then call with report.",
         t.DoRequest,
         t.DoResponse,
         "writes",

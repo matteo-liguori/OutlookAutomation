@@ -78,6 +78,7 @@ def build_receipt(
     items: tuple[ItemResult, ...] = (),
     result_ref: str | None = None,
     warnings: tuple[str, ...] = (),
+    reported: str | None = None,
 ) -> str:
     """The stored receipt of a terminal state (S-2: one named model)."""
     summary = Receipt(
@@ -90,5 +91,7 @@ def build_receipt(
         items_ok=sum(1 for item in items if item.ok),
         items_failed=sum(1 for item in items if not item.ok),
     )
-    stored = StoredReceipt(summary=summary, result_ref=result_ref, items=items, warnings=warnings)
+    stored = StoredReceipt(
+        summary=summary, result_ref=result_ref, items=items, warnings=warnings, reported=reported
+    )
     return stored.model_dump_json(exclude_none=True)

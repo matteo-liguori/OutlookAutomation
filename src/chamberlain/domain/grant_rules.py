@@ -18,6 +18,7 @@ from chamberlain.domain.intents import (
     MailMarkRead,
     MailMove,
     MailTrash,
+    OutsideAction,
     WriteIntent,
 )
 from chamberlain.domain.permissions import Facts, Needs, cover_for, needs_for, recipients_of
@@ -97,12 +98,20 @@ def _domain(address: str) -> str:
 
 def scope_mismatch(scope: StandingScope, intent: WriteIntent, card: str | None) -> bool:
     """True when the scope does not cover the intent. Exact fields only (W-22)."""
-    if scope.source != intent.source or IntentKind(intent.kind) not in scope.intent_kinds:
+    if not scope.covers(intent.source) or IntentKind(intent.kind) not in scope.intent_kinds:
         return True
     if scope.card is not None and scope.card != card:
         return True
     if scope.calendar is not None and scope.calendar != intent.source:
         return True
+    if isinstance(intent, OutsideAction):
+        return (
+            card is None
+            or scope.where is None
+            or scope.where.strip().lower() != intent.where.strip().lower()
+            or scope.categories is None
+            or intent.category not in scope.categories
+        )
     if isinstance(intent, CalendarRespond) and intent.organiser is None:
         return True
     cover = cover_for(IntentKind(intent.kind))
@@ -126,9 +135,14 @@ def scope_mismatch(scope: StandingScope, intent: WriteIntent, card: str | None) 
     return isinstance(intent, MailMarkRead) and not scope.allow_mark_read
 
 
-def narrowness(scope: StandingScope) -> tuple[int, int]:
-    """Smaller sorts first: the narrowest covering standing grant wins (W-22)."""
-    return (len(scope.intent_kinds), len(scope.recipients) + 100 * len(scope.recipient_domains))
+def narrowness(scope: StandingScope) -> tuple[int, int, int]:
+    """Smaller sorts first: the narrowest covering standing grant wins (W-22); of two that are
+    otherwise alike, the one covering fewer sources (G-26)."""
+    return (
+        len(scope.intent_kinds),
+        len(scope.recipients) + 100 * len(scope.recipient_domains),
+        len(scope.all_sources()),
+    )
 
 
 # --- review dates (G-6 to G-8) ---------------------------------------------------

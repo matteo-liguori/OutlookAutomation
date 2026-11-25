@@ -11,6 +11,7 @@ from pydantic import Field, model_validator
 from chamberlain.domain.calendar import EventFields
 from chamberlain.limits import MARK_READ_MAX
 from chamberlain.schema.base import (
+    OUTSIDE_SOURCE,
     ArtifactHandle,
     CalendarEventHandle,
     EmailAddress,
@@ -33,6 +34,7 @@ class IntentKind(StrEnum):
     CALENDAR_UPDATE = "calendar.update"
     CALENDAR_DELETE = "calendar.delete"
     CALENDAR_RESPOND = "calendar.respond"
+    OUTSIDE_ACTION = "outside.action"
 
 
 Subject = Annotated[str, Field(max_length=500, pattern=r"^[^\r\n]*$")]
@@ -162,6 +164,36 @@ class CalendarRespond(Model):
     """Who gets the answer. Completed by the harness from the stored event (W-1)."""
 
 
+class OutsideCategory(StrEnum):
+    FORM_FILL = "form_fill"
+    FORM_SUBMIT = "form_submit"
+    PORTAL_READ = "portal_read"
+    DOWNLOAD = "download"
+    OTHER = "other"
+
+
+OneLine = Annotated[str, Field(pattern=r"^[^\r\n]*$")]
+
+
+class OutsideAction(Model):
+    """Something the assistant does outside Chamberlain's tools that changes something or acts
+    as the owner (04-writes W-44). The harness never does it and never checks it (W-46)."""
+
+    kind: Literal[IntentKind.OUTSIDE_ACTION] = IntentKind.OUTSIDE_ACTION
+    source: Literal["outside:owner"] = OUTSIDE_SOURCE  # pyright: ignore[reportAssignmentType]
+    where: OneLine = Field(min_length=1, max_length=80)
+    """The site, portal or app."""
+    what: OneLine = Field(min_length=1, max_length=300)
+    """What it will do, in plain words."""
+    enters: OneLine = Field(default="", max_length=300)
+    """What it will enter or submit."""
+    category: OutsideCategory
+    enters_password: bool
+    pays: bool
+    accepts_terms: bool
+    """The three things only the owner does (W-45). Always stated; true is refused."""
+
+
 MailIntent = (
     MailSend
     | MailDraftSave
@@ -172,7 +204,7 @@ MailIntent = (
     | MailMarkRead
 )
 CalendarIntent = CalendarCreate | CalendarUpdate | CalendarDelete | CalendarRespond
-WriteIntent = Annotated[MailIntent | CalendarIntent, Field(discriminator="kind")]
+WriteIntent = Annotated[MailIntent | CalendarIntent | OutsideAction, Field(discriminator="kind")]
 
 HARNESS_COMPLETED_FIELDS = frozenset(
     {"message_id", "uid", "internet_message_id", "from_folder", "organiser"}

@@ -117,7 +117,7 @@
       "section",
       { class: "card" },
       el("h3", { text: summary.title }),
-      el("div", { class: "muted", text: summary.kind + ", " + summary.state + ", " + summary.source }),
+      el("div", { class: "muted", text: summary.kind + ", " + summary.state + ", " + (summary.sources || [summary.source]).join(", ") }),
       el("div", { class: "muted", text: "Review due: " + when(summary.review_at) }),
       el("button", { class: "act", text: "Open", onclick: function () { openGrant(summary.handle); } })
     );
@@ -128,7 +128,7 @@
       var box = el("section", { class: "panel" });
       box.appendChild(el("h2", { text: grant.title }));
       box.appendChild(
-        el("p", { class: "muted", text: grant.kind + ", " + grant.state + ", needs " + grant.requirement + ", source " + grant.source })
+        el("p", { class: "muted", text: grant.kind + ", " + grant.state + ", needs " + grant.requirement + ", " + ((grant.sources || []).length > 1 ? "sources " : "source ") + (grant.sources || [grant.source]).join(", ") })
       );
       if (grant.why_a_click && grant.state === "proposed") {
         box.appendChild(el("p", { class: "muted", text: "A click is needed for: " + grant.why_a_click + "." }));
@@ -139,6 +139,14 @@
       box.appendChild(
         el("pre", { text: grant.rendered || (grant.state === "proposed" ? "(nothing to show: do not confirm)" : "(no details stored)") })
       );
+      if (grant.uses && grant.uses.length) {
+        box.appendChild(el("p", { text: "Used so far (the assistant did these outside Chamberlain; Chamberlain did not check them):" }));
+        var used = el("ul", {});
+        grant.uses.forEach(function (use) {
+          used.appendChild(el("li", { text: when(use.at) + " - " + use.what + " - " + use.state + (use.reported ? ". It said: " + use.reported : "") }));
+        });
+        box.appendChild(used);
+      }
       box.appendChild(el("p", { class: "muted" }, "Content fingerprint: ", el("code", { text: grant.content_sha256 })));
       var buttons = el("p", {});
       if (grant.state === "proposed" && grant.rendered) {
@@ -339,7 +347,7 @@
         d.items.forEach(function (item) {
           items.appendChild(
             el("div", { class: "event " + item.kind },
-              el("div", { class: "event-top" }, el("span", { class: "kind", text: item.kind === "action" ? "Action closed" : "Harness" }), el("span", { text: when(item.at) })),
+              el("div", { class: "event-top" }, el("span", { class: "kind", text: item.kind === "action" ? "Action closed" : item.kind === "outside" ? "Outside action" : "Harness" }), el("span", { text: when(item.at) })),
               el("h3", { text: item.title }),
               el("div", { class: "event-bottom" }, el("span", { text: item.detail }), item.card ? el("span", { text: item.card }) : null))
           );

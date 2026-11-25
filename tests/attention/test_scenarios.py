@@ -73,19 +73,19 @@ def test_t7_a15_a_first_start_with_nothing_waiting_and_1_related_checks(full_app
     reply = full_app.call("start", {"agent": "test"})
     assert reply.ok
     assert reply.data is not None
-    assert ids(reply) == ["session.first"]
+    assert ids(reply) == ["session.first", "outside.act"]
     assert reply.data.work == ()
     assert reply.notices == ()
 
     # a15_a_scheduled_start_adds_the_scheduled_rule_first
     reply = full_app.call("start", {"agent": "test", "purpose": "scheduled"})
-    assert ids(reply) == ["session.scheduled", "session.first"]
+    assert ids(reply) == ["session.scheduled", "session.first", "outside.act"]
 
 
 def test_a2_an_uncertain_send_is_work_and_brings_its_rule(full_app: App, seed: Any):
     op = seed.operation("mail.send")
     reply = full_app.call("start", {"agent": "test"})
-    assert ids(reply) == ["write.unsettled", "session.first"]
+    assert ids(reply) == ["write.unsettled", "session.first", "outside.act"]
     assert reply.data is not None
     work = reply.data.work
     assert [w.kind.value for w in work] == ["operation.uncertain"]
@@ -97,13 +97,13 @@ def test_a2_an_uncertain_send_is_work_and_brings_its_rule(full_app: App, seed: A
 def test_a15_an_uncertain_calendar_write_gets_the_general_rule(full_app: App, seed: Any):
     seed.operation("calendar.create")
     reply = full_app.call("start", {"agent": "test"})
-    assert ids(reply) == ["write.unsettled", "session.first"]
+    assert ids(reply) == ["write.unsettled", "session.first", "outside.act"]
 
 
 def test_a15_a_grant_needing_the_user_brings_its_rule(full_app: App, seed: Any):
     seed.grant(requirement="human_confirmation")
     reply = full_app.call("start", {"agent": "test"})
-    assert ids(reply) == ["grant.confirm", "session.first"]
+    assert ids(reply) == ["grant.confirm", "session.first", "outside.act"]
 
 
 def test_a15_an_agent_evidence_grant_is_not_raised(full_app: App, seed: Any):
@@ -124,7 +124,7 @@ def test_e3_incomplete_coverage_brings_the_coverage_rule(full_app: App, find: Fi
 def test_a15_a_storage_budget_passed_brings_its_rule(full_app: App, seed: Any):
     seed.system("memory.over_budget", "total:600/500")
     reply = full_app.call("start", {})
-    assert ids(reply) == ["session.first", "storage.budget"]
+    assert ids(reply) == ["session.first", "storage.budget", "outside.act"]
     assert [w.kind.value for w in reply.data.work] == ["storage.over_budget"]
 
 
@@ -262,7 +262,11 @@ def test_golden_an_uncertain_send_start_reply(full_app: App, seed: Any):
     assert golden["data"]["session"] == "<ses>"
     assert golden["data"]["more_work"] == 0
     assert golden["ok"] is True
-    assert [g["id"] for g in golden["guidance"]] == ["write.unsettled", "session.first"]
+    assert [g["id"] for g in golden["guidance"]] == [
+        "write.unsettled",
+        "session.first",
+        "outside.act",
+    ]
     assert golden["guidance"][0]["version"] >= 1
     assert golden["next"][0]["tool"] == "open"
 

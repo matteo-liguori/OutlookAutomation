@@ -13,7 +13,7 @@ Code: `src/chamberlain/domain/grants.py`, `src/chamberlain/writes/`.
 `StandingScope`: `source`, `intent_kinds[]`, `recipients[]` (exact
 addresses) or `recipient_domains[]`, `folders[]`, `calendar?`,
 `allow_mark_read`, `allow_repeat`, `card?` (bind to one card), `max_per_day`,
-`title` (80), `summary` (300).
+`title` (80), `summary` (300); `sources?` (G-26); `where?` and `categories?` (G-25).
 
 - **G-1** A standing scope MUST name a source and at least one intent kind.
   A standing scope for `mail.send` MUST name recipients or domains and a
@@ -67,10 +67,10 @@ proposed -> active -> spent        (one_off, its operation confirmed)
 
 | Operation outcome | One-off grant | Standing grant counter |
 | --- | --- | --- |
-| `confirmed` | `spent` | use counted |
+| `confirmed`, `agent_reported` | `spent` | use counted |
 | `failed_clean`, `confirmed_absent`, `cancelled` | stays `active` | use released |
 | `superseded` (a missing send, sent again) | held for the resend | use passes to the resend |
-| `uncertain`, `reconciling`, `dispatched` | held; unusable | use counted |
+| `uncertain`, `reconciling`, `dispatched`, `abandoned` | held; unusable | use counted |
 
 - **G-11** Usage is derived from `operations`, not stored as a counter that
   can drift: reserved or spent uses are operations under the grant in any
@@ -89,6 +89,7 @@ holds it; a test keeps this text in step). The first row that fits wins; read to
 | Sending mail to anyone you have not written to before | Your click in the viewer |
 | Creating or changing an event that invites a new address (not one of yours, not already a guest of the event, not someone you have written to) | Your click in the viewer |
 | Sending mail only to people you have written to | Your word in chat (setting `grants.send_known`, may ask for a click) |
+| Acting outside Chamberlain's tools for you: a form, a portal, a website (never a password, a payment or accepting terms) | Your word in chat (setting `grants.other`, may ask for a click) |
 | Everything else: drafts, filing, trash, mark read, other calendar writes | Your word in chat (setting `grants.other`, may ask for a click) |
 
 | A standing permission for | May cover |
@@ -97,7 +98,10 @@ holds it; a test keeps this text in step). The first row that fits wins; read to
 | `calendar.create`, `calendar.respond` | Exact addresses only, never a domain |
 | `calendar.update`, `calendar.delete` | Never covered |
 | `mail.move`, `mail.trash` | Named folders |
+| `outside.action` | One card, one place and the kinds of action named; never a password, payment or terms |
 | `mail.mark_read`, `mail.draft_save`, `mail.draft_update`, `mail.draft_discard` | The account and the kind of write |
+
+One standing permission can cover several calendars, or several mailboxes, with one click. Entering a password, paying and accepting terms are never allowed, whatever is granted.
 <!-- /permission-table -->
 
 - **G-12a** The owner's word in
@@ -201,3 +205,26 @@ The writes track builds this endpoint and its tests. The viewer UI is wave 2.
   or revoked grant is not proposed again). With the grant, a filing move proposed with the option on
   marks the message read, and after a pass's report is kept the mail that pass triaged is marked read
   (04, W-43).
+
+## Outside actions and several sources (track o-outside)
+
+- **G-25** Outside actions (04, W-44 to W-47) use this same system. One action: the owner's word in
+  chat, like any write that is not a standing permission or a stranger (G-12a). A standing permission
+  is for a pattern, bound to one card and confirmed by one click in the viewer. Its scope has
+  `intent_kinds = {outside.action}`, source `outside:owner`, a `card` (required), a `where`, a set of
+  `categories` and a `summary` in plain words saying what pattern of action is allowed and where. It
+  covers an action only when the card, the `where` (compared without case) and the category all fit;
+  the free text of the action is not compared. It cannot be mixed with any other kind, has no
+  recipients, folders or sources, and may carry `max_per_day`. It ends when the card closes (G-9), like
+  every card-bound grant. Nothing grants entering a password, paying or accepting terms (W-45).
+  Each use is an operation under the grant, so the grant page lists them.
+- **G-26** One standing permission can cover several sources of the same role (several calendars, or
+  several mailboxes), confirmed with one click. `sources` holds the whole set (two or more, one role);
+  `source` is always its first member in sorted order, so the same set always gives the same scope and
+  hash. Whoever proposes may give `source` and `sources` in either way; the harness fills in the rest.
+  Every other rule of the scope (kinds, recipients, folders, limits) applies unchanged to each listed
+  source, and an intent is matched by its own source. `max_per_day` counts the uses of all listed
+  sources together. A scope with one source is exactly as before: the field is left out, so existing
+  grants keep their scope, hash and meaning and need no change. When two grants cover an intent, the
+  one with fewer kinds, then fewer recipients, then fewer sources, is used. `calendar` cannot be
+  combined with `sources`. Revoking the grant ends it for every listed source.

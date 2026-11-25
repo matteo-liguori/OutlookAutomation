@@ -1,10 +1,9 @@
 id: mail.older
-version: 1
+version: 2
 title: Older mail was not read
 when: {event: source.stale, reason: older_mail}
 text: >
-  Mail from before the last day was not read, because reading it costs
-  tokens. Tell the owner the dates and roughly how many messages, and ask
+  Mail older than a day was not read, to save tokens. Tell the owner the dates and roughly how many messages, and ask
   whether to read it. Only the owner's yes counts: give this event as the
   answer in next. Any other answer, mark it handled and leave the mail.
 max_chars: 340

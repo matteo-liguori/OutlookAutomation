@@ -8,6 +8,8 @@ import re
 from collections.abc import Callable
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
+from chamberlain.domain.intents import IntentKind
+from chamberlain.domain.operations import OperationState
 from chamberlain.limits import PAGE_CHARS
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.envelope import Content, ContentKind, NextStep
@@ -82,7 +84,17 @@ def make_handlers(
 
     def do(ctx: Context, request: DoRequest) -> Result:
         eng = engine(ctx)
-        return Result(DoResponse(operation=eng.view(eng.do(request.operation))))
+        op = eng.do(request.operation, request.report)
+        steps: tuple[NextStep, ...] = ()
+        if op.kind is IntentKind.OUTSIDE_ACTION and op.state is OperationState.AUTHORISED:
+            steps = (
+                NextStep(
+                    tool=ToolName.DO,
+                    args={"operation": op.handle},
+                    why="Act first. Then call this again, adding report: what you did.",
+                ),
+            )
+        return Result(DoResponse(operation=eng.view(op)), next=steps)
 
     def reconcile(ctx: Context, request: ReconcileRequest) -> Result:
         eng = engine(ctx)

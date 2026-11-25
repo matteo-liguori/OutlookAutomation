@@ -24,6 +24,8 @@ ARROWS = {
     (S.AUTHORISED, S.PREPARED),
     (S.AUTHORISED, S.FAILED_CLEAN),
     (S.AUTHORISED, S.CANCELLED),
+    (S.AUTHORISED, S.AGENT_REPORTED),  # an outside action the assistant reports (W-46)
+    (S.AUTHORISED, S.ABANDONED),  # ... or never reports
     (S.PREPARED, S.DISPATCHED),
     (S.PREPARED, S.FAILED_CLEAN),
     (S.DISPATCHED, S.CONFIRMED),
@@ -50,6 +52,7 @@ def test_w6_the_legal_transitions_are_exactly_the_arrows_of_the_diagram() -> Non
         S.CANCELLED,
         S.ABANDONED,
         S.SUPERSEDED,
+        S.AGENT_REPORTED,
     } == TERMINAL_STATES
 
 

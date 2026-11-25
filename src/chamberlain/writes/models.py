@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
+from pydantic import Field
+
 from chamberlain.domain.grant_rules import check_config_requirement
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind
@@ -68,6 +70,11 @@ class GrantRow:
     ended_at: datetime | None
     compacted_at: datetime | None
 
+    def covers(self, source: str) -> bool:
+        """True when this grant is for `source`: its own, or one its scope lists (G-26)."""
+        listed = None if self.scope is None else self.scope.sources
+        return self.source_id == source or (listed is not None and source in listed)
+
 
 @dataclass(frozen=True)
 class OperationRow:
@@ -116,3 +123,5 @@ class StoredReceipt(Model):
     result_ref: Handle | None = None
     items: tuple[ItemResult, ...] = ()
     warnings: tuple[str, ...] = ()
+    reported: str | None = Field(default=None, max_length=500)
+    """What the assistant said it did, for an outside action (W-46). Compaction drops it."""

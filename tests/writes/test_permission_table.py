@@ -15,6 +15,7 @@ from chamberlain.domain.intents import (
     CalendarUpdate,
     MailMarkRead,
     MailSend,
+    OutsideAction,
     WriteIntent,
 )
 from chamberlain.testing.write_rig import CALENDAR, WriteRig
@@ -65,6 +66,19 @@ def every_intent() -> list[WriteIntent]:
             )
         )
     intents.append(MailMarkRead(source="mail:a", messages=("msg_0123456789abcdef",)))
+    for category in ("form_fill", "download"):
+        intents.append(
+            OutsideAction.model_validate(
+                {
+                    "where": "portal",
+                    "what": "do it",
+                    "category": category,
+                    "enters_password": False,
+                    "pays": False,
+                    "accepts_terms": False,
+                }
+            )
+        )
     return intents
 
 
@@ -117,6 +131,15 @@ def test_the_docs_show_the_same_table_as_the_code() -> None:
         )
         assert found is not None, name
         assert found.group(1) == permissions.markdown(), f"{name}: regenerate the table"
+
+
+def test_the_table_has_a_row_for_outside_actions_and_says_what_is_never_allowed() -> None:
+    """One action by the owner's word; standing use is card-bound; three things never."""
+    text = permissions.markdown()
+    assert "Acting outside Chamberlain's tools" in text
+    assert "`outside.action` | One card, one place" in text
+    assert "never allowed, whatever is granted" in text
+    assert "several calendars, or several mailboxes, with one click" in text
 
 
 def test_the_viewer_explains_a_click_from_the_table() -> None:
