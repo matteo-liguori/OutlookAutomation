@@ -44,14 +44,19 @@ States: `new -> delivered -> handled`, and `new | delivered -> expired`.
   (the agent listed it in `next.handled`) or `expired` does.
 - **A-3** A handled event whose condition is still true MUST NOT reappear
   until the condition has been false once, or its kind's re-raise interval
-  passes (`operation.uncertain`: 24 hours; `grant.review_due`: 7 days;
-  others: never).
-- **A-4** `operation.uncertain`, `send.missing` and `source.sign_in_needed` cannot be marked
-  handled by the agent; they close only when the condition ends.
+  passes (`grant.review_due`: 7 days; others: never).
+- **A-4** `source.sign_in_needed` cannot be marked handled by the agent; it closes only when the
+  condition ends. `operation.uncertain` and `send.missing` can be handled, once, and then never
+  come back for the same write (owner ruling 2026-11-25: uncertain writes never need the owner).
 - **A-4a** `send.missing` (priority 94) is raised for an uncertain mail send once the harness's
   24-hour look (04-writes.md W-37) found it missing (`reason: missing`) or waiting in the Outbox
-  (`reason: outbox`); the operation then no longer raises `operation.uncertain`. A change of
-  answer is a new event (the discriminator is the result). It stays until the send is settled.
+  (`reason: outbox`); that send then no longer raises `operation.uncertain`. A change of answer is
+  a new event (the discriminator is the result). Any other uncertain write with a stored request,
+  and a send the look could not read, raises `operation.uncertain` (priority 95) only once it is
+  more than 24 hours old; nothing is raised in the first day, and a write from the old harness
+  (no stored request; closed at import) never. The next step for both is to read the write
+  (`open`), and one short rule says what to do: look at the target, then record it as done,
+  redo it from the original, or ask the owner when unsure.
 
 ## Detectors
 
