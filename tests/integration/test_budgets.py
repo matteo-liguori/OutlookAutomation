@@ -116,12 +116,14 @@ def run_pass(stack: Stack) -> Measured:
     return seen
 
 
-def test_t1_the_standing_prompt_and_the_tool_list_are_inside_their_budgets() -> None:
+def test_t1_a14_the_standing_prompt_and_the_tool_list_are_and_1_related_checks(
+    stack: Stack,
+) -> None:
+    # t1_the_standing_prompt_and_the_tool_list_are_inside_their_budgets
     assert len(STANDING_PROMPT) <= STANDING_PROMPT_MAX
     assert len(TOOLS) == TOOL_COUNT
 
-
-def test_a14_a_full_mail_pass_stays_inside_the_reply_and_guidance_budgets(stack: Stack) -> None:
+    # a14_a_full_mail_pass_stays_inside_the_reply_and_guidance_budgets
     seen = run_pass(stack)
     biggest = max(seen.replies)
     per_reply_guidance = max(seen.guidance_text)

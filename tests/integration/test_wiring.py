@@ -67,23 +67,24 @@ def test_t1_doctor_metrics_has_every_key_of_the_targets_contract(stack: Stack) -
     assert set(metrics) == documented
 
 
-def test_the_largest_reply_is_measured_from_the_audit_log(stack: Stack) -> None:
+def test_the_largest_reply_is_measured_from_the_audit_log_and_3_related_checks(
+    stack: Stack, tmp_path: Path
+) -> None:
+    # the_largest_reply_is_measured_from_the_audit_log
     stack.start()
     stack.ok("doctor")
     metrics = stack.ok("doctor", metrics=True)["metrics"]
     assert 0 < metrics["largest_reply_chars_7d"] <= MAX_REPLY_CHARS
     assert metrics["guidance_total_chars"] > 0
 
-
-def test_every_system_state_key_in_the_source_is_declared(stack: Stack) -> None:
+    # every_system_state_key_in_the_source_is_declared
     pattern = re.compile(r'"((?:attention|memory|writes|app)\.[a-z_]+)"')
     used: set[str] = set()
     for path in SRC.rglob("*.py"):
         used.update(pattern.findall(path.read_text(encoding="utf-8")))
     assert used <= SYSTEM_KEYS
 
-
-def test_the_cli_tick_and_doctor_metrics_run_against_a_data_root(tmp_path: Path) -> None:
+    # the_cli_tick_and_doctor_metrics_run_against_a_data_root
     root = str(tmp_path / "data")
     out = io.StringIO()
     assert main(["--data", root, "tick"], out) == 0
@@ -93,8 +94,7 @@ def test_the_cli_tick_and_doctor_metrics_run_against_a_data_root(tmp_path: Path)
     figures = json.loads(out.getvalue())["data"]["metrics"]
     assert "grants_awaiting_human" in figures
 
-
-def test_the_audit_chain_verifies_after_wired_use(stack: Stack) -> None:
+    # the_audit_chain_verifies_after_wired_use
     stack.start()
     stack.ok("doctor")
     assert verify(stack.app.context.db).ok
