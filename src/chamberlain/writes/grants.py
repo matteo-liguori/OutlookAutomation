@@ -168,59 +168,66 @@ class GrantService:
                 return grant
             if grant.state is not GrantState.PROPOSED:
                 raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "That proposal has ended.")
-            if now >= grant.proposed_at + timedelta(days=PROPOSAL_LAPSE_DAYS):
-                self._end(grant, GrantState.LAPSED, actor="system:tick", reason="lapsed")
-                raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "That proposal has lapsed.")
-            if grant.requirement is Requirement.HUMAN_CONFIRMATION and (
-                via is not ConfirmedVia.HUMAN_VIEWER
-            ):
-                raise ChamberlainError(ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED)
-            limit = (
-                ONE_OFF_GRANT_DAYS if grant.kind is GrantKind.ONE_OFF else STANDING_GRANT_MAX_DAYS
-            )
-            expires = now + timedelta(days=limit)
-            if requested_expiry is not None:
-                if requested_expiry <= now:
-                    raise ChamberlainError(
-                        ErrorCode.REQUEST_INVALID,
-                        "The expiry must be in the future.",
-                        field="expires_at",
+            if not self._sweep_one(grant, now):
+                return self._activate_proposed(grant, now, via, actor, requested_expiry, recipients)
+        # The lapse and cancellation must commit before reporting the refusal.
+        raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "That proposal has lapsed.")
+
+    def _activate_proposed(
+        self,
+        grant: GrantRow,
+        now: datetime,
+        via: ConfirmedVia,
+        actor: str,
+        requested_expiry: datetime | None,
+        recipients: Iterable[str],
+    ) -> GrantRow:
+        if grant.requirement is Requirement.HUMAN_CONFIRMATION and (
+            via is not ConfirmedVia.HUMAN_VIEWER
+        ):
+            raise ChamberlainError(ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED)
+        limit = ONE_OFF_GRANT_DAYS if grant.kind is GrantKind.ONE_OFF else STANDING_GRANT_MAX_DAYS
+        expires = now + timedelta(days=limit)
+        if requested_expiry is not None:
+            if requested_expiry <= now:
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID,
+                    "The expiry must be in the future.",
+                    field="expires_at",
+                )
+            expires = min(expires, requested_expiry)
+        review = anniversary(now, 1, self._policy.tz) if grant.kind is GrantKind.STANDING else None
+        moved = repo.update_grant(
+            self._db,
+            grant.handle,
+            GrantState.PROPOSED,
+            state=GrantState.ACTIVE.value,
+            confirmed_via=via.value,
+            granted_at=format_ts(now),
+            expires_at=format_ts(expires),
+            review_at=None if review is None else format_ts(review),
+        )
+        if not moved:
+            raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "That proposal changed.")
+        self._audit.append(
+            actor=actor,
+            kind="grant.activated",
+            subject=grant.handle,
+            summary=f"{grant.kind.value} grant activated via {via.value}.",
+            payload_sha256=grant.content_sha256,
+        )
+        if via is ConfirmedVia.HUMAN_VIEWER:
+            covered = grant.scope.all_sources() if grant.scope else {grant.source_id}
+            for source in sorted(covered):
+                for address in recipients:
+                    repo.add_known_recipient(
+                        self._db, source, address.lower(), grant.handle, stamp(self._clock)
                     )
-                expires = min(expires, requested_expiry)
-            review = (
-                anniversary(now, 1, self._policy.tz) if grant.kind is GrantKind.STANDING else None
-            )
-            moved = repo.update_grant(
-                self._db,
-                handle,
-                GrantState.PROPOSED,
-                state=GrantState.ACTIVE.value,
-                confirmed_via=via.value,
-                granted_at=format_ts(now),
-                expires_at=format_ts(expires),
-                review_at=None if review is None else format_ts(review),
-            )
-            if not moved:
-                raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "That proposal changed.")
-            self._audit.append(
-                actor=actor,
-                kind="grant.activated",
-                subject=handle,
-                summary=f"{grant.kind.value} grant activated via {via.value}.",
-                payload_sha256=grant.content_sha256,
-            )
-            if via is ConfirmedVia.HUMAN_VIEWER:
-                covered = grant.scope.all_sources() if grant.scope else {grant.source_id}
-                for source in sorted(covered):
-                    for address in recipients:
-                        repo.add_known_recipient(
-                            self._db, source, address.lower(), handle, stamp(self._clock)
-                        )
-            if grant.supersedes is not None:
-                old = repo.get_grant(self._db, grant.supersedes)
-                if old is not None and old.state in (GrantState.ACTIVE, GrantState.SUSPENDED):
-                    self._end(old, GrantState.REVOKED, actor=actor, reason="superseded")
-            return self.get(handle)
+        if grant.supersedes is not None:
+            old = repo.get_grant(self._db, grant.supersedes)
+            if old is not None and old.state in (GrantState.ACTIVE, GrantState.SUSPENDED):
+                self._end(old, GrantState.REVOKED, actor=actor, reason="superseded")
+        return self.get(grant.handle)
 
     # --- ending -------------------------------------------------------------------
 

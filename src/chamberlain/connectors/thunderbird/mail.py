@@ -1151,29 +1151,40 @@ class ThunderbirdMail:
         )
         result = _typed(reply, protocol.MoveManyResult)
         items = tuple(
-            ItemResult(
-                locator=encode_locator(
-                    binding.account_id, plan.folder_id, item.internet_message_id
-                ),
-                ok=item.ok,
-                code=None
-                if item.ok
-                else _BATCH_ITEM_CODES.get(item.code, ErrorCode.REMOTE_CHANGED),
-                moved_to=encode_locator(
-                    binding.account_id, plan.destination_folder_id, item.internet_message_id
-                )
-                if item.ok
-                else None,
-            )
+            self._batch_item(binding, plan, item.internet_message_id, item.ok, item.code)
             for item in result.items
         )
         if not result.verified:
             return DispatchResult(
                 outcome=DispatchOutcome.UNKNOWN, detail="the batch move was not seen to finish"
             )
+        warnings: list[str] = []
+        if result.merged_existing_copy:
+            warnings.append("merged_existing_copy")
+        if result.read_state_preserved is False:
+            warnings.append("read_state_not_preserved")
         return DispatchResult(
             outcome=DispatchOutcome.APPLIED,
-            receipt=ProviderReceipt(verification=Verification(client_verified=True), items=items),
+            receipt=ProviderReceipt(
+                verification=Verification(client_verified=True),
+                read_state_preserved=result.read_state_preserved,
+                warnings=tuple(warnings),
+                items=items,
+            ),
+            detail=", ".join(warnings),
+        )
+
+    @staticmethod
+    def _batch_item(
+        binding: ThunderbirdBinding, plan: BatchMovePlan, message_id: str, ok: bool, code: str
+    ) -> ItemResult:
+        return ItemResult(
+            locator=encode_locator(binding.account_id, plan.folder_id, message_id),
+            ok=ok,
+            code=None if ok else _BATCH_ITEM_CODES.get(code, ErrorCode.REMOTE_CHANGED),
+            moved_to=encode_locator(binding.account_id, plan.destination_folder_id, message_id)
+            if ok
+            else None,
         )
 
     def _dispatch_mark_read(
@@ -1434,7 +1445,8 @@ class ThunderbirdMail:
             ),
         )
         result = _typed(reply, protocol.ReconcileMoveManyResult)
-        if not result.complete:
+        reported_ids = tuple(item.internet_message_id for item in result.items)
+        if not result.complete or reported_ids != plan.internet_message_ids:
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="a folder scan was cut")
         moved = [i for i in result.items if i.source == 0 and i.destination > 0]
         stuck = [i for i in result.items if i.source > 0 and i.destination == 0]
@@ -1449,7 +1461,21 @@ class ThunderbirdMail:
             )
         return ReconcileResult(
             status=ReconcileStatus.PRESENT,
-            receipt=ProviderReceipt(verification=Verification(client_verified=True)),
+            receipt=ProviderReceipt(
+                verification=Verification(
+                    client_verified=True, server_verified=result.refresh_verified
+                ),
+                items=tuple(
+                    self._batch_item(
+                        binding,
+                        plan,
+                        item.internet_message_id,
+                        item.source == 0 and item.destination > 0,
+                        "ambiguous" if item.source else "not_found",
+                    )
+                    for item in result.items
+                ),
+            ),
         )
 
     def _reconcile_mark_read(

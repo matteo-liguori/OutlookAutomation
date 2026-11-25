@@ -12,8 +12,9 @@ const URIS = { [`${ACCOUNT}://Drafts`]: "imap://owner/Drafts", [`${ACCOUNT}://Se
 
 class ExtensionError extends Error {}
 
-function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`] } = {}) {
+function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map() } = {}) {
   const looked = [];
+  const changes = [];
   const identity = { key: "id1", email: MAILBOX, getUnicharAttribute: () => identityDrafts };
   const win = {
     gMsgCompose: { compFields: { fcc: URIS[`${ACCOUNT}://Sent`], fcc2: "" } },
@@ -24,13 +25,13 @@ function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`] } = {}) {
     "resource://gre/modules/ExtensionCommon.sys.mjs": { ExtensionCommon: { ExtensionAPI: class {} } },
     "resource://gre/modules/Timer.sys.mjs": { setTimeout, clearTimeout },
     "resource:///modules/MailServices.sys.mjs": {
-      MailServices: { accounts: { getAccount: () => ({ identities: [identity] }) } },
+      MailServices: { accounts: { getAccount: () => ({ identities: [identity], incomingServer: { key: "owner" } }) } },
     },
     "resource:///modules/ExtensionAccounts.sys.mjs": {
       getFolder(id) {
         looked.push(id);
         if (!URIS[id]) throw new ExtensionError(`Folder not found: ${id}`);
-        return { accountKey: ACCOUNT, folder: { canFileMessages: true, URI: URIS[id] } };
+        return { accountKey: ACCOUNT, folder: { canFileMessages: true, URI: URIS[id], markMessagesRead: (messages, read) => changes.push({ messages: [...messages], read }) } };
       },
     },
     "resource://gre/modules/ExtensionUtils.sys.mjs": { ExtensionUtils: { ExtensionError } },
@@ -38,15 +39,15 @@ function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`] } = {}) {
   const observers = [];
   const context = vm.createContext({
     ChromeUtils: { importESModule: (url) => modules[url] },
-    Ci: {},
+    Ci: { nsMsgFolderFlags: { Queue: 1 }, nsMsgMessageFlags: { Attachment: 1 } },
     Components: {},
     Services: { io: { offline: false }, obs: { addObserver: (o, topic) => observers.push([o, topic]), removeObserver() {} } },
     console,
   });
   vm.runInContext(SOURCE + "\n;this.api = chamberlainMail;", context);
-  const extensionContext = { extension: { tabManager: { get: () => ({ nativeTab: win }) } } };
+  const extensionContext = { extension: { tabManager: { get: () => ({ nativeTab: win }) }, messageManager: { get: (id) => headers.get(id) } } };
   const api = new context.api().getAPI(extensionContext).chamberlainMail;
-  return { api, looked, observers, win };
+  return { api, looked, observers, win, changes };
 }
 
 /** A Thunderbird common dialog opened by `opener`, with the buttons the real one has. */
@@ -62,6 +63,29 @@ function dialogFrom(opener, text) {
 }
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 5));
+
+test("P-14 the privileged flag update validates the whole batch before one native call", async () => {
+  const folderId = `${ACCOUNT}://Sent`;
+  const folder = { URI: URIS[folderId] };
+  const first = { folder, messageId: "one@x" };
+  const second = { folder, messageId: "<two@x>" };
+  const { api, changes } = load({ headers: new Map([[1, first], [2, second]]) });
+  const firstRef = { id: 1, internetMessageId: "one@x" };
+  await assert.rejects(api.setReadFlags(ACCOUNT, MAILBOX, folderId, [firstRef, { id: 2, internetMessageId: "wrong@x" }], true), /chamberlain:changed:/);
+  assert.deepEqual(changes, []);
+  await api.setReadFlags(ACCOUNT, MAILBOX, folderId, [firstRef, { id: 2, internetMessageId: "two@x" }], false);
+  assert.deepEqual(changes, [{ messages: [first, second], read: false }]);
+});
+
+test("P-3 bulk attachment presence reads the native header flag and binds the account", async () => {
+  const folder = { server: { key: "owner" } };
+  const outbox = { server: { key: "local", type: "none" }, getFlag: (flag) => flag === 1 };
+  const headers = new Map([[1, { folder, flags: 1 }], [2, { folder, flags: 0 }], [3, { folder: outbox, flags: 1 }]]);
+  const { api } = load({ headers });
+  assert.deepEqual([...(await api.headerAttachmentFlags(ACCOUNT, MAILBOX, [1, 2], false))], [true, false]);
+  await assert.rejects(api.headerAttachmentFlags(ACCOUNT, MAILBOX, [3], false), /chamberlain:account_mismatch:/);
+  assert.deepEqual([...(await api.headerAttachmentFlags(ACCOUNT, MAILBOX, [3], true))], [true]);
+});
 
 test("R8 a send holds the composer without looking up any draft folder", async () => {
   const { api, looked } = load({ identityDrafts: "imap://owner/Elsewhere" });

@@ -174,13 +174,21 @@ captures the flag before and after and fails with `changed` if it moved):
   existing Trash copy (Gmail labels): the result then has
   `merged_existing_copy: true` and `read_state_preserved: false` when the flags
   differed; existing Trash flags are never altered (R7).
+- `move_many` locates the requested Message-IDs in one source folder, files or
+  trashes the eligible subset together, and checks source and destination.
+  Each moved message keeps its read state unless filing explicitly marks it
+  read. The add-on groups flag corrections by desired value and verifies the
+  result. A merged Trash copy keeps its existing flag. The receipt records a
+  merge or a flag that could not be preserved.
 - `mark_read` sets the flag (`read: true` or `false`) on each located copy and
   reports every item; partial success is a normal `ok` result (W-24).
 
 **Reconcile twins** (read-only; they may `refresh` the exact folders involved
 first): `reconcile_send`, `reconcile_draft_save`, `reconcile_draft_update`,
 `reconcile_draft_discard`, `reconcile_move`, `reconcile_trash`,
-`reconcile_mark_read`. They take the write's arguments minus bytes, return
+`reconcile_move_many`, `reconcile_mark_read`. The batch result supplies per-ID
+source and destination counts so confirmed handles follow moved messages.
+They take the write's arguments minus bytes, return
 observations (copies found, per-folder completeness, whether the refresh was
 verified) and never a verdict.
 

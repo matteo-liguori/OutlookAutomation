@@ -93,7 +93,7 @@ function spanOf(headers: TbHeader[]): DateWindow {
   return { sinceMs: Math.min(...dates) - 2 * day, untilMs: Math.max(...dates) + 2 * day };
 }
 
-/** Many messages of one folder, filed or to Trash: find them all, one move, one check.
+/** Many messages of one folder, filed or to Trash: find, move and verify them together.
  *  Folder reads cover only the dates the batch spans: a few hundred headers, never the whole
  *  Inbox and Trash on every round (found live, 2026-11-25: full reads overran the deadline). */
 async function cmdMoveMany(a: MoveManyArgs, ctx: Ctx): Promise<MoveManyResult> {
@@ -103,44 +103,77 @@ async function cmdMoveMany(a: MoveManyArgs, ctx: Ctx): Promise<MoveManyResult> {
   const source = await byMessageId(a, a.folder_id);
   check(source.complete, "ambiguous", "The folder could not be scanned completely.");
   const located = a.internet_message_ids.map((raw) => ({ raw, id: bare(raw), found: source.map.get(bare(raw)) ?? [] }));
+  check(new Set(located.map((m) => m.id)).size === located.length, "bad_request", "The batch repeats a message.");
   const present = located.filter((m) => m.found.length === 1).map((m) => m.found[0]);
   if (present.length === 0) return fail("not_found", "None of the messages is in that folder.");
   const window = spanOf(present);
-  // Filing never makes a second copy: one already at the destination is left alone.
-  const before = a.trash ? null : await byMessageId(a, a.destination_folder_id, window);
-  if (before) check(before.complete, "ambiguous", "The destination could not be scanned completely.");
+  // Filing leaves existing copies alone; Trash may merge into one without changing its flag.
+  const before = await byMessageId(a, a.destination_folder_id, window);
+  check(before.complete, "ambiguous", "The destination could not be scanned completely.");
   const items: MoveManyItem[] = [];
-  const ids: number[] = [];
-  const moving: string[] = [];
+  const moving = new Map<string, TbHeader>();
   for (const m of located) {
     let code = m.found.length === 1 ? "" : m.found.length ? "ambiguous" : "not_found";
-    if (!code && before?.map.has(m.id)) code = "ambiguous";
+    if (!code && !a.trash && before.map.has(m.id)) code = "ambiguous";
     items.push({ internet_message_id: m.raw, ok: !code, code });
-    if (!code) {
-      ids.push(m.found[0].id);
-      moving.push(m.id);
-    }
+    if (!code) moving.set(m.id, m.found[0]);
   }
+  const ids = [...moving.values()].map((h) => h.id);
   if (ids.length === 0) return fail("ambiguous", "Every message is already at the destination.");
+  const helper = messenger.chamberlainMail;
+  check(typeof helper?.setReadFlags === "function", "unsupported", "The bulk read flag helper is not installed.");
   markMutation(ctx);
   await messenger.messages.move(ids, a.destination_folder_id);
   const giveUpAt = Date.now() + TUNING.batchCheckMs;
+  let flagsUpdated = false;
+  const markRead = !a.trash && a.mark_read;
   while (Date.now() < giveUpAt) {
     const left = await byMessageId(a, a.folder_id, window);
     const there = await byMessageId(a, a.destination_folder_id, window);
-    const arrived = left.complete && there.complete && moving.every((id) => !left.map.has(id) && there.map.has(id));
-    if (arrived) {
-      if (a.mark_read) {
-        for (const id of moving) {
-          for (const h of there.map.get(id) ?? []) if (!h.read) await messenger.messages.update(h.id, { read: true });
-        }
+    const changedRead: BulkReadRef[] = [];
+    const changedUnread: BulkReadRef[] = [];
+    let merged = false;
+    let preserved = true;
+    const arrived = left.complete && there.complete && [...moving].every(([id, original]) => {
+      if (left.map.has(id)) return false;
+      const previous = new Set((before.map.get(id) ?? []).map((h) => h.id));
+      const copies = there.map.get(id) ?? [];
+      const existing = copies.filter((h) => previous.has(h.id));
+      if (existing.length !== previous.size) return false;
+      const added = copies.filter((h) => !previous.has(h.id));
+      if (added.length === 0 && a.trash && existing.length) {
+        merged = true;
+        preserved &&= existing.every((h) => h.read === original.read);
+        return true;
       }
-      return { items, verified: true };
+      if (added.length !== 1) return false;
+      const targetRead = markRead || original.read;
+      if (added[0].read !== targetRead) {
+        (targetRead ? changedRead : changedUnread).push({ id: added[0].id, internetMessageId: id });
+      }
+      return true;
+    });
+    if (arrived) {
+      const needsUpdate = changedRead.length > 0 || changedUnread.length > 0;
+      if (!needsUpdate) return { items, verified: true, read_state_preserved: preserved, merged_existing_copy: merged };
+      if (!flagsUpdated) {
+        if (changedRead.length) {
+          markMutation(ctx);
+          await helper.setReadFlags(a.account_id, a.mailbox, a.destination_folder_id, changedRead, true);
+        }
+        if (changedUnread.length) {
+          markMutation(ctx);
+          await helper.setReadFlags(a.account_id, a.mailbox, a.destination_folder_id, changedUnread, false);
+        }
+        flagsUpdated = true;
+        continue;
+      }
+      if (!markRead) return { items, verified: true, read_state_preserved: false, merged_existing_copy: merged };
     }
     await sleep(TUNING.movePollMs * 4);
   }
   // Not seen in time: the harness's own check (reconcile) settles it.
-  return { items, verified: false };
+  return { items, verified: false, read_state_preserved: null, merged_existing_copy: false };
 }
 
 /** One read per folder that holds many of the refs; a handful are found one by one. */
@@ -536,8 +569,8 @@ async function cmdReconcileMove(a: ReconcileMoveArgs): Promise<ReconcileMoveResu
   const source = await copiesIn(a, a.ref.folder_id, id);
   const destination = await copiesIn(a, a.destination_folder_id, id);
   return {
-    source: { folder_id: a.ref.folder_id, messages: source.messages.map(header), complete: source.complete },
-    destination: { folder_id: a.destination_folder_id, messages: destination.messages.map(header), complete: destination.complete },
+    source: { folder_id: a.ref.folder_id, messages: source.messages.map((h) => header(h)), complete: source.complete },
+    destination: { folder_id: a.destination_folder_id, messages: destination.messages.map((h) => header(h)), complete: destination.complete },
     refreshed: refresh.refreshed,
     refresh_verified: refresh.verified,
   };

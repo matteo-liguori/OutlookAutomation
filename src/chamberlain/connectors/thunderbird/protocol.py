@@ -619,6 +619,10 @@ class MoveManyResult(Model):
     items: tuple[MoveManyItem, ...]
     verified: bool
     """Every moved message left the folder, reached the destination and (when asked) is read."""
+    read_state_preserved: bool | None
+    """Whether moved messages have the requested read state, or None if unverified."""
+    merged_existing_copy: bool
+    """At least one trashed message was observed to merge into an existing copy."""
 
 
 class DiscardResult(Model):

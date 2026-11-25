@@ -142,10 +142,12 @@ One standing permission can cover several calendars, or several mailboxes, with 
 
 ## Send limits
 
-- **G-16** The engine refuses `mail.send` beyond `SENDS_PER_HOUR` (20) per
-  source, counted from operations dispatched in the last hour, and beyond a
-  standing grant's `max_per_day`. Code `grant.limit_reached`. Limits are
-  checked in `authorise`, inside the reserving transaction.
+- **G-16** The engine refuses `mail.send` beyond 200 per source in the last
+  hour, counted from dispatched operations. A send exclusively to the owner's
+  own addresses is exempt from this hourly cap; any other recipient makes it
+  subject to the cap. A standing grant's `max_per_day` also applies; its
+  continued use remains an open owner decision. Code `grant.limit_reached`.
+  Limits are checked in `authorise`, inside the reserving transaction.
 
 ## Confirmation channel (the viewer endpoint)
 

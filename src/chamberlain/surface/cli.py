@@ -378,12 +378,13 @@ def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
         out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
         return EXIT_FAILED
     root = Path(data)
-    config = load_connections(root).cleanup
-    if not config.rules:
-        out.write("No cleanup rules in connections.yaml (see docs/cleanup.md).\n")
-        return EXIT_OK
-    app = open_app(root)
+    app = None
     try:
+        config = load_connections(root).cleanup
+        if not config.rules:
+            out.write("No cleanup rules in connections.yaml (see docs/cleanup.md).\n")
+            return EXIT_OK
+        app = open_app(root)
         if args.action == "grant":
             for source, state, handle in propose_grants(app, config):
                 out.write(f"{source}: {state} {handle}\n")
@@ -394,7 +395,8 @@ def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
         out.write(f"{error.message} {error.fix}".rstrip() + "\n")
         return EXIT_FAILED
     finally:
-        app.close()
+        if app is not None:
+            app.close()
     out.write("\n".join(report.lines(dry_run=args.action == "plan")) + "\n")
     return EXIT_FAILED if report.failed else EXIT_OK
 

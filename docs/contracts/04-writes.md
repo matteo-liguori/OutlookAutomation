@@ -17,8 +17,8 @@ A `WriteIntent` is the canonical, complete description of one write. Kinds:
 | `mail.draft_save` | as `mail.send`; `to` may be empty |
 | `mail.draft_update` | as `mail.draft_save` plus `draft` (msg handle), `expected_sha256` |
 | `mail.draft_discard` | `draft`, `expected_sha256` |
-| `mail.move` | `message`, `to_folder`, `mark_read`, `internet_message_id`*, `from_folder`* |
-| `mail.trash` | `message`, `internet_message_id`*, `from_folder`* |
+| `mail.move` | `messages[]`, `to_folder`, `mark_read`; `from_folder`* |
+| `mail.trash` | `messages[]`; `from_folder`* |
 | `mail.mark_read` | `messages[]` (1 to 200), `read` |
 | `calendar.create` | `event` (`EventFields`, with `recurrence` for a series), `uid`* |
 | `calendar.update` | `event_ref`, `expected_etag`, `event`, `scope?` (`occurrence` or `series`; 08-ports P-25) |
@@ -29,6 +29,13 @@ A `WriteIntent` is the canonical, complete description of one write. Kinds:
 Fields marked * are left empty by the agent and completed by the harness
 at `propose`, before hashing (`intents.HARNESS_COMPLETED_FIELDS`). A value
 the agent supplies for one of them is ignored and replaced.
+
+The target move and trash shape uses `messages[]`, including a batch of one.
+The harness resolves each handle to its stable Message-ID and fills the common
+source folder before hashing. For many
+items the connector finds all, acts once and checks once; it must not loop over
+single-message writes. This is the target contract; implementation and tests must
+be brought into line before the legacy single-message shape is removed.
 
 - **W-1** An intent MUST be complete at `propose` time: the harness fills
   the starred fields from the ref (`internet_message_id`, `from_folder`) and
@@ -126,8 +133,7 @@ obtained.
   `send.missing`), an item the agent can close. The agent reads the target, then settles it with
   its evidence (`reconcile` with `happened`), or does it again with `propose {redo_of}` (W-38), or
   asks the owner in chat when unsure. The owner is never asked to review an uncertain write. The
-  viewer may list unsettled writes read-only and still lets the owner settle one
-  (`human:viewer` marks it `confirmed` or `confirmed_absent`, audited); nothing tells the owner to.
+  viewer may list unsettled writes read-only; it has no owner settle action.
 - **W-13a** (owner ruling: the owner is not asked what the harness or agent can settle.)
   An operation imported from an old journal keeps `summary_json` (title, time, calendar or
   recipients; never a body) and `attempted_at`, beside a NULL intent: display and matching only,
@@ -341,7 +347,7 @@ text below says "send" where the rule is about sends only.
   wording for the first 24 hours.
 - **W-40** No quiet closing of a send. `abandon_stale` skips a `mail.send` whose text the harness
   holds. It stays visible (read-only in the viewer) until the agent resends it, the agent settles
-  it `happened` with evidence, or the owner resolves it in the viewer (W-13). Calendar writes and
+  it `happened` with evidence (W-13). Calendar writes and
   other mail writes with no way left to resend keep the 14-day close of W-13a.
 - **W-41** The owner's viewer lists each uncertain operation read-only, with the re-check result,
   when it looked and where, and any redo. It says nothing is needed from the owner.
@@ -380,3 +386,17 @@ text below says "send" where the rule is about sends only.
   action of the pass (where, what, the state in the owner's words) and says plainly that these were
   reported by the assistant and not checked by the harness. The viewer's timeline shows each one with
   its card, and the viewer's grant page lists the uses of a standing permission.
+
+## Owner-directed clean-up and export
+
+Mail clean-up is optional and off by default. `cleanup plan|grant|run` supports
+owner-authorised rules; when enabled, `start` runs it at most once per day,
+without agent work, and supplies a report line. It moves only to recoverable
+Trash, with no daily limit; flag any mailbox where more than 100 messages moved
+so the agent can glance at Trash. The owner's rules are one year for routine
+filed mail and three years for Inbox mail that is neither starred nor also in an
+owner folder. Multi-message actions follow the bulk rule above.
+
+`export thread` accepts IDs, handles or `--file`, with `--keep-quotes` as an
+option. It produces a zip with manifest in temporary storage, never on a card;
+the cleaner removes it after seven days.

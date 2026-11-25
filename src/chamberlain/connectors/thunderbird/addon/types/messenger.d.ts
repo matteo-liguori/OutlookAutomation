@@ -58,8 +58,15 @@ interface TbAccount {
   rootFolder?: TbFolder;
 }
 
+interface BulkReadRef {
+  id: number;
+  internetMessageId: string;
+}
+
 interface HarnessMailApi {
   syncFolders(accountId: string, mailbox: string, folderIds: string[], timeoutMs: number): Promise<any>;
+  headerAttachmentFlags(accountId: string, mailbox: string, messageIds: number[], allowOutbox: boolean): Promise<boolean[]>;
+  setReadFlags(accountId: string, mailbox: string, folderId: string, refs: BulkReadRef[], read: boolean): Promise<void>;
   holdComposer(tabId: number, accountId: string, mailbox: string, draftFolderId: string, sentFolderId: string): Promise<any>;
   openDraft(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;
   findComposers(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;

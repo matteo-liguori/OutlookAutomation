@@ -14,6 +14,32 @@
         ]
       },
       {
+        "name": "headerAttachmentFlags",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "messageIds", "type": "array", "items": { "type": "integer" } },
+          { "name": "allowOutbox", "type": "boolean" }
+        ]
+      },
+      {
+        "name": "setReadFlags",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "folderId", "type": "string" },
+          { "name": "refs", "type": "array", "items": { "type": "object", "properties": {
+            "id": { "type": "integer" },
+            "internetMessageId": { "type": "string" }
+          } } },
+          { "name": "read", "type": "boolean" }
+        ]
+      },
+      {
         "name": "holdComposer",
         "type": "function",
         "async": true,

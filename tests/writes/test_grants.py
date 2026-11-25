@@ -420,14 +420,23 @@ def test_g16_the_hourly_send_limit_refuses_the_next_send() -> None:
         rig.close()
 
 
+@pytest.mark.parametrize("late_confirmation", [False, True])
 def test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled(
     rig: WriteRig,
+    late_confirmation: bool,
 ) -> None:
     proposal = rig.engine().propose_intent(rig.send(to=("late@example.org",)))
     assert proposal.operation is not None
     assert proposal.grant is not None
     rig.clock.advance(hours=24 * 7 + 1)
-    maintain(rig.ctx, rig.policy)
+    if late_confirmation:
+        with pytest.raises(ChamberlainError) as raised:
+            confirm_grant(
+                rig.ctx, proposal.grant.handle, {"content_sha256": proposal.content_sha256}
+            )
+        assert raised.value.code is ErrorCode.GRANT_NOT_ACTIVE
+    else:
+        maintain(rig.ctx, rig.policy)
     assert grant_of(rig, proposal.grant.handle).state is GrantState.LAPSED
     assert rig.engine().get(proposal.operation.handle).state is S.CANCELLED
 

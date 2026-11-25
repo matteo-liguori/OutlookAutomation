@@ -143,3 +143,7 @@ Four unread messages read, carded, two answered with sends to known recipients, 
 ## 2026-11-24 17:45 UTC | architect | DECISION | Absent proof waits for the deadline plus a margin; 429 counts as unknown
 
 Coordinator ruling applied in `writes/engine.py` (`_absence_proven`): an `absent` reconcile frees a grant only after `max(SETTLE_AFTER, CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS)` since dispatch (`limits.py`: 30 s plus 120 s margin, inside the 10 minute settle that already applied); before that `absent` keeps the operation `uncertain`. Property test `test_w12_an_absent_proof_never_frees_a_grant_before_deadline_plus_margin`. Accepted as a rule for connectors: a 429 (and 408, 5xx) on a write means it may have happened, so the result is unknown, never `not_applied`.
+
+## 2026-11-25 | architect | CONTRACT-CHANGE | Clean-up step 0
+
+Align the send cap, bulk mail, clean-up and export contracts with the owner rulings. Route expected clean-up CLI failures through its existing error handler. The twelve agent tools keep their interfaces.

@@ -98,6 +98,45 @@ test("P-4 a scan that hits max_scan says it is incomplete", async () => {
   assert.equal(res.result.complete, false);
 });
 
+test("P-3 P-4 query reports attachment flags in batches from one header scan", async () => {
+  const { addon, world } = setup();
+  const flagged = new Set([0, 50, 54]);
+  for (let i = 0; i < 55; i++) {
+    world.add({
+      folderId: INBOX,
+      headerMessageId: `flag-${i}@x`,
+      attachments: flagged.has(i) ? [{ name: "a.bin", bytes: new Uint8Array(1) }] : [],
+    });
+  }
+  const { messages, chamberlainMail: mail } = world.messenger;
+  const query = messages.query;
+  const headerAttachmentFlags = mail.headerAttachmentFlags;
+  let queries = 0;
+  const batchSizes = [];
+  messages.query = (...args) => {
+    queries++;
+    return query(...args);
+  };
+  mail.headerAttachmentFlags = (account, mailbox, ids, allowOutbox) => {
+    batchSizes.push(ids.length);
+    return headerAttachmentFlags(account, mailbox, ids, allowOutbox);
+  };
+  for (const method of ["getFull", "listAttachments", "getAttachmentFile", "getRaw"]) {
+    messages[method] = () => { assert.fail(`query called ${method}`); };
+  }
+
+  const res = await call(addon, "query", { ...BASE, folder_id: INBOX, limit: 55 });
+  assert.equal(res.ok, true);
+  assert.equal(res.result.complete, true);
+  assert.equal(res.result.scanned, 55);
+  assert.equal(res.result.messages.length, 55);
+  assert.deepEqual(res.result.messages.filter((m) => m.has_attachments).map((m) => m.internet_message_id),
+    ["flag-54@x", "flag-50@x", "flag-0@x"]);
+  assert.equal(queries, 1);
+  assert.deepEqual(batchSizes, [50, 5]);
+  assert.ok(world.messages.every((m) => !m.read));
+});
+
 test("P-3 a read that would flip the unread flag fails instead of reporting", async () => {
   const { addon, world } = setup();
   world.add({ folderId: INBOX, headerMessageId: "r@x", read: false });
@@ -112,8 +151,10 @@ test("P-3 reading, resolving and fetching an attachment leave the flag alone", a
   const m = world.add({ folderId: INBOX, headerMessageId: "r@x", read: false, attachments: [{ name: "a.bin", contentType: "application/octet-stream", bytes }] });
   const read = await call(addon, "read", { ...BASE, folder_id: INBOX, internet_message_id: "r@x", raw_hash: true });
   assert.equal(read.result.attachments.length, 1);
+  assert.equal(read.result.header.has_attachments, true);
   assert.equal(read.result.body, "Body text.");
-  await call(addon, "resolve", { ...BASE, folder_id: INBOX, internet_message_id: "r@x" });
+  const resolved = await call(addon, "resolve", { ...BASE, folder_id: INBOX, internet_message_id: "r@x" });
+  assert.equal(resolved.result.messages[0].has_attachments, true);
   const att = await call(addon, "attachment", { ...BASE, folder_id: INBOX, internet_message_id: "r@x", part_name: "1.2", max_bytes: 1_000_000 });
   assert.equal(att.ok, true);
   assert.equal(m.read, false);
@@ -160,6 +201,14 @@ test("B-3 account and identity are verified on every command", async () => {
   assert.equal(world.counters.full, 0);
   const folder = await call(addon, "query", { ...BASE, folder_id: "local://Outbox" });
   assert.equal(folder.error.code, "account_mismatch");
+
+  const outbox = "local://Outbox";
+  world.add({ folderId: outbox, headerMessageId: "foreign@x" });
+  world.add({ folderId: outbox, headerMessageId: "own@x", author: OWNER,
+    attachments: [{ name: "a.bin", bytes: new Uint8Array(1) }] });
+  const own = await call(addon, "query", { ...BASE, folder_id: outbox, own_only: true });
+  assert.equal(own.ok, true);
+  assert.deepEqual(own.result.messages.map((m) => [m.internet_message_id, m.has_attachments]), [["own@x", true]]);
 });
 
 test("P-14 move leaves one copy, none at the source, and the flag as it was", async () => {
@@ -220,6 +269,42 @@ test("R7 trash that merges into an existing recovery copy is applied and says so
   assert.equal(res.result.merged_existing_copy, true);
   assert.equal(res.result.read_state_preserved, false);
   assert.equal(world.copies("gm@x", TRASH), 1);
+});
+
+test("P-14 batch filing restores both read states with two bulk updates and skips duplicates", async () => {
+  const { addon, world } = setup();
+  const ids = ["read-1@x", "read-2@x", "unread-1@x", "unread-2@x"];
+  for (const id of ids) world.add({ folderId: INBOX, headerMessageId: id, read: id.startsWith("read") });
+  world.add({ folderId: INBOX, headerMessageId: "duplicate@x" });
+  const existing = world.add({ folderId: FILED, headerMessageId: "duplicate@x", read: true });
+  world.faults.flipReadOnMove = true;
+  const res = await call(addon, "move_many", {
+    ...BASE, folder_id: INBOX, destination_folder_id: FILED,
+    internet_message_ids: [...ids, "duplicate@x"],
+  });
+  assert.equal(res.result.verified, true);
+  assert.equal(res.result.read_state_preserved, true);
+  assert.equal(res.result.merged_existing_copy, false);
+  assert.deepEqual(res.result.items.map((item) => item.code), ["", "", "", "", "ambiguous"]);
+  assert.equal(world.counters.move, 1);
+  assert.equal(world.counters.update, 2);
+  for (const id of ids) assert.equal(world.find(id).read, id.startsWith("read"));
+  assert.equal(existing.read, true);
+});
+
+test("W-23 batch filing verifies an explicitly requested read flag", async () => {
+  const { addon, world } = setup({ tuning: { batchCheckMs: 30, movePollMs: 1 } });
+  world.add({ folderId: INBOX, headerMessageId: "one@x" });
+  world.add({ folderId: INBOX, headerMessageId: "two@x" });
+  world.faults.ignoreBulkRead = true;
+  const res = await call(addon, "move_many", {
+    ...BASE, folder_id: INBOX, destination_folder_id: FILED,
+    internet_message_ids: ["one@x", "two@x"], mark_read: true,
+  });
+  assert.equal(res.result.verified, false);
+  assert.equal(res.result.read_state_preserved, null);
+  assert.equal(world.counters.move, 1);
+  assert.equal(world.counters.update, 1);
 });
 
 test("W-24 mark_read reports every message and can mark unread", async () => {

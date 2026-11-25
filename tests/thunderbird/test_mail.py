@@ -215,6 +215,28 @@ def test_r7_trash_that_merges_into_an_existing_copy_is_applied_with_a_warning(
     assert stack.copies(message_id, stack.folder_id(FolderRole.TRASH)) == 1
 
 
+def test_r7_batch_trash_keeps_the_recovery_flag_and_reports_a_merge(stack: Stack) -> None:
+    message_id, inbox = seed(stack, unread=False)
+    recovery = stack.seed(internet_message_id=message_id, folder=FolderRole.TRASH, unread=True)
+    another_id, another = seed(stack, unread=True)
+    stack.control("inject", fault="merge")
+    refs = {handle(locator): locator for locator in (inbox, another)}
+    intent = MailTrash.model_validate(
+        {"source": SOURCE, "messages": list(refs), "from_folder": stack.folder_id(FolderRole.INBOX)}
+    )
+    result = applied(stack.mail.dispatch(stack.mail.prepare(intent, refs), "k", {}))
+    assert result.receipt is not None
+    assert result.receipt.warnings == ("merged_existing_copy", "read_state_not_preserved")
+    assert result.receipt.read_state_preserved is False
+    assert len(result.receipt.items) == 2
+    assert all(item.ok and item.moved_to for item in result.receipt.items)
+    assert stack.copies(message_id, stack.folder_id(FolderRole.TRASH)) == 1
+    assert stack.copies(another_id, stack.folder_id(FolderRole.TRASH)) == 1
+    assert stack.mail.resolve(SOURCE, recovery).unread
+    counters = stack.control("counters")
+    assert (counters["move"], counters["update"]) == (1, 0)
+
+
 def test_p6_a_source_with_two_copies_makes_trash_ambiguous_old_behaviour_dropped(
     stack: Stack,
 ) -> None:

@@ -7,6 +7,8 @@ from typing import Any
 
 import pytest
 
+from chamberlain.connections.load import profile_path
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.registry import STANDING_PROMPT, TOOLS
 from chamberlain.surface import cli, mcp_server
 
@@ -17,6 +19,45 @@ def run_cli(*argv: str) -> tuple[int, str]:
     out = io.StringIO()
     code = cli.main(list(argv), out)
     return code, out.getvalue()
+
+
+@pytest.mark.parametrize("action", ["plan", "grant", "run"])
+def test_s16_cleanup_reports_malformed_profile(data_root: Path, action: str) -> None:
+    profile = profile_path(data_root)
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    profile.write_text("cleanup: [invalid", encoding="utf-8")
+
+    code, text = run_cli("--data", str(data_root), "cleanup", action)
+
+    assert code == cli.EXIT_FAILED
+    assert text == (
+        "The connection profile cannot be read. "
+        "Correct config/connections.yaml and run `chamberlain config validate`.\n"
+    )
+
+
+def test_t14_cleanup_reports_app_startup_failure(
+    data_root: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    profile = profile_path(data_root)
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    profile.write_text(
+        "cleanup:\n  rules:\n  - name: Old mail\n    sources: ['*']\n"
+        "    folder: inbox\n    older_than_days: 365\n",
+        encoding="utf-8",
+    )
+
+    def unavailable(root: Path) -> None:
+        assert root == data_root
+        raise ChamberlainError(
+            ErrorCode.CONFIG_INVALID, "The store could not be opened.", fix="Check the data root."
+        )
+
+    monkeypatch.setattr(cli, "open_app", unavailable)
+    assert run_cli("--data", str(data_root), "cleanup", "plan") == (
+        cli.EXIT_FAILED,
+        "The store could not be opened. Check the data root.\n",
+    )
 
 
 def test_t14_cli_lists_the_twelve_tools_and_3_related_checks(

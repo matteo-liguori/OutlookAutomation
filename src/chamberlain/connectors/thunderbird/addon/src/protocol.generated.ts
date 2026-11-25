@@ -402,6 +402,8 @@ interface MoveManyItem {
 interface MoveManyResult {
   items: MoveManyItem[];
   verified: boolean;
+  read_state_preserved: boolean | null;
+  merged_existing_copy: boolean;
 }
 
 interface MoveResult {
@@ -2809,6 +2811,21 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
     "title": "Items",
     "type": "array"
    },
+   "merged_existing_copy": {
+    "title": "Merged Existing Copy",
+    "type": "boolean"
+   },
+   "read_state_preserved": {
+    "anyOf": [
+     {
+      "type": "boolean"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "title": "Read State Preserved"
+   },
    "verified": {
     "title": "Verified",
     "type": "boolean"
@@ -2816,7 +2833,9 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
   },
   "required": [
    "items",
-   "verified"
+   "verified",
+   "read_state_preserved",
+   "merged_existing_copy"
   ],
   "title": "MoveManyResult",
   "type": "object"

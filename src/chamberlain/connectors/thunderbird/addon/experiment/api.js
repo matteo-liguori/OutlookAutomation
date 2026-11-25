@@ -1,4 +1,4 @@
-/* Narrow privileged helpers (bridge contract B-3): six named functions, no generic execute.
+/* Narrow privileged helpers (bridge contract B-3): named functions, no generic execute.
  * Every function re-verifies that the account owns the sender identity. Runs only inside
  * Thunderbird; the fake used by the tests lives in test/fake_thunderbird.mjs. */
 /* global ChromeUtils, Ci, Components, Services */
@@ -121,6 +121,31 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           const folders = [];
           for (const id of folderIds) folders.push(await syncOne(id, accountId, timeoutMs));
           return { folders };
+        },
+        async headerAttachmentFlags(accountId, mailbox, messageIds, allowOutbox) {
+          const account = ownerAccount(accountId, mailbox);
+          need(messageIds.length > 0 && messageIds.length <= 50, "bad_request");
+          return messageIds.map((id) => {
+            const h = context.extension.messageManager.get(id);
+            need(h, "not_found");
+            const folder = h.folder;
+            need(folder && (folder.server.key === account.incomingServer.key ||
+              (allowOutbox && folder.server.type === "none" && folder.getFlag(Ci.nsMsgFolderFlags.Queue))), "account_mismatch");
+            return Boolean(h.flags & Ci.nsMsgMessageFlags.Attachment);
+          });
+        },
+        async setReadFlags(accountId, mailbox, folderId, refs, read) {
+          ownerAccount(accountId, mailbox);
+          need(!Services.io.offline, "client_offline");
+          need(refs.length > 0 && refs.length <= 500 && new Set(refs.map((ref) => ref.id)).size === refs.length, "bad_request");
+          const target = getFolder(folderId);
+          need(target.accountKey === accountId, "account_mismatch");
+          const headers = refs.map(({ id, internetMessageId }) => {
+            const h = context.extension.messageManager.get(id);
+            need(h?.folder?.URI === target.folder.URI && h.messageId.replace(/^<|>$/g, "") === internetMessageId, "changed");
+            return h;
+          });
+          target.folder.markMessagesRead(headers, read);
         },
         async holdComposer(tabId, accountId, mailbox, draftFolderId, sentFolderId) {
           const account = ownerAccount(accountId, mailbox);

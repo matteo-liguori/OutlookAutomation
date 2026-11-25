@@ -150,6 +150,7 @@ export function createWorld() {
       // An IMAP move yields a new physical copy (new session id) at the destination.
       m.id = world.nextId++;
       m.folderId = destination;
+      if (world.faults.flipReadOnMove) m.read = !m.read;
     }
   };
 
@@ -341,6 +342,24 @@ export function createWorld() {
       syncFolders: async (accountId, mailbox, folderIds) => ({
         folders: folderIds.map((id) => ({ folder_id: id, success: !world.faults.stale, ...(world.faults.stale ? { code: "sync-callback-timeout" } : {}) })),
       }),
+      headerAttachmentFlags: async (accountId, mailbox, ids, allowOutbox) => ids.map((id) => {
+        const m = byId(id);
+        const folder = world.folders.get(m.folderId);
+        if (mailbox !== OWNER || (folder.accountId !== accountId && !(allowOutbox && folder.specialUse.includes("outbox")))) {
+          throw new Error("chamberlain:account_mismatch:");
+        }
+        return m.attachments.length > 0;
+      }),
+      setReadFlags: async (accountId, mailbox, folderId, refs, read) => {
+        if (mailbox !== OWNER || world.folders.get(folderId)?.accountId !== accountId) throw new Error("chamberlain:account_mismatch:");
+        const messages = refs.map(({ id, internetMessageId }) => {
+          const m = byId(id);
+          if (m.folderId !== folderId || m.headerMessageId !== internetMessageId) throw new Error("chamberlain:changed:");
+          return m;
+        });
+        world.counters.update += 1;
+        if (!world.faults.ignoreBulkRead) for (const m of messages) m.read = read;
+      },
       holdComposer: async (tabId, accountId, mailbox, draftFolderId, sentFolderId) => {
         const c = tabState(tabId);
         // Like experiment/api.js: an ExtensionError text "chamberlain:<code>:<reason>"; "" skips the drafts check.

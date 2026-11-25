@@ -3,6 +3,7 @@
 
 const MAX_BODY_CHARS = 200_000;
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+const HEADER_BATCH_SIZE = 50;
 
 async function emailList(values: string[]): Promise<string[]> {
   const out: string[] = [];
@@ -23,7 +24,7 @@ function whenMs(h: TbHeader): number {
   return h.date instanceof Date ? h.date.getTime() : Number(h.date);
 }
 
-function header(h: TbHeader): Header {
+function header(h: TbHeader, hasAttachments = false): Header {
   const folder = h.folder ?? { id: "", accountId: "" };
   return {
     session_id: h.id,
@@ -38,7 +39,7 @@ function header(h: TbHeader): Header {
     folder_id: folder.id,
     folder_path: clip((folder as TbFolder).path, 1000),
     special_use: (folder as TbFolder).specialUse ?? [],
-    has_attachments: false,
+    has_attachments: hasAttachments,
     priority: h.priority ?? "",
   };
 }
@@ -46,6 +47,20 @@ function header(h: TbHeader): Header {
 interface Bound {
   account_id: string;
   mailbox: string;
+}
+
+/** Read the native flags for the headers this scan is returning, without opening MIME content. */
+async function scanHeaders(r: Bound, messages: TbHeader[], allowOutbox = false): Promise<Header[]> {
+  if (!messages.length) return [];
+  const mail = messenger.chamberlainMail;
+  check(mail, "unsupported", "The message header helper is not installed.");
+  const headers: Header[] = [];
+  for (let offset = 0; offset < messages.length; offset += HEADER_BATCH_SIZE) {
+    const batch = messages.slice(offset, offset + HEADER_BATCH_SIZE);
+    const flags = await mail.headerAttachmentFlags(r.account_id, r.mailbox, batch.map((h) => h.id), allowOutbox);
+    headers.push(...batch.map((h, index) => header(h, flags[index])));
+  }
+  return headers;
 }
 
 /** The bound account, checked. The folder tree only when asked: building it on every lookup
@@ -123,7 +138,7 @@ function hasEveryWord(h: TbHeader, words: string[]): boolean {
 
 /** Scan Thunderbird's query pages up to a bound; never silently truncate. */
 async function scanQuery(r: Bound, filter: ScanFilter): Promise<Scan> {
-  const q: any = { messagesPerPage: 50 };
+  const q: any = { messagesPerPage: HEADER_BATCH_SIZE };
   if (!filter.foreign) q.accountId = r.account_id;
   if (filter.folderId) q.folderId = filter.folderId;
   if (filter.internetId) q.headerMessageId = filter.internetId;
@@ -202,7 +217,7 @@ async function cmdQuery(a: QueryArgs): Promise<QueryResult> {
   const last = page[page.length - 1];
   const more = ordered.length > a.limit;
   return {
-    messages: page.map(header),
+    messages: await scanHeaders(a, page, foreign),
     more,
     complete: scan.complete,
     scanned: scan.scanned,
@@ -229,7 +244,7 @@ async function locateOne(r: Bound, ref: MessageRef): Promise<TbHeader> {
 async function cmdResolve(a: ResolveArgs): Promise<ResolveResult> {
   await accountOf(a);
   const found = await copiesIn(a, a.folder_id, a.internet_message_id);
-  return { messages: found.messages.map(header), complete: found.complete };
+  return { messages: await scanHeaders(a, found.messages), complete: found.complete };
 }
 
 async function htmlToText(html: string[]): Promise<string> {
@@ -275,14 +290,15 @@ async function cmdRead(a: ReadArgs): Promise<ReadResult> {
   const { full, after } = await guardedFull(a, { folder_id: a.folder_id, internet_message_id: a.internet_message_id });
   const headers = full.headers ?? {};
   const decoded = await messenger.messengerUtilities.decodeMimeHeader("subject", headers.subject ?? [after.subject]);
+  const attachments = await attachmentInfo(after.id);
   return {
-    header: header(after),
+    header: header(after, attachments.length > 0),
     subject: clip(decoded[0] ?? after.subject, MAX_BODY_CHARS),
     body: clip(await bodyText(full), MAX_BODY_CHARS),
     to: await emailList(after.recipients ?? []),
     cc: await emailList(after.ccList ?? []),
     bcc: await emailList(after.bccList?.length ? after.bccList : (headers.bcc ?? [])),
-    attachments: await attachmentInfo(after.id),
+    attachments,
     in_reply_to: (headers["in-reply-to"] ?? []).join(" ").trim(),
     references: (headers.references ?? []).join(" ").trim(),
     authentication_results: (headers["authentication-results"] ?? []).slice(0, 8).map((v: string) => clip(v, 2000)),
