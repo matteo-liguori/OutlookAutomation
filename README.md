@@ -126,8 +126,8 @@ chamberlain live-test sweep                  # remove marked items left by an ea
   It sends only to the addresses you list.
 - **The marker.** Every message subject and event title it makes starts with
   `CHAMBERLAIN LIVE TEST <run id>`. Cleanup and `sweep` touch only items with that marker.
-- **One run an hour at most.** A mailbox may send 20 messages an hour and one run sends about
-  14 from each mailbox. If the limit is reached, the scenario is skipped and says so.
+- **No send cap.** It sends only to your own addresses, and the hourly send cap does not apply
+  to mail only to you.
 - **Calendar edits.** A standing grant cannot cover them. Pass `--approve-calendar-edits` for one
   run, or set `live_test.approve_calendar_edits: true` in `connections.yaml`. Without either,
   the calendar scenarios are skipped and say why.

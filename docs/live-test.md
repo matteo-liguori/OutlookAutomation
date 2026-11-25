@@ -73,9 +73,8 @@ or never ran in that run. Run `sweep` after a stopped run.
 
 Keep these limits in mind:
 
-- A mailbox may send 20 messages an hour. One run sends about 14 from each mailbox in a
-  two-account setup. Run it once an hour at most. If the limit is reached the scenario is
-  skipped and says so.
+- The hourly send cap does not apply: the run sends only to your own addresses. A grant's
+  daily count still does; if it is reached the scenario is skipped and says so.
 - Thunderbird must be open and connected. A source that is not healthy is skipped.
 
 ## What each scenario checks

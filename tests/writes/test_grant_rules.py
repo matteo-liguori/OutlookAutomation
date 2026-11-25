@@ -26,6 +26,7 @@ from chamberlain.domain.intents import (
     MailSend,
     MailTrash,
 )
+from chamberlain.limits import SENDS_PER_HOUR
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.testing.write_rig import CALENDAR, MAIL, WriteRig
 from chamberlain.writes.models import WritePolicy
@@ -115,7 +116,7 @@ def test_g12_config_may_tighten_but_never_loosen() -> None:
         {"send_known": R.NONE},
         {"other": R.NONE},
         {"zone": "Mars/Base"},
-        {"sends_per_hour": 21},
+        {"sends_per_hour": SENDS_PER_HOUR + 1},
         {"sends_per_hour": 0},
     ):
         with pytest.raises(ChamberlainError) as raised:

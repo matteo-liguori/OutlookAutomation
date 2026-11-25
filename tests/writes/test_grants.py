@@ -12,10 +12,11 @@ from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig
+from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig, make_rig
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import confirm_grant, grant_detail, list_grants
 from chamberlain.writes.maintenance import maintain
+from chamberlain.writes.models import WritePolicy
 
 S = OperationState
 
@@ -399,20 +400,24 @@ def test_g15_receiving_or_agent_sending_never_makes_a_recipient_known(rig: Write
     assert other.requirement.value == "human_confirmation"
 
 
-def test_g16_the_hourly_send_limit_refuses_the_next_send(rig: WriteRig) -> None:
-    rig.standing_grant(max_per_day=50)
-    for index in range(20):
-        proposal = rig.engine().propose_intent(rig.send(subject=f"n{index}"))
-        assert proposal.operation is not None
-        rig.engine().do(proposal.operation.handle)
-    blocked = rig.engine().propose_intent(rig.send(subject="n20"))
-    assert not blocked.ready
-    assert blocked.operation is not None
-    with pytest.raises(ChamberlainError) as raised:
-        rig.engine().do(blocked.operation.handle)
-    assert raised.value.code is ErrorCode.GRANT_LIMIT_REACHED
-    rig.clock.advance(minutes=61)
-    assert rig.engine().propose_intent(rig.send(subject="n21")).ready
+def test_g16_the_hourly_send_limit_refuses_the_next_send() -> None:
+    rig = make_rig(policy=WritePolicy(sends_per_hour=5))  # a tightened cap; the default is 200
+    try:
+        rig.standing_grant(max_per_day=50)
+        for index in range(5):
+            proposal = rig.engine().propose_intent(rig.send(subject=f"n{index}"))
+            assert proposal.operation is not None
+            rig.engine().do(proposal.operation.handle)
+        blocked = rig.engine().propose_intent(rig.send(subject="n20"))
+        assert not blocked.ready
+        assert blocked.operation is not None
+        with pytest.raises(ChamberlainError) as raised:
+            rig.engine().do(blocked.operation.handle)
+        assert raised.value.code is ErrorCode.GRANT_LIMIT_REACHED
+        rig.clock.advance(minutes=61)
+        assert rig.engine().propose_intent(rig.send(subject="n21")).ready
+    finally:
+        rig.close()
 
 
 def test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled(

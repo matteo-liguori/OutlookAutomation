@@ -15,7 +15,7 @@ from chamberlain.domain.grant_rules import (
     suspend_at,
 )
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement
-from chamberlain.domain.intents import IntentKind, WriteIntent
+from chamberlain.domain.intents import IntentKind, MailSend, WriteIntent
 from chamberlain.schema.errors import ErrorCode
 from chamberlain.writes.models import GrantRow, WritePolicy
 
@@ -78,6 +78,15 @@ def requirement_needed(intent: WriteIntent, usage: Usage, policy: WritePolicy) -
     )
 
 
+def _only_to_owner(intent: WriteIntent, owner: frozenset[str]) -> bool:
+    """Every recipient is one of the owner's own addresses: the hourly cap guards against
+    mistaken mail to other people, so it does not apply (a live test sends only like this)."""
+    if not isinstance(intent, MailSend):
+        return False
+    people = [*intent.to, *intent.cc, *intent.bcc]
+    return bool(people) and all(str(p).lower() in owner for p in people)
+
+
 def authorise(
     intent: WriteIntent,
     operation: OperationFacts,
@@ -91,6 +100,7 @@ def authorise(
     if (
         intent.kind is IntentKind.MAIL_SEND
         and usage.source_sends_last_hour >= policy.sends_per_hour
+        and not _only_to_owner(intent, usage.owner_addresses)
     ):
         return Deny(ErrorCode.GRANT_LIMIT_REACHED, needed)
     if operation.reserved_grant is not None:

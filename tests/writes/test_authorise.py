@@ -156,10 +156,14 @@ def test_g16_standing_daily_and_hourly_limits() -> None:
     full = decide([standing(2)], Usage(recent_uses={handle: 2}))
     assert isinstance(full, Deny)
     assert full.code is ErrorCode.GRANT_LIMIT_REACHED
-    busy = decide([one_off()], Usage(source_sends_last_hour=20))
+    cap = POLICY.sends_per_hour
+    busy = decide([one_off()], Usage(source_sends_last_hour=cap))
     assert isinstance(busy, Deny)
     assert busy.code is ErrorCode.GRANT_LIMIT_REACHED
-    assert isinstance(decide([one_off()], Usage(source_sends_last_hour=19)), Allow)
+    assert isinstance(decide([one_off()], Usage(source_sends_last_hour=cap - 1)), Allow)
+    # Mail only to the owner's own addresses (a live test) is never capped.
+    owned = Usage(source_sends_last_hour=cap, owner_addresses=frozenset({"friend@example.org"}))
+    assert isinstance(decide([one_off()], owned), Allow)
 
 
 def test_g15_an_unknown_recipient_is_reported_and_needs_the_human() -> None:

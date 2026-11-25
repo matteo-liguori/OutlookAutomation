@@ -116,11 +116,12 @@ def test_dry_run_only_and_skip_choose_scenarios_without_touching_anything(lab: F
     assert not any(i.startswith("calendar") for i in reasons)
 
 
-def test_a_second_run_in_the_same_hour_skips_on_the_send_limit(lab: FakeLab) -> None:
+def test_a_second_run_in_the_same_hour_is_not_held_back_by_the_send_cap(lab: FakeLab) -> None:
+    """The run sends only to owned addresses, which the hourly cap leaves alone (owner)."""
     assert run_all(lab).score.failed == 0
     second = execute(lab.app, lab.env, lab.config, RunOptions())
     assert second.score.failed == 0
-    assert any("limit" in r.reason for r in second.results)
+    assert not any("limit" in r.reason for r in second.results)
     assert second.leftovers == ()
 
 

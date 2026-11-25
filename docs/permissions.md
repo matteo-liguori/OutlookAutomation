@@ -88,7 +88,7 @@ A standing permission lets the assistant repeat one kind of change without askin
   or domains), plus folders for filing. It never covers anything outside that.
   Sends always need a daily limit. For invitations and answers it covers only the exact
   addresses you list, never a domain.
-- **Limits.** A daily count, and never more than 20 sends an hour per mailbox. It never covers
+- **Limits.** A daily count, and never more than 200 sends an hour per mailbox (mail only to your own addresses is not capped). It never covers
   changing or deleting a calendar event.
 - **Monthly review.** Each month, on the day you granted it, the viewer asks "keep this?".
   Reading it or using it does not renew it. Only your "keep" does.

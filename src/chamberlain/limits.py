@@ -95,7 +95,9 @@ CONNECTOR_DEADLINE_SECONDS: Final = 30
 ABSENCE_MARGIN_SECONDS: Final = 120
 """Safety margin after the deadline: a timed-out write may land late (W-12)."""
 REPEAT_WINDOW_HOURS: Final = 24
-SENDS_PER_HOUR: Final = 20
+SENDS_PER_HOUR: Final = 200
+"""Sends per mailbox per hour (owner, 2026-11-25: 20 was too low). Mail only to the owner's
+own addresses is not capped, so a live test never hits it."""
 MARK_READ_MAX: Final = 200
 ONE_OFF_GRANT_DAYS: Final = 7
 STANDING_GRANT_MAX_DAYS: Final = 365
