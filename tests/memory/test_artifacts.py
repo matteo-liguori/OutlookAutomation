@@ -17,7 +17,10 @@ from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
-def test_m4_no_owner_no_storage(store: ArtifactService, cards: CardService, ctx: Context) -> None:
+def test_m4_no_owner_no_storage_and_1_related_checks(
+    store: ArtifactService, cards: CardService, ctx: Context, action: str
+) -> None:
+    # m4_no_owner_no_storage
     with pytest.raises(ChamberlainError) as unknown:
         keep_text(store, "act_doesnotexist01")
     assert unknown.value.code is ErrorCode.ARTIFACT_NO_OWNER
@@ -27,8 +30,7 @@ def test_m4_no_owner_no_storage(store: ArtifactService, cards: CardService, ctx:
     assert wrong.value.code is ErrorCode.ARTIFACT_NO_OWNER
     assert blobs(ctx.data_root) == set()
 
-
-def test_m4_owner_ended_is_refused(store: ArtifactService, cards: CardService, action: str) -> None:
+    # m4_owner_ended_is_refused
     cards.finish_action(action, None, "Done.")
     with pytest.raises(ChamberlainError) as ended:
         keep_text(store, action)
@@ -118,9 +120,15 @@ def test_m8_symlink_import_is_refused(tmp_path: Path) -> None:
     assert refused.value.code is ErrorCode.REQUEST_INVALID
 
 
-def test_m8_oversize_relative_and_folder_imports_are_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_m8_m9_oversize_relative_and_folder_imports_are_refused_and_1_related_checks(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    store: ArtifactService,
+    action: str,
+    ctx: Context,
+    clock: ManualClock,
 ) -> None:
+    # m8_oversize_relative_and_folder_imports_are_refused
     big = tmp_path / "big.bin"
     big.write_bytes(b"x" * 100)
     monkeypatch.setattr(artifacts_module, "IMPORT_MAX_BYTES", 50)
@@ -132,10 +140,7 @@ def test_m8_oversize_relative_and_folder_imports_are_refused(
     with pytest.raises(ChamberlainError):
         read_import(str(tmp_path))
 
-
-def test_m9_lease_copies_the_file_and_the_sweeper_removes_it(
-    store: ArtifactService, action: str, ctx: Context, clock: ManualClock
-) -> None:
+    # m9_lease_copies_the_file_and_the_sweeper_removes_it
     handle = keep_text(store, action, "leased", filename="note.txt")
     leased = store.lease(handle)
     path = Path(leased.path)
@@ -214,7 +219,10 @@ def test_m4_every_owner_kind_is_live_exactly_while_the_table_says(
         store.read_bytes(handle)
 
 
-def test_m4_default_and_maximum_expiry(store: ArtifactService, action: str, ctx: Context) -> None:
+def test_m4_m10_default_and_maximum_expiry_and_1_related_checks(
+    store: ArtifactService, action: str, ctx: Context, clock: ManualClock
+) -> None:
+    # m4_default_and_maximum_expiry
     default = store.keep_bytes(data=b"a", kind=ArtifactKind.TEXT, owner=action, reason="r")
     longest = store.keep_bytes(
         data=b"b", kind=ArtifactKind.TEXT, owner=action, reason="r", expires_in_hours=24 * 999
@@ -222,10 +230,7 @@ def test_m4_default_and_maximum_expiry(store: ArtifactService, action: str, ctx:
     assert default.expires_at == "2026-02-04T09:00:00Z"  # 30 days
     assert longest.expires_at == "2026-07-04T09:00:00Z"  # 180 days
 
-
-def test_m4_m10_long_open_actions_keep_what_they_own_until_renewed(
-    store: ArtifactService, action: str, ctx: Context, clock: ManualClock
-) -> None:
+    # m4_m10_long_open_actions_keep_what_they_own_until_renewed
     long_lived = keep_text(store, action, "kept for a long time", expires_in_hours=24 * 180)
     short = keep_text(store, action, "default expiry")
     clock.advance(hours=744)

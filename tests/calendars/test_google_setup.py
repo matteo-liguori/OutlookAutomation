@@ -38,9 +38,10 @@ def files_under(root: Path) -> list[Path]:
     return [p for p in root.rglob("*") if p.is_file()]
 
 
-def test_s17_the_client_is_saved_in_the_credential_store_and_validated(
+def test_s17_the_client_is_saved_in_the_credential_store_and_1_related_checks(
     store: SecretStore, memory_keyring: MemoryKeyring, tmp_path: Path
 ) -> None:
+    # s17_the_client_is_saved_in_the_credential_store_and_validated
     auth.save_client(store, f" {CLIENT_ID} ", f" {CLIENT_SECRET} ")
     assert auth.load_client(store) == (CLIENT_ID, CLIENT_SECRET)
     assert any(CLIENT_SECRET in value for value in memory_keyring.items.values())
@@ -50,8 +51,7 @@ def test_s17_the_client_is_saved_in_the_credential_store_and_validated(
             auth.save_client(store, *bad)
         assert raised.value.code is ErrorCode.REQUEST_INVALID
 
-
-def test_s17_a_downloaded_client_must_be_a_desktop_app(tmp_path: Path) -> None:
+    # s17_a_downloaded_client_must_be_a_desktop_app
     good, web = tmp_path / "good.json", tmp_path / "web.json"
     good.write_text(json.dumps({"installed": {"client_id": CLIENT_ID, "client_secret": "s"}}))
     web.write_text(json.dumps({"web": {"client_id": CLIENT_ID, "client_secret": "s"}}))
@@ -121,7 +121,10 @@ def test_a_refusal_or_missing_refresh_token_does_not_save_anything(store: Secret
     assert auth.accounts(store) == []
 
 
-def test_p17_access_tokens_are_cached_until_a_minute_before_expiry(store: SecretStore) -> None:
+def test_p17_access_tokens_are_cached_until_a_minute_before_and_1_related_checks(
+    store: SecretStore,
+) -> None:
+    # p17_access_tokens_are_cached_until_a_minute_before_expiry
     auth.save_client(store, CLIENT_ID, CLIENT_SECRET)
     auth.save_refresh_token(store, "me@example.test", REFRESH, "calendar")
     clock = ManualClock()
@@ -139,8 +142,7 @@ def test_p17_access_tokens_are_cached_until_a_minute_before_expiry(store: Secret
     assert tokens("me@example.test") == "access-2"
     assert calls[0]["refresh_token"] == REFRESH
 
-
-def test_sign_in_is_asked_for_when_the_account_is_not_linked_or_refused(store: SecretStore) -> None:
+    # sign_in_is_asked_for_when_the_account_is_not_linked_or_refused
     auth.save_client(store, CLIENT_ID, CLIENT_SECRET)
     tokens = auth.AccessTokens(store, ManualClock())
     with pytest.raises(ChamberlainError) as unlinked:
@@ -157,7 +159,10 @@ def test_sign_in_is_asked_for_when_the_account_is_not_linked_or_refused(store: S
     assert CLIENT_SECRET not in refused.value.detail + refused.value.message
 
 
-def test_link_prints_the_address_and_the_binding_ids(store: SecretStore) -> None:
+def test_link_prints_the_address_and_the_binding_ids_and_1_related_checks(
+    store: SecretStore,
+) -> None:
+    # link_prints_the_address_and_the_binding_ids
     lines: list[str] = []
     opened: list[str] = []
 
@@ -180,8 +185,7 @@ def test_link_prints_the_address_and_the_binding_ids(store: SecretStore) -> None
     assert opened == ["https://example.invalid/auth"]
     assert any("calendar_id: me@example.test" in line for line in lines)
 
-
-def test_check_reports_each_account_and_how_to_relink_a_lapsed_one(store: SecretStore) -> None:
+    # check_reports_each_account_and_how_to_relink_a_lapsed_one
     lines: list[str] = []
     assert not setup.check(store, say=lines.append)
     assert "client" in lines[-1]
@@ -191,13 +195,13 @@ def test_check_reports_each_account_and_how_to_relink_a_lapsed_one(store: Secret
     for email in ("a@example.test", "b@example.test"):
         auth.save_refresh_token(store, email, REFRESH, "calendar")
 
-    def lister(s: SecretStore, email: str) -> list[dict[str, str]]:
+    def failing_lister(s: SecretStore, email: str) -> list[dict[str, str]]:
         if email.startswith("b@"):
             raise ChamberlainError(ErrorCode.SOURCE_SIGN_IN_NEEDED, "refused")
         return [{"summary": "x", "id": "x", "role": "owner"}]
 
     lines.clear()
-    assert not setup.check(store, say=lines.append, lister=lister)
+    assert not setup.check(store, say=lines.append, lister=failing_lister)
     assert "a@example.test: ok (1 calendars)" in lines
     assert any(
         line.startswith("b@example.test: needs re-linking") and "link b@example.test" in line
@@ -205,7 +209,10 @@ def test_check_reports_each_account_and_how_to_relink_a_lapsed_one(store: Secret
     )
 
 
-def test_pages_are_filled_in_with_the_app_name(tmp_path: Path) -> None:
+def test_s17_pages_are_filled_in_with_the_app_name_and_1_related_checks(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # pages_are_filled_in_with_the_app_name
     written = setup.write_pages(
         tmp_path / "site", "My Calendar Tool", "https://example.invalid/src"
     )
@@ -218,10 +225,7 @@ def test_pages_are_filled_in_with_the_app_name(tmp_path: Path) -> None:
     bare = setup.write_pages(tmp_path / "bare", "Tool")
     assert "Source code" not in bare[0].read_text(encoding="utf-8")
 
-
-def test_s17_without_a_credential_store_a_restricted_file_is_used(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
+    # s17_without_a_credential_store_a_restricted_file_is_used
     previous = keyring.get_keyring()
     keyring.set_keyring(fail.Keyring())
     try:

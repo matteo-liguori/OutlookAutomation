@@ -65,7 +65,10 @@ def add_action(
 # --- calendar ---------------------------------------------------------------------------------
 
 
-def test_the_calendar_lists_events_by_day_with_a_tone_per_calendar(rig: Rig) -> None:
+def test_the_calendar_page_lists_days_and_sources_asks_a_sane_window_and_needs_the_token(
+    rig: Rig,
+) -> None:
+    # the_calendar_lists_events_by_day_with_a_tone_per_calendar
     add_event(rig, "Standup", datetime(2026, 1, 5, 9, 30, tzinfo=UTC), 1, location="Room 2")
     add_event(rig, "Offsite", datetime(2026, 1, 6, 0, 0, tzinfo=UTC), 48, all_day=True)
     add_event(rig, "Out of window", datetime(2026, 3, 1, 9, 0, tzinfo=UTC))
@@ -88,8 +91,7 @@ def test_the_calendar_lists_events_by_day_with_a_tone_per_calendar(rig: Rig) -> 
     assert offsite["all_day"] is True
     assert (offsite["first_day"], offsite["last_day"]) == ("2026-01-06", "2026-01-07")
 
-
-def test_the_calendar_says_when_a_source_could_not_be_read(rig: Rig) -> None:
+    # the_calendar_says_when_a_source_could_not_be_read
     def broken(*_: Any, **__: Any) -> Any:
         raise ChamberlainError(ErrorCode.SOURCE_UNAVAILABLE, "down")
 
@@ -99,14 +101,12 @@ def test_the_calendar_says_when_a_source_could_not_be_read(rig: Rig) -> None:
     assert data["sources"][0]["read"] is False
     assert "could not be read" in data["sources"][0]["note"]
 
-
-def test_the_calendar_asks_for_a_sane_window(rig: Rig) -> None:
+    # the_calendar_asks_for_a_sane_window
     assert rig.call("GET", "/api/calendar?start=2026-01-03&until=2026-06-10").status == 400
     assert rig.call("GET", "/api/calendar?start=2026-01-10&until=2026-01-03").status == 400
     assert rig.call("GET", "/api/calendar?start=nope").status == 400
 
-
-def test_dated_actions_show_on_the_calendar_but_are_not_important_appointments(rig: Rig) -> None:
+    # dated_actions_show_on_the_calendar_but_are_not_important_appointments
     card = make_card(rig, "Tax return")
     add_action(rig, "act_0123456789abcdef", card, "File it", "2026-01-06T12:00:00Z")
     data = get(rig, "/api/calendar?start=2026-01-03&until=2026-01-10")
@@ -115,8 +115,7 @@ def test_dated_actions_show_on_the_calendar_but_are_not_important_appointments(r
         ("2026-01-06", "File it", "Tax return", False)
     ]
 
-
-def test_the_calendar_needs_the_token(rig: Rig) -> None:
+    # the_calendar_needs_the_token
     for path in ("/api/calendar", "/api/reports?day=2026-01-05", "/api/cards", "/api/timeline"):
         assert rig.call("GET", path, token="wrong").status == 403
         assert rig.call("GET", path, host="evil.example").status == 403

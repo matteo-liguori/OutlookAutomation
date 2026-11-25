@@ -38,28 +38,28 @@ def live(db: sqlite3.Connection) -> list[str]:
     return sorted(e.dedupe_key for e in repo.live_events(db))
 
 
-def test_a1_a_condition_detected_twice_is_one_event(db: sqlite3.Connection, clock: ManualClock):
+def test_a1_a2_a_condition_detected_twice_is_one_event_and_3_related_checks(
+    db: sqlite3.Connection, clock: ManualClock, ctx: Context
+) -> None:
+    # a1_a_condition_detected_twice_is_one_event
     reconcile(db, clock, [draft(1)])
     reconcile(db, clock, [draft(1), draft(1)])
     assert len(live(db)) == 1
 
-
-def test_a1_the_dedupe_key_adds_a_discriminator(clock: ManualClock):
+    # a1_the_dedupe_key_adds_a_discriminator
     assert draft(1).dedupe_key == "action.due:act_0000000000000001"
     assert draft(1, "x").dedupe_key.endswith(":x")
     orphans = EventDraft(EventKind.STORAGE_ORPHANS, None, "s", 30)
     assert orphans.dedupe_key == "storage.orphans:-"
 
-
-def test_a2_an_event_expires_when_its_condition_clears(db: sqlite3.Connection, clock: ManualClock):
+    # a2_an_event_expires_when_its_condition_clears
     reconcile(db, clock, [draft(1)])
     reconcile(db, clock, [])
     assert live(db) == []
     row = db.execute("SELECT state FROM events").fetchone()
     assert row["state"] == "expired"
 
-
-def test_a2_delivery_never_closes_an_event(ctx: Context, clock: ManualClock):
+    # a2_delivery_never_closes_an_event
     reconcile(ctx.db, clock, [draft(1)])
     inbox.deliver(ctx.db, clock, "ses_aaaaaaaaaaaaaaaa", repo.live_events(ctx.db))
     assert [e.state.value for e in repo.live_events(ctx.db)] == ["delivered"]
@@ -137,13 +137,48 @@ def test_a4_an_uncertain_operation_cannot_be_handled_by_the_agent(
     assert len(live(db)) == 1
 
 
-def test_a4_unknown_event_handles_change_nothing(db: sqlite3.Connection, clock: ManualClock):
+def test_a4_a2_g8_unknown_event_handles_change_nothing_and_2_related_checks(
+    db: sqlite3.Connection, clock: ManualClock, ctx: Context
+) -> None:
+    # a4_unknown_event_handles_change_nothing
     reconcile(db, clock, [draft(1)])
     real = repo.live_events(db)[0].handle
     with pytest.raises(ChamberlainError) as raised:
         inbox.handle_events(db, clock, [real, "evt_ffffffffffffffff"])
     assert raised.value.code is ErrorCode.REQUEST_UNKNOWN_HANDLE
     assert len(live(db)) == 1
+
+    # a2_g8_a_reviewed_grant_stops_being_due
+    ctx.db.execute(
+        "INSERT INTO sources (id, kind, connector, created_at, updated_at) "
+        "VALUES ('mail:test', 'mail', 'fake', 'x', 'x')"
+    )
+    ctx.db.execute(
+        "INSERT INTO grants (handle, kind, state, source_id, title, requirement, content_sha256, "
+        "proposed_at, review_at) VALUES ('grant_0000000000000001', 'standing', 'active', "
+        "'mail:test', 'g', 'none', ?, 'x', '2026-01-01T00:00:00Z')",
+        ("a" * 64,),
+    )
+    tick.tick(ctx, force=True)
+    assert [e.kind.value for e in repo.live_events(ctx.db)] == ["grant.review_due"]
+    ctx.db.execute("UPDATE grants SET review_at = '2027-01-01T00:00:00Z'")
+    tick.tick(ctx, force=True)
+    assert repo.live_events(ctx.db) == []
+
+    # a2_a_storage_warning_clears_when_the_budget_is_met
+    def set_budget(value: str) -> None:
+        ctx.db.execute(
+            "INSERT INTO system_state (key, value, updated_at) VALUES "
+            "('memory.over_budget', ?, 'x') ON CONFLICT (key) DO UPDATE SET value = excluded.value",
+            (value,),
+        )
+
+    set_budget("total:600/500")
+    tick.tick(ctx, force=True)
+    assert [e.kind.value for e in repo.live_events(ctx.db)] == ["storage.over_budget"]
+    set_budget("0")
+    tick.tick(ctx, force=True)
+    assert repo.live_events(ctx.db) == []
 
 
 # --- properties ----------------------------------------------------------------
@@ -243,37 +278,3 @@ def test_a3_a4_quiet_periods_and_unhandleable_events_hold_in_random_runs(steps: 
                 elapsed += hours
     finally:
         db.close()
-
-
-def test_a2_g8_a_reviewed_grant_stops_being_due(ctx: Context, clock: ManualClock):
-    ctx.db.execute(
-        "INSERT INTO sources (id, kind, connector, created_at, updated_at) "
-        "VALUES ('mail:test', 'mail', 'fake', 'x', 'x')"
-    )
-    ctx.db.execute(
-        "INSERT INTO grants (handle, kind, state, source_id, title, requirement, content_sha256, "
-        "proposed_at, review_at) VALUES ('grant_0000000000000001', 'standing', 'active', "
-        "'mail:test', 'g', 'none', ?, 'x', '2026-01-01T00:00:00Z')",
-        ("a" * 64,),
-    )
-    tick.tick(ctx, force=True)
-    assert [e.kind.value for e in repo.live_events(ctx.db)] == ["grant.review_due"]
-    ctx.db.execute("UPDATE grants SET review_at = '2027-01-01T00:00:00Z'")
-    tick.tick(ctx, force=True)
-    assert repo.live_events(ctx.db) == []
-
-
-def test_a2_a_storage_warning_clears_when_the_budget_is_met(ctx: Context):
-    def set_budget(value: str) -> None:
-        ctx.db.execute(
-            "INSERT INTO system_state (key, value, updated_at) VALUES "
-            "('memory.over_budget', ?, 'x') ON CONFLICT (key) DO UPDATE SET value = excluded.value",
-            (value,),
-        )
-
-    set_budget("total:600/500")
-    tick.tick(ctx, force=True)
-    assert [e.kind.value for e in repo.live_events(ctx.db)] == ["storage.over_budget"]
-    set_budget("0")
-    tick.tick(ctx, force=True)
-    assert repo.live_events(ctx.db) == []

@@ -87,9 +87,10 @@ def _context_items(data_root: Path) -> list[sqlite3.Row]:
     )
 
 
-def test_m35_open_cards_with_context_get_one_card_owned_text_item(
+def test_m35_open_cards_with_context_get_one_card_owned_and_1_related_checks(
     old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # m35_open_cards_with_context_get_one_card_owned_text_item
     report = run_import(old_root, data_root, clock=clock, secrets=secrets)
     items = _context_items(data_root)
     titles = {r["handle"]: r["title"] for r in _rows(data_root, "SELECT handle, title FROM cards")}
@@ -106,16 +107,7 @@ def test_m35_open_cards_with_context_get_one_card_owned_text_item(
     expires = clock.now().timestamp() + IMPORTED_CONTEXT_DAYS * 86400
     assert abs(_stamp(solicitor["expires_at"]) - expires) < 5
 
-
-def _stamp(text: str) -> float:
-    from datetime import UTC, datetime
-
-    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
-
-
-def test_m35_the_card_is_due_for_review_now_and_the_agent_can_read_the_item(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # m35_the_card_is_due_for_review_now_and_the_agent_can_read_the_item
     run_import(old_root, data_root, clock=clock, secrets=secrets)
     card = _rows(data_root, "SELECT * FROM cards WHERE title = 'Solicitor matter'")[0]
     assert card["review_at"] == "2026-01-05T09:00:00Z"  # now, not the old review clock
@@ -134,6 +126,12 @@ def test_m35_the_card_is_due_for_review_now_and_the_agent_can_read_the_item(
         assert "EX-1234" in item.data.content.text  # type: ignore[union-attr]
     finally:
         app.close()
+
+
+def _stamp(text: str) -> float:
+    from datetime import UTC, datetime
+
+    return datetime.strptime(text, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC).timestamp()
 
 
 def test_m35_an_import_into_a_store_that_has_the_cards_adds_the_missing_context_once(
@@ -175,9 +173,10 @@ def test_m35_forgetting_the_item_is_final_a_later_import_does_not_bring_it_back(
     assert not again.changed
 
 
-def test_m35_unread_context_expires_on_its_own_and_the_card_stops_showing_it(
+def test_m35_unread_context_expires_on_its_own_and_the_card_and_1_related_checks(
     old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # m35_unread_context_expires_on_its_own_and_the_card_stops_showing_it
     run_import(old_root, data_root, clock=clock, secrets=secrets)
     card = _rows(data_root, "SELECT handle FROM cards WHERE title = 'Solicitor matter'")[0][0]
     app = open_app(data_root, clock=clock, secrets=secrets)
@@ -194,10 +193,7 @@ def test_m35_unread_context_expires_on_its_own_and_the_card_stops_showing_it(
     finally:
         app.close()
 
-
-def test_m35_a_card_the_owner_closed_gets_no_context_on_a_later_import(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # m35_a_card_the_owner_closed_gets_no_context_on_a_later_import
     _set_context(old_root, "case-ctx", "")
     run_import(old_root, data_root, clock=clock, secrets=secrets)
     handle = _rows(data_root, "SELECT handle FROM cards WHERE title = 'Solicitor matter'")[0][0]
@@ -215,9 +211,10 @@ def test_m35_a_card_the_owner_closed_gets_no_context_on_a_later_import(
     assert "context_artifacts" not in again.counts
 
 
-def test_m35_closing_the_card_releases_its_context(
+def test_m35_closing_the_card_releases_its_context_and_1_related_checks(
     old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # m35_closing_the_card_releases_its_context
     run_import(old_root, data_root, clock=clock, secrets=secrets)
     handle = _rows(data_root, "SELECT handle FROM cards WHERE title = 'Solicitor matter'")[0][0]
     app = open_app(data_root, clock=clock, secrets=secrets)
@@ -236,10 +233,7 @@ def test_m35_closing_the_card_releases_its_context(
     finally:
         app.close()
 
-
-def test_m35_the_agent_cannot_store_things_directly_under_a_card(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # m35_the_agent_cannot_store_things_directly_under_a_card
     run_import(old_root, data_root, clock=clock, secrets=secrets)
     handle = _rows(data_root, "SELECT handle FROM cards WHERE title = 'Solicitor matter'")[0][0]
     app = open_app(data_root, clock=clock, secrets=secrets)
@@ -258,19 +252,16 @@ def _text_kind() -> Any:
     return ArtifactKind.TEXT
 
 
-def test_m35_the_import_report_names_the_count(
+def test_m35_the_import_report_names_the_count_and_1_related_checks(
     old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # m35_the_import_report_names_the_count
     report: ImportReport = run_import(old_root, data_root, clock=clock, secrets=secrets)
     assert report.document()["counts"]["context_artifacts"] == 2
     saved = json.loads((data_root / "import" / "report.json").read_text(encoding="utf-8"))
     assert saved["counts"]["context_artifacts"] == 2
 
-
-def test_m35_a_card_with_old_context_is_not_offered_for_closing(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
-    """The review event says `context`, so `card.review` ("close it unless...") stays silent."""
+    # m35_a_card_with_old_context_is_not_offered_for_closing: The review event says `context`, s
     from chamberlain.attention.collect import collect
     from chamberlain.attention.detectors.due import card_review_due
     from chamberlain.attention.rules import load_rules

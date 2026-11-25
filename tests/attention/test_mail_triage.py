@@ -33,9 +33,10 @@ def go(ctx: Context, clock: ManualClock) -> None:
     tick.tick(ctx, force=True)
 
 
-def test_a_many_new_messages_are_one_work_item_per_source(
-    ctx: Context, seed: Any, fake: FakeProvider, app: App
+def test_a_many_new_messages_are_one_work_item_per_source_and_1_related_checks(
+    ctx: Context, seed: Any, fake: FakeProvider, app: App, clock: ManualClock
 ) -> None:
+    # a_many_new_messages_are_one_work_item_per_source
     for n in range(12):
         fake.mail.add_message(SOURCE, internet_message_id=f"<n{n}@x>", sender=f"s{n}@example.org")
     reply = app.call("start", {})
@@ -47,10 +48,7 @@ def test_a_many_new_messages_are_one_work_item_per_source(
     assert mail[0].next.args["source"] == SOURCE
     assert "folder" not in mail[0].next.args, "mail may be filed anywhere, so list every folder"
 
-
-def test_a_a_reply_to_a_linked_message_suggests_that_card(
-    ctx: Context, seed: Any, fake: FakeProvider, clock: ManualClock
-) -> None:
+    # a_a_reply_to_a_linked_message_suggests_that_card
     card = seed.card("Roof repair")
     other = seed.card("Taxes")
     link(ctx, card, "<orig@x>")
@@ -118,9 +116,10 @@ def test_a_the_harness_never_writes_card_links(
     assert ctx.db.execute("SELECT COUNT(*) FROM mail_seen").fetchone()[0] == 1
 
 
-def test_a_mail_that_arrives_after_the_batch_was_shown_surfaces_again_once_it_is_handled(
+def test_a_mail_that_arrives_after_the_batch_was_shown_and_2_related_checks(
     ctx: Context, seed: Any, fake: FakeProvider, clock: ManualClock, app: App
 ) -> None:
+    # a_mail_that_arrives_after_the_batch_was_shown_surfaces_again_once_it_is_handled
     fake.mail.add_message(SOURCE, internet_message_id="<first@x>")
     reply = app.call("start", {})
     session = str(reply.data.session)
@@ -134,10 +133,7 @@ def test_a_mail_that_arrives_after_the_batch_was_shown_surfaces_again_once_it_is
     assert len(mail) == 1
     assert "1 new mail" in mail[0].summary
 
-
-def test_a_a_handled_batch_does_not_come_back(
-    ctx: Context, seed: Any, fake: FakeProvider, clock: ManualClock, app: App
-) -> None:
+    # a_a_handled_batch_does_not_come_back
     fake.mail.add_message(SOURCE, internet_message_id="<first@x>")
     reply = app.call("start", {})
     session = str(reply.data.session)
@@ -150,10 +146,7 @@ def test_a_a_handled_batch_does_not_come_back(
     ).fetchone()[0]
     assert rows == 0
 
-
-def test_a_mail_the_owner_sent_teaches_recipients_and_never_becomes_new_mail(
-    ctx: Context, seed: Any, fake: FakeProvider, clock: ManualClock, app: App
-) -> None:
+    # a_mail_the_owner_sent_teaches_recipients_and_never_becomes_new_mail
     card = seed.card("Roof repair")
     link(ctx, card, "<orig@x>")
     fake.mail.add_message(

@@ -17,16 +17,14 @@ def test_a_contact_is_read_by_its_locator(stack: Stack) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "locator", ["tb:nope", "tbc:!!", encode_contact_locator("book1", "missing")]
-)
-def test_an_unknown_contact_is_an_unknown_handle(stack: Stack, locator: str) -> None:
-    with pytest.raises(ChamberlainError) as raised:
-        stack.contacts.read("contacts:test", locator)
-    assert raised.value.code is ErrorCode.REQUEST_UNKNOWN_HANDLE
-
-
-def test_a_contact_outside_the_bound_books_is_refused_without_a_call(stack: Stack) -> None:
-    with pytest.raises(ChamberlainError) as raised:
-        stack.contacts.read("contacts:test", encode_contact_locator("book2", "c1"))
-    assert raised.value.code is ErrorCode.REQUEST_UNKNOWN_HANDLE
+def test_an_unknown_or_unbound_contact_is_an_unknown_handle_without_a_call(stack: Stack) -> None:
+    # unknown locators, and (last) a contact outside the bound books
+    for locator in [
+        "tb:nope",
+        "tbc:!!",
+        encode_contact_locator("book1", "missing"),
+        encode_contact_locator("book2", "c1"),
+    ]:
+        with pytest.raises(ChamberlainError) as raised:
+            stack.contacts.read("contacts:test", locator)
+        assert raised.value.code is ErrorCode.REQUEST_UNKNOWN_HANDLE, locator

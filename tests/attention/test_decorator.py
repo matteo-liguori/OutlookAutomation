@@ -40,6 +40,35 @@ def test_a19_guidance_in_a_reply_stays_within_the_reply_budget(app: App, seed: A
     assert used <= GUIDANCE_REPLY_CHARS
 
 
+def test_a19_a_decorator_failure_returns_the_reply_untouched(
+    ctx: Context, seed: Any, monkeypatch: pytest.MonkeyPatch
+):
+    def broken(*args: Any, **kwargs: Any) -> Any:
+        raise RuntimeError("decorate failed")
+
+    monkeypatch.setattr(hooks_module, "select", broken)
+    reply = App(ctx, HANDLERS, HOOKS).call("start", {})
+    assert reply.ok
+    assert reply.guidance == ()
+
+
+def test_a19_a_gap_is_not_hidden_by_the_decorator(ctx: Context, seed: Any):
+    def partial(c: Context, request: FindRequest) -> Result:
+        gap = CoverageGap(source="mail:test", reason="not synchronised")
+        return Result(FindResponse(), coverage=Coverage(complete=False, returned=0, gaps=(gap,)))
+
+    app = App(ctx, {**HANDLERS, ToolName.FIND: partial}, HOOKS)
+    session = str(app.call("start", {}).data.session)
+    reply = app.call("find", {"session": session, "scope": "mail"})
+    assert reply.coverage is not None
+    assert not reply.coverage.complete
+
+
+def test_a19_hooks_implement_the_app_protocol():
+    assert isinstance(HOOKS, AttentionHooks)
+    assert isinstance(Reply[FindResponse](ok=True, data=FindResponse()), Reply)
+
+
 def test_a16_a_rule_that_does_not_fit_becomes_a_pointer_until_asked_for(ctx: Context, seed: Any):
     """With a tiny budget lower rules turn into pointers, the urgent one stays whole."""
     rules = load_rules()
@@ -63,18 +92,6 @@ def _event(seed: Any, ctx: Context) -> Any:
     seed.operation("mail.send")
     tick.tick(ctx, force=True)
     return repo.live_events(ctx.db)[0]
-
-
-def test_a19_a_decorator_failure_returns_the_reply_untouched(
-    ctx: Context, seed: Any, monkeypatch: pytest.MonkeyPatch
-):
-    def broken(*args: Any, **kwargs: Any) -> Any:
-        raise RuntimeError("decorate failed")
-
-    monkeypatch.setattr(hooks_module, "select", broken)
-    reply = App(ctx, HANDLERS, HOOKS).call("start", {})
-    assert reply.ok
-    assert reply.guidance == ()
 
 
 def test_e2_guidance_drops_to_pointers_before_anything_else(ctx: Context, seed: Any):
@@ -105,20 +122,3 @@ def test_e2_guidance_drops_to_pointers_before_anything_else(ctx: Context, seed: 
     assert len(reply.model_dump_json(exclude_none=True)) <= MAX_REPLY_CHARS
     assert reply.data == plain.data
     assert not any(g.text for g in reply.guidance)
-
-
-def test_a19_a_gap_is_not_hidden_by_the_decorator(ctx: Context, seed: Any):
-    def partial(c: Context, request: FindRequest) -> Result:
-        gap = CoverageGap(source="mail:test", reason="not synchronised")
-        return Result(FindResponse(), coverage=Coverage(complete=False, returned=0, gaps=(gap,)))
-
-    app = App(ctx, {**HANDLERS, ToolName.FIND: partial}, HOOKS)
-    session = str(app.call("start", {}).data.session)
-    reply = app.call("find", {"session": session, "scope": "mail"})
-    assert reply.coverage is not None
-    assert not reply.coverage.complete
-
-
-def test_a19_hooks_implement_the_app_protocol():
-    assert isinstance(HOOKS, AttentionHooks)
-    assert isinstance(Reply[FindResponse](ok=True, data=FindResponse()), Reply)

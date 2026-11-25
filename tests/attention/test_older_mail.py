@@ -58,9 +58,10 @@ def after_a_long_absence(
     return ctx, clock
 
 
-def test_a_the_last_day_is_read_at_once_and_the_older_part_is_asked_about(
+def test_a_the_last_day_is_read_at_once_and_the_older_and_1_related_checks(
     after_a_long_absence: tuple[Context, ManualClock], app: App
 ) -> None:
+    # a_the_last_day_is_read_at_once_and_the_older_part_is_asked_about
     ctx, clock = after_a_long_absence
     go(ctx, clock)
     assert seen(ctx) == {"new0@x", "new1@x"}
@@ -74,10 +75,7 @@ def test_a_the_last_day_is_read_at_once_and_the_older_part_is_asked_about(
     assert next(b for b in repo.mail_batches(ctx.db) if not b.sent).count == 2
     assert item.next.tool.value == "doctor", "the work item never carries the yes for the agent"
 
-
-def test_a_yes_reads_the_older_mail_over_the_next_ticks_and_ends_the_question(
-    after_a_long_absence: tuple[Context, ManualClock], app: App
-) -> None:
+    # a_yes_reads_the_older_mail_over_the_next_ticks_and_ends_the_question
     ctx, clock = after_a_long_absence
     go(ctx, clock)
     start = app.call("start", {})

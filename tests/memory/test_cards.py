@@ -34,29 +34,27 @@ def refused(call: object, code: ErrorCode) -> ChamberlainError:
     return raised.value
 
 
-@pytest.mark.parametrize(
-    ("field", "limit"),
-    [
+def test_m12_each_field_cap_refuses_and_names_field_size_and_3_related_checks(
+    cards: CardService, action: str
+) -> None:
+    # m12_each_field_cap_refuses_and_names_field_size_and_limit
+    card = cards.create(title="Short")
+    for field, limit in [
         ("title", CARD_TITLE_MAX),
         ("goal", CARD_GOAL_MAX),
         ("position", CARD_POSITION_MAX),
         ("rules", CARD_RULES_MAX),
-    ],
-)
-def test_m12_each_field_cap_refuses_and_names_field_size_and_limit(
-    cards: CardService, field: str, limit: int
-) -> None:
-    card = cards.create(title="Short")
-    error = refused(
-        lambda: cards.update(card.handle, None, {field: "x" * (limit + 1)}), ErrorCode.CARD_OVER_CAP
-    )
-    assert error.field == field
-    assert str(limit) in error.fix
-    assert str(limit + 1) in error.message
-    assert getattr(cards.view(card.handle), field) == getattr(card, field)  # nothing truncated
+    ]:
+        error = refused(
+            lambda: cards.update(card.handle, None, {field: "x" * (limit + 1)}),  # noqa: B023
+            ErrorCode.CARD_OVER_CAP,
+        )
+        assert error.field == field
+        assert str(limit) in error.fix
+        assert str(limit + 1) in error.message
+        assert getattr(cards.view(card.handle), field) == getattr(card, field)  # nothing truncated
 
-
-def test_m12_the_whole_open_card_is_capped(cards: CardService) -> None:
+    # m12_the_whole_open_card_is_capped
     card = cards.create(
         title="t" * CARD_TITLE_MAX,
         goal="g" * CARD_GOAL_MAX,
@@ -78,8 +76,7 @@ def test_m12_the_whole_open_card_is_capped(cards: CardService) -> None:
     assert error.field == "card"
     assert str(CARD_MAX_CHARS) in error.fix
 
-
-def test_m12_open_actions_per_card_are_capped_at_seven(cards: CardService) -> None:
+    # m12_open_actions_per_card_are_capped_at_seven
     card = cards.create(title="Many things")
     for index in range(7):
         cards.add_action(card.handle, None, title=f"Step {index}", due_at=None, snooze_until=None)
@@ -94,8 +91,7 @@ def test_m12_open_actions_per_card_are_capped_at_seven(cards: CardService) -> No
     cards.finish_action(finish, None, "Done.")
     cards.add_action(card.handle, None, title="Now it fits", due_at=None, snooze_until=None)
 
-
-def test_m12_action_title_and_outcome_caps(cards: CardService, action: str) -> None:
+    # m12_action_title_and_outcome_caps
     card = cards.create(title="Another")
     refused(
         lambda: cards.add_action(
@@ -111,15 +107,17 @@ def test_m12_action_title_and_outcome_caps(cards: CardService, action: str) -> N
     )
 
 
-def test_m12_notes_are_capped_in_size_and_number(cards: CardService, action: str) -> None:
+def test_m12_m13_m14_notes_are_capped_in_size_and_number_and_3_related_checks(
+    cards: CardService, action: str, ctx: Context
+) -> None:
+    # m12_notes_are_capped_in_size_and_number
     refused(lambda: cards.add_note(action, "n" * (NOTE_MAX + 1)), ErrorCode.NOTE_OVER_CAP)
     for index in range(NOTES_PER_ACTION_MAX):
         cards.add_note(action, f"note {index}")
     error = refused(lambda: cards.add_note(action, "the sixth"), ErrorCode.NOTE_OVER_CAP)
     assert "older note" in error.fix
 
-
-def test_m12_evidence_is_capped(ctx: Context, cards: CardService) -> None:
+    # m12_evidence_is_capped
     card = cards.create(title="Evidence card")
     service = EvidenceService(ctx.db, ctx.clock)
     refused(
@@ -128,8 +126,7 @@ def test_m12_evidence_is_capped(ctx: Context, cards: CardService) -> None:
     )
     service.add(text="e" * 2000, owner=card.handle, session=None)
 
-
-def test_m13_an_imported_card_over_cap_is_flagged_and_must_come_under(cards: CardService) -> None:
+    # m13_an_imported_card_over_cap_is_flagged_and_must_come_under
     card = cards.create(title="Imported", goal="g" * 900, imported=True)
     assert card.over_cap
     assert card.review_at is not None
@@ -140,15 +137,17 @@ def test_m13_an_imported_card_over_cap_is_flagged_and_must_come_under(cards: Car
     assert not fixed.over_cap
     assert fixed.review_at is None
 
-
-def test_m14_updating_replaces_and_never_appends(cards: CardService) -> None:
+    # m14_updating_replaces_and_never_appends
     card = cards.create(title="Plan", position="first position")
     updated = cards.update(card.handle, None, {"position": "second position"})
     assert updated.position == "second position"
     assert "first" not in updated.model_dump_json()
 
 
-def test_m16_a_stale_version_conflicts(cards: CardService) -> None:
+def test_m16_m3_a_stale_version_conflicts_and_1_related_checks(
+    cards: CardService, ctx: Context, store: ArtifactService, clock: ManualClock
+) -> None:
+    # m16_a_stale_version_conflicts
     card = cards.create(title="Versioned")
     assert card.version == 1
     second = cards.update(card.handle, 1, {"goal": "a goal"})
@@ -159,10 +158,7 @@ def test_m16_a_stale_version_conflicts(cards: CardService) -> None:
     )
     assert "version 2" in error.message
 
-
-def test_m3_closing_compacts_and_erases_everything_the_card_held(
-    ctx: Context, cards: CardService, store: ArtifactService, clock: ManualClock
-) -> None:
+    # m3_closing_compacts_and_erases_everything_the_card_held
     card = cards.create(title="To close", goal="goal", position="position", rules="rules")
     view = cards.add_action(card.handle, None, title="Open task", due_at=None, snooze_until=None)
     action = view.actions[0].handle
@@ -196,9 +192,10 @@ def store_files(ctx: Context) -> int:
     return len([p for p in (ctx.data_root / "artifacts").rglob("*") if p.is_file()])
 
 
-def test_m3_reopening_starts_empty_and_outcome_lines_age_out(
-    ctx: Context, cards: CardService, clock: ManualClock
+def test_m3_reopening_starts_empty_and_outcome_lines_age_out_and_1_related_checks(
+    ctx: Context, cards: CardService, clock: ManualClock, action: str
 ) -> None:
+    # m3_reopening_starts_empty_and_outcome_lines_age_out
     card = cards.create(title="Reopen me", position="old position")
     cards.close(card.handle, None, "Closed for now.")
     reopened = cards.reopen(card.handle, None)
@@ -216,10 +213,7 @@ def test_m3_reopening_starts_empty_and_outcome_lines_age_out(
     assert report.total("cards_purged") == 1
     assert repo.get_card(ctx.db, card.handle) is not None  # open cards are never purged
 
-
-def test_m3_finished_action_loses_notes_and_its_line_goes_after_90_days(
-    ctx: Context, cards: CardService, action: str, clock: ManualClock
-) -> None:
+    # m3_finished_action_loses_notes_and_its_line_goes_after_90_days
     note = cards.add_note(action, "scratch")
     card = repo.card_of_action(ctx.db, action)
     assert card is not None
@@ -234,9 +228,10 @@ def test_m3_finished_action_loses_notes_and_its_line_goes_after_90_days(
     assert repo.get_action(ctx.db, action) is None
 
 
-def test_m3_a_note_untouched_for_30_days_goes_even_with_its_action_open(
+def test_m3_t10_a_note_untouched_for_30_days_goes_even_with_and_1_related_checks(
     ctx: Context, cards: CardService, action: str, clock: ManualClock
 ) -> None:
+    # m3_a_note_untouched_for_30_days_goes_even_with_its_action_open
     note = cards.add_note(action, "stale scratch")
     clock.advance(hours=24 * 29)
     sweep(ctx, clock.now())
@@ -245,8 +240,7 @@ def test_m3_a_note_untouched_for_30_days_goes_even_with_its_action_open(
     sweep(ctx, clock.now())
     assert repo.get_note(ctx.db, note) is None
 
-
-def test_t10_a_note_needs_an_open_action(cards: CardService, action: str) -> None:
+    # t10_a_note_needs_an_open_action
     card = cards.create(title="Not an action")
     refused(lambda: cards.add_note(card.handle, "text"), ErrorCode.ARTIFACT_NO_OWNER)
     cards.finish_action(action, None, "Done.")

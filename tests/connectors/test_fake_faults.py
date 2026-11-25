@@ -55,7 +55,10 @@ def test_lose_before_apply(fake: FakeProvider) -> None:
     assert fake.mail.reconcile(prepared, "k1").status is ReconcileStatus.ABSENT
 
 
-def test_send_absence_is_unproven_unless_the_provider_says_otherwise(clock: ManualClock) -> None:
+def test_send_absence_is_unproven_unless_the_provider_and_1_related_checks(
+    clock: ManualClock, fake: FakeProvider
+) -> None:
+    # send_absence_is_unproven_unless_the_provider_says_otherwise
     for provable in (False, True):
         fake = FakeProvider(clock, send_absence_provable=provable)
         fake.mail.add_source(MAIL)
@@ -63,8 +66,7 @@ def test_send_absence_is_unproven_unless_the_provider_says_otherwise(clock: Manu
         assert settled.status is ReconcileStatus.ABSENT
         assert settled.proof is provable
 
-
-def test_a_fault_is_consumed_by_one_call_and_can_be_armed_for_several(fake: FakeProvider) -> None:
+    # a_fault_is_consumed_by_one_call_and_can_be_armed_for_several
     fake.arm(Fault.BUSY_BEFORE_APPLY, times=2)
     outcomes = [
         fake.mail.dispatch(_send(fake, f"<o{i}@example.org>"), f"k{i}", {}).outcome
@@ -100,7 +102,8 @@ def test_restart_between_prepare_and_dispatch_still_moves_the_right_message(
     assert fake.mail.copies(MAIL, "<other@example.org>", "f-inbox") == 1
 
 
-def test_duplicate_copy_leaves_the_source_behind(fake: FakeProvider) -> None:
+def test_duplicate_copy_leaves_the_source_behind_and_1_related_checks(fake: FakeProvider) -> None:
+    # duplicate_copy_leaves_the_source_behind
     locator = fake.mail.add_message(MAIL, internet_message_id=MSG)
     prepared = _move(fake, locator)
     fake.arm(Fault.DUPLICATE_COPY)
@@ -109,8 +112,7 @@ def test_duplicate_copy_leaves_the_source_behind(fake: FakeProvider) -> None:
     assert fake.mail.copies(MAIL, MSG, "f-archive") == 1
     assert fake.mail.reconcile(prepared, "k1").status is ReconcileStatus.UNKNOWN
 
-
-def test_two_copies_in_one_folder_make_the_locator_ambiguous(fake: FakeProvider) -> None:
+    # two_copies_in_one_folder_make_the_locator_ambiguous
     locator = fake.mail.add_message(MAIL, internet_message_id=MSG)
     fake.mail.add_message(MAIL, internet_message_id=MSG)
     with pytest.raises(ChamberlainError) as raised:
@@ -166,16 +168,17 @@ def test_sign_in_needed_can_be_set_per_source(fake: FakeProvider) -> None:
     assert fake.calendar.health(CAL).state is HealthState.OK
 
 
-def test_the_dispatch_log_exposes_a_double_dispatch(fake: FakeProvider) -> None:
-    """The fake does not protect against a second dispatch; it makes one visible (W-8)."""
+def test_the_dispatch_log_exposes_a_double_dispatch_and_1_related_checks(
+    fake: FakeProvider,
+) -> None:
+    # the_dispatch_log_exposes_a_double_dispatch: The fake does not protect against a second dis
     prepared = _send(fake)
     fake.mail.dispatch(prepared, "k1", {})
     fake.mail.dispatch(prepared, "k1", {})
     assert fake.dispatch_count("k1") == 2
     assert fake.mail.copies(MAIL, "<out1@example.org>", "f-sent") == 2
 
-
-def test_an_unknown_source_is_not_configured(fake: FakeProvider) -> None:
+    # an_unknown_source_is_not_configured
     with pytest.raises(ChamberlainError) as raised:
         fake.mail.search("mail:nowhere", MailQuery())
     assert raised.value.code is ErrorCode.SOURCE_NOT_CONFIGURED

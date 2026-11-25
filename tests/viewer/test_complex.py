@@ -58,9 +58,10 @@ def audit_kinds(rig: Rig) -> list[str]:
     return [r.kind for r in writes_repo.audit_rows(rig.ctx.db)]
 
 
-def test_m36_a_request_is_pending_and_changes_nothing_until_the_owner_answers(
+def test_m36_m37_a_request_waits_an_approval_raises_the_caps_for_that_card_only(
     rig: Rig, agent: Agent
 ) -> None:
+    # m36_a_request_is_pending_and_changes_nothing_until_the_owner_answers
     card = agent.card()
     reply = agent.ask(card)
     assert reply.ok
@@ -75,8 +76,7 @@ def test_m36_a_request_is_pending_and_changes_nothing_until_the_owner_answers(
     assert waiting["pending"][0]["reason"] == "Several parties and a long history."
     assert "card.complex_requested" in audit_kinds(rig)
 
-
-def test_m36_approval_raises_the_caps_to_4000_and_6000(rig: Rig, agent: Agent) -> None:
+    # m36_approval_raises_the_caps_to_4000_and_6000
     card = agent.card()
     agent.ask(card)
     done = rig.call("POST", f"/api/complex/{card}/approve", {})
@@ -105,10 +105,7 @@ def test_m36_approval_raises_the_caps_to_4000_and_6000(rig: Rig, agent: Agent) -
     total = len(final.model_dump_json(exclude_none=True, exclude={"context", "complex"}))
     assert CARD_MAX_CHARS < total <= COMPLEX_CARD_MAX_CHARS
 
-
-def test_m36_the_caps_of_a_normal_card_do_not_change_for_other_cards(
-    rig: Rig, agent: Agent
-) -> None:
+    # m36_the_caps_of_a_normal_card_do_not_change_for_other_cards
     first, second = agent.card("First"), agent.card("Second")
     agent.ask(first)
     rig.call("POST", f"/api/complex/{first}/approve", {})
@@ -127,9 +124,17 @@ def test_m37_there_is_no_quota_the_owner_decides_each_card(rig: Rig, agent: Agen
     assert "limit" not in overview
 
 
-def test_m37_a_decline_tells_the_agent_and_blocks_asking_again_for_30_days(
-    rig: Rig, agent: Agent
-) -> None:
+def test_m37_an_approval_and_a_decline_are_told_to_the_agent(rig: Rig, agent: Agent) -> None:
+    # m37_an_approval_is_told_to_the_agent_too
+    card = agent.card()
+    agent.ask(card)
+    rig.call("POST", f"/api/complex/{card}/approve", {})
+    events = [
+        e for e in card_review_due(collect(rig.ctx).data) if e.attrs.reason == "complex_approved"
+    ]
+    assert [e.subject for e in events] == [card]
+
+    # m37_a_decline_tells_the_agent_and_blocks_asking_again_for_30_days
     card = agent.card()
     agent.ask(card)
     assert rig.call("POST", f"/api/complex/{card}/decline", {}).status == 200
@@ -149,19 +154,10 @@ def test_m37_a_decline_tells_the_agent_and_blocks_asking_again_for_30_days(
     assert "card.complex_declined" in audit_kinds(rig)
 
 
-def test_m37_an_approval_is_told_to_the_agent_too(rig: Rig, agent: Agent) -> None:
-    card = agent.card()
-    agent.ask(card)
-    rig.call("POST", f"/api/complex/{card}/approve", {})
-    events = [
-        e for e in card_review_due(collect(rig.ctx).data) if e.attrs.reason == "complex_approved"
-    ]
-    assert [e.subject for e in events] == [card]
-
-
-def test_m38_revoking_returns_the_card_to_normal_caps_and_the_over_cap_flow_applies(
+def test_m38_revoking_returns_the_card_to_normal_caps_over_cap_flow_and_flags_nothing_within_caps(
     rig: Rig, agent: Agent
 ) -> None:
+    # m38_revoking_returns_the_card_to_normal_caps_and_the_over_cap_flow_applies
     card = agent.card()
     agent.ask(card)
     rig.call("POST", f"/api/complex/{card}/approve", {})
@@ -180,8 +176,7 @@ def test_m38_revoking_returns_the_card_to_normal_caps_and_the_over_cap_flow_appl
     assert rig.rows("SELECT over_cap FROM cards WHERE handle = ?", card)[0]["over_cap"] == 0
     assert "card.complex_revoked" in audit_kinds(rig)
 
-
-def test_m38_revoking_a_card_within_the_normal_caps_flags_nothing(rig: Rig, agent: Agent) -> None:
+    # m38_revoking_a_card_within_the_normal_caps_flags_nothing
     card = agent.card()
     agent.ask(card)
     rig.call("POST", f"/api/complex/{card}/approve", {})
@@ -245,7 +240,10 @@ def test_m36_only_the_viewer_module_can_decide(tmp_path: Path) -> None:
     assert callers <= {"surface/viewer/complex_api.py", "memory/complex_cards.py"}
 
 
-def test_m36_the_routes_need_the_token_and_the_viewers_origin(rig: Rig, agent: Agent) -> None:
+def test_m36_the_routes_need_the_token_answer_to_nothing_is_refused_and_closing_ends_the_limit(
+    rig: Rig, agent: Agent
+) -> None:
+    # m36_the_routes_need_the_token_and_the_viewers_origin
     card = agent.card()
     agent.ask(card)
     path = f"/api/complex/{card}/approve"
@@ -255,12 +253,19 @@ def test_m36_the_routes_need_the_token_and_the_viewers_origin(rig: Rig, agent: A
     assert rig.call("GET", "/api/complex", token=None).status == 403
     assert rig.rows("SELECT state FROM complex_cards WHERE card = ?", card)[0]["state"] == "pending"
 
-
-def test_m36_an_answer_to_nothing_is_refused(rig: Rig, agent: Agent) -> None:
+    # m36_an_answer_to_nothing_is_refused
     card = agent.card()
     assert rig.call("POST", f"/api/complex/{card}/approve", {}).status == 400
     assert rig.call("POST", f"/api/complex/{card}/revoke", {}).status == 400
     assert rig.call("POST", "/api/complex/card_0123456789abcdef/approve", {}).status == 400
+
+    # m36_closing_a_card_ends_its_larger_limit
+    card = agent.card("Matter")
+    agent.ask(card)
+    rig.call("POST", f"/api/complex/{card}/approve", {})
+    closed = agent.call("card", {"op": "close", "card": card, "outcome": "Settled."})
+    assert closed.ok
+    assert rig.call("GET", "/api/complex").body["approved"] == []
 
 
 def test_m36_the_cards_page_shows_which_cards_are_complex_and_why(rig: Rig, agent: Agent) -> None:
@@ -275,15 +280,6 @@ def test_m36_the_cards_page_shows_which_cards_are_complex_and_why(rig: Rig, agen
     assert plain in [c["handle"] for c in items.values()]
     overview = rig.call("GET", "/api/complex").body
     assert [a["card"] for a in overview["approved"]] == [held]
-
-
-def test_m36_closing_a_card_ends_its_larger_limit(rig: Rig, agent: Agent) -> None:
-    card = agent.card("Matter")
-    agent.ask(card)
-    rig.call("POST", f"/api/complex/{card}/approve", {})
-    closed = agent.call("card", {"op": "close", "card": card, "outcome": "Settled."})
-    assert closed.ok
-    assert rig.call("GET", "/api/complex").body["approved"] == []
 
 
 def test_m36_the_viewer_scripts_are_served_and_hold_no_markup_parsing(rig: Rig) -> None:

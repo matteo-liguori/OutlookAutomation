@@ -23,9 +23,10 @@ def store(memory_keyring: MemoryKeyring) -> SecretStore:
     return KeyringStore()
 
 
-def test_a_credential_is_saved_only_after_the_server_accepts_it(
+def test_a_credential_is_saved_only_after_the_server_and_1_related_checks(
     store: SecretStore, memory_keyring: MemoryKeyring, tmp_path: Path
 ) -> None:
+    # a_credential_is_saved_only_after_the_server_accepts_it
     seen: list[tuple[str, str]] = []
 
     def accepting(user: str, password: str) -> list[setup.Discovered]:
@@ -45,8 +46,7 @@ def test_a_credential_is_saved_only_after_the_server_accepts_it(
         setup.save_credential(store, "other@example.test", GOOD, refusing)
     assert store.get(SERVICE, credential_name("other@example.test")) is None
 
-
-def test_normal_passwords_and_bad_addresses_never_reach_the_server(store: SecretStore) -> None:
+    # normal_passwords_and_bad_addresses_never_reach_the_server
     def never(user: str, password: str) -> list[setup.Discovered]:
         raise AssertionError("the server must not be contacted")
 
@@ -60,7 +60,8 @@ def test_normal_passwords_and_bad_addresses_never_reach_the_server(store: Secret
         assert raised.value.code is ErrorCode.REQUEST_INVALID
 
 
-def test_forget_and_a_missing_credential(store: SecretStore) -> None:
+def test_forget_and_a_missing_credential_and_1_related_checks(store: SecretStore) -> None:
+    # forget_and_a_missing_credential
     with pytest.raises(ChamberlainError) as missing:
         setup.saved_password(store, APPLE_ID)
     assert "credential" in missing.value.fix
@@ -69,8 +70,7 @@ def test_forget_and_a_missing_credential(store: SecretStore) -> None:
     assert setup.forget(store, APPLE_ID)
     assert not setup.forget(store, APPLE_ID)
 
-
-def test_the_connector_asks_the_store_for_the_password_when_it_needs_it(store: SecretStore) -> None:
+    # the_connector_asks_the_store_for_the_password_when_it_needs_it
     binding = CalDavBinding(
         url="https://x/y/", username=APPLE_ID, credential=credential_name(APPLE_ID)
     )

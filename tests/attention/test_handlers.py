@@ -12,23 +12,24 @@ from chamberlain.schema.base import ToolName
 from chamberlain.schema.errors import ErrorCode
 
 
-def test_t3_next_needs_a_session_but_start_and_guide_do_not(app: App):
+def test_t3_t7_a9_next_needs_a_session_but_start_and_guide_do_not_and_3_related_checks(
+    app: App, seed: Any
+) -> None:
+    # t3_next_needs_a_session_but_start_and_guide_do_not
     assert app.call("start", {}).ok
     assert app.call("guide", {}).ok
     reply = app.call("next", {})
     assert reply.error is not None
     assert reply.error.code is ErrorCode.SESSION_REQUIRED
 
-
-def test_t7_start_lists_sources_with_capabilities(app: App):
+    # t7_start_lists_sources_with_capabilities
     reply = app.call("start", {"agent": "test"})
     sources = {s.id: s for s in reply.data.sources}
     assert set(sources) == {"mail:test", "calendar:test", "contacts:test"}
     assert "mail.read" in sources["mail:test"].capabilities
     assert sources["mail:test"].state.value == "ok"
 
-
-def test_a9_next_marks_handled_and_does_not_repeat(app: App, seed: Any):
+    # a9_next_marks_handled_and_does_not_repeat
     seed.grant()
     seed.grant()
     start = app.call("start", {})
@@ -38,15 +39,17 @@ def test_a9_next_marks_handled_and_does_not_repeat(app: App, seed: Any):
     assert reply.ok
     assert reply.data.work == ()
 
-
-def test_a9_next_refuses_unknown_event_handles(app: App):
+    # a9_next_refuses_unknown_event_handles
     session = str(app.call("start", {}).data.session)
     reply = app.call("next", {"session": session, "handled": ["evt_ffffffffffffffff"]})
     assert reply.error is not None
     assert reply.error.code is ErrorCode.REQUEST_UNKNOWN_HANDLE
 
 
-def test_a4_the_agent_cannot_close_an_uncertain_operation(app: App, seed: Any):
+def test_a4_a17_t7_e13_a12_the_agent_cannot_close_an_uncertain_operation_and_3_related_checks(
+    app: App, seed: Any, ctx: Context
+) -> None:
+    # a4_the_agent_cannot_close_an_uncertain_operation
     seed.operation()
     start = app.call("start", {})
     event = start.data.work[0].event
@@ -55,8 +58,8 @@ def test_a4_the_agent_cannot_close_an_uncertain_operation(app: App, seed: Any):
     again = app.call("start", {"agent": "second"})
     assert [w.kind.value for w in again.data.work] == ["operation.uncertain"]
 
-
-def test_a17_guide_returns_the_full_text_and_records_a_delivery(app: App, ctx: Context):
+    # a17_t7_e13_guide_text_ledger_index_and_refusals
+    # a17_guide_returns_the_full_text_and_records_a_delivery
     session = str(app.call("start", {}).data.session)
     reply = app.call("guide", {"session": session, "id": "send.uncertain"})
     rule = reply.data.rules[0]
@@ -67,15 +70,13 @@ def test_a17_guide_returns_the_full_text_and_records_a_delivery(app: App, ctx: C
     ).fetchone()
     assert row is not None
 
-
-def test_a17_guide_ignores_the_ledger(app: App):
+    # a17_guide_ignores_the_ledger
     session = str(app.call("start", {}).data.session)
     for _ in range(2):
         reply = app.call("guide", {"session": session, "id": "session.first"})
         assert reply.data.rules[0].text
 
-
-def test_t7_the_guide_index_is_paged_and_carries_no_text(app: App):
+    # t7_the_guide_index_is_paged_and_carries_no_text
     first = app.call("guide", {})
     assert first.coverage is not None
     assert not first.coverage.complete
@@ -86,8 +87,7 @@ def test_t7_the_guide_index_is_paged_and_carries_no_text(app: App):
     assert second.coverage is not None
     assert second.coverage.complete
 
-
-def test_e13_an_unknown_rule_and_a_bad_cursor_are_refused_with_a_fix(app: App):
+    # e13_an_unknown_rule_and_a_bad_cursor_are_refused_with_a_fix
     unknown = app.call("guide", {"id": "no.such.rule"})
     assert unknown.error is not None
     assert unknown.error.fix
@@ -95,8 +95,7 @@ def test_e13_an_unknown_rule_and_a_bad_cursor_are_refused_with_a_fix(app: App):
     assert bad.error is not None
     assert bad.error.code is ErrorCode.REQUEST_BAD_CURSOR
 
-
-def test_a12_doctor_reports_guidance_and_sources(ctx: Context):
+    # a12_doctor_reports_guidance_and_sources
     app = App(ctx, {**HANDLERS, ToolName.DOCTOR: make_doctor(DOCTOR_CHECKS)}, HOOKS)
     reply = app.call("doctor", {"check": "guidance"})
     results = {c.id: c for c in reply.data.checks}
@@ -105,8 +104,7 @@ def test_a12_doctor_reports_guidance_and_sources(ctx: Context):
     sources = app.call("doctor", {"check": "sources"})
     assert sources.data.checks[0].id == "sources.health"
 
-
-def test_golden_guide_by_id_and_the_first_index_page(app: App):
+    # golden_guide_by_id_and_the_first_index_page
     one = app.call("guide", {"id": "do.once"})
     assert one.model_dump(mode="json", exclude_none=True) == {
         "ok": True,

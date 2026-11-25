@@ -21,13 +21,11 @@ def _find(
     return reply.coverage.model_dump(mode="json", exclude_none=True)
 
 
-def test_e3_coverage_is_marked_demo_when_demo_sources_exist(
+def test_e3_coverage_is_marked_demo_when_demo_sources_exist_and_1_related_checks(
     data_root: Path, clock: ManualClock, fake: FakeProvider
 ) -> None:
+    # e3_coverage_is_marked_demo_when_demo_sources_exist
     assert _find(data_root, clock, fake, frozenset({"mail:test"}))["demo"] is True
 
-
-def test_e3_coverage_has_no_demo_key_otherwise(
-    data_root: Path, clock: ManualClock, fake: FakeProvider
-) -> None:
+    # e3_coverage_has_no_demo_key_otherwise
     assert "demo" not in _find(data_root, clock, fake, frozenset())

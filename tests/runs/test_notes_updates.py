@@ -49,13 +49,13 @@ def test_a_note_audits_a_hash_never_its_text(rig: Rig) -> None:
     assert rows[0].payload_sha256 is not None
 
 
-@pytest.mark.parametrize("text", ["", "   ", "x" * 151, "bell\x07"])
-def test_a_note_must_be_one_short_printable_line(text: str) -> None:
-    with pytest.raises(ChamberlainError):
-        clean_note(text)
+def test_a_note_must_be_one_short_printable_line_and_1_related_checks(rig: Rig) -> None:
+    # a_note_must_be_one_short_printable_line
+    for text in ["", "   ", "x" * 151, "bell\x07"]:
+        with pytest.raises(ChamberlainError):
+            clean_note(text)
 
-
-def test_a_note_stops_raising_after_seven_days_and_is_deleted_after_fourteen(rig: Rig) -> None:
+    # a_note_stops_raising_after_seven_days_and_is_deleted_after_fourteen
     add_note(rig.ctx, "old note")
     run_tick(rig.app)
     assert len(live(rig, "user.note")) == 1
@@ -68,7 +68,10 @@ def test_a_note_stops_raising_after_seven_days_and_is_deleted_after_fourteen(rig
     assert repo.notes_since(rig.ctx.db, "2000-01-01T00:00:00Z") == []
 
 
-def test_tags_are_ordered_by_release_and_only_well_formed_ones_count() -> None:
+def test_tags_are_ordered_by_release_and_only_well_and_1_related_checks(
+    rig: Rig,
+) -> None:
+    # tags_are_ordered_by_release_and_only_well_formed_ones_count
     assert parse_tag("chamberlain/v2.0.0-alpha.1") < parse_tag("chamberlain/v2.0.0")  # type: ignore[operator]
     assert parse_tag("chamberlain/v2.0.0-rc.1") < parse_tag("chamberlain/v2.0.0")  # type: ignore[operator]
     assert parse_tag("other/v2.0.0") is None
@@ -79,8 +82,7 @@ def test_tags_are_ordered_by_release_and_only_well_formed_ones_count() -> None:
     assert newest_after(tags, "2.1.0") is None
     assert newest_after([], "2.0.0a0") is None
 
-
-def test_the_checker_asks_once_a_day_records_a_tag_and_raises_the_event(rig: Rig) -> None:
+    # the_checker_asks_once_a_day_records_a_tag_and_raises_the_event
     asked: list[int] = []
 
     def lister() -> list[str]:
@@ -101,7 +103,10 @@ def test_the_checker_asks_once_a_day_records_a_tag_and_raises_the_event(rig: Rig
     assert recorded_update(rig.ctx) is None
 
 
-def test_a_failing_lister_keeps_the_earlier_answer_and_retries_in_an_hour(rig: Rig) -> None:
+def test_a_failing_lister_keeps_the_earlier_answer_and_and_1_related_checks(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # a_failing_lister_keeps_the_earlier_answer_and_retries_in_an_hour
     check_for_update(rig.ctx, lambda: ["chamberlain/v9.0.0"])
     rig.clock.advance(hours=25)
 
@@ -117,8 +122,7 @@ def test_a_failing_lister_keeps_the_earlier_answer_and_retries_in_an_hour(rig: R
     assert check_for_update(rig.ctx, lambda: calls.append(1) or []) is None
     assert calls == [1]
 
-
-def test_the_git_lister_reads_remote_tags_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    # the_git_lister_reads_remote_tags_only
     seen: list[list[str]] = []
 
     def fake_run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:

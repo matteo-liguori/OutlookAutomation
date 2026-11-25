@@ -24,7 +24,8 @@ def passed(header: str, sender: str = "me@example.org", trusted: tuple[str, ...]
     return check_authentication((header,), sender, trusted).passed
 
 
-def test_dkim_pass_needs_a_signing_domain_aligned_with_from() -> None:
+def test_dkim_pass_needs_a_signing_domain_aligned_with_and_3_related_checks() -> None:
+    # dkim_pass_needs_a_signing_domain_aligned_with_from
     assert passed("mx.google.com; dkim=pass header.d=example.org")
     assert passed("mx.google.com; dkim=pass header.d=mail.example.org")
     assert passed("mx.google.com; dkim=pass header.d=example.org", "me@news.example.org")
@@ -32,22 +33,19 @@ def test_dkim_pass_needs_a_signing_domain_aligned_with_from() -> None:
     assert not passed("mx.google.com; dkim=pass header.d=org")
     assert not passed("mx.google.com; dkim=pass")
 
-
-def test_dmarc_pass_needs_the_same_from_domain() -> None:
+    # dmarc_pass_needs_the_same_from_domain
     assert passed("mx.google.com; dmarc=pass (p=NONE) header.from=example.org")
     assert not passed("mx.google.com; dmarc=pass header.from=evil.example")
     assert not passed("mx.google.com; dmarc=pass (p=NONE)"), "a pass that names no domain"
     assert not passed("mx.google.com; dmarc=fail header.from=example.org; spf=pass")
 
-
-def test_only_the_topmost_header_is_read() -> None:
+    # only_the_topmost_header_is_read
     forged = "mx.google.com; dkim=pass header.d=example.org"
     real = "mx.google.com; dkim=fail header.d=example.org"
     assert not check_authentication((real, forged), "me@example.org", TRUSTED).passed
     assert check_authentication((forged, real), "me@example.org", TRUSTED).passed
 
-
-def test_the_authenticating_server_must_be_trusted_and_none_is_opt_in() -> None:
+    # the_authenticating_server_must_be_trusted_and_none_is_opt_in
     assert not passed("attacker.example; dkim=pass header.d=example.org")
     assert passed("mail-x.protection.outlook.com; dkim=pass header.d=example.org")
     exchange = "spf=pass smtp.mailfrom=example.org; dkim=pass header.d=example.org"
@@ -55,14 +53,14 @@ def test_the_authenticating_server_must_be_trusted_and_none_is_opt_in() -> None:
     assert passed(exchange, trusted=(NO_AUTHSERV_ID,))
 
 
-def test_no_header_or_an_unreadable_sender_fails() -> None:
+def test_no_header_or_an_unreadable_sender_fails_and_3_related_checks() -> None:
+    # no_header_or_an_unreadable_sender_fails
     assert not check_authentication((), "me@example.org", TRUSTED).passed
     assert not passed(
         "mx.google.com; dkim=pass header.d=unknown.invalid", "unknown@unknown.invalid"
     )
 
-
-def test_the_config_rejects_unknown_scopes_and_duplicate_addresses() -> None:
+    # the_config_rejects_unknown_scopes_and_duplicate_addresses
     with pytest.raises(ValidationError):
         AuthorisedSenders.model_validate(
             {"others": [{"address": "pa@example.net", "scope": ["mail.explode"]}]}
@@ -79,8 +77,7 @@ def test_the_config_rejects_unknown_scopes_and_duplicate_addresses() -> None:
             }
         )
 
-
-def test_evaluate_covers_owner_other_and_ask_only() -> None:
+    # evaluate_covers_owner_other_and_ask_only
     senders = AuthorisedSenders.model_validate(
         {
             "owner": ["Me@Example.org"],
@@ -103,8 +100,7 @@ def test_evaluate_covers_owner_other_and_ask_only() -> None:
     with pytest.raises(Refusal):
         evaluate(senders, "me@example.org", good, NOW - timedelta(days=8), NOW)
 
-
-def test_a_stored_ref_round_trips_and_other_refs_are_not_instructions() -> None:
+    # a_stored_ref_round_trips_and_other_refs_are_not_instructions
     senders = AuthorisedSenders.model_validate(
         {"others": [{"address": "pa@example.org", "scope": ["mail.move", "calendar.create"]}]}
     )

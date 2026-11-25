@@ -20,7 +20,8 @@ def get(rig: Rig, path: str) -> dict[str, Any]:
     return reply.body
 
 
-def test_the_overview_counts_what_needs_the_person(rig: Rig) -> None:
+def test_the_overview_today_cards_and_storage_views(rig: Rig) -> None:
+    # the_overview_counts_what_needs_the_person
     assert get(rig, "/api/overview")["needs_you"]["grants_to_confirm"] == 0
     rig.proposal(to="x@example.org")
     rig.proposal(to="y@example.org")
@@ -28,6 +29,39 @@ def test_the_overview_counts_what_needs_the_person(rig: Rig) -> None:
     assert data["needs_you"]["grants_to_confirm"] == 2
     assert data["counts"]["active_grants"] == 0
     assert data["over_budget"] == "0"
+
+    # today_lists_what_the_assistant_did_from_the_audit_log
+    started = rig.app.call("start", {"agent": "agent"})
+    session = started.data.session  # type: ignore[union-attr]
+    rig.app.call("next", {"session": session})
+    rig.proposal()
+    data = get(rig, "/api/activity")
+    assert data["day"] == "2026-01-05"
+    assert data["tool_calls"]["start"] == 1
+    assert data["tool_calls"]["next"] == 1
+    assert any(
+        e["kind"].startswith("grant.") or e["kind"].startswith("operation.") for e in data["events"]
+    )
+    assert all(e["kind"] != "tool.call" for e in data["events"])
+    assert get(rig, "/api/activity?day=2020-01-01")["events"] == []
+    assert rig.call("GET", "/api/activity?day=not-a-day").status == 400
+
+    # cards_and_due_actions_are_listed
+    started = rig.app.call("start", {"agent": "agent"})
+    session = started.data.session  # type: ignore[union-attr]
+    made = rig.app.call(
+        "card", {"session": session, "op": "create", "fields": {"title": "Fix the boiler"}}
+    )
+    assert made.ok, made.error
+    data = get(rig, "/api/work")
+    assert [c["title"] for c in data["cards"]] == ["Fix the boiler"]
+    assert data["actions"] == []
+
+    # storage_shows_the_figures_of_the_targets_contract
+    data = get(rig, "/api/storage")
+    for key in ("artifacts_live", "artifact_bytes", "db_bytes", "data_root_bytes"):
+        assert isinstance(data[key], int)
+    assert data["db_bytes"] > 0
 
 
 def test_an_uncertain_operation_shows_its_exact_text_and_can_be_resolved(rig: Rig) -> None:
@@ -48,35 +82,6 @@ def test_an_uncertain_operation_shows_its_exact_text_and_can_be_resolved(rig: Ri
     assert get(rig, "/api/uncertain")["operations"] == []
 
 
-def test_today_lists_what_the_assistant_did_from_the_audit_log(rig: Rig) -> None:
-    started = rig.app.call("start", {"agent": "agent"})
-    session = started.data.session  # type: ignore[union-attr]
-    rig.app.call("next", {"session": session})
-    rig.proposal()
-    data = get(rig, "/api/activity")
-    assert data["day"] == "2026-01-05"
-    assert data["tool_calls"]["start"] == 1
-    assert data["tool_calls"]["next"] == 1
-    assert any(
-        e["kind"].startswith("grant.") or e["kind"].startswith("operation.") for e in data["events"]
-    )
-    assert all(e["kind"] != "tool.call" for e in data["events"])
-    assert get(rig, "/api/activity?day=2020-01-01")["events"] == []
-    assert rig.call("GET", "/api/activity?day=not-a-day").status == 400
-
-
-def test_cards_and_due_actions_are_listed(rig: Rig) -> None:
-    started = rig.app.call("start", {"agent": "agent"})
-    session = started.data.session  # type: ignore[union-attr]
-    made = rig.app.call(
-        "card", {"session": session, "op": "create", "fields": {"title": "Fix the boiler"}}
-    )
-    assert made.ok, made.error
-    data = get(rig, "/api/work")
-    assert [c["title"] for c in data["cards"]] == ["Fix the boiler"]
-    assert data["actions"] == []
-
-
 def test_a_run_report_is_shown_and_then_gone_when_it_expires(rig: Rig) -> None:
     set_schedule(rig.ctx, ScheduleSpec("morning", PassKind.MAIL, "08:00", "UTC"))
     run_tick(rig.app)
@@ -91,13 +96,6 @@ def test_a_run_report_is_shown_and_then_gone_when_it_expires(rig: Rig) -> None:
     rig.ctx.db.execute("UPDATE artifacts SET state = 'released'")
     assert get(rig, f"/api/runs/{run.handle}/reports")["reports"] == []
     assert rig.call("GET", "/api/runs/run_0123456789abcdef/reports").status == 404
-
-
-def test_storage_shows_the_figures_of_the_targets_contract(rig: Rig) -> None:
-    data = get(rig, "/api/storage")
-    for key in ("artifacts_live", "artifact_bytes", "db_bytes", "data_root_bytes"):
-        assert isinstance(data[key], int)
-    assert data["db_bytes"] > 0
 
 
 def test_a_note_from_the_viewer_reaches_the_agent_and_can_be_withdrawn(rig: Rig) -> None:

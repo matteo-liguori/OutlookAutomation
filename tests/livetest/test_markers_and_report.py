@@ -5,8 +5,6 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-import pytest
-
 from chamberlain.livetest.markers import MARKER, carries_marker, new_run_id, run_of, subject_for
 from chamberlain.livetest.model import RunReport, ScenarioResult, Status, compute_score
 from chamberlain.livetest.report import (
@@ -21,19 +19,16 @@ from chamberlain.livetest.report import (
 RUN = "20261124T153000-ab12"
 
 
-@pytest.mark.parametrize(
-    ("subject", "expected"),
-    [
+def test_only_a_subject_that_opens_with_the_marker_carries_it() -> None:
+    for subject, expected in [
         (f"{MARKER} {RUN} self_send", True),
         (f"RE: Fwd: {MARKER} {RUN} x", True),
         (f"Hello {MARKER} {RUN}", False),
         (f"{MARKER} notes", False),
         (f"{MARKER.lower()} {RUN}", False),
         ("", False),
-    ],
-)
-def test_only_a_subject_that_opens_with_the_marker_carries_it(subject: str, expected: bool) -> None:
-    assert carries_marker(subject) is expected
+    ]:
+        assert carries_marker(subject) is expected, subject
     first = new_run_id(datetime(2026, 11, 24, 15, 30, tzinfo=UTC), "ab12ffff")
     assert first == RUN
     assert run_of(subject_for(first, "self_send x")) == first
