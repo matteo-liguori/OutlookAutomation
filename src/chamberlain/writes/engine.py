@@ -690,7 +690,7 @@ class Engine:
         for name in ("message_id", "uid"):
             if name in type(intent).model_fields:
                 blank[name] = None
-        if isinstance(intent, MailTrash) and intent.messages:
+        if isinstance(intent, MailMove | MailTrash) and intent.messages:
             # A batch: the folder comes from the locators alone, never one call per message.
             port = self.ctx.sources.mail_port(intent.source)
             folders = {port.folder_of(intent.source, refs[h]) for h in intent.messages}
@@ -1353,11 +1353,18 @@ class Engine:
             old = self._refs(op).get(intent.message)
         elif isinstance(intent, MailDraftUpdate):
             old = self._refs(op).get(intent.draft)
-        if old is not None and receipt.locator is not None and receipt.locator != old:
+        moves: list[tuple[str, str]] = [
+            (item.locator, item.moved_to) for item in receipt.items if item.moved_to is not None
+        ]
+        if old is not None and receipt.locator is not None:
+            moves.append((old, receipt.locator))
+        for before, after in moves:
+            if after == before:
+                continue
             try:
-                self.ctx.services.refs.repoint(old, receipt.locator, source=op.source_id)
+                self.ctx.services.refs.repoint(before, after, source=op.source_id)
             except Exception:
-                log_failure(log, "could not repoint the handle of %s", op.handle)
+                log_failure(log, "could not repoint a handle of %s", op.handle)
         self._release_attachments(op)
 
     def _upgrade_verification(self, op: OperationRow, prepared: Prepared) -> None:

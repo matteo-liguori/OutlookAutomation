@@ -9,7 +9,7 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from chamberlain.domain.calendar import EventFields
-from chamberlain.limits import MARK_READ_MAX, TRASH_BATCH_MAX
+from chamberlain.limits import MARK_READ_MAX, MOVE_BATCH_MAX
 from chamberlain.schema.base import (
     OUTSIDE_SOURCE,
     ArtifactHandle,
@@ -93,25 +93,13 @@ class MailDraftDiscard(Model):
     expected_sha256: Sha256
 
 
-class MailMove(Model):
-    kind: Literal[IntentKind.MAIL_MOVE] = IntentKind.MAIL_MOVE
-    source: SourceId
-    message: MessageHandle
-    to_folder: str = Field(min_length=1)
-    mark_read: bool = False
-    internet_message_id: str | None = None
-    """Completed by the harness from the ref before hashing (W-1)."""
-    from_folder: str | None = None
-    """Completed by the harness from the ref before hashing (W-1)."""
+class _OneOrMany(Model):
+    """A move of one message (`message`), or of a batch from one folder (`messages`): one
+    write, one client call, one check, however many messages (never one write each)."""
 
-
-class MailTrash(Model):
-    """One message (`message`), or a batch from one folder (`messages`) moved together."""
-
-    kind: Literal[IntentKind.MAIL_TRASH] = IntentKind.MAIL_TRASH
     source: SourceId
     message: MessageHandle | None = None
-    messages: tuple[MessageHandle, ...] = Field(default=(), max_length=TRASH_BATCH_MAX)
+    messages: tuple[MessageHandle, ...] = Field(default=(), max_length=MOVE_BATCH_MAX)
     internet_message_id: str | None = None
     """Completed by the harness for a single message (W-1)."""
     from_folder: str | None = None
@@ -128,6 +116,16 @@ class MailTrash(Model):
     @property
     def handles(self) -> tuple[str, ...]:
         return (self.message,) if self.message is not None else self.messages
+
+
+class MailMove(_OneOrMany):
+    kind: Literal[IntentKind.MAIL_MOVE] = IntentKind.MAIL_MOVE
+    to_folder: str = Field(min_length=1)
+    mark_read: bool = False
+
+
+class MailTrash(_OneOrMany):
+    kind: Literal[IntentKind.MAIL_TRASH] = IntentKind.MAIL_TRASH
 
 
 class MailMarkRead(Model):

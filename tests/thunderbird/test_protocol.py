@@ -33,7 +33,7 @@ def test_b2_the_command_list_is_the_one_in_the_brief() -> None:
         "draft_discard",
         "move",
         "trash",
-        "trash_many",
+        "move_many",
         "mark_read",
     }
     twins = {f"reconcile_{name}" for name in writes - {"send"}} | {"reconcile_send"}

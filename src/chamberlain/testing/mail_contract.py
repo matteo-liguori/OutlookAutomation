@@ -186,7 +186,7 @@ class MailPortContract:
         assert rig.copies(message_id, rig.folder_id(FolderRole.TRASH)) == 1
         assert rig.copies(message_id, rig.folder_id(FolderRole.INBOX)) == 0
 
-    def test_p14_a_trash_batch_moves_them_all_in_one_dispatch(self, rig: MailRig) -> None:
+    def test_p14_a_move_batch_moves_them_all_in_one_dispatch(self, rig: MailRig) -> None:
         inbox = rig.folder_id(FolderRole.INBOX)
         ids = [rig.new_message_id() for _ in range(3)]
         locators = [rig.seed(internet_message_id=i) for i in ids]
@@ -211,6 +211,46 @@ class MailPortContract:
             assert rig.copies(message_id, rig.folder_id(FolderRole.TRASH)) == 1
             assert rig.copies(message_id, inbox) == 0
         assert rig.port.reconcile(prepared, "k-batch").status is ReconcileStatus.PRESENT
+
+    def test_w23_a_filing_batch_moves_marks_read_and_says_where_each_went(
+        self, rig: MailRig
+    ) -> None:
+        inbox, filing = rig.folder_id(FolderRole.INBOX), rig.filing_folder_id()
+        ids = [rig.new_message_id() for _ in range(3)]
+        locators = [rig.seed(internet_message_id=i) for i in ids]
+        handles = [_handle(rig, loc) for loc in locators]
+        intent = MailMove.model_validate(
+            {
+                "source": rig.source,
+                "messages": handles,
+                "to_folder": filing,
+                "mark_read": True,
+                "from_folder": inbox,
+            }
+        )
+        prepared = rig.port.prepare(intent, dict(zip(handles, locators, strict=True)))
+        result = rig.port.dispatch(prepared, "k-file-batch", {})
+        assert result.outcome is DispatchOutcome.APPLIED
+        assert result.receipt is not None
+        assert all(item.ok for item in result.receipt.items)
+        for message_id, item in zip(ids, result.receipt.items, strict=True):
+            assert rig.copies(message_id, filing) == 1
+            assert rig.copies(message_id, inbox) == 0
+            assert item.moved_to is not None
+            assert not rig.is_unread(item.moved_to)
+        assert rig.port.reconcile(prepared, "k-file-batch").status is ReconcileStatus.PRESENT
+
+    def test_w24_marking_many_read_reads_each_folder_once(self, rig: MailRig) -> None:
+        locators = [rig.seed(internet_message_id=rig.new_message_id()) for _ in range(12)]
+        handles = [_handle(rig, loc) for loc in locators]
+        intent = MailMarkRead.model_validate({"source": rig.source, "messages": handles})
+        prepared = rig.port.prepare(intent, dict(zip(handles, locators, strict=True)))
+        result = rig.port.dispatch(prepared, "k-read-many", {})
+        assert result.outcome is DispatchOutcome.APPLIED
+        assert result.receipt is not None
+        assert all(item.ok for item in result.receipt.items)
+        assert not any(rig.is_unread(loc) for loc in locators)
+        assert rig.port.reconcile(prepared, "k-read-many").status is ReconcileStatus.PRESENT
 
     def test_p9_prepare_refuses_a_message_that_is_not_where_the_intent_says(
         self, rig: MailRig

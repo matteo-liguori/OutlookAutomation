@@ -339,14 +339,22 @@ class FakeMail:
                     "draft_locator": self._locator(draft),
                     "expected_sha256": intent.expected_sha256,
                 }
-            case MailTrash() if intent.messages:
+            case MailMove() | MailTrash() if intent.messages:
                 # A batch: each message is checked where it is moved, as Thunderbird does.
                 locators = [refs[h] for h in intent.messages]
+                filing = isinstance(intent, MailMove)
+                target = (
+                    self._world.folder(source, intent.to_folder).id
+                    if isinstance(intent, MailMove)
+                    else self._world.folder_by_role(source, FolderRole.TRASH).id
+                )
                 data = {
                     "batch": True,
                     "locators": cast(list[JsonValue], locators),
                     "from_folder": intent.from_folder or "",
-                    "to_folder": self._world.folder_by_role(source, FolderRole.TRASH).id,
+                    "to_folder": target,
+                    "filing": filing,
+                    "mark_read": isinstance(intent, MailMove) and intent.mark_read,
                 }
             case MailMove() | MailTrash():
                 assert intent.message is not None
@@ -465,21 +473,25 @@ class FakeMail:
                 )
             return absent
         if data.get("batch") is True:
-            left = [loc for loc in _texts(data, "locators") if self._find(source, loc)]
-            ids = {loc.split("/", 1)[1] for loc in _texts(data, "locators")}
+            # As Thunderbird: moved = gone from the folder and at the destination; stuck =
+            # still in the folder with no copy at the destination.
             target = _text(data, "to_folder")
-            arrived = [
-                m
-                for m in world.mail[source]
-                if m.folder_id == target and m.internet_message_id in ids
-            ]
-            if not left and arrived:
-                return ReconcileResult(
-                    status=ReconcileStatus.PRESENT, receipt=ProviderReceipt(verification=_VERIFIED)
-                )
-            if len(left) == len(ids) and not arrived:
+            moved = stuck = 0
+            for locator in _texts(data, "locators"):
+                message_id = locator.split("/", 1)[1]
+                there = self._matching(source, message_id, target)
+                here = self._find(source, locator)
+                moved += bool(there and not here)
+                stuck += bool(here and not there)
+                if data["mark_read"] is True and there and not here and there[0].unread:
+                    return unknown
+            if not moved:
                 return absent
-            return unknown
+            if stuck:
+                return unknown
+            return ReconcileResult(
+                status=ReconcileStatus.PRESENT, receipt=ProviderReceipt(verification=_VERIFIED)
+            )
         if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH}:
             message_id = _text(data, "internet_message_id")
             at_source = self._matching(source, message_id, _text(data, "from_folder"))
@@ -541,12 +553,20 @@ class FakeMail:
             world.mail[source].remove(old)
             return ProviderReceipt(verification=_VERIFIED)
         if data.get("batch") is True:
+            target = _text(data, "to_folder")
             moved: list[ItemResult] = []
             for locator in _texts(data, "locators"):
                 found = self._find(source, locator)
-                if len(found) == 1:
-                    found[0].folder_id = _text(data, "to_folder")
-                    moved.append(ItemResult(locator=locator, ok=True))
+                filed_already = data["filing"] is True and bool(
+                    found and self._matching(source, found[0].internet_message_id, target)
+                )
+                if len(found) == 1 and not filed_already:
+                    found[0].folder_id = target
+                    if data["mark_read"] is True:
+                        found[0].unread = False
+                    moved.append(
+                        ItemResult(locator=locator, ok=True, moved_to=self._locator(found[0]))
+                    )
                 else:
                     code = ErrorCode.REMOTE_AMBIGUOUS if found else ErrorCode.REQUEST_UNKNOWN_HANDLE
                     moved.append(ItemResult(locator=locator, ok=False, code=code))

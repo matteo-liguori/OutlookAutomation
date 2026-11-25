@@ -89,20 +89,29 @@ def parse_ids(values: Iterable[str]) -> list[str]:
     return list(dict.fromkeys(found))
 
 
-def _locate(ctx: Context, wanted: str) -> Copy | None:
-    """The best copy of one message: a handle names it; a Message-ID is looked up everywhere."""
+def _locate(
+    ctx: Context, wanted: str, roles_of: dict[str, dict[str, FolderRole]], read: dict[str, Message]
+) -> Copy | None:
+    """The best copy of one message: a handle names it; a Message-ID is looked up everywhere.
+
+    `roles_of` caches each mailbox's folders; a message read to learn its Message-ID goes into
+    `read`, so it is never read twice.
+    """
     if wanted.startswith(f"{HandleKind.MESSAGE.value}_"):
         try:
             source, locator = ctx.services.refs.locate(wanted)
         except ChamberlainError:
             return None
         message = ctx.sources.mail_port(source).read(source, locator)
+        read[locator] = message
         return Copy(source, locator, bare_id(message.internet_message_id))
     best: tuple[int, Copy] | None = None
     for source in sorted(ctx.sources.mail):
         port = ctx.sources.mail_port(source)
         try:
-            roles = {f.id: f.role for f in port.folders(source)}
+            if source not in roles_of:
+                roles_of[source] = {f.id: f.role for f in port.folders(source)}
+            roles = roles_of[source]
             page = port.search(source, MailQuery(internet_message_id=f"<{wanted}>", limit=50))
         except ChamberlainError:
             continue
@@ -205,15 +214,20 @@ def export_thread(
         raise ChamberlainError(ErrorCode.REQUEST_INVALID, "Name at least one message.")
     copies: dict[str, Copy] = {}
     missing: list[str] = []
+    roles_of: dict[str, dict[str, FolderRole]] = {}
+    read: dict[str, Message] = {}
     for wanted in ids:
-        found = _locate(ctx, wanted)
+        found = _locate(ctx, wanted, roles_of, read)
         if found is None:
             missing.append(wanted)
         elif found.message_id not in copies:
             copies[found.message_id] = found
     messages: list[tuple[Copy, Message]] = []
     for copy in copies.values():
-        messages.append((copy, ctx.sources.mail_port(copy.source).read(copy.source, copy.locator)))
+        message = read.get(copy.locator) or ctx.sources.mail_port(copy.source).read(
+            copy.source, copy.locator
+        )
+        messages.append((copy, message))
     if not messages:
         raise ChamberlainError(
             ErrorCode.REQUEST_UNKNOWN_HANDLE,

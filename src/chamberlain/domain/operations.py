@@ -132,6 +132,8 @@ class ItemResult(Model):
     locator: str
     ok: bool
     code: ErrorCode | None = None
+    moved_to: str | None = None
+    """A batch move: where the message is now, so its handle follows it (R4)."""
 
 
 class ProviderReceipt(Model):

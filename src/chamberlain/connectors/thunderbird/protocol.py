@@ -73,7 +73,7 @@ class Command(StrEnum):
     DRAFT_DISCARD = "draft_discard"
     MOVE = "move"
     TRASH = "trash"
-    TRASH_MANY = "trash_many"
+    MOVE_MANY = "move_many"
     MARK_READ = "mark_read"
     RECONCILE_SEND = "reconcile_send"
     RECONCILE_DRAFT_SAVE = "reconcile_draft_save"
@@ -81,7 +81,7 @@ class Command(StrEnum):
     RECONCILE_DRAFT_DISCARD = "reconcile_draft_discard"
     RECONCILE_MOVE = "reconcile_move"
     RECONCILE_TRASH = "reconcile_trash"
-    RECONCILE_TRASH_MANY = "reconcile_trash_many"
+    RECONCILE_MOVE_MANY = "reconcile_move_many"
     RECONCILE_MARK_READ = "reconcile_mark_read"
     CALENDAR_LIST = "calendar_list"
     CALENDAR_QUERY = "calendar_query"
@@ -110,7 +110,7 @@ WRITE_COMMANDS: frozenset[Command] = frozenset(
         Command.DRAFT_DISCARD,
         Command.MOVE,
         Command.TRASH,
-        Command.TRASH_MANY,
+        Command.MOVE_MANY,
         Command.MARK_READ,
         Command.CALENDAR_CREATE,
         Command.CALENDAR_UPDATE,
@@ -557,12 +557,15 @@ MessageIds = Annotated[
 ]
 
 
-class TrashManyArgs(AccountArgs):
-    """Move many messages of one folder to Trash in one Thunderbird move (clean-up batches)."""
+class MoveManyArgs(AccountArgs):
+    """Move many messages of one folder in one Thunderbird move: filing or Trash."""
 
     folder_id: str
     internet_message_ids: MessageIds
     destination_folder_id: str
+    trash: bool = False
+    """Trash: a copy already there is fine (Gmail merges labels). Filing: it is `ambiguous`."""
+    mark_read: bool = False
 
 
 class MarkReadArgs(AccountArgs):
@@ -605,17 +608,17 @@ class MarkReadResult(Model):
     items: tuple[MarkReadItem, ...]
 
 
-class TrashManyItem(Model):
+class MoveManyItem(Model):
     internet_message_id: str
     ok: bool
     code: str = ""
     """`not_found` or `ambiguous` when it was not moved (checked before the move)."""
 
 
-class TrashManyResult(Model):
-    items: tuple[TrashManyItem, ...]
+class MoveManyResult(Model):
+    items: tuple[MoveManyItem, ...]
     verified: bool
-    """Every moved message left the folder and reached the destination (one scan each)."""
+    """Every moved message left the folder, reached the destination and (when asked) is read."""
 
 
 class DiscardResult(Model):
@@ -716,21 +719,23 @@ class ReconcileTrashArgs(ReconcileMoveArgs):
     pass
 
 
-class ReconcileTrashManyArgs(AccountArgs):
+class ReconcileMoveManyArgs(AccountArgs):
     folder_id: str
     internet_message_ids: MessageIds
     destination_folder_id: str
     refresh: bool = True
 
 
-class TrashCopies(Model):
+class MoveCopies(Model):
     internet_message_id: str
     source: int
     destination: int
+    unread: int = 0
+    """Copies at the destination still unread."""
 
 
-class ReconcileTrashManyResult(Model):
-    items: tuple[TrashCopies, ...]
+class ReconcileMoveManyResult(Model):
+    items: tuple[MoveCopies, ...]
     complete: bool
     refreshed: bool
     refresh_verified: bool
@@ -843,7 +848,7 @@ ARGS_MODELS: dict[Command, type[Model]] = {
     Command.DRAFT_DISCARD: DraftDiscardArgs,
     Command.MOVE: MoveArgs,
     Command.TRASH: TrashArgs,
-    Command.TRASH_MANY: TrashManyArgs,
+    Command.MOVE_MANY: MoveManyArgs,
     Command.MARK_READ: MarkReadArgs,
     Command.RECONCILE_SEND: ReconcileSendArgs,
     Command.RECONCILE_DRAFT_SAVE: ReconcileDraftSaveArgs,
@@ -851,7 +856,7 @@ ARGS_MODELS: dict[Command, type[Model]] = {
     Command.RECONCILE_DRAFT_DISCARD: ReconcileDraftDiscardArgs,
     Command.RECONCILE_MOVE: ReconcileMoveArgs,
     Command.RECONCILE_TRASH: ReconcileTrashArgs,
-    Command.RECONCILE_TRASH_MANY: ReconcileTrashManyArgs,
+    Command.RECONCILE_MOVE_MANY: ReconcileMoveManyArgs,
     Command.RECONCILE_MARK_READ: ReconcileMarkReadArgs,
     Command.CALENDAR_LIST: CalendarListArgs,
     Command.CALENDAR_QUERY: CalendarQueryArgs,
@@ -878,7 +883,7 @@ RESULT_MODELS: dict[Command, type[Model]] = {
     Command.DRAFT_DISCARD: DiscardResult,
     Command.MOVE: MoveResult,
     Command.TRASH: MoveResult,
-    Command.TRASH_MANY: TrashManyResult,
+    Command.MOVE_MANY: MoveManyResult,
     Command.MARK_READ: MarkReadResult,
     Command.RECONCILE_SEND: ReconcileComposeResult,
     Command.RECONCILE_DRAFT_SAVE: ReconcileComposeResult,
@@ -886,7 +891,7 @@ RESULT_MODELS: dict[Command, type[Model]] = {
     Command.RECONCILE_DRAFT_DISCARD: ReconcileDiscardResult,
     Command.RECONCILE_MOVE: ReconcileMoveResult,
     Command.RECONCILE_TRASH: ReconcileMoveResult,
-    Command.RECONCILE_TRASH_MANY: ReconcileTrashManyResult,
+    Command.RECONCILE_MOVE_MANY: ReconcileMoveManyResult,
     Command.RECONCILE_MARK_READ: ReconcileMarkReadResult,
     Command.CALENDAR_LIST: CalendarListResult,
     Command.CALENDAR_QUERY: CalendarQueryResult,

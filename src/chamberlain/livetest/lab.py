@@ -380,23 +380,28 @@ class Lab:
     def remove_mail(self, source: str, text: str) -> int:
         """Trash every copy of marked mail matching `text` (not already in the trash).
 
-        Only a subject that opens with the marker is touched, and `open headers` confirms it.
-        Each pass lists the copies again (trashing one copy can remove or merge another, as on
-        Gmail) and one copy that cannot be handled never stops the others; a few passes at most.
+        Only a subject that opens with the marker is touched. One batch write per folder (one
+        Thunderbird move, one check), never one write per copy. Each pass lists the copies again
+        (trashing one copy can remove or merge another, as on Gmail); a few passes at most.
         """
         removed = 0
         failures: list[str] = []
         for _ in range(MAIL_CLEANUP_PASSES):
-            progress = False
+            by_folder: dict[str, list[MailCopy]] = {}
             for copy in self.copies(source, text):
-                if copy.folder_role is FolderRole.TRASH or not carries_marker(copy.subject):
-                    continue
+                if copy.folder_role is not FolderRole.TRASH and carries_marker(copy.subject):
+                    by_folder.setdefault(copy.folder_id, []).append(copy)
+            if not by_folder:
+                break
+            progress = False
+            for batch in by_folder.values():
                 try:
-                    if self._trash_marked(copy):
-                        removed += 1
-                        progress = True
+                    moved = self._trash_batch(source, batch)
                 except (ScenarioFailure, ChamberlainError) as error:
                     failures.append(str(error)[:80])
+                    continue
+                removed += moved
+                progress = progress or moved > 0
             if not progress:
                 break
         left = [
@@ -411,17 +416,21 @@ class Lab:
             )
         return removed
 
-    def _trash_marked(self, copy: MailCopy) -> bool:
-        handle = self.handle_of(copy)
-        opened = self.ok("open", handle=handle, part="headers")
-        shown = text_of(opened)
-        subject_line = next(
-            (ln[8:].strip() for ln in shown.splitlines() if ln.startswith("Subject:")), ""
-        )
-        if not carries_marker(subject_line):
-            return False
-        self.trash(handle)
-        return True
+    def _trash_batch(self, source: str, copies: list[MailCopy]) -> int:
+        """One `mail.trash` write for these copies of one folder; how many moved."""
+        handles = list(dict.fromkeys(self.handle_of(copy) for copy in copies))
+        if len(handles) == 1:
+            self.trash(handles[0])
+            return 1
+        try:
+            done = self.write({"kind": "mail.trash", "source": source, "messages": handles})
+        except RepeatRefused:
+            # The same set was trashed within 24 hours (restored since): one at a time.
+            for handle in handles:
+                self.trash(handle)
+            return len(handles)
+        view = self.confirmed(done, "trash")
+        return int(view.get("items_ok", len(handles)))
 
     def calendar_window(self) -> tuple[datetime, datetime]:
         now = self.env.clock.now()

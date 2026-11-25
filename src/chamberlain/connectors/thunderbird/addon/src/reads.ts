@@ -48,8 +48,10 @@ interface Bound {
   mailbox: string;
 }
 
-async function accountOf(r: Bound): Promise<TbAccount> {
-  const account = await messenger.accounts.get(r.account_id, true);
+/** The bound account, checked. The folder tree only when asked: building it on every lookup
+ *  made each message lookup walk the whole account. */
+async function accountOf(r: Bound, withFolders = false): Promise<TbAccount> {
+  const account = await messenger.accounts.get(r.account_id, withFolders);
   if (!account || !account.identities.some((i) => i.email.toLowerCase() === r.mailbox.toLowerCase())) {
     fail("account_mismatch", "The Thunderbird account or sender identity is not the bound one.");
   }
@@ -308,7 +310,7 @@ async function cmdAttachment(a: AttachmentArgs, id: string): Promise<{ result: A
 }
 
 async function cmdFolders(a: FoldersArgs): Promise<FoldersResult> {
-  const account = await accountOf(a);
+  const account = await accountOf(a, true);
   const out: FolderInfo[] = [];
   walkFolders(account.rootFolder, (f) => out.push(folderInfo(f)));
   if (a.include_outbox) for (const f of await localOutboxes()) out.push(folderInfo(f));

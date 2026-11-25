@@ -2,7 +2,7 @@
 // Each write performs one logical mutation, never retries, keeps no journal. The add-on
 // reports facts; deciding what absence proves is the Python connector's job.
 
-const TUNING = { movePollMs: 250, moveAttempts: 20, savePollMs: 250, saveAttempts: 24, batchCheckMs: 25_000 };
+const TUNING = { movePollMs: 250, moveAttempts: 20, savePollMs: 250, saveAttempts: 24, batchCheckMs: 25_000, bulkReadFrom: 10 };
 
 interface Ctx {
   id: string;
@@ -86,41 +86,55 @@ async function byMessageId(r: Bound, folderId: string, window: DateWindow = {}):
   return { map, complete: scan.complete };
 }
 
-/** Many messages of one folder to Trash: find them all, one move, one check (clean-up). */
-async function cmdTrashMany(a: TrashManyArgs, ctx: Ctx): Promise<TrashManyResult> {
+/** The date window a set of headers spans, with two days' margin for clocks and zones. */
+function spanOf(headers: TbHeader[]): DateWindow {
+  const dates = headers.map(whenMs);
+  const day = 86_400_000;
+  return { sinceMs: Math.min(...dates) - 2 * day, untilMs: Math.max(...dates) + 2 * day };
+}
+
+/** Many messages of one folder, filed or to Trash: find them all, one move, one check.
+ *  Folder reads cover only the dates the batch spans: a few hundred headers, never the whole
+ *  Inbox and Trash on every round (found live, 2026-11-25: full reads overran the deadline). */
+async function cmdMoveMany(a: MoveManyArgs, ctx: Ctx): Promise<MoveManyResult> {
   await accountOf(a);
   await folderOf(a, a.destination_folder_id);
   check(a.folder_id !== a.destination_folder_id, "changed", "The messages are already in that folder.");
   const source = await byMessageId(a, a.folder_id);
   check(source.complete, "ambiguous", "The folder could not be scanned completely.");
-  const items: TrashManyItem[] = [];
+  const located = a.internet_message_ids.map((raw) => ({ raw, id: bare(raw), found: source.map.get(bare(raw)) ?? [] }));
+  const present = located.filter((m) => m.found.length === 1).map((m) => m.found[0]);
+  if (present.length === 0) return fail("not_found", "None of the messages is in that folder.");
+  const window = spanOf(present);
+  // Filing never makes a second copy: one already at the destination is left alone.
+  const before = a.trash ? null : await byMessageId(a, a.destination_folder_id, window);
+  if (before) check(before.complete, "ambiguous", "The destination could not be scanned completely.");
+  const items: MoveManyItem[] = [];
   const ids: number[] = [];
   const moving: string[] = [];
-  const dates: number[] = [];
-  for (const raw of a.internet_message_ids) {
-    const id = bare(raw);
-    const found = source.map.get(id) ?? [];
-    if (found.length === 1) {
-      ids.push(found[0].id);
-      moving.push(id);
-      dates.push(whenMs(found[0]));
-      items.push({ internet_message_id: raw, ok: true, code: "" });
-    } else {
-      items.push({ internet_message_id: raw, ok: false, code: found.length ? "ambiguous" : "not_found" });
+  for (const m of located) {
+    let code = m.found.length === 1 ? "" : m.found.length ? "ambiguous" : "not_found";
+    if (!code && before?.map.has(m.id)) code = "ambiguous";
+    items.push({ internet_message_id: m.raw, ok: !code, code });
+    if (!code) {
+      ids.push(m.found[0].id);
+      moving.push(m.id);
     }
   }
-  if (ids.length === 0) return fail("not_found", "None of the messages is in that folder.");
-  // The check reads only the dates the batch spans (two days' margin): a few hundred headers,
-  // not the whole Inbox and Trash on every round (found live, 2026-11-25: full reads overran).
-  const day = 86_400_000;
-  const window = { sinceMs: Math.min(...dates) - 2 * day, untilMs: Math.max(...dates) + 2 * day };
+  if (ids.length === 0) return fail("ambiguous", "Every message is already at the destination.");
   markMutation(ctx);
   await messenger.messages.move(ids, a.destination_folder_id);
   const giveUpAt = Date.now() + TUNING.batchCheckMs;
   while (Date.now() < giveUpAt) {
     const left = await byMessageId(a, a.folder_id, window);
     const there = await byMessageId(a, a.destination_folder_id, window);
-    if (left.complete && there.complete && moving.every((id) => !left.map.has(id) && there.map.has(id))) {
+    const arrived = left.complete && there.complete && moving.every((id) => !left.map.has(id) && there.map.has(id));
+    if (arrived) {
+      if (a.mark_read) {
+        for (const id of moving) {
+          for (const h of there.map.get(id) ?? []) if (!h.read) await messenger.messages.update(h.id, { read: true });
+        }
+      }
       return { items, verified: true };
     }
     await sleep(TUNING.movePollMs * 4);
@@ -129,12 +143,35 @@ async function cmdTrashMany(a: TrashManyArgs, ctx: Ctx): Promise<TrashManyResult
   return { items, verified: false };
 }
 
+/** One read per folder that holds many of the refs; a handful are found one by one. */
+async function foldersRead(r: Bound, refs: readonly MessageRef[]): Promise<Map<string, Map<string, TbHeader[]>>> {
+  const counts = new Map<string, number>();
+  for (const ref of refs) counts.set(ref.folder_id, (counts.get(ref.folder_id) ?? 0) + 1);
+  const read = new Map<string, Map<string, TbHeader[]>>();
+  for (const [folderId, n] of counts) {
+    if (n < TUNING.bulkReadFrom) continue;
+    const scan = await byMessageId(r, folderId);
+    if (scan.complete) read.set(folderId, scan.map);
+  }
+  return read;
+}
+
+async function findOne(r: Bound, ref: MessageRef, read: Map<string, Map<string, TbHeader[]>>): Promise<TbHeader> {
+  const folder = read.get(ref.folder_id);
+  if (!folder) return locateOne(r, ref);
+  const found = folder.get(bare(ref.internet_message_id)) ?? [];
+  if (found.length === 0) fail("not_found", "The message is not in that folder.");
+  if (found.length > 1) fail("ambiguous", "More than one copy of that message is in the folder.");
+  return found[0];
+}
+
 async function cmdMarkRead(a: MarkReadArgs, ctx: Ctx): Promise<MarkReadResult> {
   await accountOf(a);
   const items: MarkReadItem[] = [];
+  const read = await foldersRead(a, a.refs);
   for (const ref of a.refs) {
     try {
-      const h = await locateOne(a, ref);
+      const h = await findOne(a, ref, read);
       if (h.read !== a.read) {
         markMutation(ctx);
         await messenger.messages.update(h.id, { read: a.read });
@@ -506,17 +543,19 @@ async function cmdReconcileMove(a: ReconcileMoveArgs): Promise<ReconcileMoveResu
   };
 }
 
-async function cmdReconcileTrashMany(a: ReconcileTrashManyArgs): Promise<ReconcileTrashManyResult> {
+async function cmdReconcileMoveMany(a: ReconcileMoveManyArgs): Promise<ReconcileMoveManyResult> {
   await accountOf(a);
   const refresh = await maybeRefresh(a, a.refresh, [a.folder_id, a.destination_folder_id]);
   const source = await byMessageId(a, a.folder_id);
   const destination = await byMessageId(a, a.destination_folder_id);
   const items = a.internet_message_ids.map((raw) => {
     const id = bare(raw);
+    const there = destination.map.get(id) ?? [];
     return {
       internet_message_id: raw,
       source: (source.map.get(id) ?? []).length,
-      destination: (destination.map.get(id) ?? []).length,
+      destination: there.length,
+      unread: there.filter((h) => !h.read).length,
     };
   });
   return {
@@ -531,9 +570,13 @@ async function cmdReconcileMarkRead(a: ReconcileMarkReadArgs): Promise<Reconcile
   await accountOf(a);
   const refresh = await maybeRefresh(a, a.refresh, [...new Set(a.refs.map((r) => r.folder_id))].slice(0, 8));
   const items: ReconcileReadItem[] = [];
+  const read = await foldersRead(a, a.refs);
   for (const ref of a.refs) {
-    const found = await copiesIn(a, ref.folder_id, ref.internet_message_id);
-    items.push({ ref, copies: found.messages.length, read: found.messages.length === 1 ? found.messages[0].read : undefined });
+    const folder = read.get(ref.folder_id);
+    const messages = folder
+      ? (folder.get(bare(ref.internet_message_id)) ?? [])
+      : (await copiesIn(a, ref.folder_id, ref.internet_message_id)).messages;
+    items.push({ ref, copies: messages.length, read: messages.length === 1 ? messages[0].read : undefined });
   }
   return { items, refreshed: refresh.refreshed, refresh_verified: refresh.verified };
 }
