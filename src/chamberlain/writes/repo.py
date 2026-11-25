@@ -152,6 +152,11 @@ def card_is_closed(db: sqlite3.Connection, card: str) -> bool:
     return row is not None and row["state"] == "closed"
 
 
+def card_is_open(db: sqlite3.Connection, card: str) -> bool:
+    row = db.execute("SELECT state FROM cards WHERE handle = ?", (card,)).fetchone()
+    return row is not None and row["state"] == "open"
+
+
 def evidence_facts(db: sqlite3.Connection, handle: str) -> tuple[str | None, str | None] | None:
     """`(session, ref)` of an evidence row, or None if it does not exist (G-13)."""
     row = db.execute("SELECT session, ref FROM evidence WHERE handle = ?", (handle,)).fetchone()

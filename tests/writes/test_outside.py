@@ -165,6 +165,20 @@ def test_a_standing_outside_permission_is_one_click_one_card_and_ends_with_the_c
             where="z",
             categories=frozenset({FORM}),
         )
+    with pytest.raises(ChamberlainError):  # a card that does not exist cannot end it
+        rig.engine().propose_standing(
+            StandingScope(
+                source="outside:owner",
+                intent_kinds=frozenset({IntentKind.OUTSIDE_ACTION}),
+                title="x",
+                summary="y",
+                where="z",
+                categories=frozenset({FORM}),
+                card="card_00000000000000aa",
+            )
+        )
+    with pytest.raises(ChamberlainError):
+        rig.engine().propose_intent(outside(), card="card_00000000000000aa")
     grant = standing_outside(rig, max_per_day=2)
 
     ready = rig.engine().propose_intent(outside(), card=CARD)
@@ -193,10 +207,14 @@ def test_a_standing_outside_permission_is_one_click_one_card_and_ends_with_the_c
 
     # The owner sees the pattern in plain words, each use, and it all shows on the card's timeline.
     detail = grant_detail(rig.ctx, grant)
+    assert "The card it is bound to: Bins" in detail["rendered"]
     assert "council portal" in detail["rendered"]
     assert "never covers entering a password" in (detail["rendered"])
-    assert [use["state"] for use in detail["uses"]][-1].startswith("done, as reported")
-    assert "BIN-7" in detail["uses"][-1]["reported"]
+    reported = [use for use in detail["uses"] if use["reported"]]
+    assert len(reported) == 1
+    assert reported[0]["state"].startswith("done, as reported")
+    assert "BIN-7" in reported[0]["reported"]
+    assert len(detail["uses"]) == 2, "the second one was allowed and not yet reported"
     items = [
         item
         for day in pages.timeline(rig.ctx, "UTC", None, 14)["days"]

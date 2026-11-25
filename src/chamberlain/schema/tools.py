@@ -579,9 +579,15 @@ class ProposeResponse(Model):
 
 class DoRequest(ToolRequest):
     operation: OperationHandle
-    report: str | None = Field(default=None, min_length=1, max_length=500)
-    """Only for an outside action you have now done: what you did and any confirmation number
-    (04-writes W-46). Leave it out to ask for permission to act."""
+    report: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=500,
+        description=(
+            "Only for an outside action you have now done: what you did and any confirmation "
+            "number. Leave it out to take the permission before you act."
+        ),
+    )
 
 
 class DoResponse(Model):

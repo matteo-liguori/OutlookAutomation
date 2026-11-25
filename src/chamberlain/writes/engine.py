@@ -403,9 +403,12 @@ class Engine:
                     "A standing permission for outside actions belongs to one card.",
                     field="card",
                 )
-            if scope.card is not None and repo.card_is_closed(self.db, scope.card):
+            if scope.card is not None and not repo.card_is_open(self.db, scope.card):
                 raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID, "That card is closed.", field="standing"
+                    ErrorCode.REQUEST_INVALID,
+                    "That card does not exist or is closed.",
+                    fix="Bind it to an open card.",
+                    field="standing",
                 )
         else:
             for source in sorted(scope.all_sources()):
@@ -893,8 +896,10 @@ class Engine:
                 field="intent",
                 detail="owner-only-step",
             )
-        if card is not None and repo.card_is_closed(self.db, card):
-            raise ChamberlainError(ErrorCode.REQUEST_INVALID, "That card is closed.", field="card")
+        if card is not None and not repo.card_is_open(self.db, card):
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID, "That card does not exist or is closed.", field="card"
+            )
 
     def _do_outside(self, op: OperationRow, report: str | None) -> OperationRow:
         """Reserve the use, or record the assistant's report. Never touches a port (W-46)."""

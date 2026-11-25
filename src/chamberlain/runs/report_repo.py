@@ -120,7 +120,8 @@ def outside_facts(db: sqlite3.Connection, since: str) -> list[OutsideFact]:
     rows = db.execute(
         "SELECT o.state, o.intent_json, o.receipt_json, c.title AS card_title FROM operations o "
         "LEFT JOIN cards c ON c.handle = o.card WHERE o.kind = 'outside.action' "
-        "AND o.state <> 'proposed' AND o.created_at >= ? ORDER BY o.created_at, o.handle",
+        "AND o.state <> 'proposed' AND COALESCE(o.settled_at, o.created_at) >= ? "
+        "ORDER BY o.created_at, o.handle",
         (since,),
     )
     found: list[OutsideFact] = []

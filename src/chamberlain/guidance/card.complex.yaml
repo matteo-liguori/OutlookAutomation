@@ -4,7 +4,7 @@ title: A card that needs more room
 when: {error: card.over_cap}
 text: >
   A card hit its size limit. Shorten it first. If the matter is demanding,
-  ask the owner for a larger card with a short reason; the owner decides.
+  you may ask the owner for a larger card with a short reason; the owner decides.
 max_chars: 230
 once_per: session
 priority: 48

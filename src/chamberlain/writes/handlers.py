@@ -90,8 +90,8 @@ def make_handlers(
             steps = (
                 NextStep(
                     tool=ToolName.DO,
-                    args={"operation": op.handle, "report": "<what you did, any confirmation>"},
-                    why="You may act now, outside Chamberlain. Then record what happened.",
+                    args={"operation": op.handle},
+                    why="Act first. Then call this again, adding report: what you did.",
                 ),
             )
         return Result(DoResponse(operation=eng.view(op)), next=steps)

@@ -277,6 +277,11 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
         detail["rendered"] = describe_scope(grant.scope)
         if IntentKind.OUTSIDE_ACTION in grant.scope.intent_kinds:
             detail["uses"] = _outside_uses(ctx, grant)
+            titled = ctx.db.execute(
+                "SELECT title FROM cards WHERE handle = ?", (grant.scope.card,)
+            ).fetchone()
+            if titled is not None:
+                detail["rendered"] += f"\nThe card it is bound to: {titled['title']}"
         return detail
     ops = repo.operations_by_hash(ctx.db, grant.source_id, grant.content_sha256)
     shown = next((op for op in reversed(ops) if op.intent_json is not None), None)

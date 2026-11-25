@@ -58,6 +58,9 @@ proposed -> authorised -> prepared -> dispatched -> confirmed
     |            |            |             '-----> uncertain -> reconciling -> confirmed
     |            |            '-> failed_clean                        |-> confirmed_absent
     '-> cancelled '-> cancelled                                       '-> uncertain
+         |
+         |-> agent_reported   (outside action: the assistant reports, W-46)
+         '-> abandoned        (outside action: allowed, never reported)
 ```
 
 | State | Meaning | Terminal | Grant use |
