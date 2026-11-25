@@ -9,7 +9,7 @@ from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
-from chamberlain.app.context import Context, Handler, Hooks
+from chamberlain.app.context import Context, Handler, Hooks, SyncBudget
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.limits import MAX_REPLY_CHARS, SUMMARY_MAX
 from chamberlain.schema.base import Model, ToolName
@@ -73,7 +73,7 @@ class App:
     def _run(self, spec: ToolSpec, request: ToolRequest) -> Reply[Model]:
         if spec.needs_session and request.session is None:
             raise ChamberlainError(ErrorCode.SESSION_REQUIRED, "This tool needs a session.")
-        ctx = replace(self._context, session=request.session)
+        ctx = replace(self._context, session=request.session, sync_budget=SyncBudget())
         try:
             if self._hooks is not None:
                 self._hooks.guard(ctx, spec, request)

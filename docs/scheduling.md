@@ -13,15 +13,19 @@ This page is for the person setting up Chamberlain on their own computer. The co
    Thunderbird to sync every mail folder the scan reads and waits for it, so the agent's pass finds
    them fresh. The scheduler should therefore tick at least that often. A folder that will not sync
    within the time limit (`mail_sync.time_limit_seconds`, default 5 minutes) is left out, named in
-   the report ("Partially verified") and tried again at the next tick; a tick waits for one mail
-   source about that long at most. When the agent starts, any folder last synced more than
+   the report ("Partially verified") and tried again at the next tick. The limit is for all
+   mailboxes together within one tool call or tick: they are synced in turn, and a mailbox the
+   limit cuts off is reported as not synced and tried at the next tick. When the agent starts, any folder last synced more than
    `mail_sync.fresh_minutes` (default 10) ago is synced again first.
 2. When a pass reaches its time on one of its weekdays, the tick records one run for that
    local day and attention raises a `schedule.pass_due` event. A pass first noticed more than
-   six hours late is recorded as `missed`; it is never run late.
+   six hours late is recorded as `missed`; a pass that is still waiting for its session six
+   hours after its time is marked `missed` too. It is never run late. A chat with the agent
+   never holds a pass back: only another scheduled pass at work does.
 3. `chamberlain tick` prints `{"ran": ..., "wake": ..., "due": [{"run", "schedule", "kind",
-   "day"}]}` and exits with status 10 when events wait and no session is active. The wake
-   adapter below starts the agent for each entry in `due`.
+   "day"}]}` and exits with status 10 when events wait and no scheduled pass is in progress. The wake
+   adapter below starts the agent for the entry in `due`. `due` lists one pass at a time (the
+   oldest), and none while another pass is being worked, so two passes never share a session.
 4. The agent starts with `purpose: scheduled` and `scheduled_day: <day>`. A scheduled start for
    a day that is not today, or a scheduled session from an earlier day, is stopped by every
    tool with `session.stale` (R10). A late wake therefore never works a stale day.
@@ -41,7 +45,7 @@ This page is for the person setting up Chamberlain on their own computer. The co
 
 ## The wake adapter
 
-The adapter is the one agent-specific piece. It only has to start your agent once per due run and
+The adapter is the one agent-specific piece. It only has to start your agent once for the due run in the list and
 tell it the run's `day`. The shape, for any agent command, is:
 
 ```text
@@ -130,7 +134,15 @@ records the pass (or `missed` after six hours); nothing runs on a stale day.
 ```text
 chamberlain viewer            opens http://127.0.0.1:<random port>/ in your browser
 chamberlain viewer --no-open  prints the address only; the page asks for the token
+chamberlain viewer --print-url  opens nothing; prints a ready address with the token in its
+                              fragment, for an agent's own browser (the default under Claude Code)
+chamberlain viewer --browser  opens the system browser even under Claude Code
 ```
+
+Under Claude Code (the `CLAUDECODE=1` environment variable) the command does not open the system
+browser. It prints the ready address, and the agent opens it in the Claude app's built-in browser
+pane if it has one, otherwise gives it to you. The token is in the address fragment as before, and
+every token and Origin check is unchanged.
 
 - It listens on 127.0.0.1 only, on a random port, and takes no option to change that.
 - A new random token is made at every start. It is kept in memory and in `run/viewer.token` under
@@ -146,8 +158,10 @@ chamberlain viewer --no-open  prints the address only; the page asks for the tok
   text. If what is stored differs, nothing is granted (409) and you are asked to look again.
 - The page loads nothing from the internet and builds every element as plain text.
 
-Only a person confirms: standing grants, sends to someone not yet known, and calendar changes on
-events with attendees (G-12a). Other writes follow your configuration.
+Only a person confirms: standing grants, sends to someone not yet known, and inviting a new
+stranger to an event (an address that is neither yours nor one you already write to, G-12a).
+Other writes, including calendar changes on events that already have guests, follow your
+configuration and need only your word in chat.
 
 ## Updates
 

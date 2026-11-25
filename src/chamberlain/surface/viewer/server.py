@@ -132,6 +132,7 @@ def launch(
     clock: Clock | None = None,
     policy: WritePolicy | None = None,
     app_factory: AppFactory | None = None,
+    print_url: bool = False,
 ) -> Viewer:
     """Bind, create the token and open the page; the caller then calls `serve_forever`.
 
@@ -153,7 +154,15 @@ def launch(
     show = opener or webbrowser.open
     opened = open_browser and bool(show(viewer.url_with_token))
     if out is not None:
-        if opened:
+        if print_url:
+            # For an agent that has a browser of its own (Claude Code's built-in pane). The
+            # token stays in the fragment, as for the system browser; checks are unchanged.
+            out.write(
+                "Open this address in your built-in browser (the viewer pane) if you have one, "
+                "otherwise give it to the user. It is for this one run of the viewer: "
+                f"{viewer.url_with_token}\nPress Ctrl+C to stop the viewer.\n"
+            )
+        elif opened:
             out.write("It has been opened in your browser. Press Ctrl+C here to stop it.\n")
         else:
             out.write(

@@ -127,8 +127,8 @@ def check_authentication(
         if method == "dkim" and aligned(properties.get("header.d", ""), from_domain):
             return AuthVerdict(True, "dkim passed for the sender's domain.")
         if method == "dmarc":
-            claimed = properties.get("header.from")
-            if claimed is None or claimed.lower().strip(".") == from_domain:
+            claimed = properties.get("header.from", "")
+            if claimed and claimed.lower().strip(".") == from_domain:
                 return AuthVerdict(True, "dmarc passed for the sender's domain.")
     return AuthVerdict(False, "The sender's domain was not verified (no dkim or dmarc pass).")
 

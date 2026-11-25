@@ -1,7 +1,9 @@
 # Live validation checklist
 
-Run once before cutover, with the owner present. Writes go only to the disposable
-test account `mail:test` (and its Google calendar); real accounts are read-only.
+Run once before cutover, with the owner present. Writes go to the disposable
+test account `mail:test` (and its Google calendar). The live suite also sends and invites
+between the owner's own accounts, so the owner's own mail and calendars are written to as
+well, always with the `[chamberlain-live-test]` marker; nothing is sent to anyone else.
 Every capability stays at `implemented` until its row here passes; then it is raised
 to `live_verified`. Record each result on the board with the date.
 

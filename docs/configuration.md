@@ -45,7 +45,7 @@ schedules:                       # scheduled passes; applied at every start
 
 mail_sync:                       # how fresh Thunderbird's folders must be when mail is read
   fresh_minutes: 10              # a folder last synced longer ago is synced again (default 10)
-  time_limit_seconds: 300        # one sync gives up after this long and goes on (default 300)
+  time_limit_seconds: 300        # all syncing in one call gives up after this long and goes on (default 300)
 
 authorised_senders:              # who may instruct by email (see docs/permissions.md)
   owner: [you@example.com]       # a verified email from these counts like chat

@@ -140,10 +140,15 @@ def delete_runs_before(db: sqlite3.Connection, day: str) -> int:
 
 
 def scheduled_session_between(db: sqlite3.Connection, since: str, before: str) -> str | None:
-    """The first scheduled session started in `[since, before)` (a read of attention's table)."""
+    """The first scheduled session in `[since, before)` that no run owns yet.
+
+    A read of attention's table. One session works one pass, so a session already attached
+    to a run is never given to a second one.
+    """
     row = db.execute(
         "SELECT handle FROM sessions WHERE purpose = 'scheduled' AND started_at >= ? "
-        "AND started_at < ? ORDER BY started_at, handle LIMIT 1",
+        "AND started_at < ? AND handle NOT IN (SELECT session FROM runs WHERE session IS NOT NULL) "
+        "ORDER BY started_at, handle LIMIT 1",
         (since, before),
     ).fetchone()
     return None if row is None else str(row["handle"])

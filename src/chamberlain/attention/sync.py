@@ -20,7 +20,13 @@ from chamberlain.app.context import Context
 from chamberlain.attention import repo
 from chamberlain.attention.tuning import MAIL_SKIPPED_ROLES, SYNC_FRESH, SYNC_LIMIT
 from chamberlain.domain.mail import Folder
-from chamberlain.ports.sync import NOT_SELECTABLE, FolderOutcome, FolderSync
+from chamberlain.ports.sync import (
+    NOT_REACHED,
+    NOT_SELECTABLE,
+    FolderOutcome,
+    FolderSync,
+    SyncReport,
+)
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 from chamberlain.store.schema import MAIL_SYNC_KEY, get_state
@@ -43,7 +49,8 @@ class SyncSettings:
     fresh: timedelta
     """How old a folder's last sync may be before the scan or the agent syncs it again."""
     limit: timedelta
-    """How long one sync of one source may take before it goes on without the stragglers."""
+    """The overall time one tool call may spend syncing, all sources together. Sources are
+    synced in turn and the ones the limit cuts off are tried again on the next tick."""
 
 
 def settings(ctx: Context) -> SyncSettings:
@@ -89,6 +96,17 @@ def _fresh_enough(ctx: Context, source: str, max_age: timedelta) -> bool:
     return not any(r.failure for r in repo.sync_folder_rows(ctx.db, source))
 
 
+def _time_left(ctx: Context, limit: timedelta) -> timedelta:
+    """What is left of the call's overall sync limit. The clock starts at the first sync."""
+    budget = ctx.sync_budget
+    if budget is None:
+        return limit
+    now = ctx.clock.now()
+    if budget.started is None:
+        budget.started = now
+    return limit - (now - budget.started)
+
+
 def sync_source(ctx: Context, source: str, *, max_age: timedelta | None = None) -> Synced | None:
     """Sync the folders of `source` that were last in sync more than `max_age` ago (the profile's
     freshness by default), plus any that failed last time, and wait for the answer.
@@ -111,7 +129,22 @@ def sync_source(ctx: Context, source: str, *, max_age: timedelta | None = None) 
         # A folder already failing is asked once per run; a new one is asked again until the
         # limit, because the client usually finishes a slow folder while the second ask waits.
         retry = frozenset(f.id for f in asked if f.id not in known or not known[f.id].failure)
-        report = port.sync_folders(source, [f.id for f in asked], config.limit, retry)
+        left = _time_left(ctx, config.limit)
+        if left <= timedelta(0):
+            # The call's overall limit is used up: this source is not synced now, is reported
+            # like a folder that would not sync, and is tried again on the next tick (A-25).
+            report = SyncReport(
+                folders=tuple(
+                    FolderOutcome(
+                        folder_id=f.id, synced=False, code=NOT_REACHED, at=ctx.clock.now()
+                    )
+                    for f in asked
+                )
+            )
+        else:
+            report = port.sync_folders(
+                source, [f.id for f in asked], min(config.limit, left), retry
+            )
     answers = {} if report is None else {o.folder_id: o for o in report.folders}
     failed: list[str] = []
     now = ctx.clock.now()

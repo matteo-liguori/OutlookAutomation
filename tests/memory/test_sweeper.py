@@ -12,6 +12,7 @@ from memory_helpers import blobs, keep_text, make_context, table_dump
 from chamberlain.app.context import Context
 from chamberlain.app.doubles import RecordingAuditLog
 from chamberlain.domain.canonical import sha256_bytes
+from chamberlain.limits import BACKUP_DAILY_SLOTS, BACKUP_WEEKLY_SLOTS
 from chamberlain.memory import backups, repo
 from chamberlain.memory import sweeper as sweeper_module
 from chamberlain.memory.artifacts import ArtifactService, blob_path, write_blob
@@ -272,8 +273,8 @@ def test_m24_backup_slots_are_fixed(ctx: Context, clock: ManualClock) -> None:
         backups.backup(ctx.db, clock, ctx.data_root)
         clock.advance(hours=24)
     names = sorted(p.name for p in (ctx.data_root / "backups").iterdir())
-    assert len([n for n in names if n.startswith("daily-")]) == 7
-    assert len([n for n in names if n.startswith("weekly-")]) <= 4
+    assert len([n for n in names if n.startswith("daily-")]) == BACKUP_DAILY_SLOTS
+    assert len([n for n in names if n.startswith("weekly-")]) <= BACKUP_WEEKLY_SLOTS
     assert get_state(ctx.db, "memory.last_backup_at") is not None
 
 
