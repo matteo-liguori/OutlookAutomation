@@ -38,15 +38,15 @@ def app_with(ctx: Context, **handlers: Handler) -> App:
     return App(ctx, {ToolName(name): handler for name, handler in handlers.items()})
 
 
-def test_a_handler_result_becomes_an_ok_envelope(ctx: Context) -> None:
+def test_t3_a_handler_result_becomes_an_ok_envelope_and_3_related_checks(ctx: Context) -> None:
+    # a_handler_result_becomes_an_ok_envelope
     reply = app_with(ctx, start=start).call("start", {"agent": "test"})
     assert reply.ok
     assert isinstance(reply.data, StartResponse)
     assert reply.data.now == datetime(2026, 1, 5, 9, 0, tzinfo=UTC)
     assert reply.next[0].tool is ToolName.NEXT
 
-
-def test_unknown_tool_and_bad_request_are_invalid_requests(ctx: Context) -> None:
+    # unknown_tool_and_bad_request_are_invalid_requests
     app = app_with(ctx, start=start)
     unknown = app.call("briefing", {})
     assert unknown.error is not None
@@ -57,21 +57,22 @@ def test_unknown_tool_and_bad_request_are_invalid_requests(ctx: Context) -> None
     assert bad.error.field == "purpose"
     assert bad.error.example is not None
 
-
-def test_t3_tools_need_a_session_except_start_guide_doctor(ctx: Context) -> None:
+    # t3_tools_need_a_session_except_start_guide_doctor
     reply = app_with(ctx).call("do", {"operation": OPERATION})
     assert reply.error is not None
     assert reply.error.code is ErrorCode.SESSION_REQUIRED
 
-
-def test_a_tool_without_a_handler_is_unsupported_not_a_crash(ctx: Context) -> None:
+    # a_tool_without_a_handler_is_unsupported_not_a_crash
     reply = app_with(ctx).call("do", {"operation": OPERATION, "session": SESSION})
     assert reply.error is not None
     assert reply.error.code is ErrorCode.TOOL_NOT_IMPLEMENTED
     assert reply.error.category is ErrorCategory.UNSUPPORTED
 
 
-def test_the_session_reaches_the_handler_through_the_context(ctx: Context) -> None:
+def test_e14_e2_e4_the_session_reaches_the_handler_through_the_and_3_related_checks(
+    ctx: Context,
+) -> None:
+    # the_session_reaches_the_handler_through_the_context
     seen: list[str | None] = []
 
     def guide(inner: Context, request: GuideRequest) -> Result:
@@ -81,10 +82,7 @@ def test_the_session_reaches_the_handler_through_the_context(ctx: Context) -> No
     app_with(ctx, guide=guide).call("guide", {"session": SESSION})
     assert seen == [SESSION]
 
-
-def test_e14_a_chamberlain_error_keeps_its_code_and_anything_else_is_internal(
-    ctx: Context,
-) -> None:
+    # e14_a_chamberlain_error_keeps_its_code_and_anything_else_is_internal
     def refuses(inner: Context, request: ToolRequest) -> Result:
         raise ChamberlainError(ErrorCode.GRANT_REQUIRED, "No grant covers this.")
 
@@ -99,21 +97,19 @@ def test_e14_a_chamberlain_error_keeps_its_code_and_anything_else_is_internal(
     assert crashed.error.code is ErrorCode.INTERNAL_UNEXPECTED
     assert "secret" not in crashed.model_dump_json()
 
-
-def test_e2_an_oversized_reply_is_replaced_not_truncated(ctx: Context) -> None:
-    def guide(inner: Context, request: GuideRequest) -> Result:
+    # e2_an_oversized_reply_is_replaced_not_truncated
+    def big_guide(inner: Context, request: GuideRequest) -> Result:
         rules = tuple(
             GuideRule(id=f"rule.number{i}", version=1, title="t", text="x" * 500) for i in range(20)
         )
         return Result(GuideResponse(rules=rules))
 
-    reply = app_with(ctx, guide=guide).call("guide", {})
+    reply = app_with(ctx, guide=big_guide).call("guide", {})
     assert reply.error is not None
     assert reply.error.code is ErrorCode.REPLY_TOO_LARGE
     assert len(reply.model_dump_json()) < MAX_REPLY_CHARS
 
-
-def test_e4_a_handler_cannot_return_an_invalid_next_step(ctx: Context) -> None:
+    # e4_a_handler_cannot_return_an_invalid_next_step
     def start_badly(inner: Context, request: StartRequest) -> Result:
         step = NextStep(tool=ToolName.DO, args={"operation": "not a handle"}, why="")
         return Result(StartResponse(session=SESSION, now=inner.clock.now()), next=(step,))
@@ -143,21 +139,22 @@ class _Hooks:
         return reply.model_copy(update={"guidance": (item,)})
 
 
-def test_t5_a19_every_call_ticks_first_and_is_decorated_after(ctx: Context) -> None:
+def test_t5_a19_a7_g23_every_call_ticks_first_and_is_decorated_after_and_3_related_checks(
+    ctx: Context,
+) -> None:
+    # t5_a19_every_call_ticks_first_and_is_decorated_after
     hooks = _Hooks()
     reply = App(ctx, {ToolName.START: start}, hooks).call("start", {})
     assert hooks.ticks == 1
     assert [item.id for item in reply.guidance] == ["start.first"]
 
-
-def test_a7_a_failing_tick_does_not_fail_the_tool(ctx: Context) -> None:
+    # a7_a_failing_tick_does_not_fail_the_tool
     hooks = _Hooks(fail_tick=True)
     reply = App(ctx, {ToolName.START: start}, hooks).call("start", {})
     assert reply.ok
     assert hooks.ticks == 1
 
-
-def test_g23_every_call_writes_one_audit_row_without_content(ctx: Context) -> None:
+    # g23_every_call_writes_one_audit_row_without_content
     audit = RecordingAuditLog()
     audited = replace(ctx, services=replace(ctx.services, audit=audit))
     app = app_with(audited, start=start)
@@ -171,8 +168,7 @@ def test_g23_every_call_writes_one_audit_row_without_content(ctx: Context) -> No
     assert audit.rows[1].actor == f"agent:{SESSION}"
     assert "private-agent-label" not in repr(audit.rows)
 
-
-def test_doctor_reports_the_schema_checks(ctx: Context) -> None:
+    # doctor_reports_the_schema_checks
     reply = App(ctx, {ToolName.DOCTOR: make_doctor()}).call("doctor", {"check": "schema"})
     assert reply.ok
     dumped = reply.model_dump(mode="json")["data"]["checks"]
@@ -182,16 +178,16 @@ def test_doctor_reports_the_schema_checks(ctx: Context) -> None:
     }
 
 
-def test_wiring_collects_the_track_modules(clock: ManualClock) -> None:
+def test_r10_wiring_collects_the_track_modules_and_2_related_checks(
+    clock: ManualClock, tmp_path_factory: pytest.TempPathFactory, ctx: Context
+) -> None:
+    # wiring_collects_the_track_modules
     handlers, hooks = load_tracks()
     assert ToolName.DOCTOR in handlers
     assert hooks is not None
     assert len(TRACK_MODULES) == 3
 
-
-def test_build_app_opens_a_store_under_the_data_root(
-    tmp_path_factory: pytest.TempPathFactory,
-) -> None:
+    # build_app_opens_a_store_under_the_data_root
     root = tmp_path_factory.mktemp("root") / "data"
     app = build_app(root, clock=ManualClock())
     try:
@@ -200,8 +196,7 @@ def test_build_app_opens_a_store_under_the_data_root(
         app.close()
     assert (root / "chamberlain.sqlite3").exists()
 
-
-def test_r10_a_guard_that_raises_stops_the_tool_before_tick_and_handler(ctx: Context) -> None:
+    # r10_a_guard_that_raises_stops_the_tool_before_tick_and_handler
     class Stopper(_Hooks):
         def guard(self, ctx: Context, spec: ToolSpec, request: ToolRequest) -> None:
             raise ChamberlainError(ErrorCode.SESSION_STALE, "Stop.")
