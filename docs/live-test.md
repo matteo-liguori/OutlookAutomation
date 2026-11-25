@@ -146,6 +146,16 @@ It works only when the bridge folder is `<data root>/bridge` (the default).
   organiser's copy. The read-only probe fills in the answer if `open` does not show it.
 - **Restart Thunderbird** after updating the harness so the native host loads the
   lost-response hook.
+- **Drafts folder.** Thunderbird saves a draft where the identity's Copies & Folders setting
+  says. If that is not the bound draft folder (on Gmail, a stray top-level `Drafts` instead
+  of `[Gmail]/Drafts`), draft saves are refused and the reason names both folders. Sends do
+  not depend on it.
+- **Invitations on Google.** Google adds an invitation to the calendar only as its setting
+  "Add invitations to my calendar" allows. If the invitation arrives as mail but never shows
+  on the calendar, the invitation scenarios say so; change that setting to "From everyone".
+- **A Gmail scratch folder.** A new Gmail account has no label of its own, and All Mail
+  cannot be the scratch folder. Make one (for example `Chamberlain scratch`), set
+  `scratch_folder`, then run `grant` again and confirm it.
 
 ## How it cleans up
 

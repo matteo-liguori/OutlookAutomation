@@ -1,7 +1,7 @@
 // Command bridge (protocol v2). Credentials stay in Thunderbird. No journal, no retry,
 // no command outside the generated closed list (bridge contract B-2 to B-5).
 
-const ADDON_VERSION = "2.0.1";
+const ADDON_VERSION = "2.0.2";
 const HOST_NAME = "chamberlain_thunderbird_bridge";
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 45_000;
@@ -56,6 +56,10 @@ function toBridgeError(error: unknown, ctx: Ctx | null): BridgeError {
     return { code: error.code, message: clip(error.message, 500), mutation: issued || error.mutation === "possible" ? "possible" : "none", retryable: error.code === "busy" };
   }
   const text = clip((error as Error)?.message ?? error, 500);
+  const helper = helperFailure(text);
+  if (helper) {
+    return { code: helper.code, message: helper.message, mutation: issued ? "possible" : "none", retryable: helper.code === "busy" };
+  }
   return { code: /offline/i.test(text) ? "client_offline" : "internal", message: text, mutation: issued ? "possible" : "none", retryable: false };
 }
 

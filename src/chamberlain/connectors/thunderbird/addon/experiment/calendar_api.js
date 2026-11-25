@@ -6,9 +6,11 @@
 var { ExtensionCommon } = ChromeUtils.importESModule("resource://gre/modules/ExtensionCommon.sys.mjs");
 var { cal } = ChromeUtils.importESModule("resource:///modules/calendar/calUtils.sys.mjs");
 var { CalIcsParser } = ChromeUtils.importESModule("resource:///modules/CalIcsParser.sys.mjs");
+var { ExtensionUtils } = ChromeUtils.importESModule("resource://gre/modules/ExtensionUtils.sys.mjs");
 
-function need(value, code) {
-  if (!value) throw new Error(code);
+/* An ExtensionError reaches the add-on intact; a plain Error would read "An unexpected error occurred". */
+function need(value, code, reason = "") {
+  if (!value) throw new ExtensionUtils.ExtensionError(`chamberlain:${code}:${reason}`);
 }
 
 function calendarOf(id) {

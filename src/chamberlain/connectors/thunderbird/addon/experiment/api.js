@@ -6,9 +6,12 @@ var { ExtensionCommon } = ChromeUtils.importESModule("resource://gre/modules/Ext
 var { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
 var { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
 var { getFolder } = ChromeUtils.importESModule("resource:///modules/ExtensionAccounts.sys.mjs");
+var { ExtensionUtils } = ChromeUtils.importESModule("resource://gre/modules/ExtensionUtils.sys.mjs");
 
-function need(value, code) {
-  if (!value) throw new Error(code);
+/* Thunderbird hides the text of a plain Error thrown here ("An unexpected error occurred").
+ * An ExtensionError reaches the add-on intact: "chamberlain:<code>:<reason>". */
+function need(value, code, reason = "") {
+  if (!value) throw new ExtensionUtils.ExtensionError(`chamberlain:${code}:${reason}`);
 }
 
 function ownerAccount(accountId, mailbox) {
@@ -75,10 +78,16 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           win.clearTimeout(win.gAutoSaveTimeout);
           win.gAutoSaveTimeout = null; // autosave stays off in a managed composer (R8)
           const draft = getFolder(draftFolderId);
-          need(draft.accountKey === accountId && draft.folder.canFileMessages, "account_mismatch");
-          need(win.gCurrentIdentity.getUnicharAttribute("draft_folder") === draft.folder.URI, "changed");
+          // A send never saves a draft (autosave is off), so only a draft save checks the folder.
+          if (draftFolderId) {
+            const draft = getFolder(draftFolderId);
+            need(draft.accountKey === accountId && draft.folder.canFileMessages, "account_mismatch", "The bound draft folder is not in this account.");
+            const uses = win.gCurrentIdentity.getUnicharAttribute("draft_folder");
+            need(uses === draft.folder.URI, "changed", `Thunderbird saves this identity's drafts to ${uses}, not the bound draft folder ${draft.folder.URI}. Change Drafts in the account's Copies & Folders settings, or the bound folder.`);
+          }
           const sent = getFolder(sentFolderId);
-          need(sent.accountKey === accountId && sent.folder.canFileMessages && win.gMsgCompose.compFields.fcc === sent.folder.URI && !win.gMsgCompose.compFields.fcc2, "changed");
+          need(sent.accountKey === accountId && sent.folder.canFileMessages, "account_mismatch", "The bound Sent folder is not in this account.");
+          need(win.gMsgCompose.compFields.fcc === sent.folder.URI && !win.gMsgCompose.compFields.fcc2, "changed", `The composer files its Sent copy in ${win.gMsgCompose.compFields.fcc}, not the bound Sent folder ${sent.folder.URI}.`);
           win.__chamberlainHeld = true;
           return { held: true };
         },
@@ -104,7 +113,7 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
                   return;
                 }
               }
-              if (Date.now() - started >= 15000) reject(new Error("timeout"));
+              if (Date.now() - started >= 15000) reject(new ExtensionUtils.ExtensionError("chamberlain:timeout:The reopened draft did not open in time."));
               else setTimeout(look, 100);
             };
             look();

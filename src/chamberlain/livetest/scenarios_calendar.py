@@ -5,10 +5,11 @@ grant, so each runs only when the owner approved calendar edits (config or optio
 that the scenario is skipped with the reason, never approved by the runner.
 """
 
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from chamberlain.livetest.lab import JSON, Lab, ScenarioSkip, text_of
+from chamberlain.livetest.lab import JSON, Lab, ScenarioFailure, ScenarioSkip, text_of
 from chamberlain.livetest.registry import Scope, Target, scenario
 
 LONDON = ZoneInfo("Europe/London")
@@ -345,6 +346,23 @@ def _wait_find(lab: Lab, source: str, title: str, start: datetime) -> JSON:
     )
 
 
+def _invited[T](
+    lab: Lab, invitee_mail: str | None, calendar: str, title: str, wait: Callable[[], T]
+) -> T:
+    """Wait for the invitation on the invitee's calendar; if it never comes, say whether it
+    arrived as mail (then the calendar did not add it: a setting, not a harness fault)."""
+    try:
+        return wait()
+    except ScenarioFailure as missing:
+        if invitee_mail is None or not lab.hits(invitee_mail, title):
+            raise
+        raise ScenarioFailure(
+            f"the invitation arrived as mail in {invitee_mail}, but {calendar} did not add it "
+            "to the calendar; on Google, check Settings > Event settings > Add invitations to "
+            "my calendar"
+        ) from missing
+
+
 @scenario(
     "calendar.invite_flow",
     "calendar",
@@ -372,7 +390,13 @@ def invite_flow(lab: Lab, t: Target) -> None:
             "remove invitee-side events",
             lambda: lab.remove_events(str(setting.invitee_calendar), title),
         )
-        invited_copy = _wait_find(lab, setting.invitee_calendar, title, start)
+        invited_copy = _invited(
+            lab,
+            setting.invitee_mail,
+            setting.invitee_calendar,
+            title,
+            lambda: _wait_find(lab, str(setting.invitee_calendar), title, start),
+        )
         seen_on = "calendar"
     else:
         lab.arrival(setting.invitee_mail, title)
@@ -471,9 +495,15 @@ def recurring_invite(lab: Lab, t: Target) -> None:
     else:
         invited = str(setting.invitee_calendar)
         lab.defer("remove invitee-side events", lambda: lab.remove_events(invited, title))
-        lab.wait_until(
-            "every date of the invitation reaching the invitee",
-            lambda: True if len(dates(invited)) == 3 else None,
+        _invited(
+            lab,
+            setting.invitee_mail,
+            invited,
+            title,
+            lambda: lab.wait_until(
+                "every date of the invitation reaching the invitee",
+                lambda: True if len(dates(invited)) == 3 else None,
+            ),
         )
 
     # One date changed: the guest stays invited to it and to the others.

@@ -208,7 +208,8 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx, kind: "send" | "draft_save" 
     }
     const open: number = tabId as number;
     // Autosave off and the bound Sent folder re-applied on every composer, reopened drafts and replies included.
-    await helper.holdComposer(open, a.account_id, a.mailbox, a.draft_folder_id, a.sent_folder_id);
+    // A send never saves a draft, so its Drafts setting does not matter ("" skips that check).
+    await helper.holdComposer(open, a.account_id, a.mailbox, kind === "send" ? "" : a.draft_folder_id, a.sent_folder_id);
     for (const file of files) await messenger.compose.addAttachment(open, { file });
     await verifyComposer(open, a, identity.id, files);
     if (kind === "send") {
@@ -243,7 +244,7 @@ async function finishDraft(a: ComposeArgs, ctx: Ctx, tabId: number, saved: any, 
     if (!found && attempt < TUNING.saveAttempts - 1) await sleep(TUNING.savePollMs);
   }
   if (!found) fail2("The saved draft does not match what was requested.");
-  const ok = found as { header: TbHeader; match: Match };
+  const ok = await indexedDraft(a, (found as { header: TbHeader; match: Match }).header, fail2);
   const raw = await rawHash(ok.header.id);
   let remaining = 0;
   if (update && existing) {
@@ -255,6 +256,28 @@ async function finishDraft(a: ComposeArgs, ctx: Ctx, tabId: number, saved: any, 
   }
   if (!a.display_only) await closeQuietly(tabId, a);
   return { header: header(ok.header), raw_sha256: raw, attachment_bytes_verified: true, old_copies_remaining: remaining };
+}
+
+/**
+ * Right after a save on IMAP (Gmail found live, 2026-11-25), Thunderbird returns its local
+ * placeholder copy: no Message-ID in the header yet, and a new session id once the folder
+ * syncs. The draft's handle needs that Message-ID, so take it from the stored message and
+ * wait until the folder finds the draft by it.
+ */
+async function indexedDraft(a: ComposeArgs, saved: TbHeader, fail2: (message: string) => never): Promise<{ header: TbHeader }> {
+  let mid = bare(saved.headerMessageId ?? "");
+  if (!mid) {
+    const full: TbPart = await messenger.messages.getFull(saved.id);
+    mid = bare(String((full.headers ?? {})["message-id"]?.[0] ?? "").trim());
+  }
+  if (!mid) fail2("The saved draft has no Message-ID.");
+  for (let attempt = 0; attempt < TUNING.saveAttempts; attempt++) {
+    const copies = (await copiesIn(a, a.draft_folder_id, mid)).messages;
+    if (copies.length === 1) return { header: copies[0] };
+    if (copies.length > 1) fail2("More than one copy of the saved draft is in the draft folder.");
+    await sleep(TUNING.savePollMs);
+  }
+  return fail2("The saved draft could not be found by its Message-ID.");
 }
 
 async function cmdDraftDiscard(a: DraftDiscardArgs): Promise<DiscardResult> {

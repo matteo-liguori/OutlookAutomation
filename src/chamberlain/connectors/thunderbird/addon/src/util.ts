@@ -12,6 +12,15 @@ class BridgeFailure extends Error {
 }
 
 
+const HELPER_CODES: readonly BridgeErrorCode[] = ["bad_request", "account_mismatch", "not_found", "ambiguous", "changed", "busy", "timeout", "client_offline", "unsupported"];
+
+/** A privileged helper's failure arrives as "chamberlain:<code>:<reason>" (see experiment/api.js). */
+function helperFailure(text: string): { code: BridgeErrorCode; message: string } | null {
+  const m = /^chamberlain:([a-z_]+):(.*)$/s.exec(text);
+  if (!m || !HELPER_CODES.includes(m[1] as BridgeErrorCode)) return null;
+  return { code: m[1] as BridgeErrorCode, message: m[2] || `The Thunderbird helper refused (${m[1]}).` };
+}
+
 function fail(code: BridgeErrorCode, message: string, mutation: "none" | "possible" = "none"): never {
   throw new BridgeFailure(code, message, mutation);
 }

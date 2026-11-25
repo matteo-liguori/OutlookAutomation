@@ -215,6 +215,18 @@ export function createWorld() {
         headers: Object.fromEntries((c.details.customHeaders ?? []).map((h) => [h.name.toLowerCase(), [h.value]]).concat(c.replyTo ? [["in-reply-to", ["<" + c.replyTo + ">"]]] : [])),
       });
       c.existingId = m.id;
+      if (world.faults.placeholderDraft) {
+        // Like Thunderbird on IMAP: a placeholder without a Message-ID; the next folder query
+        // "syncs" it into the real copy under a new session id.
+        const real = m.headerMessageId;
+        m.headers["message-id"] = ["<" + real + ">"];
+        m.headerMessageId = "";
+        world.pendingSync = () => {
+          m.headerMessageId = real;
+          m.id = world.nextId++;
+          c.existingId = m.id;
+        };
+      }
       const header = headerOf(m);
       return { messages: [world.faults.staleCallback ? { ...header, headerMessageId: "stale-callback", read: !header.read } : header] };
     },
@@ -268,6 +280,11 @@ export function createWorld() {
     messages: {
       get: async (id) => headerOf(byId(id)),
       query: async (q) => {
+        if (world.pendingSync) {
+          const sync = world.pendingSync;
+          world.pendingSync = null;
+          sync();
+        }
         const found = world.messages.filter((m) => matches(m, q)).map(headerOf);
         const size = q.messagesPerPage ?? 50;
         if (found.length <= size) return { messages: found };
@@ -326,7 +343,9 @@ export function createWorld() {
       }),
       holdComposer: async (tabId, accountId, mailbox, draftFolderId, sentFolderId) => {
         const c = tabState(tabId);
-        if (c.details.overrideDefaultFccFolder?.id !== sentFolderId) throw new Error("changed");
+        // Like experiment/api.js: an ExtensionError text "chamberlain:<code>:<reason>"; "" skips the drafts check.
+        if (draftFolderId && world.faults.identityDrafts) throw new Error(`chamberlain:changed:Thunderbird saves this identity's drafts to ${world.faults.identityDrafts}, not the bound draft folder.`);
+        if (c.details.overrideDefaultFccFolder?.id !== sentFolderId) throw new Error("chamberlain:changed:The composer files its Sent copy elsewhere.");
         c.held = true;
         return { held: true };
       },

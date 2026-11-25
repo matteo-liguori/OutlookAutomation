@@ -107,8 +107,16 @@ interface ScanFilter {
   untilMs?: number;
   subject?: string;
   subjectContains?: boolean;
+  words?: string[];
   ownOnly?: boolean;
   maxScan: number;
+}
+
+/** Thunderbird's full-text search is too slow on big mailboxes: words match the headers. */
+function hasEveryWord(h: TbHeader, words: string[]): boolean {
+  const people = [h.author, ...(h.recipients ?? []), ...(h.ccList ?? [])].join(" ");
+  const haystack = (normaliseSubject(h.subject) + " " + people).toLowerCase();
+  return words.every((w) => haystack.includes(w));
 }
 
 /** Scan Thunderbird's query pages up to a bound; never silently truncate. */
@@ -133,6 +141,7 @@ async function scanQuery(r: Bound, filter: ScanFilter): Promise<Scan> {
         const subject = normaliseSubject(h.subject);
         if (filter.subjectContains ? !subject.includes(wanted) : subject !== wanted) continue;
       }
+      if (filter.words && !hasEveryWord(h, filter.words)) continue;
       if (filter.ownOnly && !(await isOwn(h, r.mailbox))) continue;
       out.push(h);
     }
@@ -176,6 +185,7 @@ async function cmdQuery(a: QueryArgs): Promise<QueryResult> {
     untilMs: a.until_ms ?? undefined,
     subject: a.subject ?? undefined,
     subjectContains: a.subject_contains,
+    words: a.words ? a.words.toLowerCase().split(/\s+/).filter((w) => w.length > 0) : undefined,
     ownOnly: a.own_only,
     maxScan: a.max_scan,
   });

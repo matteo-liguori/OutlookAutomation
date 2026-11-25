@@ -341,6 +341,18 @@ test("R8 the bound Sent folder is enforced on the composer", async () => {
   assert.equal(world.counters.send, 0);
 });
 
+test("R8 an identity whose Drafts setting is another folder still sends; a draft save names the folder", async () => {
+  const { addon, world } = setup();
+  world.faults.identityDrafts = "imap://owner@example/Drafts";
+  const sent = await call(addon, "send", compose());
+  assert.equal(sent.ok, true, JSON.stringify(sent.error));
+  const draft = await call(addon, "draft_save", compose({ token: "<tok-2@chamberlain.local>" }));
+  assert.equal(draft.error.code, "changed");
+  assert.match(draft.error.message, /saves this identity's drafts to imap:\/\/owner@example\/Drafts/);
+  assert.equal(draft.error.mutation, "none");
+  assert.equal(world.copies("<tok-2@chamberlain.local>", DRAFTS), 0);
+});
+
 test("R8 a reply restores the unread flag Thunderbird cleared on the original", async () => {
   const { addon, world } = setup();
   world.add({ folderId: INBOX, headerMessageId: "orig@x", read: false, subject: "Question" });
@@ -367,6 +379,16 @@ test("P-9 draft_save returns the stored message and its raw hash", async () => {
   assert.match(res.result.raw_sha256, /^[0-9a-f]{64}$/);
   assert.equal(res.result.header.folder_id, DRAFTS);
   assert.equal(world.copies("<tok-1@chamberlain.local>", DRAFTS), 1);
+});
+
+test("P-9 a placeholder draft without a Message-ID is followed to its synced copy", async () => {
+  const { addon, world } = setup();
+  world.faults.placeholderDraft = true;
+  const res = await call(addon, "draft_save", compose());
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  assert.ok(res.result.header.internet_message_id, "the handle needs a Message-ID");
+  const stored = world.find(res.result.header.internet_message_id, DRAFTS);
+  assert.equal(res.result.header.session_id, stored.id, "the synced copy, not the placeholder");
 });
 
 test("P-9 draft_update checks the old raw hash before opening anything", async () => {

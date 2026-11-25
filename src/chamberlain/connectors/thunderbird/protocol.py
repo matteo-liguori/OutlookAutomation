@@ -384,6 +384,8 @@ class QueryArgs(AccountArgs):
     text: Annotated[str, Field(max_length=500)] | None = None
     subject: Annotated[str, Field(max_length=500)] | None = None
     subject_contains: bool = False
+    words: Annotated[str, Field(max_length=500)] | None = None
+    """Every word must appear in the subject, the sender or the recipients (any case)."""
     unread: bool | None = None
     since_ms: int | None = None
     until_ms: int | None = None

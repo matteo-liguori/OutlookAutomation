@@ -497,3 +497,11 @@ def test_r8_a_reply_keeps_the_original_unread_and_sets_the_reply_header(stack: S
     )
     applied(stack.mail.dispatch(stack.mail.prepare(intent, {handle(original): original}), "k", {}))
     assert stack.is_unread(original)
+
+
+def test_words_match_the_subject_sender_and_recipients_together(stack: Stack) -> None:
+    seed(stack, subject="Quarterly plan")  # from Alice (the fake's default sender)
+    found = stack.mail.search(SOURCE, MailQuery(text="alice QUARTERLY"))
+    assert len(found.items) == 1
+    assert found.complete
+    assert stack.mail.search(SOURCE, MailQuery(text="bob quarterly")).items == ()

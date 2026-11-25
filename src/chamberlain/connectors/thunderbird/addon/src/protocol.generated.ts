@@ -391,6 +391,7 @@ interface QueryArgs {
   text?: string | null;
   subject?: string | null;
   subject_contains: boolean;
+  words?: string | null;
   unread?: boolean | null;
   since_ms?: number | null;
   until_ms?: number | null;
@@ -2796,6 +2797,19 @@ const SCHEMA_DEFS: { [name: string]: JsonValue } = {
     ],
     "default": null,
     "title": "Until Ms"
+   },
+   "words": {
+    "anyOf": [
+     {
+      "maxLength": 500,
+      "type": "string"
+     },
+     {
+      "type": "null"
+     }
+    ],
+    "default": null,
+    "title": "Words"
    }
   },
   "required": [

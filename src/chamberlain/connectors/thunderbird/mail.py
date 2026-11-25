@@ -416,6 +416,7 @@ class ThunderbirdMail:
         after: protocol.QueryCursor | None = None,
         own_only: bool = False,
         subject_contains: bool = False,
+        words: str | None = None,
         max_scan: int = 2000,
     ) -> protocol.QueryResult:
         args = protocol.QueryArgs(
@@ -426,6 +427,7 @@ class ThunderbirdMail:
             text=text,
             subject=subject,
             subject_contains=subject_contains,
+            words=words,
             unread=unread,
             since_ms=since_ms,
             until_ms=until_ms,
@@ -495,16 +497,14 @@ class ThunderbirdMail:
                     {"source": source, "reason": "The mail store was not confirmed to be in sync."}
                 )
             )
-        # Words match the subject. Thunderbird's full-text search did not finish within the
-        # bridge's deadline on the owner's real mailboxes, even over three days (found live,
-        # 2026-11-25), while a subject match over 90 days takes about two seconds. Matching the
-        # sender and recipients too needs an add-on change (to do).
+        # Words match the subject, sender and recipients. Thunderbird's full-text search did not
+        # finish within the bridge's deadline on the owner's real mailboxes, even over three days
+        # (found live, 2026-11-25), while a header match over 90 days takes about two seconds.
         result = self._query(
             binding,
             folder_id=query.folder_id,
             internet_message_id=query.internet_message_id,
-            subject=query.text,
-            subject_contains=query.text is not None,
+            words=query.text,
             unread=query.unread,
             since_ms=_ms_opt(query.since),
             until_ms=_ms_opt(query.until),
@@ -995,8 +995,14 @@ class ThunderbirdMail:
                 payloads=files,
             )
         result = _typed(reply, protocol.DraftResult)
-        locator = encode_locator(
-            binding.account_id, result.header.folder_id, result.header.internet_message_id
+        # A handle needs the Message-ID: an empty one would name every such draft at once.
+        # The draft is saved either way; without one it simply gets no handle.
+        locator = (
+            encode_locator(
+                binding.account_id, result.header.folder_id, result.header.internet_message_id
+            )
+            if result.header.internet_message_id
+            else None
         )
         note = ""
         if result.old_copies_remaining:
