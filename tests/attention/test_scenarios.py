@@ -68,7 +68,8 @@ def full_app(ctx: Context, seed: Any, find: Find) -> App:
     return App(ctx, {**HANDLERS, ToolName.FIND: find}, HOOKS)
 
 
-def test_t7_a_first_start_with_nothing_waiting(full_app: App):
+def test_t7_a15_a_first_start_with_nothing_waiting_and_1_related_checks(full_app: App) -> None:
+    # t7_a_first_start_with_nothing_waiting
     reply = full_app.call("start", {"agent": "test"})
     assert reply.ok
     assert reply.data is not None
@@ -76,8 +77,7 @@ def test_t7_a_first_start_with_nothing_waiting(full_app: App):
     assert reply.data.work == ()
     assert reply.notices == ()
 
-
-def test_a15_a_scheduled_start_adds_the_scheduled_rule_first(full_app: App):
+    # a15_a_scheduled_start_adds_the_scheduled_rule_first
     reply = full_app.call("start", {"agent": "test", "purpose": "scheduled"})
     assert ids(reply) == ["session.scheduled", "session.first"]
 
@@ -147,7 +147,10 @@ def test_t7_start_returns_at_most_five_items_and_counts_the_rest(full_app: App, 
     assert second.data.remaining == 0
 
 
-def test_e4_every_work_item_names_a_valid_call(full_app: App, seed: Any):
+def test_e4_a19_every_work_item_names_a_valid_call_and_1_related_checks(
+    full_app: App, seed: Any, clock: ManualClock
+) -> None:
+    # e4_every_work_item_names_a_valid_call
     card = seed.card(review_at=seed.ts(hours=-1))
     seed.card(over_cap=1)
     seed.action(card, due_at=seed.ts(hours=-1))
@@ -175,10 +178,7 @@ def test_e4_every_work_item_names_a_valid_call(full_app: App, seed: Any):
     for item in items:
         check_next_step(item.next)
 
-
-def test_a19_notices_piggyback_urgent_events_on_other_tools(
-    full_app: App, seed: Any, clock: ManualClock
-):
+    # a19_notices_piggyback_urgent_events_on_other_tools
     session = str(full_app.call("start", {}).data.session)
     op = seed.operation("mail.send")
     clock.advance(seconds=120)
@@ -265,7 +265,10 @@ def test_golden_an_uncertain_send_start_reply(full_app: App, seed: Any):
     assert golden["next"][0]["tool"] == "reconcile"
 
 
-def test_golden_next_after_handling_returns_the_rest(full_app: App, seed: Any):
+def test_golden_next_after_handling_returns_the_rest_and_1_related_checks(
+    full_app: App, seed: Any, clock: Any
+) -> None:
+    # golden_next_after_handling_returns_the_rest
     seed.grant()
     seed.card(over_cap=1)
     start = full_app.call("start", {"agent": "g"})
@@ -280,8 +283,7 @@ def test_golden_next_after_handling_returns_the_rest(full_app: App, seed: Any):
         "notices": [],
     }
 
-
-def test_golden_next_shows_a_new_event_as_one_exact_call(full_app: App, seed: Any, clock: Any):
+    # golden_next_shows_a_new_event_as_one_exact_call
     session = full_app.call("start", {"agent": "g"}).data.session
     seed.operation("calendar.update")
     clock.advance(seconds=120)
