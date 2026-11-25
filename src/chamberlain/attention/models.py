@@ -231,6 +231,12 @@ class CalendarSlot:
     start: datetime
     end: datetime
     fingerprint: str
+    information_only: bool = False
+    """From a calendar kept for information (`commitments: false`): other people's plans."""
+    title: str = field(default="", repr=False)
+    location: str = field(default="", repr=False)
+    """Remote text, kept in memory only to tell one event on two calendars from two events
+    (domain/same_event.py). Never written to an event, a summary or a log."""
 
 
 @dataclass(frozen=True)

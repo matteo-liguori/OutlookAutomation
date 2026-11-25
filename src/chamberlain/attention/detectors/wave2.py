@@ -14,6 +14,7 @@ from datetime import datetime
 from chamberlain.attention.models import CalendarSlot, DetectorInput, EventAttrs, EventDraft
 from chamberlain.attention.tuning import CONFLICT_MAX, PRIORITY
 from chamberlain.domain.events import EventKind
+from chamberlain.domain.same_event import same_event
 from chamberlain.limits import SUMMARY_MAX
 
 NOTE_PREFIX = "Note from the user: "
@@ -24,15 +25,31 @@ def _stored(moment: datetime) -> str:
 
 
 def _one_each(slots: Iterable[CalendarSlot]) -> list[CalendarSlot]:
-    """Sorted by start, with a copy of an event held by two calendars counted once."""
+    """Sorted by start, with a copy of an event held by two calendars counted once (the copy on
+    a commitment calendar is the one kept)."""
     seen: set[tuple[str, datetime] | str] = set()
     unique: list[CalendarSlot] = []
-    for slot in sorted(slots, key=lambda s: (s.start, s.source, s.locator)):
+    for slot in sorted(slots, key=lambda s: (s.start, s.information_only, s.source, s.locator)):
         if (slot.uid, slot.start) in seen or slot.fingerprint in seen:
             continue
+        if any(_copies(kept, slot) for kept in reversed(unique[-20:])):
+            continue  # one real event entered on two calendars (owner ruling 2026-11-25)
         seen.update({(slot.uid, slot.start), slot.fingerprint})
         unique.append(slot)
     return unique
+
+
+def _copies(kept: CalendarSlot, slot: CalendarSlot) -> bool:
+    return kept.source != slot.source and same_event(
+        kept.start,
+        kept.end,
+        kept.title,
+        kept.location,
+        slot.start,
+        slot.end,
+        slot.title,
+        slot.location,
+    )
 
 
 def calendar_conflict(data: DetectorInput) -> Iterable[EventDraft]:
@@ -45,6 +62,8 @@ def calendar_conflict(data: DetectorInput) -> Iterable[EventDraft]:
         for second in slots[index + 1 :]:
             if second.start >= first.end:
                 break
+            if first.information_only and second.information_only:
+                continue  # other people's plans overlapping each other: not the owner's clash
             found.append((first, second))
     for first, second in found[:CONFLICT_MAX]:
         begins, ends = second.start, min(first.end, second.end)
@@ -52,15 +71,27 @@ def calendar_conflict(data: DetectorInput) -> Iterable[EventDraft]:
         where = (
             first.source if first.source == second.source else f"{first.source}, {second.source}"
         )
+        possible = first.information_only or second.information_only
+        lead = "Possible clash" if possible else "Two events overlap"
+        tail = (
+            ": one is on an information-only calendar; judge if it affects the owner"
+            if possible
+            else ""
+        )
         yield EventDraft(
             EventKind.CALENDAR_CONFLICT,
             None,
             (
-                f"Two events overlap on {begins:%Y-%m-%d} from {begins:%H:%M} to {ends:%H:%M} UTC "
-                f"({where})."
+                f"{lead} on {begins:%Y-%m-%d} from {begins:%H:%M} to {ends:%H:%M} UTC "
+                f"({where}){tail}."
             )[:SUMMARY_MAX],
-            PRIORITY[EventKind.CALENDAR_CONFLICT],
-            EventAttrs(source=first.source, since=_stored(begins), until=_stored(ends)),
+            PRIORITY[EventKind.CALENDAR_CONFLICT] - (20 if possible else 0),
+            EventAttrs(
+                source=first.source,
+                since=_stored(begins),
+                until=_stored(ends),
+                reason="possible" if possible else None,
+            ),
             discriminator=hashlib.sha256(f"{key}|{second.start}".encode()).hexdigest()[:12],
         )
 

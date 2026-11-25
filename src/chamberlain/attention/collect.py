@@ -6,7 +6,7 @@ A source that raises is logged and becomes a coverage gap, never a failed call.
 
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import timedelta
 
 from chamberlain.app.context import Context
@@ -103,6 +103,8 @@ def _slot(event: CalendarEvent) -> CalendarSlot | None:
         fields.start,
         fields.end,
         hashlib.sha256(key.encode()).hexdigest()[:16],
+        title=fields.title,
+        location=fields.location,
     )
 
 
@@ -132,16 +134,14 @@ def _read_calendar(ctx: Context, source: str) -> list[CalendarSlot] | None:
 def _calendars(
     ctx: Context, snapshots: tuple[SourceSnapshot, ...]
 ) -> tuple[tuple[CalendarSlot, ...], set[str]]:
-    """The owner's timed events across every commitment calendar, and those not fully read.
+    """The owner's timed events across every calendar, and the calendars not fully read.
 
-    A calendar kept for information only (`commitments: false`) is left out: its events are
-    other people's plans, not clashes."""
+    Events from a calendar kept for information (`commitments: false`) are marked, so the clash
+    check can tell a definite clash from a possible one the agent judges (A-26)."""
     states = {s.id: s.state for s in snapshots}
     slots: list[CalendarSlot] = []
     unreadable: set[str] = set()
     for source in sorted(ctx.sources.calendar):
-        if source in ctx.sources.information_only:
-            continue
         if states.get(source) is not HealthState.OK:
             unreadable.add(source)
             continue
@@ -152,6 +152,8 @@ def _calendars(
             read = None
         if read is None:
             unreadable.add(source)
+        elif source in ctx.sources.information_only:
+            slots.extend(replace(slot, information_only=True) for slot in read)
         else:
             slots.extend(read)
     return tuple(slots), unreadable

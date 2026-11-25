@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
+from chamberlain.domain.same_event import same_event
 from chamberlain.limits import CARD_POSITION_MAX
 from chamberlain.memory import repo as memory_repo
 from chamberlain.memory.labels import event_identity
@@ -139,24 +140,49 @@ def _local_row(row: local_repo.LocalEventRow, tz: ZoneInfo) -> dict[str, Any]:
     }
 
 
+def _when(row: dict[str, Any]) -> tuple[datetime, datetime]:
+    """Local wall times of a row, for comparing two rows only."""
+    start = datetime.fromisoformat(f"{row['first_day']}T{row['start_time'] or '00:00'}")
+    end = datetime.fromisoformat(f"{row['last_day']}T{row['end_time'] or '00:00'}")
+    return start, end
+
+
+def _same(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    if a["all_day"] != b["all_day"] or a["first_day"] != b["first_day"]:
+        return False
+    if a.get("source") == b.get("source"):
+        return " ".join(a["title"].casefold().split()) == " ".join(
+            b["title"].casefold().split()
+        ) and _when(a) == _when(b)
+    a_start, a_end = _when(a)
+    b_start, b_end = _when(b)
+    return same_event(
+        a_start,
+        a_end,
+        a["title"],
+        a.get("location", ""),
+        b_start,
+        b_end,
+        b["title"],
+        b.get("location", ""),
+    ) or (
+        " ".join(a["title"].casefold().split()) == " ".join(b["title"].casefold().split())
+        and (a_start, a_end) == (b_start, b_end)
+    )
+
+
 def _merge(rows: list[dict[str, Any]], labels: dict[str, str]) -> list[dict[str, Any]]:
-    """The same event on two calendars is shown once, naming both."""
-    merged: dict[tuple[str, str, str, str, bool], dict[str, Any]] = {}
+    """The same event on two calendars is shown once, naming both: an exact copy, or one real
+    event entered separately on each (owner ruling 2026-11-25, domain/same_event.py)."""
+    merged: list[dict[str, Any]] = []
     for row in rows:
-        key = (
-            " ".join(row["title"].casefold().split()),
-            row["start"],
-            row["last_day"] + row["end_time"],
-            row["first_day"],
-            row["all_day"],
-        )
         name = labels.get(row["source"]) or row["source"]
-        found = merged.get(key)
+        found = next((m for m in merged if _same(m, row)), None)
         if found is None:
-            merged[key] = {**row, "calendars": [name]}
+            merged.append({**row, "calendars": [name]})
         elif name not in found["calendars"]:
             found["calendars"].append(name)
-    result = list(merged.values())
+    result = merged
     result.sort(key=lambda r: (r["first_day"], not r["all_day"], r["start_time"], r["title"]))
     return result
 
