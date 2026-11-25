@@ -1,12 +1,12 @@
 id: reconcile.read
-version: 2
+version: 3
 title: Settling an uncertain change
 when: {tool: reconcile}
 text: >
   Reconcile only reads. If it still cannot tell whether the change happened,
   leave it open and tell the user exactly what is known. Do not work around it
-  by sending or changing again. The one exception is a send the harness
-  reports missing after a day.
+  by sending or changing again. Only an item saying the harness could not find
+  it after a day allows doing it again.
 max_chars: 300
 once_per: operation
 priority: 70

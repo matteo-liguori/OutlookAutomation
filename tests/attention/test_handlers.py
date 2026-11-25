@@ -49,24 +49,24 @@ def test_t3_t7_a9_next_needs_a_session_but_start_and_guide_do_not_and_3_related_
 def test_a4_a17_t7_e13_a12_the_agent_cannot_close_an_uncertain_operation_and_3_related_checks(
     app: App, seed: Any, ctx: Context
 ) -> None:
-    # a4_the_agent_cannot_close_an_uncertain_operation
+    # a4_the_agent_can_close_an_unsettled_write_once_and_it_stays_closed
     seed.operation()
     start = app.call("start", {})
     event = start.data.work[0].event
     session = str(start.data.session)
     app.call("next", {"session": session, "handled": [event]})
     again = app.call("start", {"agent": "second"})
-    assert [w.kind.value for w in again.data.work] == ["operation.uncertain"]
+    assert again.data.work == ()
 
     # a17_t7_e13_guide_text_ledger_index_and_refusals
     # a17_guide_returns_the_full_text_and_records_a_delivery
     session = str(app.call("start", {}).data.session)
-    reply = app.call("guide", {"session": session, "id": "send.uncertain"})
+    reply = app.call("guide", {"session": session, "id": "write.unsettled"})
     rule = reply.data.rules[0]
     assert rule.text is not None
-    assert "reconcile" in rule.text
+    assert "ask the user" in rule.text
     row = ctx.db.execute(
-        "SELECT version FROM guidance_deliveries WHERE rule_id = 'send.uncertain'"
+        "SELECT version FROM guidance_deliveries WHERE rule_id = 'write.unsettled'"
     ).fetchone()
     assert row is not None
 

@@ -126,14 +126,6 @@ def count_grants_in_state(db: sqlite3.Connection, state: str) -> int:
     return int(db.execute("SELECT count(*) FROM grants WHERE state = ?", (state,)).fetchone()[0])
 
 
-def count_uncertain_operations(db: sqlite3.Connection) -> int:
-    return int(
-        db.execute(
-            "SELECT count(*) FROM operations WHERE state IN ('uncertain', 'reconciling')"
-        ).fetchone()[0]
-    )
-
-
 # --- important appointments: open actions whose title starts with "Important" -------------------
 
 

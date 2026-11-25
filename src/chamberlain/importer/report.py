@@ -14,7 +14,8 @@ class ImportReport:
     skipped_sources: list[str] = field(default_factory=list[str])
     secrets: dict[str, str] = field(default_factory=dict[str, str])
     """Secret reference to `copied`, `already present` or `differs; kept the existing one`."""
-    uncertain_operations: list[str] = field(default_factory=list[str])
+    left_with_old_harness: list[str] = field(default_factory=list[str])
+    """Old journals not in a final stage: closed as abandoned, left with the old harness."""
     standing_grants: list[str] = field(default_factory=list[str])
     over_cap_cards: list[str] = field(default_factory=list[str])
     private_guidance: dict[str, str] = field(default_factory=dict[str, str])
@@ -61,7 +62,7 @@ class ImportReport:
             "sources": dict(sorted(self.sources.items())),
             "skipped_sources": sorted(self.skipped_sources),
             "secrets": dict(sorted(self.secrets.items())),
-            "uncertain_operations": sorted(self.uncertain_operations),
+            "left_with_old_harness": sorted(self.left_with_old_harness),
             "standing_grants_need_reconfirmation": sorted(self.standing_grants),
             "over_cap_cards": sorted(self.over_cap_cards),
             "owner_instructions_added": sorted(self.private_guidance),

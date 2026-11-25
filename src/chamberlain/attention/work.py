@@ -18,16 +18,16 @@ def next_step(event: EventRow) -> NextStep:
     kind = event.kind
     if kind is EventKind.OPERATION_UNCERTAIN and subject is not None:
         return NextStep(
-            tool=ToolName.RECONCILE,
-            args={"operation": subject},
-            why="Read what happened. Never send again.",
+            tool=ToolName.OPEN,
+            args={"handle": subject, "part": "summary"},
+            why="Read what it was meant to do, then look for it yourself. Never do it twice.",
         )
     if kind is EventKind.SEND_MISSING and subject is not None:
         if event.attrs.reason == "missing":
             return NextStep(
-                tool=ToolName.PROPOSE,
-                args={"redo_of": subject},
-                why="Weigh it first. Make this call only if you decide it should go again.",
+                tool=ToolName.OPEN,
+                args={"handle": subject, "part": "summary"},
+                why="Read it, then look in the folder yourself. Never send twice.",
             )
         return NextStep(
             tool=ToolName.OPEN,

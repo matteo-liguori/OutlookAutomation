@@ -37,7 +37,5 @@ class EventState(StrEnum):
 
 LIVE_EVENT_STATES = frozenset({EventState.NEW, EventState.DELIVERED})
 
-NOT_AGENT_HANDLEABLE = frozenset(
-    {EventKind.OPERATION_UNCERTAIN, EventKind.SEND_MISSING, EventKind.SOURCE_SIGN_IN_NEEDED}
-)
+NOT_AGENT_HANDLEABLE = frozenset({EventKind.SOURCE_SIGN_IN_NEEDED})
 """Events that close only when the condition ends (A-4)."""

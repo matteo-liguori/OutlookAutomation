@@ -71,8 +71,8 @@ proposed -> authorised -> prepared -> dispatched -> confirmed
 | `reconciling` | A read-only reconcile is running. | no | reserved |
 | `confirmed_absent` | Reconcile proved the write did not happen. | yes | released |
 | `cancelled` | Withdrawn before dispatch, or the proposal lapsed. | yes | released |
-| `abandoned` | An uncertain operation nothing can resend, closed unsettled (W-13a). | yes | kept |
-| `superseded` | An uncertain send that the agent sent again after it was found missing (W-38). | yes | passed to the resend |
+| `abandoned` | An old-harness journal entry left with that harness at import, or an uncertain write nothing can resend, closed unsettled (W-13a). | yes | kept |
+| `superseded` | An uncertain write that the agent did again after it was found missing (W-38). | yes | passed to the redo |
 
 `proposed` and `cancelled` extend the plan's diagram: the plan starts at
 `authorised`, and something has to hold the intent while the grant is being
@@ -114,11 +114,15 @@ obtained.
   `SETTLE_AFTER` (10 minutes, never less than the connector deadline plus a 120
   second margin, because a timed-out write can land late) has passed since dispatch. Otherwise the
   operation returns to `uncertain`.
-- **W-13** While an operation is `uncertain`, the grant use stays reserved,
-  a one-off grant cannot be used for anything else, and the event
-  `operation.uncertain` stays open. The only exit other than reconcile is the
-  user resolving it in the viewer (`human:viewer` marks it `confirmed` or
-  `confirmed_absent`, audited).
+- **W-13** While an operation is `uncertain`, the grant use stays reserved and a one-off grant
+  cannot be used for anything else. The first 24 hours are the harness's business: it settles by
+  reading (reconcile on ticks) and nothing is raised for the agent or the owner. After 24 hours
+  (W-37) a write it could not settle goes to the agent once as `operation.uncertain` (a send as
+  `send.missing`), an item the agent can close. The agent reads the target, then settles it with
+  its evidence (`reconcile` with `happened`), or does it again with `propose {redo_of}` (W-38), or
+  asks the owner in chat when unsure. The owner is never asked to review an uncertain write. The
+  viewer may list unsettled writes read-only and still lets the owner settle one
+  (`human:viewer` marks it `confirmed` or `confirmed_absent`, audited); nothing tells the owner to.
 - **W-13a** (owner ruling: the owner is not asked what the harness or agent can settle.)
   An operation imported from an old journal keeps `summary_json` (title, time, calendar or
   recipients; never a body) and `attempted_at`, beside a NULL intent: display and matching only,
@@ -129,8 +133,13 @@ obtained.
   no possible resend (no intent, no grant, or a grant spent, expired or revoked) is closed
   `abandoned` by the tick after 14 days unsettled, except a mail send whose text the harness
   holds (W-40); the state is terminal, frees nothing and
-  claims nothing. Attention tells the agent about such an operation once, and again only when
-  `redo_at` (a later proposal of the same write) is newer than that notice.
+  claims nothing. Attention no longer tells the agent about such an operation (W-39).
+  **Imported operations** (owner ruling 2026-11-25): the old harness owns its own journals while
+  both run. At import an unfinished journal entry is written straight as `abandoned` with a
+  receipt and an audit line saying it was left with the old harness, counted in the import report
+  (`left_with_old_harness`), never raised as work and never resent. Migration 0220 does the same
+  to imported `uncertain` operations (`import:` key, no stored request) already in a store; SQL
+  cannot extend the audit chain, so that migration leaves no audit row.
 - **W-14** An `applied` receipt carries a `Verification`:
   `client_verified` (the local client reports the result) and
   `server_verified` (read back from the server). The agent-facing text for a
@@ -276,10 +285,14 @@ and reconcile over the fake provider with random faults, checking:
 
 ## An uncertain send is never lost (owner ruling 2026-11-24, W-37 to W-41)
 
-The first 24 hours keep the strict rule: an uncertain send is never sent again, in any form.
-After that the harness looks once, and the agent decides.
+The first 24 hours keep the strict rule: an uncertain write is never done again, in any form.
+After that the harness looks once, and the agent decides. Since 2026-11-25 the look, the item and
+the redo (W-37 to W-39) cover every write the harness holds the request of, not only sends; the
+text below says "send" where the rule is about sends only.
 
-- **W-37** The one look. The tick looks again at every `mail.send` that has been `uncertain` for
+- **W-37** The one look. The tick looks again at every `uncertain` write with a stored request (a
+  non-send is read through its connector's `reconcile`, and `missing` means it was not found;
+  never `confirmed_absent`) that has been `uncertain` for
   `UNCERTAIN_SEND_RECHECK_HOURS` (24, counted from `dispatched_at`). It reads through the same
   `reconcile` path as always: the connector's Sent, Outbox and Drafts of the sending mailbox, then,
   for each recipient that is an owner address of another configured source, that source's Inbox
@@ -292,10 +305,10 @@ After that the harness looks once, and the agent decides.
   The result is on the operation (`rechecked_at`, `recheck_result`, `recheck_json`), shown on
   `OperationView.recheck`, and audited as `operation.rechecked`. A later `reconcile` by the agent
   of a re-checked send updates `queued` and `missing` in the same way.
-- **W-38** The resend. `propose` with `redo_of: <operation>` makes a NEW operation from the
-  original's stored text (the agent supplies no content), linked by `redo_of`. It is refused
-  unless the original is `uncertain`, a mail send with stored text, past its re-check, itself not a
-  resend, and a fresh read-only look still says `missing` (found: it is settled `confirmed` and
+- **W-38** The resend (any write kind). `propose` with `redo_of: <operation>` makes a NEW operation
+  from the original's stored request (the agent supplies no content), linked by `redo_of`. It is
+  refused unless the original is `uncertain`, has a stored request, is past its re-check, is
+  itself not a redo, and a fresh read-only look still says `missing` (found: it is settled `confirmed` and
   the resend is refused; `queued`: refused, the message is stuck, not lost; unreadable: refused).
   It is authorised only by the ORIGINAL's grant, with no new evidence: the grant must still
   authorise it (a one-off that merely timed out while unspent still does; a revoked, declined or
@@ -312,20 +325,21 @@ After that the harness looks once, and the agent decides.
   - If the resend then fails clean (for example the client is down), the original is already
     `superseded` and nothing was sent; the agent is told so, and proposes the write again, which a
     still-active grant allows.
-- **W-39** Telling the agent. A re-checked send leaves `operation.uncertain` and raises ONE
-  `send.missing` event (priority 94, never closes on its own, only when the send is settled or
-  superseded), `reason` `missing` or `outbox`. Its text names recipient, subject and age; the card is
+- **W-39** Telling the agent. A re-checked send raises ONE `send.missing` event (priority 94;
+  the agent may close it; it also ends when the send is settled or superseded), `reason`
+  `missing` or `outbox`. Any other uncertain write older than 24 hours with a stored request,
+  including a send the look could not read, raises ONE `operation.uncertain` (priority 95; the
+  agent may close it; it never comes back). A write from the old harness raises neither. Its text names recipient, subject and age; the card is
   an attribute; `open` on the operation shows `recheck`, `redo_of` and `redone_by`. The rules
   `send.missing` and `send.stuck` carry the judgement: weigh urgency against the small cost of a
   duplicate, resend or ask the owner, and say which in the report. `send.uncertain` keeps the strict
   wording for the first 24 hours.
-- **W-40** No quiet closing of a send. `abandon_stale` and attention's "told once, then quiet"
-  rule skip a `mail.send` whose text the harness holds. It stays visible until the agent resends it,
-  the agent settles it `happened` with evidence, or the owner resolves it in the viewer (W-13).
-  Calendar writes, other mail writes and sends imported from an old journal (no text, never
-  resendable) keep the 14-day close of W-13a.
-- **W-41** The owner's viewer lists each uncertain operation with the re-check result, when it
-  looked and where, and any resend.
+- **W-40** No quiet closing of a send. `abandon_stale` skips a `mail.send` whose text the harness
+  holds. It stays visible (read-only in the viewer) until the agent resends it, the agent settles
+  it `happened` with evidence, or the owner resolves it in the viewer (W-13). Calendar writes and
+  other mail writes with no way left to resend keep the 14-day close of W-13a.
+- **W-41** The owner's viewer lists each uncertain operation read-only, with the re-check result,
+  when it looked and where, and any redo. It says nothing is needed from the owner.
 
 - **W-43** Marking mail read after a report. When a run finishes with a kept report and
   `read_state.reporting_marks_read` is on, the harness marks read each message of that run's session

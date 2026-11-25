@@ -4,9 +4,11 @@ Contract: docs/contracts/04-writes.md, 05-grants.md (G-6) and the rebuild plan.
 
 Safety rules, in the order they matter:
 
-1. **A journal not in a final state is `uncertain`**, never retryable. The allowlist of
-   final stages is closed: any stage this code has not seen is uncertain. An imported
-   operation has no stored intent and no prepared write, so nothing can dispatch it.
+1. **A journal not in a final state is closed as `abandoned`**: it was left with the old
+   harness, which owns its own journals. It is counted in the report, never shown to the agent
+   as work and never resent. The allowlist of final stages is closed: any stage this code has
+   not seen is treated the same way. An imported operation has no stored intent and no
+   prepared write, so nothing can dispatch it.
 2. **An old approval authorises nothing new.** The old message hash cannot equal a new
    canonical intent hash, so an imported one-off grant is inert by construction. It is
    imported with its original dates and hash for the record, not re-hashed.
@@ -306,7 +308,7 @@ def _operation_state(journal: OldJournal) -> OperationState:
         return OperationState.CONFIRMED
     if stage in CLEAN_STAGES:
         return OperationState.FAILED_CLEAN
-    return OperationState.UNCERTAIN
+    return OperationState.ABANDONED
 
 
 def _insert_operation(
@@ -348,22 +350,20 @@ def _insert_operation(
         refs_json="{}",
         at=ctx.now,
     )
-    uncertain = state is OperationState.UNCERTAIN
-    receipt: str | None = None
-    if uncertain:
-        ctx.report.uncertain_operations.append(f"{handle} ({kind.value}, old {journal.key})")
-    else:
-        receipt = StoredReceipt(
-            summary=Receipt(
-                intent_kind=kind,
-                source=source,
-                state=state,
-                intent_sha256=intent_hash,
-                settled_at=parse(ctx.now),
-                verification=Verification(),
-                items_ok=1 if state is OperationState.CONFIRMED else 0,
-            )
-        ).model_dump_json(exclude_none=True)
+    left = state is OperationState.ABANDONED
+    if left:
+        ctx.report.left_with_old_harness.append(f"{handle} ({kind.value}, old {journal.key})")
+    receipt = StoredReceipt(
+        summary=Receipt(
+            intent_kind=kind,
+            source=source,
+            state=state,
+            intent_sha256=intent_hash,
+            settled_at=parse(ctx.now),
+            verification=Verification(),
+            items_ok=1 if state is OperationState.CONFIRMED else 0,
+        )
+    ).model_dump_json(exclude_none=True)
     moved = writes.update_operation(
         ctx.db,
         handle,
@@ -373,8 +373,7 @@ def _insert_operation(
         refs_json=None,
         grant=grant,
         updated_at=ctx.now,
-        dispatched_at=ctx.now if uncertain else None,
-        settled_at=None if uncertain else ctx.now,
+        settled_at=ctx.now,
         receipt_json=receipt,
     )
     if not moved:
@@ -383,7 +382,8 @@ def _insert_operation(
         actor=ACTOR,
         kind="operation.imported",
         subject=handle,
-        summary=f"Imported old {kind.value} journal as {state.value}; never retried.",
+        summary=f"Imported old {kind.value} journal as {state.value}; never retried."
+        + (" It was left with the old harness." if left else ""),
         payload_sha256=intent_hash,
     )
     ctx.report.count("operations", new=True)

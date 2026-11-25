@@ -310,7 +310,6 @@ def _operation(row: sqlite3.Row) -> OperationRow:
         updated_at=parse_ts(row["updated_at"]),
         summary_json=row["summary_json"],
         attempted_at=_ts(row["attempted_at"]),
-        redo_at=_ts(row["redo_at"]),
         rechecked_at=_ts(row["rechecked_at"]),
         recheck_result=row["recheck_result"],
         recheck_json=row["recheck_json"],
@@ -366,10 +365,6 @@ def set_operation_summary(
         ).rowcount
         == 1
     )
-
-
-def mark_redo(db: sqlite3.Connection, handle: str, at: str) -> None:
-    db.execute("UPDATE operations SET redo_at = ? WHERE handle = ?", (at, handle))
 
 
 def get_operation(db: sqlite3.Connection, handle: str) -> OperationRow | None:
@@ -529,9 +524,9 @@ def stale_uncertain(db: sqlite3.Connection, before: str) -> list[OperationRow]:
 
 
 def sends_due_recheck(db: sqlite3.Connection, before: str) -> list[OperationRow]:
-    """Uncertain sends dispatched at or before `before` that have not had their re-check (W-37)."""
+    """Uncertain writes dispatched at or before `before` that have not had their re-check (W-37)."""
     rows = db.execute(
-        "SELECT * FROM operations WHERE state = 'uncertain' AND kind = 'mail.send' "
+        "SELECT * FROM operations WHERE state = 'uncertain' "
         "AND intent_json IS NOT NULL AND rechecked_at IS NULL AND dispatched_at <= ? "
         "ORDER BY dispatched_at, handle",
         (before,),

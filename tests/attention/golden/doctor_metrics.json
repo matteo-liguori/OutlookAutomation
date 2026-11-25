@@ -15,7 +15,7 @@
       {
         "id": "guidance.rules",
         "status": "ok",
-        "summary": "46 rules, 8990 characters."
+        "summary": "45 rules, 8951 characters."
       },
       {
         "id": "guidance.overrides",
@@ -51,7 +51,7 @@
       "db_bytes": 0,
       "data_root_bytes": 0,
       "largest_reply_chars_7d": 0,
-      "guidance_total_chars": 8990,
+      "guidance_total_chars": 8951,
       "uncertain_operations": 0,
       "grants_active": 0,
       "grants_awaiting_human": 0

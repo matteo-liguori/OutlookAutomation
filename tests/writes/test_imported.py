@@ -214,42 +214,9 @@ def test_a_native_send_is_never_abandoned_and_keeps_its_grant_use(rig: WriteRig)
 # --- attention speaks once ---------------------------------------------------------------
 
 
-def told(rig: WriteRig, handle: str) -> None:
-    now = stamp(rig.clock)
-    rig.db.execute(
-        "INSERT INTO events (handle, kind, subject, dedupe_key, priority, summary, state, "
-        "detected_at, delivered_at) VALUES (?, 'operation.uncertain', ?, ?, 95, 's', "
-        "'delivered', ?, ?)",
-        ("evt_" + handle[-12:], handle, "k:" + handle, now, now),
-    )
-
-
-def raised_now(rig: WriteRig) -> list[str]:
-    return [o.handle for o in attention_repo.uncertain_operations(rig.db)]
-
-
-def test_an_unresendable_operation_is_raised_until_told_then_quiet(rig: WriteRig) -> None:
+def test_an_old_harness_operation_is_never_work_for_the_agent(rig: WriteRig) -> None:
+    """Even one still `uncertain` (a store older than migration 0220) raises nothing (A-4)."""
     imported(rig, IntentKind.CALENDAR_CREATE, dentist(), source=CALENDAR)
-    assert raised_now(rig) == [HANDLE]
-    told(rig, HANDLE)
-    assert raised_now(rig) == []
-
-
-def test_trying_to_redo_the_same_imported_write_raises_it_again(rig: WriteRig) -> None:
-    summary = OperationSummary(title="Invoice 7", to=("pat@example.org",))
-    imported(rig, IntentKind.MAIL_SEND, summary, source=MAIL)
-    told(rig, HANDLE)
-    assert raised_now(rig) == []
-    rig.clock.advance(minutes=5)
-    rig.know("pat@example.org")
-    rig.engine().propose_intent(rig.send(to=("pat@example.org",), subject="Re: Invoice 7"))
-    assert raised_now(rig) == [HANDLE]
-
-
-def test_an_unrelated_new_write_does_not_raise_it_again(rig: WriteRig) -> None:
-    imported(rig, IntentKind.MAIL_SEND, OperationSummary(title="Invoice 7"), source=MAIL)
-    told(rig, HANDLE)
-    rig.clock.advance(minutes=5)
-    rig.know("friend@example.org")
-    rig.engine().propose_intent(rig.send(subject="Lunch?"))
-    assert raised_now(rig) == []
+    rig.clock.advance(hours=72)
+    before = stamp(rig.clock)
+    assert [o.handle for o in attention_repo.uncertain_operations(rig.db, before)] == []

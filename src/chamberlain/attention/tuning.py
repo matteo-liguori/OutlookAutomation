@@ -33,7 +33,6 @@ PRIORITY: Final[dict[EventKind, int]] = {
 }
 
 RERAISE: Final[dict[EventKind, timedelta]] = {
-    EventKind.OPERATION_UNCERTAIN: timedelta(hours=24),
     EventKind.GRANT_REVIEW_DUE: timedelta(days=7),
 }
 """Kinds with a re-raise interval after being handled (A-3). Others never re-raise."""

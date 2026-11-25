@@ -83,9 +83,9 @@ harness keeps doing all the writing, so exactly one system writes.
    scope (the old scope was free text), so it authorises nothing. Recreate each one you
    still want as a new standing grant from the old wording shown in its evidence, and
    confirm it.
-2. Every unfinished old write journal is an **uncertain** operation. Look in Sent, the
-   folders and the calendar, then tell the viewer whether each one happened. An imported
-   operation is never retried and the agent cannot reconcile it.
+2. Every unfinished old write journal is closed at import as left with the old harness
+   (`abandoned`, counted in the import report). Nothing is asked of you and nothing is resent;
+   the old harness keeps its own journals while both run.
 3. Old one-off approvals are inert (their hash cannot match a new intent). Ask the agent to
    propose the write again if you still want it. No recipient is known yet.
 4. Read `config/owner-instructions.yaml` (your own rules, carried from the old harness) and

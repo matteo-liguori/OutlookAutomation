@@ -223,7 +223,6 @@ def test_w12_an_imported_uncertain_operation_is_not_reported_as_settled(rig: Wri
     text = str(raised.value)
     assert "old harness" in text
     assert "never be retried" in text
-    assert "viewer" in text
     assert rig.engine().get(op.handle).state is S.UNCERTAIN
 
 

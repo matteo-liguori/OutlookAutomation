@@ -18,7 +18,7 @@ from chamberlain.importer.run import run_import
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import connect
-from chamberlain.writes.confirm import keep_grant, resolve_operation
+from chamberlain.writes.confirm import keep_grant
 
 
 def fingerprint(root: Path) -> dict[str, str]:
@@ -337,12 +337,14 @@ def operations(data_root: Path) -> dict[str, sqlite3.Row]:
     return {r["idempotency_key"]: r for r in rows(data_root, "SELECT * FROM operations")}
 
 
-def test_w_an_in_flight_send_becomes_uncertain_and_and_3_related_checks(
+def test_w_an_in_flight_send_is_left_with_the_old_harness_and_3_related_checks(
     data_root: Path, imported: ImportReport
 ) -> None:
-    # w_an_in_flight_send_becomes_uncertain_and_cannot_be_dispatched
+    # w_an_in_flight_send_is_closed_as_left_with_the_old_harness_and_cannot_be_dispatched
     op = operations(data_root)["import:thunderbird:send:oa-inflight"]
-    assert op["state"] == "uncertain"
+    assert op["state"] == "abandoned"
+    assert json.loads(op["receipt_json"])["summary"]["state"] == "abandoned"
+    assert len(imported.left_with_old_harness) == 5
     assert op["kind"] == "mail.send"
     assert op["source_id"] == "mail:work"
     assert op["prepared_json"] is None  # nothing to re-dispatch
@@ -351,14 +353,14 @@ def test_w_an_in_flight_send_becomes_uncertain_and_and_3_related_checks(
     grant = rows(data_root, "SELECT handle FROM grants WHERE title = 'Subject oa-inflight'")[0]
     assert op["grant"] == grant["handle"]  # the grant is held by it (G-10)
 
-    # w_any_journal_not_in_a_final_state_is_uncertain_and_a_calendar_one_lands_on_its_source
+    # w_any_journal_not_in_a_final_state_is_abandoned_and_a_calendar_one_lands_on_its_source
     for key in [
         "import:outlook-send:oa-com",
         "import:native-send:oa-native",  # `draft-saved` is not final
         "import:thunderbird:trash:t-1",  # a stage this code has never seen
         "import:thunderbird:calendar-create:c-1",
     ]:
-        assert operations(data_root)[key]["state"] == "uncertain", key
+        assert operations(data_root)[key]["state"] == "abandoned", key
     assert (
         operations(data_root)["import:thunderbird:calendar-create:c-1"]["source_id"]
         == "calendar:work"
@@ -373,7 +375,7 @@ def test_w_an_in_flight_send_becomes_uncertain_and_and_3_related_checks(
 
     # w_an_imported_operation_is_never_in_a_retryable_state
     for op in operations(data_root).values():
-        assert op["state"] in {"uncertain", "confirmed", "failed_clean"}
+        assert op["state"] in {"abandoned", "confirmed", "failed_clean"}
         assert op["state"] not in {"proposed", "authorised", "prepared"}
 
 
@@ -391,17 +393,8 @@ def test_w_the_tick_after_an_import_neither_fails_nor_and_1_related_checks(
     finally:
         app.close()
     assert {k: v["state"] for k, v in operations(data_root).items()} == before
-    assert "operation.uncertain" in events
+    assert "operation.uncertain" not in events  # nothing about an old journal is ever work
     assert "grant.review_due" in events
-
-    # w_the_owner_can_settle_an_imported_uncertain_operation_in_the_viewer
-    handle = operations(data_root)["import:thunderbird:send:oa-inflight"]["handle"]
-    app = open_app(data_root, clock=clock, secrets=secrets)
-    try:
-        answer = resolve_operation(app.context, handle, {"outcome": "did_not_happen"})
-    finally:
-        app.close()
-    assert answer["state"] == "confirmed_absent"
 
 
 def test_g7_w_the_agent_cannot_reconcile_an_imported_and_1_related_checks(
@@ -414,10 +407,10 @@ def test_g7_w_the_agent_cannot_reconcile_an_imported_and_1_related_checks(
         started = app.call("start", {"agent": "test"})
         assert started.ok
         reply = app.call("reconcile", {"operation": handle, "session": started.data.session})  # type: ignore[union-attr]
-        assert not reply.ok
+        assert reply.ok  # already closed: nothing to read, nothing to resend
     finally:
         app.close()
-    assert operations(data_root)["import:thunderbird:send:oa-inflight"]["state"] == "uncertain"
+    assert operations(data_root)["import:thunderbird:send:oa-inflight"]["state"] == "abandoned"
 
     # g7_keeping_an_undated_imported_grant_works_and_activates_nothing_new
     handle = grants(data_root)["Standing sa-undated"]["handle"]

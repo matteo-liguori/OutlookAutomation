@@ -1,4 +1,4 @@
-"""Writes that may have happened and are not settled (W-9, W-13, A-4)."""
+"""Writes still unsettled after the harness's own 24 hours (W-13, W-37, A-4)."""
 
 from collections.abc import Iterable
 
@@ -18,7 +18,8 @@ def operation_uncertain(data: DetectorInput) -> Iterable[EventDraft]:
         yield EventDraft(
             EventKind.OPERATION_UNCERTAIN,
             operation.handle,
-            f"Operation {operation.handle} may have happened and is not settled.",
+            f"{operation.kind} {operation.handle} is still unsettled after a day; "
+            "the harness could not find it.",
             PRIORITY[EventKind.OPERATION_UNCERTAIN],
             EventAttrs(intent_kind=kind),
         )

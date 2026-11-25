@@ -71,8 +71,7 @@ Python; on macOS or Linux use `.venv/bin/python`.
    `chamberlain config validate`. The full steps are in [docs/cutover.md](docs/cutover.md);
    settings are in [docs/configuration.md](docs/configuration.md).
 
-5. Viewer. `chamberlain viewer` opens a local page where you confirm grants, settle
-   uncertain operations, answer requests for larger cards (see
+5. Viewer. `chamberlain viewer` opens a local page where you confirm grants, answer requests for larger cards (see
    [docs/permissions.md](docs/permissions.md#larger-cards)) and read the report, which is the
    front page (see [The report](#the-report)). The page keeps
    its token for the tab, so a reload works; a new browser session needs the token link again.
