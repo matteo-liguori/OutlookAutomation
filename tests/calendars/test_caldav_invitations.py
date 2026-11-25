@@ -362,3 +362,18 @@ def test_a_changed_date_of_a_series_with_guests_keeps_its_guests() -> None:
     override = next(p for p in ics.parse_events(changed) if p.recurrence_id is not None)
     assert override.organiser_address == CALDAV_ADDRESS.lower()
     assert "guest@example.org" in {a for a, _ in override.partstats}
+
+
+def test_an_event_with_a_property_written_twice_still_reads() -> None:
+    """Found live: an iCloud event carried LAST-MODIFIED twice, and the whole calendar failed."""
+    from chamberlain.connectors.calendar_support import ics
+
+    text = (
+        "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//t//EN\r\nBEGIN:VEVENT\r\nUID:twice@t\r\n"
+        "DTSTAMP:20270101T000000Z\r\nDTSTART:20270301T100000Z\r\nDTEND:20270301T110000Z\r\n"
+        "SUMMARY:Twice\r\nLAST-MODIFIED:20270102T000000Z\r\nLAST-MODIFIED:20270103T000000Z\r\n"
+        "END:VEVENT\r\nEND:VCALENDAR\r\n"
+    )
+    [event] = ics.parse_events(text)
+    assert event.fields.title == "Twice"
+    assert event.updated.year == 2027

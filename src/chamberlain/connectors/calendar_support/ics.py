@@ -9,7 +9,7 @@ exactly as the server sent them.
 import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 import icalendar
@@ -62,7 +62,11 @@ def _utc(value: date | datetime) -> tuple[datetime, bool]:
 
 
 def _prop(component: Any, name: str) -> Any:
+    """One property's value. A property written twice (seen live in an iCloud event's
+    LAST-MODIFIED) gives its first value, so one odd event never breaks a calendar."""
     value = component.get(name)
+    if isinstance(value, list):
+        value = cast(list[Any], value)[0] if value else None
     return None if value is None else getattr(value, "dt", value)
 
 
