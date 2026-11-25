@@ -110,6 +110,9 @@ def test_w10_w11_busy_before_dispatch_frees_the_grant_and_a_retry_works(rig: Wri
     grant = repo.get_grant(rig.db, failed.grant)
     assert grant is not None
     assert grant.state.value == "active"
+    assert repo.sends_since(rig.db, failed.source_id, "2000-01-01T00:00:00Z", "x") == 0, (
+        "a send that provably did not happen does not count against the hourly cap"
+    )
     with fails(ErrorCode.SOURCE_BUSY):
         rig.engine().do(first.handle)
     retry = rig.engine().propose_intent(rig.send())

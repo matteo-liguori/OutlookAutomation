@@ -494,10 +494,14 @@ def recent_uses(
 
 
 def sends_since(db: sqlite3.Connection, source_id: str, since: str, other_than: str) -> int:
-    """Sends dispatched since `since` in any state, plus reserved ones not yet dispatched (Q3)."""
+    """Sends dispatched since `since`, plus reserved ones not yet dispatched (Q3).
+
+    A send that failed clean is left out: the client proved nothing left (found live,
+    2026-11-25: refused attempts used up the hourly cap before anything was sent).
+    """
     row = db.execute(
         "SELECT COUNT(*) FROM operations WHERE source_id = ? AND kind = 'mail.send' "
-        "AND handle <> ? AND (dispatched_at >= ? "
+        "AND state <> 'failed_clean' AND handle <> ? AND (dispatched_at >= ? "
         "OR (dispatched_at IS NULL AND state IN ('authorised', 'prepared')))",
         (source_id, other_than, since),
     ).fetchone()

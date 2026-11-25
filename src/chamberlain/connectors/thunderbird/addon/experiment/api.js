@@ -77,7 +77,6 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           need(!win.gSendOperationInProgress && !win.gSaveOperationInProgress, "busy");
           win.clearTimeout(win.gAutoSaveTimeout);
           win.gAutoSaveTimeout = null; // autosave stays off in a managed composer (R8)
-          const draft = getFolder(draftFolderId);
           // A send never saves a draft (autosave is off), so only a draft save checks the folder.
           if (draftFolderId) {
             const draft = getFolder(draftFolderId);
