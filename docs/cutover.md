@@ -20,10 +20,38 @@ chamberlain --data <new data root> import <copy of old data root>
 ```
 
 Read the printed summary, then `<new data root>/import/report.json` (private; it also
-holds the old private guidance text). Running the import again changes nothing, except
-that it adds the old card context (stored as "context from the old harness") to any card
-that was imported before this was carried over; the report counts them as
-`context_artifacts`.
+holds nothing private). Running the import again is safe. It adds only what is missing and
+never overwrites a change made since, in v2, by you or the agent: card context ("context from the
+old harness"), card rules, important-appointment flags, your private instructions, the report
+layout and the read-state options. What it added is in the new report; the earlier report is kept
+beside it as `report.1.json`, `report.2.json` and so on.
+
+What comes across, and how:
+
+- **Your own instructions** (the old `instructions` in the profile and in `customisations.yaml`),
+  **standing facts** and **keyword watches** go to `config/owner-instructions.yaml`, word for word,
+  and the agent is given them at the right moment (see `docs/configuration.md`). Only instruction
+  topics you actually changed are carried: the old harness's own shipped texts (which describe the
+  old commands) are recognised from its `.state/defaults.json` and left out. If that file is
+  missing, every topic is carried and the report says so; delete the ones that only describe old
+  commands. Keyword watches are not matched automatically any more; they become a note the agent
+  reads when new mail is shown.
+- **Card rules.** A card's own instructions (`customisations.instructions`) and its decisions
+  become the new card's `rules`, decisions as "Decided: ..." lines. If that is over the 600
+  character limit the card is flagged and due for review. On an existing card, rules are filled in
+  only while empty. Other per-card settings (review days, templates, permission defaults) are not
+  carried; the report counts them.
+- **Important appointments.** An old action marked important (the flag, `-important-` in its id or
+  a next step starting "IMPORTANT:") arrives with the important flag, due at the appointment's start,
+  reminder from the old reminder time. A repeat import also flags ones imported earlier, unless you
+  or the agent changed them since.
+- **Read-state.** Your old `filing_changes_read_state` and `reporting_marks_read` become the
+  profile options in `read_state`. A standing "mark read" permission per mailbox is proposed; it
+  does nothing until you click it in the viewer.
+- **Not carried: the weekly sign-in notice roundup.** The old harness collected sign-in notices
+  (new device and similar messages) into a weekly list. Chamberlain does not: such notices are
+  ordinary mail, and a source whose own sign-in has failed is raised at once as a sign-in problem
+  instead. The report names the dropped line of your old report template.
 
 - `config/report-template.yaml` (your report layout) is created from the old report template
   if absent, never overwritten. A line of the old template that needs a value the new harness
@@ -60,7 +88,8 @@ harness keeps doing all the writing, so exactly one system writes.
    operation is never retried and the agent cannot reconcile it.
 3. Old one-off approvals are inert (their hash cannot match a new intent). Ask the agent to
    propose the write again if you still want it. No recipient is known yet.
-4. Turn the listed private guidance overrides into rule patches by hand.
+4. Read `config/owner-instructions.yaml` (your own rules, carried from the old harness) and
+   delete any topic that only describes the old commands.
 5. Cards over a size cap are flagged and due for review; trim them at their next update.
 
 ## Switch

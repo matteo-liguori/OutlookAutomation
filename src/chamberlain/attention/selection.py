@@ -13,6 +13,7 @@ from chamberlain.limits import (
     GUIDANCE_POINTER_COST,
     GUIDANCE_POINTERS_MAX,
     GUIDANCE_REPLY_CHARS,
+    RULE_MAX_CHARS,
 )
 
 DISPLACE_PRIORITY = 90
@@ -127,7 +128,7 @@ def select(
     pointers: list[Rule] = []
     for chosen in urgent + ordinary:
         size = len(chosen.rule.text)
-        if size <= remaining:
+        if size <= remaining and size <= RULE_MAX_CHARS:
             full.append(chosen)
             remaining -= size
         elif len(pointers) < GUIDANCE_POINTERS_MAX and remaining >= GUIDANCE_POINTER_COST:

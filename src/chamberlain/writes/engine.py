@@ -86,7 +86,7 @@ from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import OperationView
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
-from chamberlain.writes import repo
+from chamberlain.writes import read_state, repo
 from chamberlain.writes.authorise import (
     Allow,
     Decision,
@@ -692,6 +692,8 @@ class Engine:
             )
             blank["internet_message_id"] = seen.internet_message_id
             blank["from_folder"] = seen.folder_id
+        if isinstance(intent, MailMove) and not intent.mark_read:
+            blank["mark_read"] = self._filing_marks_read(intent.source)
         if isinstance(intent, CalendarRespond):
             blank["organiser"] = refs[EVENT_ORGANISER_REF]
         if isinstance(intent, CalendarCreate | CalendarUpdate):
@@ -711,6 +713,20 @@ class Engine:
                     ErrorCode.ARTIFACT_HASH_MISMATCH, "An attachment does not match its hash."
                 )
         return completed
+
+    def _filing_marks_read(self, source: str) -> bool:
+        """The owner's `read_state.filing_marks_read` option, which acts only through a grant.
+
+        With the option on and the mailbox's standing grant active, a move marks the message
+        read. Without the grant the move leaves it unread and the grant is proposed, once, for
+        the owner's click (G-24).
+        """
+        if not read_state.options(self.db).filing_marks_read:
+            return False
+        if read_state.active_grant(self.db, source) is not None:
+            return True
+        read_state.propose_missing(self.db, self.ctx.clock, self._audit, [source])
+        return False
 
     def _check_limits(self, intent: WriteIntent, capability: Capability) -> None:
         """Connector limits are checked before `prepare` (P-2)."""

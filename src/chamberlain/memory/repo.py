@@ -147,6 +147,26 @@ def set_card_review(db: sqlite3.Connection, handle: str, review_at: str, over_ca
     )
 
 
+# --- what a repeat import has already carried (M-41) ------------------------------
+
+
+def imported_item_done(db: sqlite3.Connection, kind: str, old_id: str) -> bool:
+    row = db.execute(
+        "SELECT 1 FROM imported_items WHERE kind = ? AND old_id = ?", (kind, old_id)
+    ).fetchone()
+    return row is not None
+
+
+def record_imported_item(
+    db: sqlite3.Connection, kind: str, old_id: str, target: str, now: str
+) -> None:
+    db.execute(
+        "INSERT OR IGNORE INTO imported_items (kind, old_id, target, imported_at) "
+        "VALUES (?, ?, ?, ?)",
+        (kind, old_id, target, now),
+    )
+
+
 # --- context carried over from the old harness (M-35) ----------------------------
 
 

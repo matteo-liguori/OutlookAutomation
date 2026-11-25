@@ -55,6 +55,10 @@ authorised_senders:              # who may instruct by email (see docs/permissio
       note: my PA
   # trusted_authserv_ids: [mx.google.com, "*.outlook.com"]   # whose Authentication-Results to believe
 
+read_state:                      # when the harness may mark mail read (default: never)
+  filing_marks_read: false       # a filing move marks the message read
+  reporting_marks_read: false    # after a pass report is kept, the mail that pass handled is marked read
+
 updates:                         # daily check for a newer release tag (reads tag names only)
   enabled: false
   remote: origin
@@ -75,6 +79,39 @@ Thunderbird to sync every folder the scan reads and waits (`mail_sync`). A folde
 sync within the time limit is named in the pass report ("Partially verified"), raised as a
 `source.stale` event, and tried again at the next tick. The scheduler side is described in
 [scheduling](scheduling.md); cutover in [cutover](cutover.md).
+
+### `read_state`: marking mail read
+
+Mail stays unread by default. Turning an option on does not allow anything by itself (the agent
+could edit this file). Marking mail read also needs a standing permission for the mailbox with
+"mark read allowed", which only your click in the viewer confirms. When an option is on and the
+mailbox has no such permission, the harness proposes it once (never confirms it) and mail stays
+unread until you click. After you confirm it: with `filing_marks_read`, a filing move marks the
+message read; with `reporting_marks_read`, once a pass's report is kept, the mail that pass was
+shown, handled and reported is marked read. Mail that arrived after the pass showed its batch, and
+mail no pass handled, is never touched. Each message is tried once; results are per message in the
+usual write record. `chamberlain import` sets both options from the old settings
+`filing_changes_read_state` and `reporting_marks_read`.
+
+## `owner-instructions.yaml`: your own rules for the agent
+
+A private file next to `connections.yaml` (never in Git):
+
+```yaml
+version: 1
+topics:
+  filing:                # any name you like
+    where: mail          # start (default), mail (when new mail is shown), report or calendar
+    text: |
+      File receipts under Finance. Never file mail from my solicitor.
+```
+
+Topics with the same `where` reach the agent as one block, once per session, at the moment it is
+useful (the start of a session, a batch of mail to triage, writing the report, looking at the
+calendar). It is your own wording, passed on as it is. A block longer than 600 characters is not
+put in the reply: the agent gets a short pointer and reads the whole text when it needs it.
+`chamberlain import` fills this file from your old private instructions, standing facts and
+keyword watches (see [cutover](cutover.md)). Changes apply at the next tool call.
 
 ## `live_test`: what `chamberlain live-test` may touch
 

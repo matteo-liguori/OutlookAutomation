@@ -496,14 +496,17 @@ def test_g20_the_import_is_audited_and_the_chain_verifies(
         app.close()
 
 
-def test_s14_private_guidance_is_listed_for_the_owner_and_not_imported(
+def test_s14_private_guidance_goes_to_the_private_owner_file_not_the_store(
     data_root: Path, imported: ImportReport
 ) -> None:
     assert set(imported.private_guidance) == {"filing", "reporting"}
     stored = json.dumps(dump_store(data_root), default=str)
     assert "Private filing rule" not in stored
     report = json.loads((data_root / "import" / "report.json").read_text(encoding="utf-8"))
-    assert "Private filing rule" in report["private_guidance_to_convert"]["filing"]
+    assert report["owner_instructions_added"] == ["filing", "reporting"]
+    assert "Private filing rule" not in json.dumps(report)
+    owner_file = (data_root / "config" / "owner-instructions.yaml").read_text(encoding="utf-8")
+    assert "Private filing rule: file receipts under Finance." in owner_file
 
 
 def test_s14_the_printed_summary_names_topics_but_carries_no_private_text(

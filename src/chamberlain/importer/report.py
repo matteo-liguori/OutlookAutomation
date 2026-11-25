@@ -18,7 +18,16 @@ class ImportReport:
     standing_grants: list[str] = field(default_factory=list[str])
     over_cap_cards: list[str] = field(default_factory=list[str])
     private_guidance: dict[str, str] = field(default_factory=dict[str, str])
-    """Old private instruction topics, with their text, for the owner to turn into rule patches."""
+    """Owner instruction topics added to `config/owner-instructions.yaml` this run (the text stays
+    in that file; the report document lists names only)."""
+    old_default_instructions: list[str] = field(default_factory=list[str])
+    """Old instruction topics that were only the old harness's shipped text, so not carried."""
+    read_state: dict[str, Any] = field(default_factory=dict[str, Any])
+    """The old read-state settings, what they became, and the standing grants proposed."""
+    appointments: list[str] = field(default_factory=list[str])
+    """Important appointments imported or backfilled."""
+    kept_as_changed: list[str] = field(default_factory=list[str])
+    """Things a repeat import did not touch because the owner or agent changed them since."""
     unmapped_settings: dict[str, Any] = field(default_factory=dict[str, Any])
     left_behind: dict[str, int] = field(default_factory=dict[str, int])
     warnings: list[str] = field(default_factory=list[str])
@@ -38,7 +47,11 @@ class ImportReport:
 
     @property
     def changed(self) -> bool:
-        return bool(self.counts)
+        return (
+            bool(self.counts)
+            or self.report_template == "created"
+            or self.config_written == "created"
+        )
 
     def document(self) -> dict[str, Any]:
         """The full private report, written to `<data root>/import/report.json`."""
@@ -51,7 +64,11 @@ class ImportReport:
             "uncertain_operations": sorted(self.uncertain_operations),
             "standing_grants_need_reconfirmation": sorted(self.standing_grants),
             "over_cap_cards": sorted(self.over_cap_cards),
-            "private_guidance_to_convert": dict(sorted(self.private_guidance.items())),
+            "owner_instructions_added": sorted(self.private_guidance),
+            "old_default_instructions_not_carried": sorted(self.old_default_instructions),
+            "read_state": self.read_state,
+            "important_appointments": sorted(self.appointments),
+            "kept_because_changed_since": sorted(self.kept_as_changed),
             "unmapped_settings": self.unmapped_settings,
             "left_behind": dict(sorted(self.left_behind.items())),
             "warnings": sorted(self.warnings),
@@ -64,5 +81,4 @@ class ImportReport:
     def summary(self) -> dict[str, Any]:
         """What the command prints: counts and names, no private text."""
         document = self.document()
-        document["private_guidance_to_convert"] = sorted(self.private_guidance)
         return document

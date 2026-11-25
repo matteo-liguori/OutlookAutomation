@@ -11,7 +11,7 @@ import json
 import sqlite3
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import yaml
 
@@ -39,8 +39,6 @@ SKIPPED_TABLES = (
     "retention_activity",
     "maintenance_files",
     "mutations",
-    "decisions",
-    "context",
 )
 """Old tables whose rows are deliberately left behind (rebuild plan, "Not imported")."""
 
@@ -64,6 +62,25 @@ class OldAction:
     status: str
     next_review: str | None
     details: Json
+
+
+@dataclass(frozen=True)
+class OldDecision:
+    id: str
+    case_id: str
+    text: str
+
+
+@dataclass(frozen=True)
+class OldContextItem:
+    """One standing fact or keyword watch from the old `context` table."""
+
+    id: str
+    entity: str
+    kind: str
+    text: str
+    terms: tuple[str, ...]
+    enabled: bool
 
 
 @dataclass(frozen=True)
@@ -100,6 +117,11 @@ class OldInstallation:
     approvals: list[OldApproval] = field(default_factory=list[OldApproval])
     journals: list[OldJournal] = field(default_factory=list[OldJournal])
     skipped_rows: dict[str, int] = field(default_factory=dict[str, int])
+    decisions: list[OldDecision] = field(default_factory=list[OldDecision])
+    context: list[OldContextItem] = field(default_factory=list[OldContextItem])
+    default_instructions: dict[str, str] | None = None
+    """The shipped text of each instruction topic when the old harness last refreshed its defaults
+    (`.state/defaults.json`); None when that file is missing, so edits cannot be told apart."""
 
 
 def _refuse(message: str, fix: str = "") -> ChamberlainError:
@@ -161,6 +183,63 @@ def _load_customisations(root: Path) -> Json:
     if not isinstance(value, dict):
         raise _refuse("customisations.yaml is not a mapping.")
     return value  # pyright: ignore[reportUnknownVariableType]
+
+
+def _baseline_instructions(root: Path) -> dict[str, str] | None:
+    path = root / ".state" / "defaults.json"
+    if not path.is_file():
+        return None
+    try:
+        state: Any = json.loads(path.read_text(encoding="utf-8-sig"))
+        found: Any = state["baseline"]["instructions"]
+    except (ValueError, KeyError, TypeError, OSError):
+        return None
+    if not isinstance(found, dict):
+        return None
+    return {str(k): v for k, v in cast(dict[Any, Any], found).items() if isinstance(v, str)}
+
+
+def _optional_json(text: str) -> Json:
+    try:
+        value: Any = json.loads(text)
+    except ValueError:
+        return {}
+    return value if isinstance(value, dict) else {}  # pyright: ignore[reportUnknownVariableType]
+
+
+def _read_decisions_and_context(db: sqlite3.Connection, old: "OldInstallation") -> None:
+    try:
+        for row in db.execute("SELECT id, case_id, details FROM decisions ORDER BY id"):
+            details = _optional_json(row["details"])
+            text = details.get("text")
+            if isinstance(text, str) and text.strip() and row["case_id"]:
+                old.decisions.append(OldDecision(row["id"], row["case_id"], text.strip()))
+        for row in db.execute("SELECT id, entity, details FROM context ORDER BY id"):
+            details = _optional_json(row["details"])
+            text = details.get("text")
+            raw_terms: Any = details.get("terms")
+            terms = (
+                tuple(
+                    t.strip()
+                    for t in cast(list[Any], raw_terms)
+                    if isinstance(t, str) and t.strip()
+                )
+                if isinstance(raw_terms, list)
+                else ()
+            )
+            if isinstance(text, str) and text.strip():
+                old.context.append(
+                    OldContextItem(
+                        row["id"],
+                        str(row["entity"] or ""),
+                        str(details.get("kind") or ""),
+                        text.strip(),
+                        terms,
+                        details.get("enabled", True) is not False,
+                    )
+                )
+    except sqlite3.Error:
+        return
 
 
 def _count(db: sqlite3.Connection, table: str) -> int:
@@ -231,6 +310,8 @@ def read_installation(root: Path) -> OldInstallation:
                 old.journals.append(
                     OldJournal(key, state if isinstance(state, dict) else {})  # pyright: ignore[reportUnknownArgumentType]
                 )
+        _read_decisions_and_context(db, old)
+        old.default_instructions = _baseline_instructions(root)
         old.skipped_rows = {table: _count(db, table) for table in SKIPPED_TABLES}
         old.skipped_rows = {t: n for t, n in old.skipped_rows.items() if n}
         return old
