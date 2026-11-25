@@ -45,7 +45,7 @@ Owner is the wave-1 track that implements the handler.
 | `forget` | Release an artifact or note early; revoke a grant; cancel a proposal. | memory (routes grant and operation handles to writes) |
 | `card` | Create, update or close a card and its actions. | memory |
 | `propose` | Describe a write; learn which grant it needs; attach approval. | writes |
-| `do` | Execute an authorised operation once. | writes |
+| `do` | Execute an authorised operation once. For an outside action (04, W-46): reserve the use, then record `report`. | writes |
 | `reconcile` | Settle an uncertain operation by reading, never by resending. | writes |
 | `doctor` | Health checks and storage metrics. | app (each track contributes checks) |
 

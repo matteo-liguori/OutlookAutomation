@@ -24,6 +24,7 @@ A `WriteIntent` is the canonical, complete description of one write. Kinds:
 | `calendar.update` | `event_ref`, `expected_etag`, `event`, `scope?` (`occurrence` or `series`; 08-ports P-25) |
 | `calendar.delete` | `event_ref`, `expected_etag`, `scope?` |
 | `calendar.respond` | `event_ref`, `expected_etag`, `response` (`accepted`, `tentative`, `declined`), `organiser`* |
+| `outside.action` | `where`, `what`, `enters`, `category`, `enters_password`, `pays`, `accepts_terms` (W-44). Its `source` is always `outside:owner`. |
 
 Fields marked * are left empty by the agent and completed by the harness
 at `propose`, before hashing (`intents.HARNESS_COMPLETED_FIELDS`). A value
@@ -73,6 +74,7 @@ proposed -> authorised -> prepared -> dispatched -> confirmed
 | `cancelled` | Withdrawn before dispatch, or the proposal lapsed. | yes | released |
 | `abandoned` | An old-harness journal entry left with that harness at import, or an uncertain write nothing can resend, closed unsettled (W-13a). | yes | kept |
 | `superseded` | An uncertain write that the agent did again after it was found missing (W-38). | yes | passed to the redo |
+| `agent_reported` | An outside action the assistant says it did (W-46). The harness did not do it and cannot check it. | yes | spent |
 
 `proposed` and `cancelled` extend the plan's diagram: the plan starts at
 `authorised`, and something has to hold the intent while the grant is being
@@ -347,3 +349,31 @@ text below says "send" where the rule is about sends only.
   (`mail_seen.read_marked_at`); "shown to the session" is `mail_seen.delivered_session`. Mail that arrived after the batch was shown is never in it. The write
   is an ordinary `mail.mark_read` operation with per-message results (W-24), authorised by the
   mailbox's standing grant (05, G-24), actor `system:read_state`. A message is tried once.
+
+## Outside actions (track o-outside)
+
+- **W-44** `outside.action` is for what the assistant does outside Chamberlain's tools that changes
+  something or acts as the owner: filling or submitting an online form, signing in to a portal to read
+  or download a document, using a website for the owner. It carries `where` (the site, portal or app,
+  80 characters), `what` (what it will do, 300), `enters` (what it will enter or submit, 300, may be
+  empty), a `category` (`form_fill`, `form_submit`, `portal_read`, `download`, `other`) and three flags
+  the assistant must always state: `enters_password`, `pays`, `accepts_terms`. It has no connector:
+  its source is the fixed `outside:owner`, it is never prepared or dispatched, and the harness never
+  touches the outside. Permission is the same system as any write (05, G-12a, G-25): the owner's word
+  in chat for one action, or a standing permission bound to one card.
+- **W-45** Passwords, payments and terms are never allowed. At `propose`, an `outside.action` with any
+  of the three flags true is refused (`request.invalid`, with a fix saying the owner does that part
+  themselves), whatever grants exist and whatever settings say. The refusal is written to the audit log
+  as `outside.refused`. The refusal comes before any grant is looked at.
+- **W-46** The harness records but never claims to verify. `do {operation}` on an allowed outside
+  action reserves the use (`authorised`) and tells the assistant to act now. After acting, `do
+  {operation, report}` records what it did (up to 500 characters, any confirmation number) and ends the
+  operation as `agent_reported`: terminal, never verified, grant use spent (a one-off becomes `spent`).
+  To withdraw before acting, the assistant forgets the operation (`cancelled`, use released). An
+  `authorised` outside action not reported within 24 hours is closed as `abandoned` by the tick (use
+  kept) and the pass report says it was allowed but never reported. The card must be open at `propose`
+  and at `do`.
+- **W-47** Each use is shown. The pass report's harness-written verification part lists every outside
+  action of the pass (where, what, the state in the owner's words) and says plainly that these were
+  reported by the assistant and not checked by the harness. The viewer's timeline shows each one with
+  its card, and the viewer's grant page lists the uses of a standing permission.
