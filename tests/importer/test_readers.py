@@ -110,9 +110,15 @@ def test_w_the_sweep_and_write_maintenance_keep_what_the_owner_still_needs(
         app.close()
 
 
-def test_s14_two_old_ids_that_normalise_alike_are_refused_not_merged(
-    tmp_path: Path, secrets: MemorySecrets, clock: ManualClock
+def test_s14_two_old_ids_that_normalise_alike_are_refused_and_3_related_checks(
+    tmp_path: Path,
+    secrets: MemorySecrets,
+    clock: ManualClock,
+    old_root: Path,
+    data_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # s14_two_old_ids_that_normalise_alike_are_refused_not_merged
     from old_fixture import build_old_root
 
     from chamberlain.schema.errors import ChamberlainError
@@ -127,10 +133,7 @@ def test_s14_two_old_ids_that_normalise_alike_are_refused_not_merged(
         run_import(old, tmp_path / "new", clock=clock, secrets=secrets)
     assert "mail:work-x" in raised.value.message
 
-
-def test_s14_a_broken_old_record_is_a_named_config_error_and_rolls_back(
-    tmp_path: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s14_a_broken_old_record_is_a_named_config_error_and_rolls_back
     from old_fixture import build_old_root
 
     from chamberlain.schema.errors import ChamberlainError
@@ -145,10 +148,7 @@ def test_s14_a_broken_old_record_is_a_named_config_error_and_rolls_back(
     assert "case case-big" in raised.value.message
     assert not (tmp_path / "new" / "chamberlain.sqlite3").exists()
 
-
-def test_s14_a_failure_while_writing_names_the_old_record_and_rolls_back(
-    tmp_path: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s14_a_failure_while_writing_names_the_old_record_and_rolls_back
     from old_fixture import build_old_root
 
     from chamberlain.schema.errors import ChamberlainError
@@ -170,14 +170,7 @@ def test_s14_a_failure_while_writing_names_the_old_record_and_rolls_back(
     assert "source mail:work" in raised.value.message
     assert not (tmp_path / "second" / "chamberlain.sqlite3").exists()
 
-
-def test_s14_the_cli_imports_and_a_second_run_reports_nothing_new(
-    old_root: Path,
-    data_root: Path,
-    secrets: MemorySecrets,
-    clock: ManualClock,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+    # s14_the_cli_imports_and_a_second_run_reports_nothing_new
     monkeypatch.setattr("chamberlain.importer.run.default_store", lambda _root: secrets)
     outputs: list[dict[str, Any]] = []
     for _ in range(2):

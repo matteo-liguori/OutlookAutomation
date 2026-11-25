@@ -57,19 +57,17 @@ def rows(data_root: Path, sql: str, *args: object) -> list[sqlite3.Row]:
 # --- the old installation is never changed ------------------------------------------
 
 
-def test_s14_the_old_root_is_untouched_by_an_import(
+def test_s14_the_old_root_is_untouched_by_an_import_and_3_related_checks(
     old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # s14_the_old_root_is_untouched_by_an_import
     before = fingerprint(old_root)
     assert not [name for name in before if name.endswith(("-wal", "-shm"))]
     run_import(old_root, data_root, clock=clock, secrets=secrets)
     run_import(old_root, data_root, clock=clock, secrets=secrets)
     assert fingerprint(old_root) == before
 
-
-def test_s14_an_old_database_with_unmerged_wal_content_is_refused(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s14_an_old_database_with_unmerged_wal_content_is_refused
     holder = sqlite3.connect(old_root / "monitor" / "monitor.db")
     holder.execute("PRAGMA journal_mode=WAL")
     holder.execute("INSERT INTO meta VALUES('late', '1')")
@@ -84,10 +82,7 @@ def test_s14_an_old_database_with_unmerged_wal_content_is_refused(
     finally:
         holder.close()
 
-
-def test_s14_an_unsupported_old_schema_is_refused(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s14_an_unsupported_old_schema_is_refused
     db = sqlite3.connect(old_root / "monitor" / "monitor.db")
     db.execute("PRAGMA user_version=4")
     db.close()
@@ -95,10 +90,7 @@ def test_s14_an_unsupported_old_schema_is_refused(
         run_import(old_root, data_root, clock=clock, secrets=secrets)
     assert "schema 4" in raised.value.message
 
-
-def test_s14_the_new_root_may_not_sit_inside_the_old_one(
-    old_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s14_the_new_root_may_not_sit_inside_the_old_one
     with pytest.raises(ChamberlainError):
         run_import(old_root, old_root / "new", clock=clock, secrets=secrets)
     with pytest.raises(ChamberlainError):
@@ -126,9 +118,6 @@ def test_s14_a_second_import_changes_nothing(
     assert dump_store(data_root) == store_before  # every table, including audit_log
     assert fingerprint(data_root) == files_before  # profile and report included
     assert secrets.items == secrets_before
-
-
-# --- connection profile and secrets ---------------------------------------------------
 
 
 def test_g_the_profile_becomes_a_valid_connection_profile(
@@ -168,19 +157,20 @@ def test_g_an_unbindable_source_is_skipped_and_listed_never_guessed(
     assert "calendar:shared" in listed
 
 
-def test_g_icloud_is_a_disabled_caldav_placeholder_with_its_credential_name(
-    data_root: Path, imported: ImportReport
+# --- connection profile and secrets ---------------------------------------------------
+
+
+def test_s17_g_icloud_is_a_disabled_caldav_placeholder_with_and_1_related_checks(
+    data_root: Path, imported: ImportReport, secrets: MemorySecrets
 ) -> None:
+    # g_icloud_is_a_disabled_caldav_placeholder_with_its_credential_name
     icloud = load_connections(data_root).sources["calendar:icloud"].model_dump()
     assert icloud["kind"] == "caldav"
     assert icloud["enabled"] is False
     assert icloud["username"] == "owner@icloud.example"
     assert icloud["credential"] == "password:owner@icloud.example"
 
-
-def test_s17_secrets_move_to_the_store_and_never_into_a_file(
-    data_root: Path, secrets: MemorySecrets, imported: ImportReport
-) -> None:
+    # s17_secrets_move_to_the_store_and_never_into_a_file
     stored = " ".join(secrets.items.values())
     for value in ("client-secret-value", "refresh-token-value", "abcd-efgh-ijkl-mnop"):
         assert value in stored
@@ -216,9 +206,10 @@ def test_g_an_existing_profile_is_kept(
 # --- cards, actions, evidence ---------------------------------------------------------
 
 
-def test_m_open_cards_import_with_their_review_clock_and_open_actions(
-    data_root: Path, imported: ImportReport
+def test_m13_m_open_cards_import_with_their_review_clock_and_3_related_checks(
+    data_root: Path, imported: ImportReport, clock: ManualClock
 ) -> None:
+    # m_open_cards_import_with_their_review_clock_and_open_actions
     cards = {r["title"]: r for r in rows(data_root, "SELECT * FROM cards")}
     alpha = cards["Alpha supplier contract"]
     assert alpha["state"] == "open"
@@ -233,10 +224,7 @@ def test_m_open_cards_import_with_their_review_clock_and_open_actions(
     assert actions[0]["due_at"] == "2026-01-06T09:00:00Z"
     assert actions[1]["snooze_until"] == "2026-01-10T09:00:00Z"
 
-
-def test_m13_a_card_over_a_cap_imports_as_is_flagged_and_due(
-    data_root: Path, imported: ImportReport, clock: ManualClock
-) -> None:
+    # m13_a_card_over_a_cap_imports_as_is_flagged_and_due
     big = next(r for r in rows(data_root, "SELECT * FROM cards") if r["title"] == "Oversized card")
     assert big["over_cap"] == 1
     assert len(big["position"]) == 2000  # stored as it is, nothing cut
@@ -246,8 +234,7 @@ def test_m13_a_card_over_a_cap_imports_as_is_flagged_and_due(
     assert len(long_action["title"]) == 160  # the one field a hard limit forces to be cut
     assert any("act-long" in w for w in imported.warnings)
 
-
-def test_m_a_closed_card_keeps_one_outcome_line(data_root: Path, imported: ImportReport) -> None:
+    # m_a_closed_card_keeps_one_outcome_line
     done = next(
         r for r in rows(data_root, "SELECT * FROM cards") if r["title"] == "Finished matter"
     )
@@ -255,10 +242,7 @@ def test_m_a_closed_card_keeps_one_outcome_line(data_root: Path, imported: Impor
     assert done["outcome"] == "Resolved by phone on the 2nd."
     assert (done["goal"], done["position"], done["rules"]) == ("", "", "")
 
-
-def test_m_evidence_comes_across_only_when_referenced_and_at_most_15_per_card(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # m_evidence_comes_across_only_when_referenced_and_at_most_15_per_card
     texts = [r["text"] for r in rows(data_root, "SELECT text FROM evidence")]
     assert not any("Nobody refers to me" in t for t in texts)
     on_alpha = rows(
@@ -270,24 +254,17 @@ def test_m_evidence_comes_across_only_when_referenced_and_at_most_15_per_card(
     assert imported.left_behind["evidence beyond 15 per open card"] == 5
 
 
-def test_s14_handles_are_valid_and_deterministic(data_root: Path, imported: ImportReport) -> None:
+def test_s14_g6_g5_handles_are_valid_and_deterministic_and_3_related_checks(
+    data_root: Path, imported: ImportReport
+) -> None:
+    # s14_handles_are_valid_and_deterministic
     for table in ("cards", "actions", "grants", "operations", "evidence"):
         for row in rows(data_root, f"SELECT handle FROM {table}"):
             prefix, _, token = row["handle"].partition("_")
             assert prefix in {"card", "act", "grant", "op", "evd"}
             assert len(token) == 16
 
-
-# --- grants ---------------------------------------------------------------------------
-
-
-def grants(data_root: Path) -> dict[str, sqlite3.Row]:
-    return {r["title"]: r for r in rows(data_root, "SELECT * FROM grants")}
-
-
-def test_g6_a_standing_grant_imports_suspended_and_due_for_review_at_once(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # g6_a_standing_grant_imports_suspended_and_due_for_review_at_once
     dated = grants(data_root)["Standing sa-dated"]
     assert dated["state"] == "suspended"
     assert dated["kind"] == "standing"
@@ -298,31 +275,32 @@ def test_g6_a_standing_grant_imports_suspended_and_due_for_review_at_once(
     assert dated["review_at"] <= "2026-01-05T09:00:00Z"
     assert len(imported.standing_grants) == 3
 
-
-def test_g6_a_standing_grant_with_no_recorded_date_is_due_and_undated(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # g6_a_standing_grant_with_no_recorded_date_is_due_and_undated
     undated = grants(data_root)["Standing sa-undated"]
     assert undated["granted_at"] is None
     assert undated["state"] == "suspended"
     assert undated["review_at"] == "2026-01-05T09:00:00Z"
 
-
-def test_g5_an_expired_standing_grant_imports_expired_not_active(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # g5_an_expired_standing_grant_imports_expired_not_active
     expired = grants(data_root)["Standing sa-expired"]
     assert expired["state"] == "expired"
     assert expired["ended_at"] == "2025-12-31T09:00:00Z"
 
 
-def test_g15_no_recipient_becomes_known_by_import(data_root: Path, imported: ImportReport) -> None:
-    assert rows(data_root, "SELECT * FROM known_recipients") == []
+# --- grants ---------------------------------------------------------------------------
 
 
-def test_g5_one_off_grants_follow_the_seven_day_rule_and_their_journals(
+def grants(data_root: Path) -> dict[str, sqlite3.Row]:
+    return {r["title"]: r for r in rows(data_root, "SELECT * FROM grants")}
+
+
+def test_g15_g5_no_recipient_becomes_known_by_import_and_3_related_checks(
     data_root: Path, imported: ImportReport
 ) -> None:
+    # g15_no_recipient_becomes_known_by_import
+    assert rows(data_root, "SELECT * FROM known_recipients") == []
+
+    # g5_one_off_grants_follow_the_seven_day_rule_and_their_journals
     by_subject = {
         r["title"]: r for r in rows(data_root, "SELECT * FROM grants WHERE kind = 'one_off'")
     }
@@ -335,16 +313,10 @@ def test_g5_one_off_grants_follow_the_seven_day_rule_and_their_journals(
         assert row["requirement"] == "human_confirmation"
         assert row["scope_json"] is None
 
-
-def test_g_the_old_hash_is_kept_inert_not_recomputed(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # g_the_old_hash_is_kept_inert_not_recomputed
     assert grants(data_root)["Subject oa-fresh"]["content_sha256"] == "a" * 64
 
-
-def test_g_the_old_wording_of_a_standing_grant_is_kept_as_evidence(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # g_the_old_wording_of_a_standing_grant_is_kept_as_evidence
     handle = grants(data_root)["Standing sa-dated"]["handle"]
     texts = [
         r["text"]
@@ -365,9 +337,10 @@ def operations(data_root: Path) -> dict[str, sqlite3.Row]:
     return {r["idempotency_key"]: r for r in rows(data_root, "SELECT * FROM operations")}
 
 
-def test_w_an_in_flight_send_becomes_uncertain_and_cannot_be_dispatched(
+def test_w_an_in_flight_send_becomes_uncertain_and_and_3_related_checks(
     data_root: Path, imported: ImportReport
 ) -> None:
+    # w_an_in_flight_send_becomes_uncertain_and_cannot_be_dispatched
     op = operations(data_root)["import:thunderbird:send:oa-inflight"]
     assert op["state"] == "uncertain"
     assert op["kind"] == "mail.send"
@@ -378,52 +351,36 @@ def test_w_an_in_flight_send_becomes_uncertain_and_cannot_be_dispatched(
     grant = rows(data_root, "SELECT handle FROM grants WHERE title = 'Subject oa-inflight'")[0]
     assert op["grant"] == grant["handle"]  # the grant is held by it (G-10)
 
-
-@pytest.mark.parametrize(
-    "key",
-    [
+    # w_any_journal_not_in_a_final_state_is_uncertain_and_a_calendar_one_lands_on_its_source
+    for key in [
         "import:outlook-send:oa-com",
         "import:native-send:oa-native",  # `draft-saved` is not final
         "import:thunderbird:trash:t-1",  # a stage this code has never seen
         "import:thunderbird:calendar-create:c-1",
-    ],
-)
-def test_w_any_journal_not_in_a_final_state_is_uncertain(
-    data_root: Path, imported: ImportReport, key: str
-) -> None:
-    assert operations(data_root)[key]["state"] == "uncertain"
-
-
-def test_w_a_calendar_journal_lands_on_its_calendar_source(
-    data_root: Path, imported: ImportReport
-) -> None:
+    ]:
+        assert operations(data_root)[key]["state"] == "uncertain", key
     assert (
         operations(data_root)["import:thunderbird:calendar-create:c-1"]["source_id"]
         == "calendar:work"
     )
 
-
-def test_w_finished_journals_become_receipts_and_clean_ones_are_released(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # w_finished_journals_become_receipts_and_clean_ones_are_released
     done = operations(data_root)["import:thunderbird:send:oa-sent"]
     assert done["state"] == "confirmed"
     receipt = json.loads(done["receipt_json"])
     assert receipt["summary"]["state"] == "confirmed"
     assert operations(data_root)["import:thunderbird:move:m-1"]["state"] == "failed_clean"
 
-
-def test_w_an_imported_operation_is_never_in_a_retryable_state(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # w_an_imported_operation_is_never_in_a_retryable_state
     for op in operations(data_root).values():
         assert op["state"] in {"uncertain", "confirmed", "failed_clean"}
         assert op["state"] not in {"proposed", "authorised", "prepared"}
 
 
-def test_w_the_tick_after_an_import_neither_fails_nor_changes_an_uncertain_operation(
+def test_w_the_tick_after_an_import_neither_fails_nor_and_1_related_checks(
     data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # w_the_tick_after_an_import_neither_fails_nor_changes_an_uncertain_operation
     before = {k: v["state"] for k, v in operations(data_root).items()}
     app = open_app(data_root, clock=clock, secrets=secrets)
     try:
@@ -437,10 +394,7 @@ def test_w_the_tick_after_an_import_neither_fails_nor_changes_an_uncertain_opera
     assert "operation.uncertain" in events
     assert "grant.review_due" in events
 
-
-def test_w_the_owner_can_settle_an_imported_uncertain_operation_in_the_viewer(
-    data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # w_the_owner_can_settle_an_imported_uncertain_operation_in_the_viewer
     handle = operations(data_root)["import:thunderbird:send:oa-inflight"]["handle"]
     app = open_app(data_root, clock=clock, secrets=secrets)
     try:
@@ -450,9 +404,10 @@ def test_w_the_owner_can_settle_an_imported_uncertain_operation_in_the_viewer(
     assert answer["state"] == "confirmed_absent"
 
 
-def test_w_the_agent_cannot_reconcile_an_imported_operation_into_a_resend(
+def test_g7_w_the_agent_cannot_reconcile_an_imported_and_1_related_checks(
     data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # w_the_agent_cannot_reconcile_an_imported_operation_into_a_resend
     handle = operations(data_root)["import:thunderbird:send:oa-inflight"]["handle"]
     app = open_app(data_root, clock=clock, secrets=secrets)
     try:
@@ -464,10 +419,7 @@ def test_w_the_agent_cannot_reconcile_an_imported_operation_into_a_resend(
         app.close()
     assert operations(data_root)["import:thunderbird:send:oa-inflight"]["state"] == "uncertain"
 
-
-def test_g7_keeping_an_undated_imported_grant_works_and_activates_nothing_new(
-    data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # g7_keeping_an_undated_imported_grant_works_and_activates_nothing_new
     handle = grants(data_root)["Standing sa-undated"]["handle"]
     app = open_app(data_root, clock=clock, secrets=secrets)
     try:
@@ -480,9 +432,10 @@ def test_g7_keeping_an_undated_imported_grant_works_and_activates_nothing_new(
 # --- audit and what is left for the owner ---------------------------------------------
 
 
-def test_g20_the_import_is_audited_and_the_chain_verifies(
+def test_g20_s14_the_import_is_audited_and_the_chain_verifies_and_3_related_checks(
     data_root: Path, imported: ImportReport, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # g20_the_import_is_audited_and_the_chain_verifies
     kinds = {r["kind"]: r for r in rows(data_root, "SELECT kind, actor FROM audit_log")}
     assert {"import", "grant.imported", "operation.imported"} <= set(kinds)
     assert {r["actor"] for r in rows(data_root, "SELECT DISTINCT actor FROM audit_log")} == {
@@ -495,38 +448,34 @@ def test_g20_the_import_is_audited_and_the_chain_verifies(
     finally:
         app.close()
 
-
-def test_s14_private_guidance_is_listed_for_the_owner_and_not_imported(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # s14_private_guidance_is_listed_for_the_owner_and_not_imported
     assert set(imported.private_guidance) == {"filing", "reporting"}
     stored = json.dumps(dump_store(data_root), default=str)
     assert "Private filing rule" not in stored
     report = json.loads((data_root / "import" / "report.json").read_text(encoding="utf-8"))
     assert "Private filing rule" in report["private_guidance_to_convert"]["filing"]
 
-
-def test_s14_the_printed_summary_names_topics_but_carries_no_private_text(
-    imported: ImportReport,
-) -> None:
+    # s14_the_printed_summary_names_topics_but_carries_no_private_text
     printed = json.dumps(imported.summary())
     assert "filing" in printed
     assert "Private filing rule" not in printed
     assert "refresh-token-value" not in printed
 
-
-def test_s14_runs_and_review_history_are_left_behind_and_counted(
-    imported: ImportReport,
-) -> None:
+    # s14_runs_and_review_history_are_left_behind_and_counted
     assert imported.left_behind["runs"] == 1
     assert imported.left_behind["message_reviews"] == 1
     assert imported.unmapped_settings["schedule"] == {"calendar_days_ahead": 3}
     assert imported.unmapped_settings["updates"] == {"interval_hours": 24}
 
 
-def test_g_old_schedule_and_update_settings_become_connection_settings(
-    data_root: Path, imported: ImportReport
+def test_g15_g_old_schedule_and_update_settings_become_and_3_related_checks(
+    data_root: Path,
+    imported: ImportReport,
+    old_root: Path,
+    secrets: MemorySecrets,
+    clock: ManualClock,
 ) -> None:
+    # g_old_schedule_and_update_settings_become_connection_settings
     connections = load_connections(data_root)
     assert [(s.name, s.kind, s.at, s.zone, s.weekdays) for s in connections.schedules] == [
         ("morning", "mail", "08:00", None, (1, 2, 3, 4, 5, 6, 7)),
@@ -536,13 +485,7 @@ def test_g_old_schedule_and_update_settings_become_connection_settings(
     assert connections.updates.enabled is True
     assert connections.updates.remote == "upstream"
 
-
-# --- what an old journal said, kept for display and matching only ------------------------
-
-
-def test_w_an_imported_operation_keeps_a_summary_but_never_an_intent(
-    data_root: Path, imported: ImportReport
-) -> None:
+    # w_an_imported_operation_keeps_a_summary_but_never_an_intent
     mail = operations(data_root)["import:thunderbird:send:oa-inflight"]
     assert json.loads(mail["summary_json"]) == {
         "title": "Inflight subject",
@@ -562,14 +505,7 @@ def test_w_an_imported_operation_keeps_a_summary_but_never_an_intent(
         assert op["intent_json"] is None
         assert op["prepared_json"] is None
 
-
-def test_w_running_the_import_again_adds_summaries_to_operations_that_lack_them(
-    old_root: Path,
-    data_root: Path,
-    imported: ImportReport,
-    secrets: MemorySecrets,
-    clock: ManualClock,
-) -> None:
+    # w_running_the_import_again_adds_summaries_to_operations_that_lack_them
     key = "import:thunderbird:send:oa-inflight"
     db = connect(data_root / "chamberlain.sqlite3")
     try:
@@ -585,10 +521,7 @@ def test_w_running_the_import_again_adds_summaries_to_operations_that_lack_them(
     assert not third.counts
     assert dump_store(data_root) == before
 
-
-def test_g15_the_import_seeds_known_recipients_from_sent_history_and_reports_counts(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # g15_the_import_seeds_known_recipients_from_sent_history_and_reports_counts
     from chamberlain.connectors.fake import FakeProvider
 
     fake = FakeProvider(clock)
@@ -612,6 +545,9 @@ def test_g15_the_import_seeds_known_recipients_from_sent_history_and_reports_cou
         ("friend@example.org", "sent-history", None),
     ]
     assert rows(data_root, "SELECT * FROM grants WHERE title LIKE '%sent-history%'") == []
+
+
+# --- what an old journal said, kept for display and matching only ------------------------
 
 
 def test_s17_the_old_windows_icloud_password_moves_and_its_calendars_connect(
