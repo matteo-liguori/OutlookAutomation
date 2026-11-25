@@ -1085,7 +1085,12 @@ class Engine:
             )
 
     def _fail_clean(
-        self, op: OperationRow, code: ErrorCode, *, expected_lease: str | bool | None = False
+        self,
+        op: OperationRow,
+        code: ErrorCode,
+        *,
+        expected_lease: str | bool | None = False,
+        detail: str = "",
     ) -> OperationRow | None:
         """Proven nothing happened: release the grant use (W-10, W-11).
 
@@ -1104,7 +1109,11 @@ class Engine:
             op,
             OperationState.FAILED_CLEAN,
             actor=self.actor(),
-            summary=f"Nothing happened ({code.value}); grant use released.",
+            summary=(
+                f"Nothing happened ({code.value}"
+                + (f": {detail[:200]}" if detail else "")
+                + "); grant use released."
+            ),
             expected_lease=expected_lease,
             receipt_json=build_receipt(op, OperationState.FAILED_CLEAN, self._now()),
             error_code=code.value,
@@ -1222,7 +1231,9 @@ class Engine:
             self._upgrade_verification(row, prepared)
             return self.get(row.handle)
         if result.outcome is DispatchOutcome.NOT_APPLIED:
-            row = self._fail_clean(journal, ErrorCode.SOURCE_BUSY, expected_lease=self.worker)
+            row = self._fail_clean(
+                journal, ErrorCode.SOURCE_BUSY, expected_lease=self.worker, detail=result.detail
+            )
             return row or self.get(journal.handle)
         moved = move_operation(
             self.db,
