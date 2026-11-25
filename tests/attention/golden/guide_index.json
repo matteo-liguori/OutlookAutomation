@@ -9,7 +9,7 @@
       },
       {
         "id": "appointments.important",
-        "version": 3,
+        "version": 4,
         "title": "Important appointments"
       },
       {
@@ -34,7 +34,7 @@
       },
       {
         "id": "card.complex",
-        "version": 2,
+        "version": 3,
         "title": "A card that needs more room"
       },
       {
@@ -132,7 +132,7 @@
   "coverage": {
     "complete": false,
     "returned": 25,
-    "total": 45,
+    "total": 46,
     "cursor": "ZzI1",
     "gaps": []
   },

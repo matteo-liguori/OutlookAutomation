@@ -8,6 +8,8 @@ actions belong to other tracks. Callers wrap writes in `store.db.transaction`.
 import sqlite3
 from dataclasses import dataclass
 
+from chamberlain.domain.operations import outside_details
+
 Row = sqlite3.Row
 
 
@@ -102,6 +104,30 @@ def filing_facts(db: sqlite3.Connection, since: str) -> list[FilingFact]:
         FilingFact(r["source_id"], r["kind"], r["state"], bool(r["verified"]), int(r["n"]))
         for r in rows
     ]
+
+
+@dataclass(frozen=True)
+class OutsideFact:
+    state: str
+    where: str
+    what: str
+    card_title: str | None
+    reported: str
+
+
+def outside_facts(db: sqlite3.Connection, since: str) -> list[OutsideFact]:
+    """Outside actions of the pass: what the assistant was allowed to do outside (W-47)."""
+    rows = db.execute(
+        "SELECT o.state, o.intent_json, o.receipt_json, c.title AS card_title FROM operations o "
+        "LEFT JOIN cards c ON c.handle = o.card WHERE o.kind = 'outside.action' "
+        "AND o.state <> 'proposed' AND o.created_at >= ? ORDER BY o.created_at, o.handle",
+        (since,),
+    )
+    found: list[OutsideFact] = []
+    for r in rows:
+        where, what, reported = outside_details(r["intent_json"], r["receipt_json"])
+        found.append(OutsideFact(r["state"], where, what, r["card_title"], reported))
+    return found
 
 
 @dataclass(frozen=True)

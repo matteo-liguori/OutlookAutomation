@@ -61,6 +61,7 @@ def maintain(ctx: Context, policy: WritePolicy | None = None) -> MaintenanceRepo
     """One pass: crash recovery, grant timers, compaction, then the audit window."""
     engine = Engine(ctx, policy)
     recovered = engine.recover()
+    engine.close_unreported_outside()
     rechecked = engine.recheck_sends()
     changed = engine.grants.sweep()
     compacted = compact_operations(ctx)

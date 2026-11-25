@@ -6,12 +6,12 @@ docs/contracts/08-ports.md (P-9 to P-12).
 
 import json
 from enum import StrEnum
-from typing import Self
+from typing import Any, Self, cast
 
 from pydantic import Field, JsonValue, model_validator
 
 from chamberlain.domain.intents import IntentKind
-from chamberlain.schema.base import Model, Sha256, SourceId, Timestamp
+from chamberlain.schema.base import Model, Sha256, SourceId, Timestamp, WriteSourceId
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
@@ -28,13 +28,18 @@ class OperationState(StrEnum):
     CANCELLED = "cancelled"
     ABANDONED = "abandoned"
     SUPERSEDED = "superseded"
+    AGENT_REPORTED = "agent_reported"
+    """An outside action the assistant says it did. The harness did not do it and cannot check
+    it, so this is never `confirmed` (04-writes W-46)."""
 
 
 _S = OperationState
 
 TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
     _S.PROPOSED: frozenset({_S.AUTHORISED, _S.CANCELLED}),
-    _S.AUTHORISED: frozenset({_S.PREPARED, _S.FAILED_CLEAN, _S.CANCELLED}),
+    _S.AUTHORISED: frozenset(
+        {_S.PREPARED, _S.FAILED_CLEAN, _S.CANCELLED, _S.AGENT_REPORTED, _S.ABANDONED}
+    ),
     _S.PREPARED: frozenset({_S.DISPATCHED, _S.FAILED_CLEAN}),
     _S.DISPATCHED: frozenset({_S.CONFIRMED, _S.FAILED_CLEAN, _S.UNCERTAIN}),
     _S.UNCERTAIN: frozenset(
@@ -47,6 +52,7 @@ TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
     _S.CANCELLED: frozenset(),
     _S.ABANDONED: frozenset(),
     _S.SUPERSEDED: frozenset(),
+    _S.AGENT_REPORTED: frozenset(),
 }
 """Exactly the arrows of the state diagram (W-6).
 
@@ -62,6 +68,33 @@ because the resend that replaces the send takes it over in the same transaction 
 
 MAY_HAVE_HAPPENED_STATES = frozenset({_S.DISPATCHED, _S.UNCERTAIN, _S.RECONCILING})
 """`do` in these states fails with `operation.needs_reconcile` (W-17)."""
+
+
+OUTSIDE_STATE_WORDS = {
+    "proposed": "waiting for permission",
+    "authorised": "allowed; the assistant has not reported yet",
+    "agent_reported": "done, as reported by the assistant (Chamberlain did not check it)",
+    "abandoned": "allowed, but the assistant never reported",
+    "cancelled": "withdrawn before it was done",
+    "failed_clean": "did not happen",
+}
+"""An outside action's state in the owner's words (04-writes W-47)."""
+
+
+def outside_details(intent_json: str | None, receipt_json: str | None) -> tuple[str, str, str]:
+    """`(where, what, reported)` of an outside action, for the report, timeline and grant page.
+
+    Empty strings once the stored request has been compacted away."""
+    try:
+        intent = cast(dict[str, Any], json.loads(intent_json or "{}"))
+        receipt = cast(dict[str, Any], json.loads(receipt_json or "{}"))
+        return (
+            str(intent.get("where", "")),
+            str(intent.get("what", "")),
+            str(receipt.get("reported") or ""),
+        )
+    except (ValueError, AttributeError):
+        return "", "", ""
 
 
 def recheck_text(result: str | None, looked_json: str | None) -> str | None:
@@ -175,7 +208,7 @@ class Receipt(Model):
     """The stored, agent-safe record of a settled operation (W-16, W-25)."""
 
     intent_kind: IntentKind
-    source: SourceId
+    source: WriteSourceId
     state: OperationState
     intent_sha256: Sha256
     settled_at: Timestamp

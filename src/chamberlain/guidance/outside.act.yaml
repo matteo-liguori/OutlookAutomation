@@ -1,0 +1,11 @@
+id: outside.act
+version: 1
+title: Acting outside these tools
+when: {tool: start}
+text: >
+  Before acting outside these tools in a way that changes something or acts as
+  the owner, propose outside.action. Never enter passwords or payment details,
+  pay, or accept terms.
+max_chars: 180
+once_per: session
+priority: 68

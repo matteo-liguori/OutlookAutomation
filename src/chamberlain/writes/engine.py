@@ -54,6 +54,7 @@ from chamberlain.domain.intents import (
     MailMove,
     MailSend,
     MailTrash,
+    OutsideAction,
     WriteIntent,
 )
 from chamberlain.domain.operations import (
@@ -139,6 +140,8 @@ CALENDAR_SETTLE_ATTEMPTS: Final = 7
 CALENDAR_SETTLE_WINDOW_SECONDS: Final = 60
 ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
 """Reserved key in the `refs` mapping given to `prepare` (board R3)."""
+OUTSIDE_REPORT_HOURS: Final = 24
+"""How long the assistant has to report an outside action it was allowed to do (W-46)."""
 INVITATIONS_UNSUPPORTED: Final = "invitations-not-supported"
 RECURRENCE_UNSUPPORTED: Final = "recurrence-not-supported"
 
@@ -292,12 +295,19 @@ class Engine:
         evidence: tuple[str, ...] = (),
     ) -> Proposal:
         """Store a complete intent and report the authority it needs (W-1, W-18, W-19)."""
-        capability = self._capability(intent)
-        refs = self._locate(intent)
-        self._require_invitations(intent, refs)
-        self._require_recurrence(intent)
-        completed = self._complete(intent, refs)
-        self._check_limits(completed, capability)
+        completed: WriteIntent
+        if isinstance(intent, OutsideAction):
+            # No connector stands behind it: nothing to locate, complete or limit (W-44).
+            self._check_outside(intent, card)
+            refs: dict[str, str] = {}
+            completed = intent
+        else:
+            capability = self._capability(intent)
+            refs = self._locate(intent)
+            self._require_invitations(intent, refs)
+            self._require_recurrence(intent)
+            completed = self._complete(intent, refs)
+            self._check_limits(completed, capability)
         sha = intent_hash(completed)
         existing = self._existing(completed, sha, card)
         if existing is not None:
@@ -386,20 +396,33 @@ class Engine:
 
     def propose_standing(self, scope: StandingScope, *, card: str | None = None) -> Proposal:
         """Ask for a standing grant. Only the viewer can activate it (G-12, G-14)."""
-        for kind in scope.intent_kinds:
-            capability = _CAPABILITY[kind]
-            port_caps = (
-                self.ctx.sources.calendar_port(scope.source).capabilities(scope.source)
-                if kind in _CALENDAR_KINDS
-                else self.ctx.sources.mail_port(scope.source).capabilities(scope.source)
-            )
-            if port_caps.get(capability) is None or (
-                kind is IntentKind.CALENDAR_RESPOND
-                and port_caps.get(CapabilityName.CALENDAR_INVITE) is None
-            ):
+        if IntentKind.OUTSIDE_ACTION in scope.intent_kinds:
+            if card is not None and card != scope.card:
                 raise ChamberlainError(
-                    ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
+                    ErrorCode.REQUEST_INVALID,
+                    "A standing permission for outside actions belongs to one card.",
+                    field="card",
                 )
+            if scope.card is not None and repo.card_is_closed(self.db, scope.card):
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID, "That card is closed.", field="standing"
+                )
+        else:
+            for source in sorted(scope.all_sources()):
+                for kind in scope.intent_kinds:
+                    capability = _CAPABILITY[kind]
+                    port_caps = (
+                        self.ctx.sources.calendar_port(source).capabilities(source)
+                        if kind in _CALENDAR_KINDS
+                        else self.ctx.sources.mail_port(source).capabilities(source)
+                    )
+                    if port_caps.get(capability) is None or (
+                        kind is IntentKind.CALENDAR_RESPOND
+                        and port_caps.get(CapabilityName.CALENDAR_INVITE) is None
+                    ):
+                        raise ChamberlainError(
+                            ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
+                        )
         grant = self.grants.propose_standing(scope, card=card, supersedes=None, actor=self.actor())
         return Proposal(
             operation=None,
@@ -496,7 +519,8 @@ class Engine:
     def _existing(self, intent: WriteIntent, sha: str, card: str | None) -> OperationRow | None:
         """An identical live operation, or a recent one that may not repeat (W-18, W-19)."""
         window = self.ctx.clock.now() - timedelta(hours=REPEAT_WINDOW_HOURS)
-        repeat_ok = self._repeat_allowed(intent, card)
+        # The same form may be filled again later: only a live outside action matches (W-44).
+        repeat_ok = isinstance(intent, OutsideAction) or self._repeat_allowed(intent, card)
         found = [
             op
             for op in repo.live_by_hash(self.db, intent.source, sha)
@@ -805,9 +829,21 @@ class Engine:
 
     # --- do -----------------------------------------------------------------------
 
-    def do(self, handle: str) -> OperationRow:
-        """Execute an authorised operation once (W-7, W-8, W-16, W-17)."""
+    def do(self, handle: str, report: str | None = None) -> OperationRow:
+        """Execute an authorised operation once (W-7, W-8, W-16, W-17).
+
+        For an outside action the harness does nothing outside: the first call reserves the use,
+        the second, with `report`, records what the assistant did (W-46)."""
         op = self.get(handle)
+        if op.kind is IntentKind.OUTSIDE_ACTION:
+            return self._do_outside(op, report)
+        if report is not None:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "A report is only for an outside action.",
+                fix="Leave report out.",
+                field="report",
+            )
         if op.state in TERMINAL_STATES:
             return self._terminal_reply(op)
         if op.state in MAY_HAVE_HAPPENED_STATES:
@@ -829,6 +865,95 @@ class Engine:
             return self._terminal_reply(final)
         raise self.uncertain(final.handle)
 
+    # --- outside actions (W-44 to W-47) -----------------------------------------------
+
+    def _check_outside(self, intent: OutsideAction, card: str | None) -> None:
+        """Refuse what only the owner does, and an action for a closed card, before any grant."""
+        owner_only = [
+            words
+            for words, flag in (
+                ("entering a password", intent.enters_password),
+                ("paying", intent.pays),
+                ("accepting terms", intent.accepts_terms),
+            )
+            if flag
+        ]
+        if owner_only:
+            self._audit.append(
+                actor=self.actor(),
+                kind="outside.refused",
+                subject=None,
+                summary="Refused an outside action: it involves " + ", ".join(owner_only) + ".",
+                payload_sha256=intent_hash(intent),
+            )
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID,
+                "Passwords, payments and accepting terms are never done for the owner.",
+                fix="Stop before that step and ask the owner to do it themselves.",
+                field="intent",
+                detail="owner-only-step",
+            )
+        if card is not None and repo.card_is_closed(self.db, card):
+            raise ChamberlainError(ErrorCode.REQUEST_INVALID, "That card is closed.", field="card")
+
+    def _do_outside(self, op: OperationRow, report: str | None) -> OperationRow:
+        """Reserve the use, or record the assistant's report. Never touches a port (W-46)."""
+        if op.state in TERMINAL_STATES:
+            return self._terminal_reply(op)
+        intent = self.intent_of(op)
+        if not isinstance(intent, OutsideAction):
+            raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Not an outside action.")
+        if op.state is OperationState.PROPOSED:
+            if report is not None:
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID,
+                    "Take the permission first: call do without a report, then act.",
+                    field="report",
+                )
+            self._check_outside(intent, op.card)
+            return self._reserve(op, intent)
+        if op.state is not OperationState.AUTHORISED:
+            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
+        if report is None:
+            return op
+        moved = move_operation(
+            self.db,
+            self.ctx.clock,
+            self._audit,
+            op,
+            OperationState.AGENT_REPORTED,
+            actor=self.actor(),
+            summary="The assistant reported doing this outside Chamberlain; not checked.",
+            receipt_json=build_receipt(
+                op, OperationState.AGENT_REPORTED, self._now(), reported=report
+            ),
+            dispatched_at=self._now(),  # when it counts against a daily limit
+        )
+        if moved is None:
+            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
+        if moved.grant is not None:
+            self.grants.mark_spent(moved.grant, actor=self.actor())
+        return moved
+
+    def close_unreported_outside(self) -> int:
+        """An outside action allowed a day ago and never reported is closed, use kept (W-46)."""
+        cutoff = format_ts(self.ctx.clock.now() - timedelta(hours=OUTSIDE_REPORT_HOURS))
+        closed = 0
+        for op in repo.stale_outside(self.db, cutoff):
+            moved = move_operation(
+                self.db,
+                self.ctx.clock,
+                self._audit,
+                op,
+                OperationState.ABANDONED,
+                actor="system:tick",
+                summary="Allowed but never reported by the assistant; closed.",
+                receipt_json=build_receipt(op, OperationState.ABANDONED, self._now()),
+                dispatched_at=format_ts(op.updated_at or self.ctx.clock.now()),
+            )
+            closed += 1 if moved is not None else 0
+        return closed
+
     @staticmethod
     def needs_reconcile(handle: str) -> ChamberlainError:
         return ChamberlainError(
@@ -845,7 +970,7 @@ class Engine:
 
     def _terminal_reply(self, op: OperationRow) -> OperationRow:
         """The stored outcome, with the same `ok` as the first time (W-16)."""
-        if op.state is OperationState.CONFIRMED:
+        if op.state in (OperationState.CONFIRMED, OperationState.AGENT_REPORTED):
             return op
         if op.state is OperationState.FAILED_CLEAN:
             try:
@@ -1775,6 +1900,8 @@ class Engine:
     # --- connector calls (the only ones) --------------------------------------------
 
     def _port_prepare(self, intent: WriteIntent, refs: Mapping[str, str]) -> Prepared:
+        if isinstance(intent, OutsideAction):
+            raise _no_connector()
         if isinstance(intent, _CALENDAR_INTENTS):
             return self.ctx.sources.calendar_port(intent.source).prepare(intent, refs)
         return self.ctx.sources.mail_port(intent.source).prepare(intent, refs)
@@ -1782,6 +1909,8 @@ class Engine:
     def _port_dispatch(
         self, intent: WriteIntent, prepared: Prepared, key: str, payloads: Mapping[str, bytes]
     ) -> DispatchResult:
+        if isinstance(intent, OutsideAction):
+            raise _no_connector()
         if isinstance(intent, _CALENDAR_INTENTS):
             return self.ctx.sources.calendar_port(intent.source).dispatch(prepared, key)
         return self.ctx.sources.mail_port(intent.source).dispatch(prepared, key, payloads)
@@ -1789,12 +1918,19 @@ class Engine:
     def _port_reconcile(self, intent: WriteIntent, prepared: Prepared, key: str) -> ReconcileResult:
         """Read-only. Any failure is `unknown`, never a reason to resend."""
         try:
+            if isinstance(intent, OutsideAction):
+                raise _no_connector()
             if isinstance(intent, _CALENDAR_INTENTS):
                 return self.ctx.sources.calendar_port(intent.source).reconcile(prepared, key)
             return self.ctx.sources.mail_port(intent.source).reconcile(prepared, key)
         except Exception:
             log_failure(log, "reconcile failed")
             return ReconcileResult(status=ReconcileStatus.UNKNOWN)
+
+
+def _no_connector() -> ChamberlainError:
+    """An outside action is never prepared, dispatched or reconciled: it has no connector."""
+    return ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "An outside action has no connector.")
 
 
 def _attendees_in(refs: Mapping[str, str]) -> frozenset[str]:

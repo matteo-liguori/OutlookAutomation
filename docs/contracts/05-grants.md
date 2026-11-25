@@ -89,6 +89,7 @@ holds it; a test keeps this text in step). The first row that fits wins; read to
 | Sending mail to anyone you have not written to before | Your click in the viewer |
 | Creating or changing an event that invites a new address (not one of yours, not already a guest of the event, not someone you have written to) | Your click in the viewer |
 | Sending mail only to people you have written to | Your word in chat (setting `grants.send_known`, may ask for a click) |
+| Acting outside Chamberlain's tools for you: a form, a portal, a website (never a password, a payment or accepting terms) | Your word in chat (setting `grants.other`, may ask for a click) |
 | Everything else: drafts, filing, trash, mark read, other calendar writes | Your word in chat (setting `grants.other`, may ask for a click) |
 
 | A standing permission for | May cover |
@@ -97,7 +98,10 @@ holds it; a test keeps this text in step). The first row that fits wins; read to
 | `calendar.create`, `calendar.respond` | Exact addresses only, never a domain |
 | `calendar.update`, `calendar.delete` | Never covered |
 | `mail.move`, `mail.trash` | Named folders |
+| `outside.action` | One card, one place and the kinds of action named; never a password, payment or terms |
 | `mail.mark_read`, `mail.draft_save`, `mail.draft_update`, `mail.draft_discard` | The account and the kind of write |
+
+One standing permission can cover several calendars, or several mailboxes, with one click. Entering a password, paying and accepting terms are never allowed, whatever is granted.
 <!-- /permission-table -->
 
 - **G-12a** The owner's word in

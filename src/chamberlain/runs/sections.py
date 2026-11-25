@@ -12,6 +12,7 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
+from chamberlain.domain.operations import OUTSIDE_STATE_WORDS
 from chamberlain.runs import appointments
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs.models import RunRow
@@ -54,6 +55,7 @@ class Facts:
         self.since = run.started_at or run.due_at
         self.sources = repo.source_facts(ctx.db)
         self.filing = repo.filing_facts(ctx.db, self.since)
+        self.outside = repo.outside_facts(ctx.db, self.since)
         self.unsynced = repo.sync_failures(ctx.db)
         self.gaps: list[str] = []
         """Reasons the pass is only partly verified, filled by the builders."""
@@ -181,6 +183,20 @@ def verification(facts: Facts) -> str:
     if by_source:
         lines += ["", "**Filing during this pass**", ""]
         lines += [_filing_line(source, by_source[source], facts) for source in sorted(by_source)]
+    if facts.outside:
+        lines += ["", "**Outside actions during this pass**", ""]
+        for item in facts.outside:
+            card = f" Card: {_cell(item.card_title)}." if item.card_title else ""
+            said = f" It said: {_cell(item.reported)}." if item.reported else ""
+            lines.append(
+                f"- {_cell(item.where)}: {_cell(item.what)} - "
+                f"{OUTSIDE_STATE_WORDS.get(item.state, item.state)}.{said}{card}"
+            )
+        lines.append(
+            "The assistant did these outside Chamberlain. Chamberlain did not do them and "
+            "cannot check them."
+        )
+        facts.gaps.append("outside actions were reported by the assistant, not checked")
     lines.append("")
     if facts.gaps:
         reasons = "; ".join(dict.fromkeys(facts.gaps))

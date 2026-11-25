@@ -64,6 +64,10 @@ to `live_verified`. Record each result on the board with the date.
 | 3.2 | A standing grant and an unknown-recipient send both stop for viewer confirmation |
 | 3.3 | Scheduled pass via `chamberlain tick`; wrong-day run stops; report artifact kept and later swept |
 | 3.4 | One full mail pass by an agent through the MCP or CLI surface; compare tokens with the old harness on the same mailbox |
+| 3.5 | Outside action: the agent proposes filling a real online form, you say yes in chat, it acts and reports; the operation ends "reported by the assistant", never "verified", and shows in the pass report and the timeline |
+| 3.6 | A standing outside permission for one card: one click in the viewer; a use on that card needs no question; another card, place or kind does; closing the card ends it |
+| 3.7 | A password, payment or terms step is refused by the agent and by the harness even with the permission |
+| 3.8 | One standing permission for two of your calendars: one click, the viewer lists both, an event on each is added without asking, a third calendar still asks |
 
 ## 4. After
 

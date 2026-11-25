@@ -210,10 +210,12 @@ class GrantService:
                 payload_sha256=grant.content_sha256,
             )
             if via is ConfirmedVia.HUMAN_VIEWER:
-                for address in recipients:
-                    repo.add_known_recipient(
-                        self._db, grant.source_id, address.lower(), handle, stamp(self._clock)
-                    )
+                covered = grant.scope.all_sources() if grant.scope else {grant.source_id}
+                for source in sorted(covered):
+                    for address in recipients:
+                        repo.add_known_recipient(
+                            self._db, source, address.lower(), handle, stamp(self._clock)
+                        )
             if grant.supersedes is not None:
                 old = repo.get_grant(self._db, grant.supersedes)
                 if old is not None and old.state in (GrantState.ACTIVE, GrantState.SUSPENDED):

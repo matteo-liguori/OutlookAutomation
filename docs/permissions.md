@@ -16,6 +16,7 @@ the code (`src/chamberlain/domain/permissions.py`), and a test keeps this page i
 | Sending mail to anyone you have not written to before | Your click in the viewer |
 | Creating or changing an event that invites a new address (not one of yours, not already a guest of the event, not someone you have written to) | Your click in the viewer |
 | Sending mail only to people you have written to | Your word in chat (setting `grants.send_known`, may ask for a click) |
+| Acting outside Chamberlain's tools for you: a form, a portal, a website (never a password, a payment or accepting terms) | Your word in chat (setting `grants.other`, may ask for a click) |
 | Everything else: drafts, filing, trash, mark read, other calendar writes | Your word in chat (setting `grants.other`, may ask for a click) |
 
 | A standing permission for | May cover |
@@ -24,7 +25,10 @@ the code (`src/chamberlain/domain/permissions.py`), and a test keeps this page i
 | `calendar.create`, `calendar.respond` | Exact addresses only, never a domain |
 | `calendar.update`, `calendar.delete` | Never covered |
 | `mail.move`, `mail.trash` | Named folders |
+| `outside.action` | One card, one place and the kinds of action named; never a password, payment or terms |
 | `mail.mark_read`, `mail.draft_save`, `mail.draft_update`, `mail.draft_discard` | The account and the kind of write |
+
+One standing permission can cover several calendars, or several mailboxes, with one click. Entering a password, paying and accepting terms are never allowed, whatever is granted.
 <!-- /permission-table -->
 
 "Known" is explained [below](#known-recipients). Changing or cancelling events, inviting people you
@@ -35,6 +39,28 @@ that. No click. (There is one housekeeping choice for [larger cards](#larger-car
 Each click shows exactly what will happen (the recipients, subject, body, times)
 and approves only that. For a repeating event it also says how often it repeats and whether a
 change reaches "this date only" or "every date of the series". If the assistant changes one word, the permission no longer matches.
+
+## Acting outside Chamberlain
+
+Sometimes the assistant does something for you that Chamberlain's own tools cannot: filling in an
+online form, sending one, signing in to a portal to read or download a document, using a website
+on your behalf. It must **propose it first** as an outside action, saying where, what it will do
+and what it will enter or submit.
+
+- **One action.** Your words in chat are enough, like any other change.
+- **A pattern, again and again.** The assistant can ask for a standing permission tied to one card,
+  for one place and the kinds of action you allow (for example "fill in forms at the council
+  portal"). You confirm it with one click in the viewer, which shows the pattern in plain words. It
+  ends by itself when the card closes.
+- **Never allowed, whatever you grant:** entering a password, paying, or accepting terms. The
+  assistant must say it does none of these; if it says it would, the request is refused and
+  recorded. Those steps stay with you.
+- **Chamberlain cannot do these actions or check them.** The assistant does them and then reports
+  what happened. Chamberlain records that report and marks it "reported by the assistant", never
+  "verified". Every use appears in the pass report, on the viewer's timeline with its card, and on
+  the permission's page.
+- If the assistant is allowed to act and never reports within a day, the use is closed and the
+  report says so.
 
 ## Larger cards
 
@@ -71,6 +97,10 @@ A standing permission lets the assistant repeat one kind of change without askin
 - **Expiry.** It ends after at most a year, whatever you do.
 - **Ending it.** Revoke it in the viewer any time. A permission is never deleted, only ended,
   so the history stays.
+
+One standing permission can cover several calendars, or several mailboxes, of the same kind. You
+confirm it once, the viewer lists every source it covers, and a daily limit counts all of them
+together. Revoking it ends it for all of them. Older permissions for one source are unchanged.
 
 One-off permissions (for a single exact action) expire after 7 days if unused.
 

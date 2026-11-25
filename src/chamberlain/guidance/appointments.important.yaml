@@ -1,10 +1,10 @@
 id: appointments.important
-version: 3
+version: 4
 title: Important appointments
 when: {tool: card, op: add_action}
 text: >
-  Decide whether an appointment is important: medical ones, ones the owner
-  marked, or what the card's rules say. For each, add one action per
+  Decide whether an appointment is important: medical, marked by the owner,
+  or by the card's rules. For each, add one action per
   reminder with important set, due at its start and snoozed to the day it
   should surface: seven, two and one day ahead. The owner acknowledges it
   in the viewer; do not finish it unless the appointment is cancelled.

@@ -20,6 +20,8 @@ from chamberlain.domain.intents import (
     MailMove,
     MailSend,
     MailTrash,
+    OutsideAction,
+    OutsideCategory,
     WriteIntent,
 )
 from chamberlain.domain.recurrence import describe
@@ -47,6 +49,14 @@ _VERB = {
     IntentKind.CALENDAR_UPDATE: "Change a calendar event",
     IntentKind.CALENDAR_DELETE: "Delete a calendar event",
     IntentKind.CALENDAR_RESPOND: "Answer a calendar invitation",
+    IntentKind.OUTSIDE_ACTION: "Act outside Chamberlain",
+}
+CATEGORY_WORDS = {
+    OutsideCategory.FORM_FILL: "filling in a form (not sending it)",
+    OutsideCategory.FORM_SUBMIT: "sending a form",
+    OutsideCategory.PORTAL_READ: "signing in to read something",
+    OutsideCategory.DOWNLOAD: "downloading a document",
+    OutsideCategory.OTHER: "something else",
 }
 
 
@@ -76,10 +86,14 @@ def grant_title(intent: WriteIntent) -> str:
     if isinstance(intent, MailSend):
         count = len({*intent.to, *intent.cc, *intent.bcc})
         return f"{verb} to {count} recipient{'s' if count != 1 else ''}"
+    if isinstance(intent, OutsideAction):
+        return f"{verb}: {intent.where}"[:80]
     return verb
 
 
 def grant_summary(intent: WriteIntent) -> str:
+    if isinstance(intent, OutsideAction):
+        return f"{intent.what} ({intent.where}), exactly as previewed."
     return f"{_verb(intent)} on {intent.source}, exactly as previewed."
 
 
@@ -138,6 +152,16 @@ def describe_intent(
     elif isinstance(intent, CalendarRespond):
         lines.append(f"Answer: {intent.response}")
         lines.append("Sent to the organiser: " + (intent.organiser or "(unknown)"))
+    elif isinstance(intent, OutsideAction):
+        lines = [f"{_verb(intent)}: {intent.where}", f"What: {intent.what}"]
+        if intent.enters:
+            lines.append(f"It will enter or submit: {intent.enters}")
+        lines.append(f"Kind: {CATEGORY_WORDS[intent.category]}")
+        lines.append(
+            "Chamberlain does not do this and cannot check it: the assistant does it and says "
+            "afterwards what happened. It includes no password, no payment and no accepting "
+            "of terms."
+        )
     text = "\n".join(lines) + (("\n\n" + body) if body else "")
     if limit is not None and len(text) > limit:
         return text[:limit], True
@@ -156,8 +180,12 @@ def _reach(scope: str, stored: Mapping[str, str]) -> list[str]:
 
 def describe_scope(scope: StandingScope) -> str:
     """The standing scope in full, for the confirmation page and the proposal preview."""
+    if scope.where is not None and scope.categories is not None:
+        return _describe_outside_scope(scope, scope.where, scope.categories)
     parts = [
-        f"Source: {scope.source}",
+        f"Source: {scope.source}"
+        if scope.sources is None
+        else "Sources (one permission for all of them): " + ", ".join(sorted(scope.sources)),
         "Kinds: " + ", ".join(sorted(kind.value for kind in scope.intent_kinds)),
     ]
     if scope.recipients:
@@ -169,6 +197,24 @@ def describe_scope(scope: StandingScope) -> str:
     parts.append(
         f"Mark read allowed: {scope.allow_mark_read}; repeats allowed: {scope.allow_repeat}"
     )
+    if scope.max_per_day is not None:
+        parts.append(f"At most {scope.max_per_day} a day")
+    return "\n".join(parts)
+
+
+def _describe_outside_scope(
+    scope: StandingScope, where: str, categories: frozenset[OutsideCategory]
+) -> str:
+    """A standing permission for outside actions, in plain words (G-25)."""
+    kinds = ", ".join(sorted(CATEGORY_WORDS[c] for c in categories))
+    parts = [
+        f"Where: {where}",
+        f"Kinds of action: {kinds}",
+        f"What it allows: {scope.summary}",
+        "Only for the card it is bound to; it ends when that card closes.",
+        "It never covers entering a password, paying or accepting terms.",
+        "Chamberlain does not do these actions or check them: the assistant does them and reports.",
+    ]
     if scope.max_per_day is not None:
         parts.append(f"At most {scope.max_per_day} a day")
     return "\n".join(parts)

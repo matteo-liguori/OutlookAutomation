@@ -7,6 +7,8 @@ writes through the services (`ConfirmationApp`, the runs track's notes), never h
 import sqlite3
 from dataclasses import dataclass
 
+from chamberlain.domain.operations import outside_details
+
 
 @dataclass(frozen=True)
 class CardLine:
@@ -212,6 +214,34 @@ def closed_actions_between(
         )
         for r in rows
     ]
+
+
+@dataclass(frozen=True)
+class OutsideLine:
+    at: str
+    state: str
+    where: str
+    what: str
+    reported: str
+    card_title: str | None
+
+
+def outside_between(db: sqlite3.Connection, start: str, end: str, limit: int) -> list[OutsideLine]:
+    """Outside actions allowed between `start` and `end`, with the card they belong to (W-47)."""
+    rows = db.execute(
+        "SELECT o.created_at, o.state, o.intent_json, o.receipt_json, c.title AS card_title "
+        "FROM operations o LEFT JOIN cards c ON c.handle = o.card "
+        "WHERE o.kind = 'outside.action' AND o.state <> 'proposed' "
+        "AND o.created_at >= ? AND o.created_at < ? ORDER BY o.created_at DESC LIMIT ?",
+        (start, end, limit),
+    )
+    found: list[OutsideLine] = []
+    for r in rows:
+        where, what, reported = outside_details(r["intent_json"], r["receipt_json"])
+        found.append(
+            OutsideLine(r["created_at"], r["state"], where, what, reported, r["card_title"])
+        )
+    return found
 
 
 def source_labels(db: sqlite3.Connection) -> dict[str, str]:

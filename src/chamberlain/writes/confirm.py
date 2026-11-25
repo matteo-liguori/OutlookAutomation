@@ -25,6 +25,8 @@ from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.grants import ConfirmedVia, GrantKind, GrantState, Requirement
+from chamberlain.domain.intents import IntentKind
+from chamberlain.domain.operations import OUTSIDE_STATE_WORDS, outside_details
 from chamberlain.domain.permissions import click_reason, recipients_of
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.writes import repo
@@ -36,6 +38,7 @@ TOKEN_HEADER = "X-Chamberlain-Token"
 ACTOR = "human:viewer"
 REJECT_ACTOR = "system:viewer"
 MAX_BODY = 64 * 1024
+USES_SHOWN = 50
 _HANDLE = r"[a-z]+_[a-z0-9]{8,32}"
 _LOOPBACK = frozenset({"127.0.0.1", "::1"})
 
@@ -76,6 +79,7 @@ def _grant_json(grant: GrantRow) -> dict[str, Any]:
         "title": grant.title,
         "requirement": grant.requirement.value,
         "source": grant.source_id,
+        "sources": sorted(grant.scope.all_sources() if grant.scope else {grant.source_id}),
         "content_sha256": grant.content_sha256,
         "proposed_at": grant.proposed_at.isoformat(),
         "granted_at": None if grant.granted_at is None else grant.granted_at.isoformat(),
@@ -271,6 +275,8 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
     if grant.scope is not None:
         detail["scope"] = json.loads(grant.scope.model_dump_json(exclude_none=True))
         detail["rendered"] = describe_scope(grant.scope)
+        if IntentKind.OUTSIDE_ACTION in grant.scope.intent_kinds:
+            detail["uses"] = _outside_uses(ctx, grant)
         return detail
     ops = repo.operations_by_hash(ctx.db, grant.source_id, grant.content_sha256)
     shown = next((op for op in reversed(ops) if op.intent_json is not None), None)
@@ -284,6 +290,22 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
     elif grant.confirmed_via == "import":
         detail["rendered"] = _imported_wording(ctx, grant)
     return detail
+
+
+def _outside_uses(ctx: Context, grant: GrantRow) -> list[dict[str, str]]:
+    """Each time a standing outside permission was used, in the owner's words (W-47)."""
+    uses: list[dict[str, str]] = []
+    for op in repo.operations_for_grant(ctx.db, grant.handle, USES_SHOWN):
+        where, what, reported = outside_details(op.intent_json, op.receipt_json)
+        uses.append(
+            {
+                "at": op.created_at.isoformat(),
+                "what": f"{where}: {what}" if where else "(details removed after 30 days)",
+                "state": OUTSIDE_STATE_WORDS.get(op.state.value, op.state.value),
+                "reported": reported,
+            }
+        )
+    return uses
 
 
 def _imported_wording(ctx: Context, grant: GrantRow) -> str:
