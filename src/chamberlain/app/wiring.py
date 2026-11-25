@@ -10,7 +10,7 @@ this file. Here the real `Services` are built (memory first, then writes with
 memory's artifact store), the write handlers get the configured policy, and the
 tick's steps are put in the context: crash recovery and run planning on every call
 (`always`), the sweeper plus write maintenance after the inbox is reconciled (`extra`),
-and the owner's mail clean-up only in the scheduler's tick (`background`).
+and the owner's mail clean-up when an agent calls `start` (`on_start`).
 """
 
 import sqlite3
@@ -25,6 +25,7 @@ from chamberlain.app.context import (
     Handler,
     Hooks,
     SourceRouter,
+    StartStep,
     SyncBudget,
     TickSteps,
 )
@@ -33,7 +34,7 @@ from chamberlain.app.doctor import make_doctor
 from chamberlain.app.services import Services
 from chamberlain.attention import tick as attention_tick
 from chamberlain.cleanup.rules import CleanupConfig
-from chamberlain.cleanup.run import daily_cleanup
+from chamberlain.cleanup.run import CLEANUP_AGENT, daily_cleanup
 from chamberlain.memory import services as memory_services
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.memory.sweeper import Compactor, sweep
@@ -120,8 +121,8 @@ def tick_steps(
     review: ReviewSettings | None = None,
     cleanup: CleanupConfig | None = None,
 ) -> TickSteps:
-    """What the tick runs on every call (`always`), when due (`extra`) and only in the
-    scheduler's tick (`background`)."""
+    """What the tick runs on every call (`always`), when due (`extra`) and what `start`
+    runs before offering work (`on_start`)."""
 
     def sweep_everything(ctx: Context) -> None:
         sweep(ctx, ctx.clock.now(), budgets=budgets, compactors=COMPACTORS)
@@ -138,16 +139,19 @@ def tick_steps(
         extra.append(run_updates.tick_step(update_lister))
     if review is not None:
         extra.append(review_tick_step(review))
-    background: list[Callable[[Context], None]] = []
+    on_start: list[StartStep] = []
     if cleanup is not None and cleanup.enabled and cleanup.rules:
         rules = cleanup
 
-        def clean_up_mail(ctx: Context) -> None:
+        def clean_up_mail(ctx: Context, agent: str) -> list[str]:
+            if agent == CLEANUP_AGENT:
+                return []  # the clean-up's own session
             handlers, hooks = load_tracks(policy)
-            daily_cleanup(App(ctx, handlers, hooks), rules)
+            report = daily_cleanup(App(ctx, handlers, hooks), rules)
+            return [] if report is None else report.summary()
 
-        background.append(clean_up_mail)
-    return TickSteps(always=tuple(always), extra=tuple(extra), background=tuple(background))
+        on_start.append(clean_up_mail)
+    return TickSteps(always=tuple(always), extra=tuple(extra), on_start=tuple(on_start))
 
 
 def build_app(
@@ -189,7 +193,5 @@ def run_tick(app: App, *, force: bool = True) -> tuple[bool, int]:
     The wake status is 10 when events wait for a session and none is active, so a
     scheduler can start one (07-attention.md, delivery 3); 0 otherwise.
     """
-    ran = attention_tick.tick(
-        replace(app.context, sync_budget=SyncBudget()), force=force, background=True
-    )
+    ran = attention_tick.tick(replace(app.context, sync_budget=SyncBudget()), force=force)
     return ran, attention_tick.wake_status(app.context)

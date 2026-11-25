@@ -6,6 +6,7 @@ this track fills them and never edits the app package.
 
 import base64
 import binascii
+import logging
 from typing import Literal
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Hooks, Result
@@ -17,10 +18,11 @@ from chamberlain.attention.rules import Rule, load_rules, rule_problems
 from chamberlain.attention.tuning import GUIDE_PAGE
 from chamberlain.attention.work import work_item
 from chamberlain.domain.capabilities import HealthState
-from chamberlain.limits import START_WORK_ITEMS
+from chamberlain.limits import START_WORK_ITEMS, SUMMARY_MAX
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.envelope import Coverage
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import (
     CheckResult,
     DoctorCheck,
@@ -37,6 +39,8 @@ from chamberlain.schema.tools import (
 from chamberlain.store.migrate import stamp
 
 SourceKind = Literal["mail", "calendar", "contacts"]
+
+log = logging.getLogger("chamberlain.attention")
 
 
 def _offer(ctx: Context, session: str, limit: int) -> tuple[tuple[WorkItem, ...], int]:
@@ -79,6 +83,7 @@ def start(ctx: Context, request: StartRequest) -> Result:
         resume=request.resume,
         zone=sessions.configured_zone(ctx.data_root),
     )
+    housekeeping = _on_start(ctx, request.agent or "")
     work, more = _offer(ctx, row.handle, START_WORK_ITEMS)
     response = StartResponse(
         session=row.handle,
@@ -86,8 +91,20 @@ def start(ctx: Context, request: StartRequest) -> Result:
         sources=_sources(ctx),
         work=work,
         more_work=more,
+        housekeeping=housekeeping,
     )
     return Result(response, next=(work[0].next,) if work else ())
+
+
+def _on_start(ctx: Context, agent: str) -> tuple[str, ...]:
+    """Other tracks' start steps (the owner's mail clean-up); a failure never fails `start`."""
+    lines: list[str] = []
+    for step in ctx.tick_steps.on_start:
+        try:
+            lines += step(ctx, agent)
+        except Exception:
+            log_failure(log, "start step %s failed", getattr(step, "__name__", "step"))
+    return tuple(line[:SUMMARY_MAX] for line in lines[:10])
 
 
 def next_work(ctx: Context, request: NextRequest) -> Result:

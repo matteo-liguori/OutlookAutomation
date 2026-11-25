@@ -7,6 +7,7 @@ confirm in the viewer: this module only proposes it.
 """
 
 import logging
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Final
@@ -33,33 +34,57 @@ CARD_TITLE: Final = "Mail clean-up"
 GRANT_TITLE: Final = "Move old mail to Trash"
 MAX_PER_DAY: Final = 500
 CLEANUP_EVERY: Final = timedelta(days=1)
+CLEANUP_AGENT: Final = "cleanup"
+"""The clean-up's own session: its `start` never triggers the clean-up again."""
 LAST_RUN_KEY: Final = "cleanup.last_run_at"
 
 
 @dataclass
 class CleanupReport:
     planned: dict[str, int] = field(default_factory=lambda: dict[str, int]())
-    moved: int = 0
+    """Dry run: what each rule would move."""
+    moved_by: dict[str, int] = field(default_factory=lambda: dict[str, int]())
+    """Real run: what moved, per "rule (mailbox)"."""
     failed: list[str] = field(default_factory=lambda: list[str]())
+    """One reason code per message not moved; never mail text (the lines reach the agent)."""
     waiting: list[str] = field(default_factory=lambda: list[str]())
     """Mailboxes whose grant is missing or waiting for the owner."""
+    more: list[str] = field(default_factory=lambda: list[str]())
+    """Mailboxes that reached `per_run`: the rest moves next time."""
+
+    @property
+    def moved(self) -> int:
+        return sum(self.moved_by.values())
 
     def lines(self, *, dry_run: bool) -> list[str]:
-        out = [f"{rule}: {count}" for rule, count in self.planned.items()] or ["Nothing to move."]
         if dry_run:
+            out = [f"{rule}: {n}" for rule, n in self.planned.items()] or ["Nothing to move."]
             return ["Would move to Trash (nothing changed):", *out]
-        out = ["Planned:", *out, f"Moved to Trash: {self.moved}"]
+        return [*self.summary()] or ["Clean-up: nothing to move."]
+
+    def summary(self) -> list[str]:
+        """The report lines: only what happened or needs the owner, nothing when idle."""
+        out: list[str] = []
+        if self.moved:
+            parts = "; ".join(f"{where} {n}" for where, n in self.moved_by.items())
+            more = " (more next time)" if self.more else ""
+            out.append(f"Clean-up moved {self.moved} emails to Trash{more}: {parts}.")
         if self.waiting:
-            out.append("Waiting for your confirmation in the viewer: " + ", ".join(self.waiting))
+            out.append(
+                "Clean-up is waiting for the owner to confirm "
+                f'"{GRANT_TITLE}" in the viewer for: {", ".join(self.waiting)}.'
+            )
         if self.failed:
-            out.append(f"Not moved ({len(self.failed)}): " + "; ".join(self.failed[:5]))
+            reasons = Counter(self.failed).most_common(3)
+            why = "; ".join(f"{reason} {n}" for reason, n in reasons)
+            out.append(f"Clean-up could not move {len(self.failed)} emails: {why}.")
         return out
 
 
 class _Session:
     def __init__(self, app: App) -> None:
         self.app = app
-        self.session = str(self.ok("start", agent="cleanup")["session"])
+        self.session = str(self.ok("start", agent=CLEANUP_AGENT)["session"])
 
     def ok(self, tool: str, **request: Any) -> dict[str, Any]:
         if tool != "start":
@@ -157,50 +182,59 @@ def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupRep
     ctx = app.context
     now = ctx.clock.now()
     report = CleanupReport()
-    found: list[Candidate] = []
-    for rule in config.rules:
-        mine = list(candidates(ctx, rule, now))
-        report.planned[f"{rule.name}"] = len(mine)
-        found += mine
-    if dry_run or not found:
+    if dry_run:
+        for rule in config.rules:
+            report.planned[rule.name] = sum(1 for _ in candidates(ctx, rule, now))
+        return report
+    folders = _rule_folders(app, config)
+    if not folders:
         return report
     s = _Session(app)
     card = s.card()
-    folders = _rule_folders(app, config)
-    active: set[str] = set()
-    for source, wanted in folders.items():
+    active: list[str] = []
+    for source, wanted in sorted(folders.items()):
         state, _ = _grant_state(app, source, _scope(source, frozenset(wanted), card))
-        (active.add(source) if state == "active" else report.waiting.append(source))
-    refs = ctx.services.refs
+        (active.append(source) if state == "active" else report.waiting.append(source))
     taken: dict[str, int] = {}
-    for candidate in found:
-        if candidate.source not in active or taken.get(candidate.source, 0) >= config.per_run:
-            continue
-        taken[candidate.source] = taken.get(candidate.source, 0) + 1
-        handle = refs.remember(HandleKind.MESSAGE, candidate.source, candidate.summary.locator)
-        intent = {"kind": "mail.trash", "source": candidate.source, "message": handle}
-        try:
-            proposed = s.ok("propose", intent=intent, card=card)
-            if not proposed.get("ready"):
-                report.failed.append(f"{candidate.summary.subject[:40]}: not covered")
-                continue
-            done = s.ok("do", operation=proposed["operation"])
-            if done["operation"]["state"] == "confirmed":
-                report.moved += 1
-            else:
-                report.failed.append(
-                    f"{candidate.summary.subject[:40]}: {done['operation']['state']}"
-                )
-        except ChamberlainError as error:
-            report.failed.append(f"{candidate.summary.subject[:40]}: {error.code.value}")
+    for rule in config.rules:
+        for source in active:
+            # Lazy: a mailbox stops being searched once it reaches `per_run`.
+            for candidate in candidates(ctx, rule, now, only=source):
+                if taken.get(source, 0) >= config.per_run:
+                    if source not in report.more:
+                        report.more.append(source)
+                    break
+                taken[source] = taken.get(source, 0) + 1
+                if _trash(s, card, candidate, report):
+                    where = f"{rule.name} ({source})"
+                    report.moved_by[where] = report.moved_by.get(where, 0) + 1
     return report
 
 
+def _trash(s: _Session, card: str, candidate: Candidate, report: CleanupReport) -> bool:
+    refs = s.app.context.services.refs
+    handle = refs.remember(HandleKind.MESSAGE, candidate.source, candidate.summary.locator)
+    intent = {"kind": "mail.trash", "source": candidate.source, "message": handle}
+    try:
+        proposed = s.ok("propose", intent=intent, card=card)
+        if not proposed.get("ready"):
+            report.failed.append("not covered by the grant")
+            return False
+        done = s.ok("do", operation=proposed["operation"])
+    except ChamberlainError as error:
+        report.failed.append(error.code.value)
+        return False
+    state = str(done["operation"]["state"])
+    if state != "confirmed":
+        report.failed.append(state)
+    return state == "confirmed"
+
+
 def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
-    """The background run: at most once a day, only when the owner turned it on.
+    """The run an agent's `start` triggers: at most once a day, only when the owner turned it on.
 
     It proposes any missing grant (so the owner sees it in the viewer), then moves what the
-    active grants cover. The day is claimed at the start, so a slow run is never doubled.
+    active grants cover. The day is claimed first, so a slow run is never doubled.
     """
     ctx = app.context
     if not config.enabled or not config.rules:
@@ -222,4 +256,11 @@ def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
     return report
 
 
-__all__ = ["CARD_TITLE", "CleanupReport", "daily_cleanup", "propose_grants", "run_cleanup"]
+__all__ = [
+    "CARD_TITLE",
+    "CLEANUP_AGENT",
+    "CleanupReport",
+    "daily_cleanup",
+    "propose_grants",
+    "run_cleanup",
+]

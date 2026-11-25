@@ -4,8 +4,8 @@ from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
-from chamberlain.app.context import TickSteps
-from chamberlain.attention import tick as attention_tick
+from chamberlain.app.core import App
+from chamberlain.app.wiring import load_tracks, tick_steps
 from chamberlain.cleanup.rules import CleanupConfig, CleanupRule, own_folders
 from chamberlain.cleanup.run import daily_cleanup, propose_grants, run_cleanup
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery
@@ -102,16 +102,41 @@ def test_the_background_clean_up_is_off_by_default_and_runs_once_a_day(tmp_path:
         lab.close()
 
 
-def test_background_steps_run_only_in_the_schedulers_tick(tmp_path: Path) -> None:
+def test_an_agents_start_runs_the_clean_up_and_reports_it(tmp_path: Path) -> None:
     lab = build_fake_lab(tmp_path / "data")
     try:
-        seen: list[str] = []
-        steps = TickSteps(background=(lambda ctx: seen.append("ran"),))
-        ctx = replace(lab.app.context, tick_steps=steps)
-        attention_tick.tick(ctx, force=True)
-        assert seen == [], "a tool call's tick never runs the slow background steps"
-        attention_tick.tick(ctx, force=True, background=True)
-        assert seen == ["ran"]
+        now = lab.clock.now()
+        lab.provider.mail.add_message(
+            FAKE_MAIL_A, internet_message_id="<old@x>", date=now - timedelta(days=4 * 365)
+        )
+        on = RULES.model_copy(update={"enabled": True})
+        steps = tick_steps(None, None, cleanup=on)
+        app = App(replace(lab.app.context, tick_steps=steps), *load_tracks(None))
+
+        first = app.call("start", {"agent": "codex"})
+        assert first.data is not None
+        assert first.data.model_dump(mode="json")["housekeeping"] == [
+            'Clean-up is waiting for the owner to confirm "Move old mail to Trash" '
+            f"in the viewer for: {FAKE_MAIL_A}."
+        ]
+        grant = lab.app.context.db.execute(
+            "SELECT handle, content_sha256 FROM grants WHERE state = 'proposed'"
+        ).fetchone()
+        confirm_grant(lab.app.context, grant["handle"], {"content_sha256": grant["content_sha256"]})
+
+        lab.clock.advance(hours=24)
+        second = app.call("start", {"agent": "codex"})
+        assert second.data is not None
+        assert second.data.model_dump(mode="json")["housekeeping"] == [
+            "Clean-up moved 1 emails to Trash: "
+            f"Inbox-only mail after three years ({FAKE_MAIL_A}) 1."
+        ]
+        assert inbox_ids(lab) == set()
+        third = app.call("start", {"agent": "codex"})
+        assert third.data is not None
+        assert third.data.model_dump(mode="json")["housekeeping"] == [], (
+            "once a day; silent when idle"
+        )
     finally:
         lab.close()
 

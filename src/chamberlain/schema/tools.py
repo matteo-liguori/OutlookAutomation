@@ -97,6 +97,11 @@ class StartResponse(Model):
     sources: tuple[SourceStatus, ...] = ()
     work: tuple[WorkItem, ...] = Field(default=(), max_length=START_WORK_ITEMS)
     more_work: int = Field(default=0, ge=0)
+    housekeeping: tuple[Annotated[str, StringConstraints(max_length=SUMMARY_MAX)], ...] = Field(
+        default=(), max_length=10
+    )
+    """What the harness did by itself just now, one line each, for the report: the owner's
+    mail clean-up ("Clean-up moved 12 emails to Trash: ...")."""
 
 
 class NextRequest(ToolRequest):

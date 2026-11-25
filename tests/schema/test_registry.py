@@ -55,6 +55,7 @@ HARNESS_OR_USER_TEXT = frozenset(
         "args",
         "capabilities",
         "field",
+        "housekeeping",
     }
 )
 """Free-text response fields that never carry remote text (E-7, E-8).

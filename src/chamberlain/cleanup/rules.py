@@ -42,7 +42,7 @@ class CleanupRule(Model):
 
 class CleanupConfig(Model):
     enabled: bool = False
-    """Run the rules by themselves once a day in the scheduler's tick. Off by default;
+    """Run the rules by themselves once a day, when an agent calls `start`. Off by default;
     `chamberlain cleanup plan|grant|run` work by hand either way."""
     rules: tuple[CleanupRule, ...] = ()
     per_run: int = Field(default=500, ge=1, le=5000)
@@ -77,10 +77,14 @@ def sources_of(ctx: Context, rule: CleanupRule) -> list[str]:
     return [s for s in rule.sources if s in ctx.sources.mail]
 
 
-def candidates(ctx: Context, rule: CleanupRule, now: datetime) -> Iterator[Candidate]:
-    """Every message the rule would move, oldest folder first. Reads only."""
+def candidates(
+    ctx: Context, rule: CleanupRule, now: datetime, only: str | None = None
+) -> Iterator[Candidate]:
+    """Every message the rule would move (in mailbox `only`, if given), lazily. Reads only."""
     cutoff = now - timedelta(days=rule.older_than_days)
     for source in sources_of(ctx, rule):
+        if only is not None and source != only:
+            continue
         port = ctx.sources.mail_port(source)
         try:
             folders = port.folders(source)

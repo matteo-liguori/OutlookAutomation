@@ -55,7 +55,9 @@ Request: `agent?` (label, 40 chars), `purpose` (`interactive` | `scheduled`),
 `resume?` (`ses_` handle), `scheduled_day?` (`YYYY-MM-DD`, the local day a scheduled
 run was meant for, given by the wake adapter; without it a start is a live chat, R10).
 Response: `session`, `now`, `sources[] {id, kind, state, capabilities[]}`,
-`work[]` (`WorkItem`), `more_work` (count not shown).
+`work[]` (`WorkItem`), `more_work` (count not shown), `housekeeping[]` (at most 10
+lines of what the harness just did by itself, for the report: the owner's mail clean-up,
+docs/cleanup.md; empty when nothing happened).
 
 `WorkItem` is `{event, kind, subject?, summary, next}`: one event, one
 harness-written line of at most 160 characters, one exact tool call.

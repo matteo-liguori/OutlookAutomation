@@ -67,9 +67,13 @@ class TickSteps:
     """Every call, even a skipped tick, before detection: crashed-operation recovery (W-9)."""
     extra: tuple[TickStep, ...] = ()
     """After the inbox is reconciled, at most once per interval: the sweeper (M-21)."""
-    background: tuple[TickStep, ...] = ()
-    """Only in the operating system scheduler's tick (`chamberlain tick`), never inside a
-    tool call, because they may take minutes: the owner's mail clean-up."""
+    on_start: tuple["StartStep", ...] = ()
+    """When an agent calls `start`, before its work is offered: the owner's mail clean-up.
+    Each returns lines for the agent's report; a failing step never fails `start`."""
+
+
+StartStep = Callable[["Context", str], list[str]]
+"""`(context, the starting agent's name)` -> report lines."""
 
 
 @dataclass

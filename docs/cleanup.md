@@ -33,12 +33,16 @@ cleanup:
 
 ## How it runs
 
-With `enabled: true`, the scheduler's tick (`chamberlain tick`, see scheduling.md) runs the
-rules at most once a day, with no agent involved. It never runs inside an agent's tool call,
-because a large run takes minutes. The first time, it proposes one permission per mailbox:
-move to Trash only, from exactly the rules' folders, at most 500 a day. Confirm each once in
-the viewer's Needs you page; nothing moves before that. Every move is an ordinary harness
-write on the "Mail clean-up" card, so it is audited like any other.
+With `enabled: true`, the harness runs the rules by itself, at most once a day, when an agent
+calls `start` to get ready for its report. The agent does nothing for it: `start` returns a
+`housekeeping` line such as "Clean-up moved 12 emails to Trash: Inbox-only mail after three
+years (mail:kcl) 12." for the report. It is silent when nothing moved.
+
+The first time, it proposes one permission per mailbox: move to Trash only, from exactly the
+rules' folders, at most 500 a day. Confirm each once in the viewer's Needs you page; until then
+nothing moves and the line says what is waiting. Every move is an ordinary harness write on the
+"Mail clean-up" card, audited like any other. Steady state is a few messages a day; a large
+first backlog is better moved once by hand (below), so no `start` has to wait for it.
 
 By hand, whether or not it is enabled:
 
