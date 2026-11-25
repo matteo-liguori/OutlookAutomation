@@ -12,16 +12,21 @@ STATIC = Path(viewer_package.__file__).parent / "static"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
-@pytest.mark.parametrize(
-    "name", ["page.js", "calendar.js", "report.js", "appointments.js", "complex.js", "livetest.js"]
-)
-def test_each_viewer_script_parses(name: str) -> None:
+def test_each_viewer_script_parses() -> None:
     node = shutil.which("node")
     assert node is not None
-    done = subprocess.run(
-        [node, "--check", str(STATIC / name)], capture_output=True, text=True, check=False
-    )
-    assert done.returncode == 0, done.stderr
+    for name in [
+        "page.js",
+        "calendar.js",
+        "report.js",
+        "appointments.js",
+        "complex.js",
+        "livetest.js",
+    ]:
+        done = subprocess.run(
+            [node, "--check", str(STATIC / name)], capture_output=True, text=True, check=False
+        )
+        assert done.returncode == 0, (name, done.stderr)
 
 
 def test_the_token_survives_a_reload_in_the_tab_only() -> None:

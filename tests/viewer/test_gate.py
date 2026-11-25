@@ -5,7 +5,6 @@ Rules: docs/contracts/05-grants.md (G-17, G-18).
 
 from typing import Any
 
-import pytest
 from viewer_rig import Rig
 
 from chamberlain.domain.grants import GrantState
@@ -140,7 +139,7 @@ def test_g18_an_audited_refusal_never_records_a_hostile_path(rig: Rig) -> None:
     assert "(path)" in rows[0].summary
 
 
-@pytest.mark.parametrize("path", ["/api/grants", "/api/operations/op_0123456789abcdef/resolve"])
-def test_g17_the_mounted_confirmation_routes_sit_behind_the_same_gate(rig: Rig, path: str) -> None:
-    assert rig.call("GET", path, token=None).status == 403
-    assert rig.call("GET", path, host="evil.example").status == 403
+def test_g17_the_mounted_confirmation_routes_sit_behind_the_same_gate(rig: Rig) -> None:
+    for path in ["/api/grants", "/api/operations/op_0123456789abcdef/resolve"]:
+        assert rig.call("GET", path, token=None).status == 403, path
+        assert rig.call("GET", path, host="evil.example").status == 403, path

@@ -14,7 +14,10 @@ from chamberlain.schema.registry import TOOLS
 from chamberlain.writes import repo
 
 
-def test_g19_the_detail_shows_the_exact_content_to_be_authorised(rig: Rig) -> None:
+def test_g19_the_viewer_shows_the_exact_content_a_wrong_hash_is_409_and_the_right_hash_activates(
+    rig: Rig,
+) -> None:
+    # g19_the_detail_shows_the_exact_content_to_be_authorised
     proposal = rig.proposal(to="new.person@example.org", subject="Quarterly numbers")
     handle = proposal.grant.handle  # type: ignore[union-attr]
     reply = rig.call("GET", f"/api/grants/{handle}")
@@ -26,8 +29,7 @@ def test_g19_the_detail_shows_the_exact_content_to_be_authorised(rig: Rig) -> No
     assert detail["state"] == "proposed"
     assert detail["requirement"] == "human_confirmation"
 
-
-def test_g19_confirm_with_a_different_hash_is_409_and_nothing_is_granted(rig: Rig) -> None:
+    # g19_confirm_with_a_different_hash_is_409_and_nothing_is_granted
     proposal = rig.proposal()
     handle = proposal.grant.handle  # type: ignore[union-attr]
     stale = rig.call("POST", f"/api/grants/{handle}/confirm", {"content_sha256": "f" * 64})
@@ -38,10 +40,7 @@ def test_g19_confirm_with_a_different_hash_is_409_and_nothing_is_granted(rig: Ri
     kinds = [r.kind for r in repo.audit_rows(rig.ctx.db)]
     assert kinds.count("confirm.rejected") == 2
 
-
-def test_g19_g15_confirming_the_hash_that_was_shown_activates_and_names_the_human(
-    rig: Rig,
-) -> None:
+    # g19_g15_confirming_the_hash_that_was_shown_activates_and_names_the_human
     proposal = rig.proposal()
     handle = proposal.grant.handle  # type: ignore[union-attr]
     shown = rig.call("GET", f"/api/grants/{handle}").body["content_sha256"]
@@ -135,13 +134,12 @@ def test_g18_the_token_is_in_no_tool_reply_no_audit_row_and_no_viewer_reply(rig:
     assert ("x" + rig.token) not in dump
 
 
-def test_g18_the_token_file_is_in_run_and_matches_the_launch_token(rig: Rig) -> None:
+def test_g18_the_token_file_is_in_run_and_no_tool_can_import_token_or_store(rig: Rig) -> None:
+    # g18_the_token_file_is_in_run_and_matches_the_launch_token
     saved = (rig.ctx.data_root / "run" / "viewer.token").read_text(encoding="utf-8")
     assert saved == rig.token
 
-
-def test_g18_a_tool_cannot_import_the_viewer_token_or_the_store_into_an_artifact(rig: Rig) -> None:
-    """`keep` copies a file the agent names; the token file and the store must be off limits."""
+    # g18_a_tool_cannot_import_the_viewer_token_or_the_store_into_an_artifact: `keep` copies a f
     started = rig.app.call("start", {"agent": "agent"})
     session = started.data.session  # type: ignore[union-attr]
     root = rig.ctx.data_root

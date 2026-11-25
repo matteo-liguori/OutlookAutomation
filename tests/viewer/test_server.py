@@ -96,7 +96,10 @@ def test_g18_the_page_asks_for_the_token_when_the_browser_could_not_be_opened(
         viewer.close()
 
 
-def test_g17_each_launch_has_its_own_random_token_and_port(tmp_path: Path) -> None:
+def test_g17_each_launch_has_its_own_token_and_the_viewer_listens_nowhere_else(
+    tmp_path: Path,
+) -> None:
+    # g17_each_launch_has_its_own_random_token_and_port
     first = launch(tmp_path / "one", open_browser=False)
     second = launch(tmp_path / "two", open_browser=False)
     try:
@@ -111,8 +114,7 @@ def test_g17_each_launch_has_its_own_random_token_and_port(tmp_path: Path) -> No
         first.close()
         second.close()
 
-
-def test_g17_the_viewer_cannot_be_told_to_listen_elsewhere() -> None:
+    # g17_the_viewer_cannot_be_told_to_listen_elsewhere
     assert server.BIND_ADDRESS == "127.0.0.1"
     options = {a.dest for a in cli._parser()._actions}
     assert "host" not in options
@@ -147,6 +149,18 @@ def test_tick_prints_the_passes_a_wake_adapter_should_start(tmp_path: Path) -> N
     out = io.StringIO()
     cli.main(["--data", str(tmp_path / "data"), "tick"], out)
     assert json.loads(out.getvalue()) == {"ran": True, "wake": False, "due": []}
+
+
+def test_a_malformed_profile_stops_the_viewer_with_an_error_not_a_traceback(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "data"
+    (root / "config").mkdir(parents=True)
+    (root / "config" / "connections.yaml").write_text("version: 2\n", encoding="utf-8")
+    out = io.StringIO()
+    code = cli.main(["--data", str(root), "viewer", "--no-open"], out)
+    assert code == cli.EXIT_FAILED
+    assert "config.invalid" in out.getvalue()
 
 
 def test_the_viewer_runs_on_the_configured_app(
@@ -184,15 +198,3 @@ def test_the_viewer_runs_on_the_configured_app(
         assert [tuple(row) for row in rows] == [("morning", "07:30", "Europe/London", "1,2,3")]
     finally:
         app.close()
-
-
-def test_a_malformed_profile_stops_the_viewer_with_an_error_not_a_traceback(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "data"
-    (root / "config").mkdir(parents=True)
-    (root / "config" / "connections.yaml").write_text("version: 2\n", encoding="utf-8")
-    out = io.StringIO()
-    code = cli.main(["--data", str(root), "viewer", "--no-open"], out)
-    assert code == cli.EXIT_FAILED
-    assert "config.invalid" in out.getvalue()
