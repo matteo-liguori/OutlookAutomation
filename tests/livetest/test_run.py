@@ -165,3 +165,28 @@ def test_the_lost_response_scenario_needs_a_hook_that_fires(lab: FakeLab) -> Non
     lab.env.faults = Unavailable()
     refused = execute(lab.app, lab.env, lab.config, RunOptions(only=only))
     assert "no hook here" in refused.results[0].reason
+
+
+def test_each_scenario_lands_in_the_report_at_once_and_a_retry_runs_only_the_rest(
+    lab: FakeLab,
+) -> None:
+    """Owner, 2026-11-25: a stopped run keeps every result so far; retry only what is left."""
+    from chamberlain.livetest.runner import NOT_RUN_YET, retry_ids
+
+    seen: list[RunReport] = []
+    report = run_all(lab, only=("mail.self_send", "mail.cross_send"), progress=seen.append)
+    assert len(seen) >= 3
+    assert not seen[0].finished
+    assert all(r.reason == NOT_RUN_YET for r in seen[0].results if r.status is Status.SKIPPED)
+    ran = [len([r for r in s.results if r.reason != NOT_RUN_YET]) for s in seen]
+    assert ran == sorted(ran)
+    assert report.finished
+    assert retry_ids(report) == ()
+
+    # A run stopped half-way: the first result passed, the others never ran.
+    stopped = seen[1]
+    left = retry_ids(stopped)
+    assert left
+    assert all(r.id in left for r in stopped.results if r.reason == NOT_RUN_YET)
+    again = run_all(lab, retry_ids=left)
+    assert {r.id for r in again.results} == set(left)

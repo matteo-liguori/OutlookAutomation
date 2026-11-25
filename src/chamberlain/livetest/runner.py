@@ -7,8 +7,8 @@ next step.
 
 import secrets
 import time
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 
 from chamberlain.app.core import App
 from chamberlain.livetest.authority import ensure_card, require_grants
@@ -35,6 +35,8 @@ from chamberlain.livetest.scenarios_harness import doctor_states
 from chamberlain.livetest.timeutil import iso
 from chamberlain.schema.errors import ChamberlainError
 
+NOT_RUN_YET = "not run yet"
+"""The reason on a scenario a report lists before it has run (or after the run was stopped)."""
 APPROVAL_CONFIG = "live_test.approve_calendar_edits in connections.yaml"
 APPROVAL_OPTION = "the --approve-calendar-edits option of this run"
 RUN_ACTION_PREFIX = "Live test run "
@@ -49,6 +51,12 @@ class RunOptions:
     approve_calendar_edits: bool = False
     """The one-run option; the config setting works without it."""
     run_id: str | None = None
+    retry_from: str | None = None
+    """`--retry`: a run id (or `latest`) whose failed and never-run scenarios run again."""
+    retry_ids: tuple[str, ...] = ()
+    """Only these exact scenario ids (`--retry`: what failed or never ran in an earlier run)."""
+    progress: Callable[[RunReport], None] | None = field(default=None, compare=False)
+    """Called with the report so far after every scenario, so a stopped run keeps its results."""
 
 
 def approval(config: LiveTestConfig, options: RunOptions) -> tuple[bool, str]:
@@ -160,6 +168,18 @@ def _run_one(lab: Lab, item: Planned, keep: bool) -> ScenarioResult:
     )
 
 
+def _pending(item: Planned) -> ScenarioResult:
+    if item.skip:
+        return _skipped(item, False)
+    return ScenarioResult(
+        id=item.id,
+        group=item.spec.group,
+        status=Status.SKIPPED,
+        reason=NOT_RUN_YET,
+        manual=item.spec.manual,
+    )
+
+
 def _skipped(item: Planned, dry: bool) -> ScenarioResult:
     reason = item.skip or ("planned (dry run)" if dry else "")
     return ScenarioResult(
@@ -211,6 +231,8 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
     """Plan, check authority, run, clean up and score one run."""
     sources = app.context.sources
     plan = build_plan(config, sources, only=options.only, skip=options.skip)
+    if options.retry_ids:
+        plan = [p for p in plan if p.id in options.retry_ids]
     run_id = make_run_id(env, options)
     started_at = iso(env.clock.now())
     names = tuple(sorted({s for p in plan for s in (p.target.source, p.target.other) if s}))
@@ -228,10 +250,23 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
     lab.action = _start_action(lab)
     lab.baseline = doctor_states(lab)
     done: list[ScenarioResult] = []
+
+    def tell() -> None:
+        if options.progress is None:
+            return
+        by_id = {r.id: r for r in done}
+        sofar = tuple(by_id.get(p.id) or _pending(p) for p in plan)
+        partial = _report(
+            run_id, started_at, env, env.mode, options, names, sofar, [], lab.baseline, {}
+        )
+        options.progress(partial.model_copy(update={"finished": False}))
+
+    tell()
     for item in plan:
         if item.skip or item.spec.last:
             continue
         done.append(_run_one(lab, item, options.keep))
+        tell()
     leftovers: list[str] = []
     if not options.keep and runnable:
         _second_chance(lab, plan)
@@ -239,6 +274,7 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
     for item in plan:
         if item.spec.last and not item.skip:
             done.append(_run_one(lab, item, options.keep))
+            tell()
     by_id = {r.id: r for r in done}
     ordered = tuple(by_id.get(p.id) or _skipped(p, False) for p in plan)
     after = doctor_states(lab)
@@ -283,4 +319,9 @@ def _report(
     )
 
 
-__all__ = ["MARKER", "RunOptions", "approval", "execute", "open_lab"]
+def retry_ids(report: RunReport) -> tuple[str, ...]:
+    """The scenarios of a run worth running again: those that failed or never ran."""
+    return tuple(r.id for r in report.results if r.status is Status.FAIL or r.reason == NOT_RUN_YET)
+
+
+__all__ = ["MARKER", "NOT_RUN_YET", "RunOptions", "approval", "execute", "open_lab", "retry_ids"]

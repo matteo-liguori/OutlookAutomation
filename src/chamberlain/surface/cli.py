@@ -15,6 +15,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain recipients seed [--months N]
                                         learn known recipients from each Sent folder (read-only)
     chamberlain live-test [run|grant|sweep|report] [--only P] [--skip P] [--keep] [--dry-run]
+                          [--retry RUN]
                                         exercise the harness against the real accounts
                                         (docs/live-test.md; off until live_test.enabled)
     chamberlain <tool> --json '{...}'   call a tool and print the envelope
@@ -118,6 +119,12 @@ def _parser() -> argparse.ArgumentParser:
     live.add_argument("--only", action="append", default=[], help="only scenarios matching this")
     live.add_argument("--skip", action="append", default=[], help="leave out scenarios matching")
     live.add_argument("--keep", action="store_true", help="leave the test items in place")
+    live.add_argument(
+        "--retry",
+        dest="retry_from",
+        metavar="RUN",
+        help="run again only what failed or never ran in RUN (a run id, or latest)",
+    )
     live.add_argument("--dry-run", action="store_true", help="show the plan and touch nothing")
     live.add_argument(
         "--approve-calendar-edits",
@@ -398,6 +405,7 @@ def _live_test(args: argparse.Namespace, out: TextIO) -> int:
         keep=args.keep,
         dry_run=args.dry_run,
         approve_calendar_edits=args.approve_calendar_edits,
+        retry_from=args.retry_from,
     )
     return live_test_main(
         args.action, Path(data), options, out, as_json=args.as_json, run_id=args.report_run

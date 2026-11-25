@@ -69,6 +69,9 @@ class RunReport(Model):
     """`id:status` of every doctor check, before and after the run."""
     stopped: str = ""
     """Set when the run stopped before the scenarios (for example a missing grant)."""
+    finished: bool = True
+    """False while the run is still going: the report is rewritten after every scenario, and
+    the ones not run yet say so (`NOT_RUN_YET`)."""
 
 
 def compute_score(results: tuple[ScenarioResult, ...], leftovers: int) -> Score:

@@ -58,12 +58,18 @@ chamberlain live-test run --dry-run          # show the plan; touch nothing
 chamberlain live-test run --only mail.reply  # only scenarios whose id contains this
 chamberlain live-test run --skip calendar    # leave some out
 chamberlain live-test run --keep             # leave the items for you to look at
+chamberlain live-test run --retry latest     # run again only what failed or never ran
 chamberlain live-test sweep                  # remove marked items from earlier runs
 chamberlain live-test report                 # print the latest report again
 ```
 
 `--only` and `--skip` take a word (matches inside the scenario id) or a pattern with `*`.
 Both can be repeated. A full run takes a few minutes: mail has to arrive.
+
+Each scenario's result is printed and written to the report the moment it finishes; the
+scenarios still to come are listed as "not run yet". A run that is stopped part way keeps
+everything it did, and `--retry <run id>` (or `latest`) runs only the scenarios that failed
+or never ran in that run. Run `sweep` after a stopped run.
 
 Keep these limits in mind:
 
