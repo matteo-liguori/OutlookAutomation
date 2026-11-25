@@ -150,7 +150,7 @@ def _parse_component(component: Any) -> ParsedEvent:
         all_day=all_day,
         location=str(component.get("LOCATION", "")),
         description=str(component.get("DESCRIPTION", "")),
-        attendees=(str(a) for a in _list(component, "ATTENDEE")),
+        attendees=(cal_address(a) for a in _list(component, "ATTENDEE")),
     )
     try:
         sequence = int(component.get("SEQUENCE", 0))
@@ -172,14 +172,29 @@ def _parse_component(component: Any) -> ParsedEvent:
         organiser=organiser_text is not None,
         sequence=sequence,
         organiser_address=(
-            clean_one(str(organiser_text)) or None if organiser_text is not None else None
+            cal_address(organiser_text) or None if organiser_text is not None else None
         ),
         partstats=tuple(
             (address, str(getattr(a, "params", {}).get("PARTSTAT", "NEEDS-ACTION")).upper())
             for a in _list(component, "ATTENDEE")
-            if (address := clean_one(str(a)))
+            if (address := cal_address(a))
         ),
     )
+
+
+def cal_address(value: Any) -> str:
+    """The email address of an ORGANIZER or ATTENDEE, cleaned; empty if it has none.
+
+    iCloud rewrites its own user to a principal path (`/a.../principal/`) and keeps the address
+    in the EMAIL parameter (found live, 2026-11-25), so a value that is not `mailto:` falls
+    back to EMAIL.
+    """
+    text = str(value)
+    if not text.lower().startswith("mailto:"):
+        email = getattr(value, "params", {}).get("EMAIL")
+        if email:
+            return clean_one(str(email))
+    return clean_one(text)
 
 
 def parse_events(text: str) -> list[ParsedEvent]:
@@ -449,7 +464,7 @@ def apply_answer(text: str, address: str, partstat: str, now: datetime) -> str:
     event = masters[0]
     changed = False
     for entry in _list(event, "ATTENDEE"):
-        if clean_one(str(entry)) == address:
+        if cal_address(entry) == address:
             entry.params["PARTSTAT"] = partstat
             changed = True
     if not changed:

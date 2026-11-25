@@ -34,6 +34,10 @@ def matches(pattern: str, scenario_id: str) -> bool:
     return pattern.lower() in scenario_id.lower()
 
 
+HEALTH_TRIES = 3
+"""How often a mailbox found stale is checked again before its scenarios are skipped."""
+
+
 def _capabilities(sources: SourceRouter, source: str) -> tuple[set[str], str]:
     """`(capability names, problem)`: the problem is empty when the source can be used."""
     try:
@@ -42,6 +46,12 @@ def _capabilities(sources: SourceRouter, source: str) -> tuple[set[str], str]:
                 return set(), f"{source} is not a configured, enabled source"
             port = sources.mail_port(source)
             health = port.health(source)
+            for _ in range(HEALTH_TRIES - 1):
+                # "stale" means two quick Inbox samples differed: mail arriving between them
+                # (a test's own mail) is enough, so one stale answer does not skip a mailbox.
+                if health.state is not HealthState.STALE:
+                    break
+                health = port.health(source)
             names = set(port.capabilities(source).names())
         else:
             if source not in sources.calendar:

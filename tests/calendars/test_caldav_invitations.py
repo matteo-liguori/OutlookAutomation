@@ -377,3 +377,35 @@ def test_an_event_with_a_property_written_twice_still_reads() -> None:
     [event] = ics.parse_events(text)
     assert event.fields.title == "Twice"
     assert event.updated.year == 2027
+
+
+ICLOUD_ORGANISED = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Apple Inc.//iCloud//EN
+BEGIN:VEVENT
+UID:icloud-principal-1
+DTSTART:20271201T100000Z
+DTEND:20271201T103000Z
+DTSTAMP:20271120T100000Z
+SUMMARY:Planning
+ORGANIZER;EMAIL=me@example.test;CN=Me:/aMTYz/principal/
+ATTENDEE;CUTYPE=INDIVIDUAL;PARTSTAT=ACCEPTED;EMAIL=me@example.test:/aMTYz/principal/
+ATTENDEE;PARTSTAT=NEEDS-ACTION;SCHEDULE-STATUS=2.0:mailto:guest@example.test
+END:VEVENT
+END:VCALENDAR
+"""
+
+
+def test_an_icloud_principal_path_is_read_by_its_email_parameter() -> None:
+    """iCloud rewrites its own user to a principal path (found live, 2026-11-25): the event
+    is still ours, so it stays changeable and is not taken for someone else's invitation."""
+    from chamberlain.connectors.caldav.calendar import _is_invitee_copy
+    from chamberlain.connectors.calendar_support import ics
+
+    parsed = ics.master_of(ICLOUD_ORGANISED)
+    assert parsed.organiser_address == "me@example.test"
+    assert dict(parsed.partstats) == {
+        "me@example.test": "ACCEPTED",
+        "guest@example.test": "NEEDS-ACTION",
+    }
+    assert not _is_invitee_copy(parsed, "me@example.test")
