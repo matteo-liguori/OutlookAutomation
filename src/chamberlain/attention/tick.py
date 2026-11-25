@@ -39,6 +39,18 @@ def _due(ctx: Context) -> bool:
     return elapsed.total_seconds() >= TICK_MIN_INTERVAL_SECONDS
 
 
+def _claim(ctx: Context) -> bool:
+    """Take the next tick at its start, atomically. Another caller (the agent, the viewer, a
+    scheduled pass, live-test workers) that finds it taken skips instead of running the same
+    collection at the same time (found live, 2026-11-25: eight callers all collected at once).
+    """
+    with transaction(ctx.db):
+        if not _due(ctx):
+            return False
+        set_state(ctx.db, ctx.clock, "attention.last_tick_at", _stamp(ctx))
+    return True
+
+
 def tick(ctx: Context, *, force: bool = False) -> bool:
     """Run one tick. Returns True when detectors ran, False when it was skipped."""
     _run_steps(ctx, ctx.tick_steps.always)
@@ -49,7 +61,7 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
     except Exception:
         log_failure(log, "session upkeep failed")
     try:
-        if not force and not _due(ctx):
+        if not force and not _claim(ctx):
             return False
         try:
             sync.presync(ctx)

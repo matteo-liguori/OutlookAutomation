@@ -161,6 +161,22 @@ def test_a6_a_tick_within_a_minute_is_skipped(ctx: Context, seed: Any, clock: Ma
     assert kinds(ctx) == ["operation.uncertain"]
 
 
+def test_a6_a_tick_already_running_elsewhere_is_not_started_again(
+    ctx: Context, monkeypatch: pytest.MonkeyPatch
+):
+    """Another caller arriving while a tick collects skips it (found live: eight at once)."""
+    real = tick.collect
+    inner: list[bool] = []
+
+    def collect_while_another_caller_arrives(context: Context) -> Any:
+        inner.append(tick.tick(context))
+        return real(context)
+
+    monkeypatch.setattr(tick, "collect", collect_while_another_caller_arrives)
+    assert tick.tick(ctx) is True
+    assert inner == [False]
+
+
 def test_w9_recovery_steps_run_even_on_a_skipped_tick(ctx: Context, clock: ManualClock):
     calls: list[str] = []
     steps = TickSteps(
