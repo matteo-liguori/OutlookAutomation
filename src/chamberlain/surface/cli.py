@@ -14,6 +14,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain recipients seed [--months N]
                                         learn known recipients from each Sent folder (read-only)
+    chamberlain cleanup plan|grant|run   move old mail to Trash by the cleanup rules
     chamberlain export thread ID... [--file F] [--title T]
                                         one conversation as clean text + attachments (zip)
     chamberlain addon update [--restart] update the Thunderbird add-on by replacing its file
@@ -34,6 +35,7 @@ from typing import Any, TextIO
 
 from chamberlain import __version__
 from chamberlain.app.wiring import run_tick
+from chamberlain.cleanup.run import propose_grants, run_cleanup
 from chamberlain.connections import (
     build_runtime,
     load_connections,
@@ -104,6 +106,10 @@ def _parser() -> argparse.ArgumentParser:
         help="switch the Claude file guard on or off (off by default; docs/review.md)",
     )
     guard.add_argument("action", choices=["on", "off", "status"])
+    cleanup = commands.add_parser(
+        "cleanup", help="move old mail to Trash by the cleanup rules (plan, grant or run)"
+    )
+    cleanup.add_argument("action", choices=["plan", "grant", "run"])
     export = commands.add_parser(
         "export",
         help="a conversation as clean text plus attachments, zipped (exports/, kept a week)",
@@ -365,6 +371,34 @@ def _import(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
+    """`plan` counts, `grant` proposes the owner's grant, `run` moves to Trash (docs/cleanup.md)."""
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
+        return EXIT_FAILED
+    root = Path(data)
+    config = load_connections(root).cleanup
+    if not config.rules:
+        out.write("No cleanup rules in connections.yaml (see docs/cleanup.md).\n")
+        return EXIT_OK
+    app = open_app(root)
+    try:
+        if args.action == "grant":
+            for source, state, handle in propose_grants(app, config):
+                out.write(f"{source}: {state} {handle}\n")
+            out.write("Confirm each waiting grant in the viewer (chamberlain viewer).\n")
+            return EXIT_OK
+        report = run_cleanup(app, config, dry_run=args.action == "plan")
+    except ChamberlainError as error:
+        out.write(f"{error.message} {error.fix}".rstrip() + "\n")
+        return EXIT_FAILED
+    finally:
+        app.close()
+    out.write("\n".join(report.lines(dry_run=args.action == "plan")) + "\n")
+    return EXIT_FAILED if report.failed else EXIT_OK
+
+
 def _export(args: argparse.Namespace, out: TextIO) -> int:
     """An owner utility: one conversation as a zip under exports/ (read-only on the mail)."""
     data = args.data or os.environ.get(DATA_ENV)
@@ -580,6 +614,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _addon(args, stream)
     if args.command == "export":
         return _export(args, stream)
+    if args.command == "cleanup":
+        return _cleanup(args, stream)
     if args.command == "viewer":
         return _viewer(args, stream)
     if args.command == "live-test":

@@ -10,6 +10,7 @@ from typing import Annotated, Literal, Self
 
 from pydantic import Field, model_validator
 
+from chamberlain.cleanup.rules import CleanupConfig
 from chamberlain.domain.grants import Requirement
 from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.domain.senders import AuthorisedSenders
@@ -180,6 +181,8 @@ class Connections(Model):
     schedules: tuple[ScheduleConfig, ...] = ()
     mail_sync: MailSyncConfig = MailSyncConfig()
     read_state: ReadStateConfig = ReadStateConfig()
+    cleanup: CleanupConfig = CleanupConfig()
+    """Old mail the owner's rules move to Trash (`chamberlain cleanup`). None by default."""
     updates: UpdatesConfig = UpdatesConfig()
     review: ReviewConfig = ReviewConfig()
     authorised_senders: AuthorisedSenders = AuthorisedSenders()
