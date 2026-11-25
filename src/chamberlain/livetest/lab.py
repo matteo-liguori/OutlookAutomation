@@ -200,10 +200,12 @@ class Lab:
 
     def arrival(self, source: str, subject: str) -> JSON:
         """The inbox hit for a marked subject, waiting for it to arrive."""
-        return self.wait_until(
-            f"the mail arriving in {source}",
-            lambda: next(iter(self.hits(source, subject, folder="inbox")), None),
-        )
+
+        def look() -> JSON | None:
+            self.env.probe.sync_inbox(source)
+            return next(iter(self.hits(source, subject, folder="inbox")), None)
+
+        return self.wait_until(f"the mail arriving in {source}", look)
 
     def message_id(self, handle: str) -> str:
         """The Message-ID header of a message, read through `open headers`."""

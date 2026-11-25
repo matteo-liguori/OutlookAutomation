@@ -19,6 +19,7 @@ from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarQuery
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery
 from chamberlain.ports.clock import Clock
+from chamberlain.ports.sync import FolderSync
 from chamberlain.schema.errors import ChamberlainError
 
 FAULT_FILE = "livetest-fault.json"
@@ -76,6 +77,10 @@ class Probe(Protocol):
 
     def in_reply_to(self, source: str, copy: MailCopy) -> str: ...
 
+    def sync_inbox(self, source: str) -> None:
+        """Ask the client to fetch new mail into the inbox now (read-only; never raises)."""
+        ...
+
     def events(self, source: str, text: str, start: datetime, end: datetime) -> list[CalendarCopy]:
         """Every event (cancelled too) whose title contains `text`, in the window."""
         ...
@@ -85,6 +90,8 @@ class Probe(Protocol):
         ...
 
 
+INBOX_SYNC_SECONDS = 20
+"""How long an arrival check waits for the inbox to sync before searching it."""
 MARKED_MAIL_DAYS = 30
 """How far back the probe looks for marked mail; runs and sweeps are recent."""
 
@@ -147,6 +154,20 @@ class PortProbe:
 
     def folders(self, source: str) -> list[Folder]:
         return self._ctx.sources.mail_port(source).folders(source)
+
+    def sync_inbox(self, source: str) -> None:
+        # A folder counts as fresh for minutes after a sync, so a reply that lands meanwhile
+        # stays invisible until the client checks the server by itself (found live,
+        # 2026-11-25: arrivals were missed though the mail had come).
+        port = self._ctx.sources.mail_port(source)
+        if not isinstance(port, FolderSync):
+            return
+        try:
+            inbox = [f.id for f in port.folders(source) if f.role is FolderRole.INBOX]
+            if inbox:
+                port.sync_folders(source, inbox, timedelta(seconds=INBOX_SYNC_SECONDS))
+        except ChamberlainError:
+            return
 
     def copies(self, source: str, text: str) -> list[MailCopy]:
         port = self._ctx.sources.mail_port(source)

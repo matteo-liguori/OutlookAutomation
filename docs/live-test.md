@@ -158,6 +158,9 @@ It works only when the bridge folder is `<data root>/bridge` (the default).
   says. If that is not the bound draft folder (on Gmail, a stray top-level `Drafts` instead
   of `[Gmail]/Drafts`), draft saves are refused and the reason names both folders. Sends do
   not depend on it.
+- **The invitee must be another account.** A calendar never invites its own organiser. An
+  iCloud account whose Apple ID is a Gmail address sends invitations *as* that address, so
+  that Gmail account cannot be the iCloud calendar's invitee; use another owned account.
 - **Invitations on Google.** Google adds an invitation to the calendar only as its setting
   "Add invitations to my calendar" allows. If the invitation arrives as mail but never shows
   on the calendar, the invitation scenarios say so; change that setting to "From everyone".
