@@ -7,7 +7,9 @@ confirm in the viewer: this module only proposes it.
 """
 
 import logging
+import time
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any, Final
@@ -32,6 +34,8 @@ log = logging.getLogger("chamberlain.cleanup")
 
 CARD_TITLE: Final = "Mail clean-up"
 GRANT_TITLE: Final = "Move old mail to Trash"
+BUSY_TRIES: Final = 12
+BUSY_WAIT_SECONDS: Final = 5.0
 BATCH: Final = 250
 """Messages per write: one Thunderbird move each, well inside the add-on's write deadline."""
 LOOK_AT_TRASH_OVER: Final = 100
@@ -90,8 +94,9 @@ class CleanupReport:
 
 
 class _Session:
-    def __init__(self, app: App) -> None:
+    def __init__(self, app: App, wait: Callable[[float], None] = time.sleep) -> None:
         self.app = app
+        self.wait = wait
         self.session = str(self.ok("start", agent=CLEANUP_AGENT)["session"])
 
     def ok(self, tool: str, **request: Any) -> dict[str, Any]:
@@ -229,15 +234,23 @@ def _trash(
     refs = s.app.context.services.refs
     handles = [refs.remember(HandleKind.MESSAGE, source, c.summary.locator) for c in batch]
     intent = {"kind": "mail.trash", "source": source, "messages": handles}
-    try:
-        proposed = s.ok("propose", intent=intent, card=card)
-        if not proposed.get("ready"):
-            report.failed += ["not covered by the grant"] * len(batch)
-            return None
-        done = s.ok("do", operation=proposed["operation"])
-    except ChamberlainError as error:
-        report.failed += [error.code.value] * len(batch)
-        return 0
+    attempt = 0
+    while True:
+        try:
+            proposed = s.ok("propose", intent=intent, card=card)
+            if not proposed.get("ready"):
+                report.failed += ["not covered by the grant"] * len(batch)
+                return None
+            done = s.ok("do", operation=proposed["operation"])
+            break
+        except ChamberlainError as error:
+            # Busy means Thunderbird refused before doing anything: wait and try again.
+            attempt += 1
+            if error.code is ErrorCode.SOURCE_BUSY and attempt < BUSY_TRIES:
+                s.wait(BUSY_WAIT_SECONDS)
+                continue
+            report.failed += [error.code.value] * len(batch)
+            return 0
     operation: dict[str, Any] = done["operation"]
     if operation["state"] != "confirmed":
         report.failed += [str(operation["state"])] * len(batch)

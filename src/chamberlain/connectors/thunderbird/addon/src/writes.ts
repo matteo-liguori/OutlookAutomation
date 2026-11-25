@@ -2,7 +2,7 @@
 // Each write performs one logical mutation, never retries, keeps no journal. The add-on
 // reports facts; deciding what absence proves is the Python connector's job.
 
-const TUNING = { movePollMs: 250, moveAttempts: 20, savePollMs: 250, saveAttempts: 24 };
+const TUNING = { movePollMs: 250, moveAttempts: 20, savePollMs: 250, saveAttempts: 24, batchCheckMs: 25_000 };
 
 interface Ctx {
   id: string;
@@ -67,10 +67,15 @@ async function cmdMove(a: MoveArgs | TrashArgs, ctx: Ctx, trash: boolean): Promi
   return fail("not_verified", "Exactly one copy at the destination and none at the source was not seen.", "possible");
 }
 
-/** Every message of one folder by bare Message-ID: one scan, however many are asked about. */
-async function byMessageId(r: Bound, folderId: string): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
+interface DateWindow {
+  sinceMs?: number;
+  untilMs?: number;
+}
+
+/** Every message of one folder (within a date window) by bare Message-ID: one scan. */
+async function byMessageId(r: Bound, folderId: string, window: DateWindow = {}): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
   await folderOf(r, folderId);
-  const scan = await scanQuery(r, { folderId, maxScan: 200000 });
+  const scan = await scanQuery(r, { folderId, maxScan: 200000, ...window });
   const map = new Map<string, TbHeader[]>();
   for (const h of scan.messages) {
     const id = bare(h.headerMessageId);
@@ -91,28 +96,36 @@ async function cmdTrashMany(a: TrashManyArgs, ctx: Ctx): Promise<TrashManyResult
   const items: TrashManyItem[] = [];
   const ids: number[] = [];
   const moving: string[] = [];
+  const dates: number[] = [];
   for (const raw of a.internet_message_ids) {
     const id = bare(raw);
     const found = source.map.get(id) ?? [];
     if (found.length === 1) {
       ids.push(found[0].id);
       moving.push(id);
+      dates.push(whenMs(found[0]));
       items.push({ internet_message_id: raw, ok: true, code: "" });
     } else {
       items.push({ internet_message_id: raw, ok: false, code: found.length ? "ambiguous" : "not_found" });
     }
   }
   if (ids.length === 0) return fail("not_found", "None of the messages is in that folder.");
+  // The check reads only the dates the batch spans (two days' margin): a few hundred headers,
+  // not the whole Inbox and Trash on every round (found live, 2026-11-25: full reads overran).
+  const day = 86_400_000;
+  const window = { sinceMs: Math.min(...dates) - 2 * day, untilMs: Math.max(...dates) + 2 * day };
   markMutation(ctx);
   await messenger.messages.move(ids, a.destination_folder_id);
-  for (let attempt = 0; attempt < TUNING.moveAttempts; attempt++) {
-    const left = await byMessageId(a, a.folder_id);
-    const there = await byMessageId(a, a.destination_folder_id);
+  const giveUpAt = Date.now() + TUNING.batchCheckMs;
+  while (Date.now() < giveUpAt) {
+    const left = await byMessageId(a, a.folder_id, window);
+    const there = await byMessageId(a, a.destination_folder_id, window);
     if (left.complete && there.complete && moving.every((id) => !left.map.has(id) && there.map.has(id))) {
       return { items, verified: true };
     }
-    await sleep(TUNING.movePollMs);
+    await sleep(TUNING.movePollMs * 4);
   }
+  // Not seen in time: the harness's own check (reconcile) settles it.
   return { items, verified: false };
 }
 
