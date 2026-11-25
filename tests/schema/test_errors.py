@@ -17,20 +17,29 @@ from chamberlain.schema.errors import (
 )
 
 
-def test_e10_every_code_has_a_spec_and_a_dotted_lowercase_name() -> None:
+def test_e10_e13_e11_every_code_has_a_spec_and_a_dotted_lowercase_and_3_related_checks() -> None:
+    # e10_every_code_has_a_spec_and_a_dotted_lowercase_name
     assert set(ERROR_TABLE) == set(ErrorCode)
     for code in ErrorCode:
         assert re.fullmatch(r"[a-z_]+\.[a-z_]+", code.value), code
 
-
-def test_e13_every_default_fix_is_one_short_sentence() -> None:
+    # e13_every_default_fix_is_one_short_sentence
     for code, spec in ERROR_TABLE.items():
         assert 0 < len(spec.fix) <= FIX_MAX, code
         assert "{" not in spec.fix, code
 
-
-def test_every_category_is_used() -> None:
+    # every_category_is_used
     assert {spec.category for spec in ERROR_TABLE.values()} == set(ErrorCategory)
+
+    # e11_the_model_rejects_an_inconsistent_error
+    good = ChamberlainError(ErrorCode.SOURCE_UNAVAILABLE).to_info().model_dump()
+    with pytest.raises(ValidationError):
+        ErrorInfo.model_validate({**good, "may_have_happened": True})
+    with pytest.raises(ValidationError):
+        ErrorInfo.model_validate({**good, "category": "conflict"})
+    uncertain = ChamberlainError(ErrorCode.OPERATION_UNCERTAIN).to_info().model_dump()
+    with pytest.raises(ValidationError):
+        ErrorInfo.model_validate({**uncertain, "retryable": True})
 
 
 @given(st.sampled_from(sorted(ErrorCode)), st.text(max_size=400), st.booleans())
@@ -47,17 +56,6 @@ def test_e11_e12_only_uncertain_may_have_happened_and_is_never_retryable(
     info = ChamberlainError(code, retryable=retry).to_info()
     assert info.may_have_happened == (info.category is ErrorCategory.UNCERTAIN)
     assert not (info.may_have_happened and info.retryable)
-
-
-def test_e11_the_model_rejects_an_inconsistent_error() -> None:
-    good = ChamberlainError(ErrorCode.SOURCE_UNAVAILABLE).to_info().model_dump()
-    with pytest.raises(ValidationError):
-        ErrorInfo.model_validate({**good, "may_have_happened": True})
-    with pytest.raises(ValidationError):
-        ErrorInfo.model_validate({**good, "category": "conflict"})
-    uncertain = ChamberlainError(ErrorCode.OPERATION_UNCERTAIN).to_info().model_dump()
-    with pytest.raises(ValidationError):
-        ErrorInfo.model_validate({**uncertain, "retryable": True})
 
 
 def test_e15_detail_stays_out_of_the_reply() -> None:

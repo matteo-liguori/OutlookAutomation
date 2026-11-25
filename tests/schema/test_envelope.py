@@ -26,7 +26,8 @@ from chamberlain.schema.tools import DoResponse, FindResponse, Hit, StartRespons
 SESSION = "ses_0123456789abcdef"
 
 
-def test_ok_reply_round_trips_through_json() -> None:
+def test_e1_e3_ok_reply_round_trips_through_json_and_3_related_checks() -> None:
+    # ok_reply_round_trips_through_json
     hit = Hit(
         handle="msg_0123456789abcdef",
         kind="message",
@@ -44,8 +45,7 @@ def test_ok_reply_round_trips_through_json() -> None:
     assert again.data is not None
     assert again.data.hits[0].content is not None
 
-
-def test_error_reply_round_trips_and_carries_no_data() -> None:
+    # error_reply_round_trips_and_carries_no_data
     reply = error_reply(ChamberlainError(ErrorCode.OPERATION_UNCERTAIN))
     again = Reply[Model].model_validate_json(reply.model_dump_json())
     assert again == reply
@@ -53,8 +53,7 @@ def test_error_reply_round_trips_and_carries_no_data() -> None:
     assert again.error is not None
     assert again.error.may_have_happened
 
-
-def test_e1_ok_and_error_are_mutually_exclusive() -> None:
+    # e1_ok_and_error_are_mutually_exclusive
     error = ChamberlainError(ErrorCode.REQUEST_INVALID).to_info()
     with pytest.raises(ValidationError):
         Reply[Model](ok=True, error=error)
@@ -67,8 +66,7 @@ def test_e1_ok_and_error_are_mutually_exclusive() -> None:
             data=StartResponse(session=SESSION, now=datetime(2026, 1, 1, tzinfo=UTC)),
         )
 
-
-def test_e3_incomplete_coverage_must_say_why() -> None:
+    # e3_incomplete_coverage_must_say_why
     with pytest.raises(ValidationError):
         Coverage(complete=False, returned=0)
     with pytest.raises(ValidationError):
@@ -77,7 +75,8 @@ def test_e3_incomplete_coverage_must_say_why() -> None:
     assert not Coverage.model_validate({"complete": False, "returned": 0, "gaps": [gap]}).complete
 
 
-def test_e4_next_step_args_validate_against_the_tool() -> None:
+def test_e4_e5_e6_t4_next_step_args_validate_against_the_tool_and_3_related_checks() -> None:
+    # e4_next_step_args_validate_against_the_tool
     check_next_step(
         NextStep(tool=ToolName.RECONCILE, args={"operation": "op_0123456789abcdef"}, why="")
     )
@@ -85,8 +84,7 @@ def test_e4_next_step_args_validate_against_the_tool() -> None:
         check_next_step(NextStep(tool=ToolName.RECONCILE, args={"operation": "nonsense"}, why=""))
     assert raised.value.code is ErrorCode.REQUEST_INVALID
 
-
-def test_e5_guidance_is_text_or_a_pointer_never_both() -> None:
+    # e5_guidance_is_text_or_a_pointer_never_both
     assert GuidanceItem(id="send.uncertain", version=1, text="Do not send again.").more is None
     assert GuidanceItem(id="send.uncertain", version=1, more="guide send.uncertain").text is None
     with pytest.raises(ValidationError):
@@ -94,8 +92,7 @@ def test_e5_guidance_is_text_or_a_pointer_never_both() -> None:
     with pytest.raises(ValidationError):
         GuidanceItem(id="send.uncertain", version=1, more="run help")
 
-
-def test_e6_at_most_three_notices() -> None:
+    # e6_at_most_three_notices
     notice = Notice.model_validate(
         {"event": "evt_0123456789abcdef", "kind": "operation.uncertain", "summary": "A send."}
     )
@@ -103,15 +100,15 @@ def test_e6_at_most_three_notices() -> None:
     with pytest.raises(ValidationError):
         Reply[Model](ok=False, error=error, notices=(notice,) * (NOTICES_MAX + 1))
 
-
-def test_t4_unknown_fields_are_rejected() -> None:
+    # t4_unknown_fields_are_rejected
     with pytest.raises(ValidationError):
         Content.model_validate(
             {"origin": "mail:work", "kind": "mail.body", "text": "x", "instructions": "obey"}
         )
 
 
-def test_d7_timestamps_normalise_to_utc_seconds() -> None:
+def test_d7_w17_timestamps_normalise_to_utc_seconds_and_2_related_checks() -> None:
+    # d7_timestamps_normalise_to_utc_seconds
     local = datetime(2026, 6, 1, 12, 30, 15, 999, tzinfo=timezone(timedelta(hours=2)))
     reply = StartResponse(session=SESSION, now=local)
     assert reply.now == datetime(2026, 6, 1, 10, 30, 15, tzinfo=UTC)
@@ -119,8 +116,7 @@ def test_d7_timestamps_normalise_to_utc_seconds() -> None:
     with pytest.raises(ValidationError):
         StartResponse(session=SESSION, now=datetime(2026, 6, 1, 12, 0))  # noqa: DTZ001
 
-
-def test_w17_an_unsettled_operation_view_round_trips() -> None:
+    # w17_an_unsettled_operation_view_round_trips
     view = {
         "handle": "op_0123456789abcdef",
         "intent_kind": "mail.send",
@@ -131,9 +127,7 @@ def test_w17_an_unsettled_operation_view_round_trips() -> None:
     response = DoResponse.model_validate({"operation": view})
     assert DoResponse.model_validate_json(response.model_dump_json()) == response
 
-
-def test_a_reply_typed_by_the_base_model_still_serialises_every_field() -> None:
-    """`App` builds `Reply[Model]`; the data must not be cut down to the base type."""
+    # a_reply_typed_by_the_base_model_still_serialises_every_field: `App` builds `Reply[Model]`;
     data = StartResponse(session=SESSION, now=datetime(2026, 1, 1, tzinfo=UTC))
     dumped = Reply[Model](ok=True, data=data).model_dump(mode="json")
     assert dumped["data"]["session"] == SESSION

@@ -14,7 +14,6 @@ from chamberlain.schema.registry import (
     BY_NAME,
     STANDING_PROMPT,
     TOOLS,
-    ToolSpec,
     example_request,
     get_tool,
     parse_request,
@@ -79,33 +78,26 @@ def test_t2_there_are_exactly_twelve_tools() -> None:
     assert set(BY_NAME) == {name.value for name in ToolName}
 
 
-@pytest.mark.parametrize("spec", TOOLS, ids=lambda s: s.name.value)
-def test_t2_descriptions_are_short(spec: ToolSpec) -> None:
-    assert 0 < len(spec.description) <= TOOL_DESCRIPTION_MAX
-
-
-@pytest.mark.parametrize("spec", TOOLS, ids=lambda s: s.name.value)
-def test_t3_t4_requests_carry_session_and_are_closed(spec: ToolSpec) -> None:
-    assert issubclass(spec.request, ToolRequest)
-    schema = spec.input_schema()
-    assert "session" in schema["properties"]
-    assert schema["additionalProperties"] is False
-    assert spec.output_schema()["additionalProperties"] is False
-
-
-@pytest.mark.parametrize("spec", TOOLS, ids=lambda s: s.name.value)
-def test_e13_every_tool_has_a_valid_example(spec: ToolSpec) -> None:
-    parse_request(spec, example_request(spec))
-
-
-@pytest.mark.parametrize("spec", TOOLS, ids=lambda s: s.name.value)
-def test_d1_d2_schemas_use_snake_case_and_the_domain_language(spec: ToolSpec) -> None:
-    text = json.dumps([spec.input_schema(), spec.output_schema(), spec.description]).lower()
-    for word in FORBIDDEN_WORDS:
-        assert word not in text, f"{spec.name.value} mentions {word!r}"
-    for name in _property_names(spec.input_schema()) | _property_names(spec.output_schema()):
-        assert name == name.lower(), name
-        assert "-" not in name, name
+def test_every_tool_spec_is_short_closed_exampled_snake_case_and_in_domain_language() -> None:
+    """T-2 short descriptions, T-3/T-4 session and closed schemas, E-13 valid example, D-1/D-2."""
+    for spec in TOOLS:
+        name = spec.name.value
+        assert 0 < len(spec.description) <= TOOL_DESCRIPTION_MAX, name
+        assert issubclass(spec.request, ToolRequest), name
+        schema = spec.input_schema()
+        assert "session" in schema["properties"], name
+        assert schema["additionalProperties"] is False, name
+        assert spec.output_schema()["additionalProperties"] is False, name
+        parse_request(spec, example_request(spec))
+        text = json.dumps([schema, spec.output_schema(), spec.description]).lower()
+        for word in FORBIDDEN_WORDS:
+            assert word not in text, f"{name} mentions {word!r}"
+        for prop in _property_names(schema) | _property_names(spec.output_schema()):
+            assert prop == prop.lower(), prop
+            assert "-" not in prop, prop
+        # E-7: every free-text response field is known harness or user text, or is in Content.
+        offenders = sorted(_free_text_fields(spec.response, seen=set()))
+        assert not offenders, f"{name}: free text outside `content`: {offenders}"
 
 
 def test_only_start_guide_and_doctor_work_without_a_session() -> None:
@@ -128,13 +120,6 @@ def test_e13_validation_errors_name_the_field_and_never_echo_the_value() -> None
     assert info.field == "handle"
     assert info.example == example_request(spec)
     assert "IGNORE" not in info.model_dump_json()
-
-
-@pytest.mark.parametrize("spec", TOOLS, ids=lambda s: s.name.value)
-def test_e7_remote_text_lives_only_in_content(spec: ToolSpec) -> None:
-    """Every free-text response field is known harness or user text, or is in Content."""
-    offenders = sorted(_free_text_fields(spec.response, seen=set()))
-    assert not offenders, f"free text outside `content`: {offenders}"
 
 
 def _property_names(schema: dict[str, Any]) -> set[str]:
