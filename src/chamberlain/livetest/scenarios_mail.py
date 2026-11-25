@@ -315,6 +315,51 @@ def move_back(lab: Lab, t: Target) -> None:
 
 
 @scenario(
+    "mail.batch_file",
+    "mail",
+    "File three messages in one write, marked read, and bring them back in one",
+    Scope.MAILBOX,
+    needs=("mail.send", "mail.move", "mail.search"),
+)
+def batch_file(lab: Lab, t: Target) -> None:
+    folders = lab.env.probe.folders(t.source)
+    scratch = scratch_folder(folders, lab.config.mail[t.source].scratch_folder)
+    if scratch is None:
+        raise ScenarioSkip("no scratch or archive folder is configured or found")
+    inbox = lab.folder_id(t.source, FolderRole.INBOX)
+    address = lab.config.address_of(t.source)
+    common = lab.subject(f"batch_file {t.tag}")
+    _own_mail(lab, t.source, common)
+    subjects = [f"{common} {n}" for n in (1, 2, 3)]
+    for subject in subjects:
+        lab.send(t.source, address, subject, body(lab, "batch filing"))
+    handles = [str(lab.arrival(t.source, subject)["handle"]) for subject in subjects]
+
+    def where() -> list[set[str]]:
+        copies = lab.copies(t.source, common)
+        return [{c.folder_id for c in copies if c.subject.endswith(s[-2:])} for s in subjects]
+
+    def batch(to_folder: str, mark_read: bool) -> JSON:
+        intent = {
+            "kind": "mail.move",
+            "source": t.source,
+            "messages": handles,
+            "to_folder": to_folder,
+            "mark_read": mark_read,
+        }
+        return lab.confirmed(lab.write(intent), f"batch move to {to_folder}")
+
+    view = batch(scratch.id, mark_read=True)
+    lab.check(view.get("items_ok") == len(handles), f"only {view.get('items_ok')} of 3 moved")
+    lab.check(all(scratch.id in f and inbox not in f for f in where()), "not all were filed")
+    for handle in handles:
+        lab.check(lab.call("open", handle=handle).ok, "a handle did not follow its message (R4)")
+        lab.check(not _unread(lab, handle), "a filed message was not marked read")
+    batch(inbox, mark_read=False)
+    lab.check(all(inbox in f and scratch.id not in f for f in where()), "not all came back")
+
+
+@scenario(
     "mail.trash_restore",
     "mail",
     "Trash a message and restore it",
