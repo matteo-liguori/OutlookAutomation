@@ -43,19 +43,16 @@ def test_b7_clean_end_of_stream_is_none() -> None:
     assert read_frame(io.BytesIO(b""), 100) is None
 
 
-@pytest.mark.parametrize(
-    "raw",
-    [
+def test_b7_truncated_zero_and_oversize_frames_are_refused() -> None:
+    for raw in [
         b"\x01\x00",  # header cut short
         b"\x05\x00\x00\x00ab",  # body cut short
         b"\x00\x00\x00\x00",  # zero length
         b"\xff\xff\xff\xff",  # absurd length
-    ],
-)
-def test_b7_truncated_zero_and_oversize_frames_are_refused(raw: bytes) -> None:
-    with pytest.raises(ChamberlainError) as raised:
-        read_frame(io.BytesIO(raw), 1_000)
-    assert raised.value.code is ErrorCode.SOURCE_UNAVAILABLE
+    ]:
+        with pytest.raises(ChamberlainError) as raised:
+            read_frame(io.BytesIO(raw), 1_000)
+        assert raised.value.code is ErrorCode.SOURCE_UNAVAILABLE, raw
 
 
 def test_b7_the_limit_differs_by_direction() -> None:

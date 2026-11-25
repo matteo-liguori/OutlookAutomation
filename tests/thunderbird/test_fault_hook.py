@@ -14,7 +14,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
 from test_bridge import (
     ALL_CAPS,
     FAST,
@@ -135,11 +134,14 @@ def test_a_marked_send_loses_its_response_once_but_still_runs(tmp_path: Path) ->
         assert isinstance(second, protocol.ResponseFrame)
 
 
-@pytest.mark.parametrize(
-    "case",
-    ["other_subject", "other_run", "not_a_send", "unknown_fault", "stale", "broken", "no_file"],
-)
-def test_nothing_else_is_ever_touched(tmp_path: Path, case: str) -> None:
+def test_nothing_else_is_ever_touched(tmp_path: Path) -> None:
+    cases = ["other_subject", "other_run", "not_a_send", "unknown_fault", "stale", "broken"]
+    for case in [*cases, "no_file"]:
+        (tmp_path / case).mkdir()
+        _nothing_else_is_touched(tmp_path / case, case)
+
+
+def _nothing_else_is_touched(tmp_path: Path, case: str) -> None:
     subject, cmd = SUBJECT, "send"
     with hosted(tmp_path) as env:
         if case == "broken":

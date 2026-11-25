@@ -54,12 +54,12 @@ FORBIDDEN = [
 ]
 
 
-@pytest.mark.parametrize("source", SOURCES, ids=lambda p: p.name)
-def test_b3_b4_the_addon_has_no_eval_listener_network_or_journal(source: Path) -> None:
-    text = source.read_text(encoding="utf-8")
-    code = re.sub(r"//.*", "", text)
-    for pattern in FORBIDDEN:
-        assert not re.search(pattern, code), f"{source.name} matches {pattern}"
+def test_b3_b4_the_addon_has_no_eval_listener_network_or_journal() -> None:
+    for source in SOURCES:
+        text = source.read_text(encoding="utf-8")
+        code = re.sub(r"//.*", "", text)
+        for pattern in FORBIDDEN:
+            assert not re.search(pattern, code), f"{source.name} matches {pattern}"
 
 
 def test_b2_the_addon_dispatch_covers_exactly_the_closed_command_list() -> None:
