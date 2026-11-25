@@ -10,6 +10,15 @@ from datetime import datetime
 MARKER = "CHAMBERLAIN LIVE TEST"
 RUN_ID_PATTERN = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{4}$")
 _REPLY_PREFIX = re.compile(r"^\s*((re|fwd?|aw|sv)\s*:\s*)+", re.IGNORECASE)
+_NOTICE_PREFIX = re.compile(
+    r"^\s*(?:(?:updated\s+)?invitation(?:\s+from\s+[^:]{1,80})?\s*:"
+    r"|(?:tentatively\s+)?accepted\s*:|declined\s*:|cancell?ed\s+(?:event|invitation)\s*:"
+    r"|[^:]{1,80}?\binvited you to)\s*[\"'“‘]?",  # noqa: RUF001 - curly quotes are what iCloud sends
+    re.IGNORECASE,
+)
+"""What a calendar puts before an invitation's title in its email (Google: "Invitation:",
+"Accepted:"; iCloud: "<name> invited you to “...”", found live 2026-11-25)."""
+_OPEN_QUOTE = re.compile(r"^\s*[\"'“‘]")  # noqa: RUF001
 _MARKED = re.compile(rf"{re.escape(MARKER)} (\d{{8}}T\d{{6}}-[0-9a-f]{{4}})\b")
 
 CARD_TITLE = f"{MARKER} card"
@@ -43,8 +52,10 @@ def run_of(text: str) -> str | None:
 def carries_marker(subject: str) -> bool:
     """True for `CHAMBERLAIN LIVE TEST <run id> ...` after any `Re:` or `Fwd:` prefixes.
 
-    The marker must open the subject (after reply prefixes): a message that merely mentions
-    the words is not ours.
+    The marker must open the subject (after reply prefixes, or a calendar's notice words such
+    as "Accepted:"): a message that merely mentions the words is not ours.
     """
     stripped = _REPLY_PREFIX.sub("", subject, count=1).lstrip()
+    # A calendar's own email about a marked event: its notice words, then the marked title.
+    stripped = _OPEN_QUOTE.sub("", _NOTICE_PREFIX.sub("", stripped, count=1), count=1).lstrip()
     return stripped.startswith(MARKER + " ") and run_of(stripped) is not None

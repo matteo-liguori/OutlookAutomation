@@ -513,6 +513,7 @@ def _state_after(lab: Lab, operation: str) -> str:
     Scope.PAIR,
     needs=("mail.send", "mail.search"),
     needs_other=("mail.send", "mail.search"),
+    alone=True,  # reads the harness's whole new-mail batch, which other scenarios change
 )
 def watermark_suggestion(lab: Lab, t: Target) -> None:
     subject = lab.subject(f"watermark {t.tag}-{t.other_tag}")

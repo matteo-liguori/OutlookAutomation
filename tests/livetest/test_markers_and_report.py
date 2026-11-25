@@ -27,6 +27,14 @@ def test_only_a_subject_that_opens_with_the_marker_carries_it() -> None:
         (f"{MARKER} notes", False),
         (f"{MARKER.lower()} {RUN}", False),
         ("", False),
+        # A calendar's own emails about a marked event (found live, 2026-11-25).
+        (f"Accepted: {MARKER} {RUN} invite test @ Sun 29 Nov 2026 10am", True),
+        (f"Invitation: {MARKER} {RUN} invite @ Sun 29 Nov", True),
+        (f"Matteo Liguori invited you to “{MARKER} {RUN} invite icloud”", True),
+        (f"“{MARKER} {RUN} invite icloud” has been cancelled by Matteo.", True),
+        # Still never a message that merely mentions it.
+        (f"Accepted: Lunch about {MARKER} {RUN}", False),
+        (f"Someone invited you to lunch, see {MARKER} {RUN}", False),
     ]:
         assert carries_marker(subject) is expected, subject
     first = new_run_id(datetime(2026, 11, 24, 15, 30, tzinfo=UTC), "ab12ffff")
