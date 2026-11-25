@@ -22,9 +22,10 @@ def evidence(ctx: Context) -> EvidenceService:
     return EvidenceService(ctx.db, ctx.clock)
 
 
-def test_m3_evidence_referrers_are_independent_and_the_last_one_deletes_it(
-    ctx: Context, cards: CardService, evidence: EvidenceService
+def test_m3_m15_evidence_referrers_are_independent_and_the_and_3_related_checks(
+    ctx: Context, cards: CardService, evidence: EvidenceService, clock: ManualClock
 ) -> None:
+    # m3_evidence_referrers_are_independent_and_the_last_one_deletes_it
     first = cards.create(title="First thread")
     second = cards.create(title="Second thread")
     shared = evidence.add(text="The user approved the wording.", owner=first.handle, session=None)
@@ -35,10 +36,7 @@ def test_m3_evidence_referrers_are_independent_and_the_last_one_deletes_it(
     cards.close(second.handle, None, "Done.")
     assert repo.get_evidence(ctx.db, shared) is None  # deleted at once, no sweep needed
 
-
-def test_m15_forget_drops_one_referrer_then_deletes(
-    ctx: Context, cards: CardService, evidence: EvidenceService
-) -> None:
+    # m15_forget_drops_one_referrer_then_deletes
     one = cards.create(title="One")
     two = cards.create(title="Two")
     item = evidence.add(text="A fact.", owner=one.handle, session=None)
@@ -47,10 +45,7 @@ def test_m15_forget_drops_one_referrer_then_deletes(
     assert evidence.release(item, two.handle) == (True, 0)
     assert repo.get_evidence(ctx.db, item) is None
 
-
-def test_m15_expired_source_cannot_become_new_authority(
-    ctx: Context, cards: CardService, evidence: EvidenceService, clock: ManualClock
-) -> None:
+    # m15_expired_source_cannot_become_new_authority
     add_grant(ctx.db, clock, "grant_compacted0001", "spent")
     item = evidence.add(
         text="Approved by the user.", owner="grant_compacted0001", session="ses_aaaaaaaa0001"
@@ -68,10 +63,7 @@ def test_m15_expired_source_cannot_become_new_authority(
         evidence.link(item, "grant_compacted0001")
     assert unknown.value.code is ErrorCode.REQUEST_UNKNOWN_HANDLE
 
-
-def test_m15_evidence_is_immutable(
-    ctx: Context, cards: CardService, evidence: EvidenceService
-) -> None:
+    # m15_evidence_is_immutable
     card = cards.create(title="Immutable")
     item = evidence.add(text="Original statement.", owner=card.handle, session=None)
     before = repo.get_evidence(ctx.db, item)
@@ -82,9 +74,10 @@ def test_m15_evidence_is_immutable(
     assert tuple(before) == tuple(again)
 
 
-def test_m15_card_dumps_and_mail_bodies_are_rejected(
-    cards: CardService, evidence: EvidenceService
+def test_m15_t10_d6_m20_card_dumps_and_mail_bodies_are_rejected_and_3_related_checks(
+    cards: CardService, evidence: EvidenceService, action: str, ctx: Context, fake: FakeProvider
 ) -> None:
+    # m15_card_dumps_and_mail_bodies_are_rejected
     card = cards.create(title="Guarded")
     dump = json.dumps({"title": "x", "goal": "y", "position": "z", "version": 3})
     mail = "From: a@example.org\nTo: b@example.org\nSubject: Hi\nDate: today\n\nBody text."
@@ -97,10 +90,7 @@ def test_m15_card_dumps_and_mail_bodies_are_rejected(
         text="User confirmed the delivery date on the phone.", owner=card.handle, session=None
     )
 
-
-def test_t10_evidence_owner_must_be_live_and_of_the_right_kind(
-    cards: CardService, evidence: EvidenceService, action: str
-) -> None:
+    # t10_evidence_owner_must_be_live_and_of_the_right_kind
     with pytest.raises(ChamberlainError) as bad:
         evidence.add(text="x", owner="ses_aaaaaaaa0001", session=None)
     assert bad.value.code is ErrorCode.ARTIFACT_NO_OWNER
@@ -111,8 +101,7 @@ def test_t10_evidence_owner_must_be_live_and_of_the_right_kind(
     assert ended.value.code is ErrorCode.ARTIFACT_OWNER_ENDED
     evidence.add(text="Action level fact.", owner=action, session=None)
 
-
-def test_d6_ref_handles_are_deterministic_and_never_hold_content(ctx: Context) -> None:
+    # d6_ref_handles_are_deterministic_and_never_hold_content
     first = refs.remember(
         ctx.db, ctx.clock, HandleKind.MESSAGE, "mail:test", "f-inbox/<a@b>", "<a@b>"
     )
@@ -123,10 +112,7 @@ def test_d6_ref_handles_are_deterministic_and_never_hold_content(ctx: Context) -
     with pytest.raises(ChamberlainError):
         refs.locate(ctx.db, "msg_00000000000000")
 
-
-def test_m20_physical_copies_of_one_message_keep_distinct_refs(
-    ctx: Context, fake: FakeProvider
-) -> None:
+    # m20_physical_copies_of_one_message_keep_distinct_refs
     fake.mail.add_message("mail:test", internet_message_id="<same@x>", folder_id="f-inbox")
     fake.mail.add_message("mail:test", internet_message_id="<same@x>", folder_id="f-archive")
     page = fake.mail.search("mail:test", MailQuery())

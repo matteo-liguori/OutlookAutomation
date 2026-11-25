@@ -144,7 +144,10 @@ def test_t9_find_and_open_leave_unread_mail_unread(app: App, fake: FakeProvider)
     assert opened.data.range.total == len("Hello there")
 
 
-def test_e3_a_stale_source_is_incomplete_not_empty(app: App, fake: FakeProvider) -> None:
+def test_e3_a_stale_source_is_incomplete_not_empty_and_1_related_checks(
+    app: App, fake: FakeProvider
+) -> None:
+    # e3_a_stale_source_is_incomplete_not_empty
     fake.arm(Fault.STALE)
     reply = call(app, "find", scope="mail")
     assert hits(reply) == []
@@ -156,8 +159,7 @@ def test_e3_a_stale_source_is_incomplete_not_empty(app: App, fake: FakeProvider)
     assert clean.coverage.complete
     assert clean.coverage.gaps == ()
 
-
-def test_e3_a_source_that_cannot_answer_becomes_a_gap(app: App, fake: FakeProvider) -> None:
+    # e3_a_source_that_cannot_answer_becomes_a_gap
     seed_mail(fake, 2)
     fake.arm(Fault.SLOW)
     reply = call(app, "find", scope="mail")
@@ -168,9 +170,10 @@ def test_e3_a_source_that_cannot_answer_becomes_a_gap(app: App, fake: FakeProvid
     assert reply.coverage.gaps[0].source == "mail:test"
 
 
-def test_m20_distinct_copies_keep_distinct_handles_but_show_as_one_hit(
-    app: App, fake: FakeProvider
+def test_m20_t8_distinct_copies_keep_distinct_handles_but_show_and_1_related_checks(
+    app: App, fake: FakeProvider, ctx: Context, action: str
 ) -> None:
+    # m20_distinct_copies_keep_distinct_handles_but_show_as_one_hit
     fake.mail.add_message("mail:test", internet_message_id="<dup@x>", folder_id="f-inbox")
     fake.mail.add_message("mail:test", internet_message_id="<dup@x>", folder_id="f-archive")
     everywhere = hits(call(app, "find", scope="mail"))
@@ -183,10 +186,7 @@ def test_m20_distinct_copies_keep_distinct_handles_but_show_as_one_hit(
     assert inbox[0].handle != archive[0].handle
     assert everywhere[0].handle == inbox[0].handle
 
-
-def test_t8_within_returns_matching_lines_with_offsets_that_open_can_read(
-    app: App, ctx: Context, action: str
-) -> None:
+    # t8_within_returns_matching_lines_with_offsets_that_open_can_read
     store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
     text = "first line\nthe needle is here\nthird line\nanother needle too"
     handle = keep_text(store, action, text)
@@ -202,7 +202,10 @@ def test_t8_within_returns_matching_lines_with_offsets_that_open_can_read(
     assert opened.data.range.total == len(text)
 
 
-def test_t8_within_a_message_and_a_card(app: App, fake: FakeProvider, cards: CardService) -> None:
+def test_t8_m18_within_a_message_and_a_card_and_1_related_checks(
+    app: App, fake: FakeProvider, cards: CardService, ctx: Context, action: str
+) -> None:
+    # t8_within_a_message_and_a_card
     fake.mail.add_message(
         "mail:test", internet_message_id="<body@x>", body="alpha\nbeta budget line\ngamma"
     )
@@ -216,8 +219,7 @@ def test_t8_within_a_message_and_a_card(app: App, fake: FakeProvider, cards: Car
     assert needs_query.error is not None
     assert needs_query.error.field == "query"
 
-
-def test_m18_open_returns_one_bounded_range(app: App, ctx: Context, action: str) -> None:
+    # m18_open_returns_one_bounded_range
     store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
     handle = keep_text(store, action, "z" * 9000)
     page = call(app, "open", handle=handle, part="body")
@@ -234,7 +236,10 @@ def test_m18_open_returns_one_bounded_range(app: App, ctx: Context, action: str)
     assert too_big.error is not None
 
 
-def test_m19_default_open_is_the_minimal_view(app: App, fake: FakeProvider) -> None:
+def test_m19_m9_default_open_is_the_minimal_view_and_1_related_checks(
+    app: App, fake: FakeProvider, ctx: Context, action: str
+) -> None:
+    # m19_default_open_is_the_minimal_view
     fake.mail.add_message(
         "mail:test", internet_message_id="<min@x>", body="BODY", attachments=(("a.pdf", b"%PDF"),)
     )
@@ -249,10 +254,7 @@ def test_m19_default_open_is_the_minimal_view(app: App, fake: FakeProvider) -> N
     assert info.content.text == "a.pdf"
     assert info.content.kind.value == "attachment.name"
 
-
-def test_m9_open_with_lease_returns_a_path_that_expires(
-    app: App, ctx: Context, action: str
-) -> None:
+    # m9_open_with_lease_returns_a_path_that_expires
     store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
     handle = keep_text(store, action, "file bytes", filename="report.txt")
     reply = call(app, "open", handle=handle, part="file", lease=True)
@@ -262,9 +264,10 @@ def test_m9_open_with_lease_returns_a_path_that_expires(
     assert (reply.data.lease.expires_at - ctx.clock.now()) == timedelta(minutes=30)
 
 
-def test_t8_find_scopes_cards_stored_calendar_contacts_grants_operations(
+def test_t8_e13_find_scopes_cards_stored_calendar_contacts_and_1_related_checks(
     app: App, fake: FakeProvider, cards: CardService, ctx: Context, action: str
 ) -> None:
+    # t8_find_scopes_cards_stored_calendar_contacts_grants_operations
     cards.create(title="Supplier negotiation")
     assert [h.kind for h in hits(call(app, "find", scope="cards", query="negotiation"))] == ["card"]
     store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
@@ -296,8 +299,7 @@ def test_t8_find_scopes_cards_stored_calendar_contacts_grants_operations(
     assert hits(call(app, "find", scope="grants")) == []
     assert hits(call(app, "find", scope="operations")) == []
 
-
-def test_e13_unknown_and_wrong_kind_handles_have_fixes(app: App) -> None:
+    # e13_unknown_and_wrong_kind_handles_have_fixes
     unknown = call(app, "open", handle="msg_0123456789abcdef")
     assert unknown.error is not None
     assert unknown.error.code.value == "request.unknown_handle"

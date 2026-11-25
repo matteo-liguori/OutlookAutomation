@@ -126,6 +126,41 @@ def test_m23_a_failed_deletion_is_visible_and_retried(
     assert {c.id: c.status for c in storage_checks(ctx)}["storage.deletions"] == "ok"
 
 
+def _interrupted_sweep_is_finished(tmp_path: Path, crash_after: str) -> None:
+    clock = ManualClock()
+    ctx = make_context(tmp_path / "data", clock)
+    try:
+        cards = CardService(ctx.db, clock)
+        store = ArtifactService(ctx.db, clock, ctx.data_root)
+        card = cards.create(title="Interrupted")
+        action = cards.add_action(card.handle, None, title="t", due_at=None, snooze_until=None)
+        handle = action.actions[0].handle
+        released = keep_text(store, handle, "will be released")
+        keep_text(store, handle, "expires soon", expires_in_hours=1)
+        cards.finish_action(handle, None, "Done.")
+        stray = ctx.data_root / "stray.bin"
+        stray.parent.mkdir(parents=True, exist_ok=True)
+        stray.write_bytes(b"orphan")
+        clock.advance(hours=48)
+
+        def die(name: str) -> None:
+            if name == crash_after:
+                raise SweepCrash(name)
+
+        with pytest.raises(SweepCrash):
+            sweep(ctx, clock.now(), hooks=SweepHooks(after_rule=die))
+        sweep(ctx, clock.now())
+        states = {r["state"] for r in ctx.db.execute("SELECT state FROM artifacts")}
+        assert states <= {"deleted"}
+        assert blobs(ctx.data_root) == set()
+        assert not stray.exists()
+        again = sweep(ctx, clock.now())
+        assert not again.changed()
+        assert released
+    finally:
+        ctx.db.close()
+
+
 def test_m26_orphans_are_quarantined_reported_once_then_deleted_after_the_grace_period(
     ctx: Context, clock: ManualClock, tmp_path: Path
 ) -> None:
@@ -365,10 +400,10 @@ def test_m25_import_report_and_secrets_are_never_quarantined(
     assert (ctx.data_root / "secrets" / "store.json").exists()
 
 
-def test_m7_a_blob_younger_than_ten_minutes_is_not_an_orphan_yet(
-    ctx: Context, clock: ManualClock
+def test_m7_a_blob_younger_than_ten_minutes_is_not_an_and_1_related_checks(
+    ctx: Context, clock: ManualClock, store: ArtifactService, action: str
 ) -> None:
-    """Another process may be between `write_blob` and inserting its row."""
+    # m7_a_blob_younger_than_ten_minutes_is_not_an_orphan_yet: Another process may be between `w
     sha = sha256_bytes(b"in flight")
     write_blob(ctx.data_root, b"in flight", sha)
     path = blob_path(ctx.data_root, sha)
@@ -380,11 +415,7 @@ def test_m7_a_blob_younger_than_ten_minutes_is_not_an_orphan_yet(
     assert sweep(ctx, clock.now()).orphans_found == 1
     assert not path.exists()
 
-
-def test_m7_a_blob_restored_by_another_process_survives_the_delete_step(
-    ctx: Context, store: ArtifactService, action: str, clock: ManualClock
-) -> None:
-    """Interleaving: the sweep has read the released sha; a writer then inserts a live row."""
+    # m7_a_blob_restored_by_another_process_survives_the_delete_step: Interleaving: the sweep ha
     handle = keep_text(store, action, "shared bytes")
     sha = sha256_bytes(b"shared bytes")
     store.release(handle, None)

@@ -53,7 +53,10 @@ def card_of(reply: Reply[Model]) -> Any:
     return reply.data.card
 
 
-def test_t12_card_create_add_action_update_and_close_golden(app: App) -> None:
+def test_t12_card_create_add_action_update_and_close_golden_and_1_related_checks(
+    app: App, ctx: Context
+) -> None:
+    # t12_card_create_add_action_update_and_close_golden
     created = call(
         app, "card", op="create", fields={"title": "Supplier quote", "goal": "Agree price"}
     )
@@ -85,8 +88,7 @@ def test_t12_card_create_add_action_update_and_close_golden(app: App) -> None:
     golden("card_close", closed)
     assert card_of(closed).state == "closed"
 
-
-def test_t12_over_cap_update_names_the_field_and_limit(app: App, ctx: Context) -> None:
+    # t12_over_cap_update_names_the_field_and_limit
     handle = card_of(call(app, "card", op="create", fields={"title": "Capped"})).handle
     too_long = app.call(
         "card",
@@ -150,9 +152,10 @@ def test_t10_keep_without_a_live_owner_is_refused_with_a_fix_golden(app: App, ct
     assert ended.error.code.value == "artifact.owner_ended"
 
 
-def test_t11_forget_routes_grants_and_operations_to_writes(
-    app: App, ctx: Context, clock: ManualClock
+def test_t11_m20_forget_routes_grants_and_operations_to_writes_and_1_related_checks(
+    app: App, ctx: Context, clock: ManualClock, fake: FakeProvider
 ) -> None:
+    # t11_forget_routes_grants_and_operations_to_writes
     add_grant(ctx.db, clock, "grant_route00000001")
     add_operation(ctx.db, clock, "op_route000000001", "proposed")
     grant = call(app, "forget", handle="grant_route00000001")
@@ -165,10 +168,7 @@ def test_t11_forget_routes_grants_and_operations_to_writes(
     assert writes.cancelled == ["op_route000000001"]
     assert call(app, "forget", handle="card_0123456789abcdef").error is not None
 
-
-def test_m20_keep_caches_a_body_and_an_attachment_only_with_an_owner(
-    app: App, fake: FakeProvider, ctx: Context
-) -> None:
+    # m20_keep_caches_a_body_and_an_attachment_only_with_an_owner
     fake.mail.add_message(
         "mail:test",
         internet_message_id="<cache@x>",
@@ -210,9 +210,10 @@ def _locators(fake: FakeProvider) -> list[str]:
     return [m.locator for m in fake.mail.search("mail:test", MailQuery()).items]
 
 
-def test_m17_find_pages_stay_under_the_budget_and_replies_under_the_cap(
+def test_m17_t3_find_pages_stay_under_the_budget_and_replies_and_1_related_checks(
     app: App, fake: FakeProvider
 ) -> None:
+    # m17_find_pages_stay_under_the_budget_and_replies_under_the_cap
     for index in range(60):
         fake.mail.add_message(
             "mail:test",
@@ -236,8 +237,7 @@ def test_m17_find_pages_stay_under_the_budget_and_replies_under_the_cap(
         cursor = reply.coverage.cursor
     assert seen == 60
 
-
-def test_t3_a_session_is_required(app: App) -> None:
+    # t3_a_session_is_required
     reply = app.call("find", {"scope": "cards"})
     assert reply.error is not None
     assert reply.error.code.value == "session.required"
