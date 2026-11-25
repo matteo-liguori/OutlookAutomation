@@ -359,3 +359,135 @@ def build_old_root(root: Path) -> Path:
         encoding="utf-8",
     )
     return root
+
+
+# --- the owner's own knowledge (rules, decisions, standing facts, watches, appointments) ----
+
+DEFAULT_REPORTING = "Use the supplied report template (the old harness's shipped text)."
+DEFAULT_OUTLOOK = "Mail and calendar access: `outlook <operation> --input -` takes JSON."
+
+
+def add_owner_knowledge(root: Path) -> None:
+    """Add to an existing synthetic old root what the owner wrote over the years."""
+    state = root / ".state"
+    state.mkdir(exist_ok=True)
+    (state / "defaults.json").write_text(
+        json.dumps(
+            {
+                "baseline": {
+                    "instructions": {"outlook": DEFAULT_OUTLOOK, "reporting": DEFAULT_REPORTING}
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    custom = yaml.safe_load((root / "customisations.yaml").read_text(encoding="utf-8"))
+    custom["instructions"]["outlook"] = DEFAULT_OUTLOOK  # still the shipped text: not the owner's
+    custom["permission_defaults"] = {
+        "filing_changes_read_state": True,
+        "reporting_marks_read": True,
+    }
+    (root / "customisations.yaml").write_text(yaml.safe_dump(custom), encoding="utf-8")
+
+    db = sqlite3.connect(root / "monitor" / "monitor.db")
+    try:
+        row = db.execute("SELECT details FROM cases WHERE id='case-alpha'").fetchone()
+        details = json.loads(row[0])
+        details["customisations"] = {
+            "instructions": {"supplier": "Always copy the finance team on supplier mail."},
+            "reviews": {"card_days": 3},
+        }
+        db.execute("UPDATE cases SET details=? WHERE id='case-alpha'", (dumps(details),))
+        row = db.execute("SELECT details FROM cases WHERE id='case-big'").fetchone()
+        details = json.loads(row[0])
+        details["customisations"] = {"instructions": {"style": "Short replies only."}}
+        db.execute("UPDATE cases SET details=? WHERE id='case-big'", (dumps(details),))
+        for aid, extra in (
+            (
+                "act-1",
+                {
+                    "important_appointment": True,
+                    "appointment_title": "Dentist",
+                    "appointment_start": "2026-03-01T10:00:00+00:00",
+                    "explicit_review": "2026-02-28T09:00:00+00:00",
+                },
+            ),
+            (
+                "act-2",
+                {"important_appointment": True, "appointment_start": "2026-03-02T10:00:00+00:00"},
+            ),
+        ):
+            row = db.execute("SELECT details FROM actions WHERE id=?", (aid,)).fetchone()
+            merged = {**json.loads(row[0]), **extra}
+            db.execute("UPDATE actions SET details=? WHERE id=?", (dumps(merged), aid))
+        db.execute(
+            "INSERT INTO cases VALUES(?,?,?,?,?,?,?)",
+            (
+                "case-passport",
+                "Passport renewal",
+                "Appointment booked.",
+                "open",
+                1,
+                "2026-01-02T10:00:00+00:00",
+                dumps({"purpose": "Passport renewal", "context": ""}),
+            ),
+        )
+        db.execute(
+            "INSERT INTO actions VALUES(?,?,?,?,?)",
+            (
+                "act-new-important-1",
+                "case-passport",
+                "needs-user",
+                "2026-01-20T09:00:00+00:00",
+                dumps(
+                    {
+                        "id": "act-new-important-1",
+                        "status": "needs-user",
+                        "next_step": "Passport visit",
+                        "next_review": "2026-01-20T09:00:00+00:00",
+                        "appointment_start": "2026-04-01T08:30:00+00:00",
+                    }
+                ),
+            ),
+        )
+        db.execute(
+            "INSERT INTO decisions VALUES(?,?,?)",
+            (
+                "dec-1",
+                "case-alpha",
+                dumps({"id": "dec-1", "text": "Pay by bank transfer, never card."}),
+            ),
+        )
+        db.execute(
+            "INSERT INTO context VALUES(?,?,?)",
+            (
+                "ctx-1",
+                "Acme Ltd",
+                dumps(
+                    {
+                        "id": "ctx-1",
+                        "entity": "Acme Ltd",
+                        "text": "Our main supplier; contact is Sam.",
+                    }
+                ),
+            ),
+        )
+        db.execute(
+            "INSERT INTO context VALUES(?,?,?)",
+            (
+                "watch-1",
+                "keyword-watch",
+                dumps(
+                    {
+                        "id": "watch-1",
+                        "kind": "keyword-watch",
+                        "terms": ["tenancy", "deposit"],
+                        "text": "Tell the owner at once.",
+                        "enabled": True,
+                    }
+                ),
+            ),
+        )
+        db.commit()
+    finally:
+        db.close()

@@ -22,6 +22,7 @@ from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.limits import SESSION_IDLE_HOURS
 from chamberlain.runs import compose, repo
 from chamberlain.runs.models import RunRow, RunState, ScheduleRow
+from chamberlain.runs.read_state import mark_reported
 from chamberlain.runs.reports import store_report
 from chamberlain.runs.tuning import MAX_LATE
 from chamberlain.schema.safelog import log_failure
@@ -174,6 +175,8 @@ def plan_runs(ctx: Context) -> None:
             store_report(ctx, run.handle, INCOMPLETE_REPORT)
         except Exception:
             log_failure(log, "storing the report of %s failed", run.handle)
+    for run in finished:
+        mark_reported(ctx, run)
     for run in [*finished, *ended]:
         try:
             compose.settle_snapshot(ctx, run)

@@ -24,6 +24,7 @@ from chamberlain.connections.model import (
 )
 from chamberlain.connectors.caldav.credentials import credential_name
 from chamberlain.domain.grants import Requirement
+from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.importer.old import Json, OldInstallation
 from chamberlain.importer.report import ImportReport
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -110,10 +111,30 @@ def _policy(old: OldInstallation, report: ImportReport) -> WritePolicyConfig:
         send = Requirement.HUMAN_CONFIRMATION
     if merged.get("calendar_writes") == ASK_EVERY_TIME:
         other = Requirement.HUMAN_CONFIRMATION
-    ignored = sorted(set(merged) - {"sending", "calendar_writes"})
+    ignored = sorted(set(merged) - {"sending", "calendar_writes", *READ_SETTINGS})
     if ignored:
         report.unmapped_settings["permission_defaults"] = {k: merged[k] for k in ignored}
     return WritePolicyConfig(send_known=send, other=other)
+
+
+READ_SETTINGS = ("filing_changes_read_state", "reporting_marks_read")
+
+
+def _read_state(old: OldInstallation, report: ImportReport) -> ReadStateConfig:
+    """The owner's v1 read-state options become the v2 profile options (05, G-24)."""
+    merged: dict[str, Any] = {}
+    for layer in (
+        old.profile.get("permission_defaults"),
+        old.customisations.get("permission_defaults"),
+    ):
+        if isinstance(layer, dict):
+            merged.update(cast(Json, layer))
+    state = ReadStateConfig(
+        filing_marks_read=merged.get("filing_changes_read_state") is True,
+        reporting_marks_read=merged.get("reporting_marks_read") is True,
+    )
+    report.read_state = state.model_dump()
+    return state
 
 
 def _clock_time(value: object) -> str | None:
@@ -293,6 +314,7 @@ def map_profile(
     mapped.connections = Connections(
         timezone=_zone(old),
         write_policy=_policy(old, report),
+        read_state=_read_state(old, report),
         budgets=BudgetsConfig(),
         schedules=_schedules(old, report),
         updates=_updates(old, report),

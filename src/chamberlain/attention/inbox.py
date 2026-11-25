@@ -117,5 +117,9 @@ def deliver(db: sqlite3.Connection, clock: Clock, session: str, events: Iterable
             repo.mark_delivered(db, event.handle, session, stamp(clock))
             if event.kind in _MAIL_KINDS and event.subject is not None:
                 repo.stamp_delivered(
-                    db, event.subject, event.handle, sent=event.attrs.reason == "sent"
+                    db,
+                    event.subject,
+                    event.handle,
+                    sent=event.attrs.reason == "sent",
+                    session=session,
                 )

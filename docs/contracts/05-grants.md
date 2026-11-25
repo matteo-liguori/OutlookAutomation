@@ -190,3 +190,14 @@ The writes track builds this endpoint and its tests. The viewer UI is wave 2.
 - **G-23** Every tool call writes one `tool.call` row (tool, session,
   request hash, `ok`, error code). Every grant and operation transition
   writes one row in the same transaction as the change.
+
+## Read state (track f-import)
+
+- **G-24** Mail stays unread unless the owner turned an option on in the profile
+  (`read_state.filing_marks_read`, `read_state.reporting_marks_read`, both default off) AND a
+  standing grant for that mailbox covers `mail.mark_read` with `allow_mark_read`. The option alone
+  never authorises anything. When an option is on and the mailbox has no such grant, the harness
+  proposes it once (actor `system:read_state`, `human_confirmation`; it never confirms it; a declined
+  or revoked grant is not proposed again). With the grant, a filing move proposed with the option on
+  marks the message read, and after a pass's report is kept the mail that pass triaged is marked read
+  (04, W-43).

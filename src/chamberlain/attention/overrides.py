@@ -13,6 +13,7 @@ from typing import Literal, Self
 import yaml
 from pydantic import Field, ValidationError, model_validator
 
+from chamberlain.attention.owner_rules import owner_rules
 from chamberlain.attention.rules import Rule, content_problems
 from chamberlain.limits import RULE_MAX_CHARS
 from chamberlain.schema.base import Model
@@ -85,4 +86,9 @@ def apply_overrides(rules: tuple[Rule, ...], data_root: Path) -> Applied:
         by_id[patch.id] = base.model_copy(
             update={"text": new_text, "max_chars": max(base.max_chars, len(new_text))}
         )
-    return Applied(tuple(sorted(by_id.values(), key=lambda r: r.id)), tuple(stale), tuple(problems))
+    mine, owner_problems = owner_rules(data_root)
+    problems.extend(owner_problems)
+    merged = {**by_id, **{rule.id: rule for rule in mine}}
+    return Applied(
+        tuple(sorted(merged.values(), key=lambda r: r.id)), tuple(stale), tuple(problems)
+    )

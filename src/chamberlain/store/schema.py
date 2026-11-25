@@ -51,6 +51,7 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "artifacts": (_D.WORKING_SET, _T.MEMORY),
     "artifact_owners": (_D.WORKING_SET, _T.MEMORY),
     "imported_context": (_D.RECORDS, _T.MEMORY),
+    "imported_items": (_D.RECORDS, _T.MEMORY),
     "complex_cards": (_D.RECORDS, _T.MEMORY),
     "refs": (_D.WORKING_SET, _T.MEMORY),
     "leases": (_D.EPHEMERAL, _T.MEMORY),
@@ -94,6 +95,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "app.installed_version",
         "app.authorised_senders",
         "app.mail_sync",
+        "app.read_state",
         "importer.last_import",
         "runs.update_tag",
         "runs.update_checked_at",
@@ -103,6 +105,8 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""
 AUTHORISED_SENDERS_KEY = "app.authorised_senders"
 """The profile's `authorised_senders`, mirrored at every start for the tools that check email."""
+READ_STATE_KEY = "app.read_state"
+"""The profile's `read_state` options, mirrored at every start (docs/configuration.md)."""
 MAIL_SYNC_KEY = "app.mail_sync"
 """The profile's `mail_sync` (how fresh folders must be, the sync time limit), mirrored at start."""
 

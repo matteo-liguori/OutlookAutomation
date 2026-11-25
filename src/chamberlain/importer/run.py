@@ -6,6 +6,7 @@ run finds every derived handle already there and writes nothing.
 """
 
 import json
+import re
 import sqlite3
 from collections.abc import Mapping
 from pathlib import Path
@@ -13,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
+from chamberlain.app.services import AuditLog
 from chamberlain.app.wiring import build_services
 from chamberlain.connections.build import build_router
 from chamberlain.connections.load import dump_connections, profile_path
@@ -21,7 +23,7 @@ from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.caldav.setup import Check, connect_icloud
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
 from chamberlain.connectors.google_calendar import auth
-from chamberlain.importer import authority, records
+from chamberlain.importer import authority, instructions, records
 from chamberlain.importer.credentials import icloud_credential, move_secrets
 from chamberlain.importer.old import SKIPPED_TABLES, OldInstallation, read_installation
 from chamberlain.importer.profile_map import MappedProfile, map_profile
@@ -34,6 +36,7 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import open_store, stamp
 from chamberlain.store.schema import get_state, set_state
+from chamberlain.writes import read_state
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
 STATE_KEY = "importer.last_import"
@@ -43,7 +46,8 @@ NEXT_STEPS = (
     "Reinstall the Thunderbird add-on once (python -m chamberlain.connectors.thunderbird.setup).",
     "Open the viewer and confirm each standing grant again; none is active until you do.",
     "Resolve each uncertain operation in the viewer: it happened, or it did not.",
-    "Turn the listed private guidance overrides into rule patches by hand.",
+    "Read config/owner-instructions.yaml: your own rules, now given to the agent. Delete any "
+    "topic that only describes the old commands.",
     "Keep the old data folder untouched as the fallback; run only one system with write access.",
 )
 
@@ -56,14 +60,6 @@ def _guard_paths(old_root: Path, data_root: Path) -> None:
             "The new data root and the old one must be separate folders.",
             fix="Choose a new, empty data root for Chamberlain.",
         )
-
-
-def _private_guidance(old: OldInstallation, report: ImportReport) -> None:
-    for layer in (old.profile.get("instructions"), old.customisations.get("instructions")):
-        if isinstance(layer, dict):
-            for topic, text in sorted(layer.items()):  # pyright: ignore[reportUnknownVariableType, reportUnknownArgumentType]
-                if isinstance(topic, str) and isinstance(text, str) and text.strip():
-                    report.private_guidance[topic] = text.strip()
 
 
 def _write_profile(data_root: Path, mapped: MappedProfile, report: ImportReport) -> None:
@@ -80,6 +76,26 @@ def _write_profile(data_root: Path, mapped: MappedProfile, report: ImportReport)
     else:
         report.config_written = "kept existing (differs from the old profile)"
         report.warnings.append("config/connections.yaml already exists and was not changed.")
+        _add_read_state(path, mapped, report)
+
+
+def _add_read_state(path: Path, mapped: MappedProfile, report: ImportReport) -> None:
+    """An older profile has no `read_state` section: add it (only when an option is on)."""
+    state = mapped.connections.read_state
+    existing = path.read_text(encoding="utf-8-sig")
+    if not (state.filing_marks_read or state.reporting_marks_read):
+        return
+    if re.search(r"^read_state:", existing, re.MULTILINE):
+        return
+    block = "read_state:\n" + "".join(
+        f"  {name}: {'true' if value else 'false'}\n"
+        for name, value in sorted(state.model_dump().items())
+    )
+    separator = "" if existing.endswith("\n") else "\n"
+    pending = path.with_suffix(".tmp")
+    pending.write_text(existing + separator + block, encoding="utf-8", newline="\n")
+    pending.replace(path)
+    report.count("read_state_options", new=True)
 
 
 def _check_google_accounts(mapped: MappedProfile, store: SecretStore, report: ImportReport) -> None:
@@ -104,7 +120,6 @@ def _import_all(
     icloud = icloud_credential(old_root)
     mapped = map_profile(old, report, icloud[0] if icloud else None)
     zone = ZoneInfo(mapped.connections.timezone)
-    _private_guidance(old, report)
 
     store = secrets or default_store(data_root)
     move_secrets(old_root, store, report, icloud)
@@ -213,12 +228,40 @@ def run_import(
     return report
 
 
+def _propose_read_grants(
+    db: sqlite3.Connection,
+    mapped: MappedProfile,
+    the_clock: Clock,
+    audit: AuditLog,
+    report: ImportReport,
+) -> None:
+    """The owner's v1 read-state options are on: propose the standing grant they need, per
+    mailbox, once. Never confirmed here: only a click in the viewer activates it (G-24)."""
+    state = mapped.connections.read_state
+    if not (state.filing_marks_read or state.reporting_marks_read):
+        return
+    mailboxes = sorted(s for s in mapped.connections.sources if s.startswith("mail:"))
+    for handle in read_state.propose_missing(db, the_clock, audit, mailboxes):
+        report.count("read_state_grants", new=True)
+        report.read_state.setdefault("grants_proposed", []).append(handle)
+    report.read_state["note"] = (
+        "Marking mail read needs your click on the proposed standing grant for each mailbox "
+        "(viewer, Permissions). Filing that marks mail read also needs the move itself to be "
+        "allowed as usual."
+    )
+
+
 def _write_report(data_root: Path, report: ImportReport) -> None:
     target = data_root / REPORT_RELATIVE
     document = json.dumps(report.document(), indent=2, sort_keys=True, ensure_ascii=False) + "\n"
     if report.changed or not target.is_file():
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(document, encoding="utf-8")
+        if target.is_file():
+            number = 1
+            while target.with_name(f"report.{number}.json").exists():
+                number += 1
+            target.replace(target.with_name(f"report.{number}.json"))
+        target.write_text(document, encoding="utf-8", newline="\n")
 
 
 def _write_rows(
@@ -248,6 +291,8 @@ def _write_rows(
             )
             grants = authority.import_grants(ctx)
             authority.import_journals(ctx, grants)
+            instructions.carry(db, old, data_root, now, report)
+            _propose_read_grants(db, mapped, the_clock, services.audit, report)
             if report.changed:
                 counts = json.dumps(report.counts, sort_keys=True)
                 services.audit.append(

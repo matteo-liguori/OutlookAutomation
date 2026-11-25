@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo
 from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.domain.cards import card_over_cap
 from chamberlain.importer.convert import add_days, derive, norm_ts, shorten
-from chamberlain.importer.old import Json, OldAction, OldCase, OldInstallation
+from chamberlain.importer.old import Json, OldAction, OldCase, OldDecision, OldInstallation
 from chamberlain.importer.report import ImportReport
 from chamberlain.limits import (
     ACTION_TITLE_MAX,
@@ -122,10 +122,23 @@ def _evidence_ids(case: OldCase, actions: list[OldAction]) -> list[str]:
     ]
 
 
-def _card_fields(case: OldCase) -> tuple[str, str, str, str]:
+def card_rules(case: OldCase, decisions: list[OldDecision]) -> str:
+    """The card's own standing instructions, then its decisions, in the owner's words (M-41)."""
+    lines: list[str] = []
+    custom: Any = case.details.get("customisations")
+    instructions: Any = cast(Json, custom).get("instructions") if isinstance(custom, dict) else None
+    if isinstance(instructions, dict):
+        for topic, text in sorted(cast(dict[Any, Any], instructions).items(), key=str):
+            if isinstance(text, str) and text.strip():
+                lines.append(f"{topic}: {text.strip()}")
+    lines += [f"Decided: {d.text}" for d in decisions if d.case_id == case.id]
+    return "\n".join(lines)
+
+
+def _card_fields(case: OldCase, rules: str = "") -> tuple[str, str, str, str]:
     purpose = _text(case.details.get("purpose"))
     goal = "" if purpose == case.title.strip() else purpose
-    return case.title.strip(), goal, case.position.strip(), ""
+    return case.title.strip(), goal, case.position.strip(), rules
 
 
 def _review_at(case: OldCase, zone: ZoneInfo, now: str) -> str:
@@ -194,6 +207,104 @@ def import_context(
     report.count("context_artifacts", new=True)
 
 
+RULES_KIND = "card_rules"
+IMPORTANT_KIND = "important"
+
+
+def is_important(action: OldAction) -> bool:
+    """The old harness's own test (`dashboard.is_important_appointment`)."""
+    step = _text(action.details.get("next_step"))
+    return (
+        action.details.get("important_appointment") is True
+        or "-important-" in action.id
+        or step.upper().startswith("IMPORTANT:")
+    )
+
+
+def appointment_times(
+    action: OldAction, zone: ZoneInfo, report: ImportReport
+) -> tuple[str | None, str | None]:
+    """`(due, snooze)` of an important appointment: due is its start, snooze its reminder time."""
+    old_due = norm_ts(action.next_review, zone)
+    start = norm_ts(action.details.get("appointment_start"), zone)
+    reminder = (
+        norm_ts(action.details.get("explicit_review"), zone)
+        or norm_ts(action.details.get("snooze_until"), zone)
+        or old_due
+    )
+    if start is None:
+        report.warnings.append(
+            f"Action {action.id} is an important appointment with no start time; "
+            "it keeps its old review time. Check it."
+        )
+        return old_due, norm_ts(action.details.get("snooze_until"), zone)
+    return start, reminder if reminder is not None and reminder < start else None
+
+
+def _carry_rules(
+    db: sqlite3.Connection,
+    case: OldCase,
+    handle: str,
+    rules: str,
+    now: str,
+    report: ImportReport,
+) -> None:
+    """Fill an existing card's empty rules once; never replace what v2 holds (M-41)."""
+    if not rules or case.status == "closed" or memory.imported_item_done(db, RULES_KIND, case.id):
+        return
+    memory.record_imported_item(db, RULES_KIND, case.id, handle, now)
+    card = memory.get_card(db, handle)
+    if card is None or str(card["state"]) != "open":
+        return
+    if str(card["rules"]).strip():
+        report.kept_as_changed.append(f"{handle}: rules (the card already has its own)")
+        return
+    over = bool(card["over_cap"]) or len(rules) > CARD_RULES_MAX
+    memory.update_card(
+        db,
+        handle=handle,
+        title=str(card["title"]),
+        goal=str(card["goal"]),
+        position=str(card["position"]),
+        rules=rules,
+        over_cap=over,
+        review_at=now if over else card["review_at"],
+        now=now,
+    )
+    report.count("card_rules", new=True)
+    if over:
+        report.over_cap_cards.append(f"{handle} (old {case.id})")
+
+
+def _backfill_important(
+    db: sqlite3.Connection, action: OldAction, zone: ZoneInfo, now: str, report: ImportReport
+) -> None:
+    """Flag an action imported before the flag was carried, unless v2 has changed it since."""
+    handle = derive("act", action.id)
+    row = memory.get_action(db, handle)
+    if row is None or memory.imported_item_done(db, IMPORTANT_KIND, action.id):
+        return
+    memory.record_imported_item(db, IMPORTANT_KIND, action.id, handle, now)
+    if bool(row["important"]):
+        return
+    untouched = str(row["state"]) == "open" and row["due_at"] == norm_ts(action.next_review, zone)
+    if not untouched:
+        report.kept_as_changed.append(f"{handle}: important appointment (changed since the import)")
+        return
+    due, snooze = appointment_times(action, zone, report)
+    memory.update_action(
+        db,
+        handle=handle,
+        title=str(row["title"]),
+        due_at=due,
+        snooze_until=snooze,
+        now=now,
+        important=True,
+    )
+    report.count("important_appointments", new=True)
+    report.appointments.append(handle)
+
+
 def import_cards(
     db: sqlite3.Connection,
     old: OldInstallation,
@@ -203,6 +314,7 @@ def import_cards(
     artifacts: ArtifactService,
 ) -> Imported:
     imported = Imported()
+    other_settings = 0
     by_case: dict[str, list[OldAction]] = {}
     for action in old.actions:
         if action.status in OPEN_ACTION:
@@ -211,16 +323,24 @@ def import_cards(
         report.where = f"case {case.id}"
         handle = derive("card", case.id)
         imported.cards[case.id] = handle
+        rules = card_rules(case, old.decisions)
+        custom: Any = case.details.get("customisations")
+        if isinstance(custom, dict) and set(cast(Json, custom)) - {"instructions"}:
+            other_settings += 1
         if memory.get_card(db, handle) is not None:
             report.count("cards", new=False)
             import_context(db, artifacts, case, handle, now, report)
+            _carry_rules(db, case, handle, rules, now, report)
+            for action in sorted(by_case.get(case.id, []), key=lambda a: a.id):
+                if is_important(action):
+                    _backfill_important(db, action, zone, now, report)
             continue
         report.count("cards", new=True)
         if case.status == "closed":
             _import_closed(db, case, handle, zone, now)
             continue
         actions = sorted(by_case.get(case.id, []), key=lambda a: a.id)
-        fields = _card_fields(case)
+        fields = _card_fields(case, rules)
         views: list[ActionView] = []
         for action in actions:
             title = shorten(_text(action.details.get("next_step")) or action.id, ACTION_TITLE_MAX)
@@ -248,6 +368,9 @@ def import_cards(
         )
         if over:
             report.over_cap_cards.append(f"{handle} (old {case.id})")
+        if rules:
+            memory.record_imported_item(db, RULES_KIND, case.id, handle, now)
+            report.count("card_rules", new=True)
         for action in actions:
             _import_action(db, action, handle, zone, now, report)
         import_context(db, artifacts, case, handle, now, report)
@@ -260,6 +383,8 @@ def import_cards(
             linked = add_evidence(db, old, old_id, "card", handle, zone, now, report)
             if linked is not None:
                 imported.evidence[old_id] = linked
+    if other_settings:
+        report.left_behind["card settings other than instructions"] = other_settings
     return imported
 
 
@@ -296,16 +421,28 @@ def _import_action(
     report: ImportReport,
 ) -> None:
     title = _text(action.details.get("next_step")) or action.id
+    important = is_important(action)
+    if important:
+        heading = _text(action.details.get("appointment_title"))
+        if heading and heading not in title:
+            title = f"{heading}: {title}"
     if len(title) > ACTION_TITLE_MAX:
         report.warnings.append(f"Action {action.id}: title cut to {ACTION_TITLE_MAX} characters.")
     snooze = norm_ts(action.details.get("snooze_until"), zone)
+    due = norm_ts(action.next_review, zone)
+    if important:
+        due, snooze = appointment_times(action, zone, report)
+        memory.record_imported_item(db, IMPORTANT_KIND, action.id, derive("act", action.id), now)
+        report.count("important_appointments", new=True)
+        report.appointments.append(derive("act", action.id))
     memory.insert_action(
         db,
         handle=derive("act", action.id),
         card=card,
         title=shorten(title, ACTION_TITLE_MAX),
-        due_at=norm_ts(action.next_review, zone),
+        due_at=due,
         snooze_until=snooze,
         now=now,
+        important=important,
     )
     report.count("actions", new=True)

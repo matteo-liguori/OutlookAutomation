@@ -728,13 +728,15 @@ def mail_batches(db: sqlite3.Connection) -> list[MailBatch]:
     ]
 
 
-def stamp_delivered(db: sqlite3.Connection, source: str, event: str, *, sent: bool) -> None:
-    """The agent is being shown the batch: remember which rows it covers."""
+def stamp_delivered(
+    db: sqlite3.Connection, source: str, event: str, *, sent: bool, session: str | None = None
+) -> None:
+    """The agent is being shown the batch: remember which rows it covers, and to whom."""
     db.execute(
-        "UPDATE mail_seen SET delivered_event = ? "
+        "UPDATE mail_seen SET delivered_event = ?, delivered_session = ? "
         "WHERE source_id = ? AND sent = ? AND triaged = 0 AND (delivered_event IS NULL OR "
         "delivered_event NOT IN (SELECT handle FROM events WHERE state IN ('new', 'delivered')))",
-        (event, source, int(sent)),
+        (event, session, source, int(sent)),
     )
 
 
