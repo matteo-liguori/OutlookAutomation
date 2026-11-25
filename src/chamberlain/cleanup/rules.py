@@ -43,7 +43,7 @@ class CleanupRule(Model):
 class CleanupConfig(Model):
     rules: tuple[CleanupRule, ...] = ()
     per_run: int = Field(default=500, ge=1, le=5000)
-    """At most this many messages go to Trash in one run; the rest wait for the next."""
+    """At most this many messages per mailbox go to Trash in one run; the rest wait."""
 
 
 @dataclass(frozen=True)

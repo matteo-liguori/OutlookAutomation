@@ -34,7 +34,7 @@ cleanup:
 ```
 chamberlain cleanup plan     # count what each rule would move; changes nothing
 chamberlain cleanup grant    # propose the permission; confirm it once in the viewer
-chamberlain cleanup run      # move what the rules name to Trash (at most per_run)
+chamberlain cleanup run      # move what the rules name to Trash (at most per_run per mailbox)
 ```
 
 Each move is an ordinary harness write on the "Mail clean-up" card, covered by one standing

@@ -145,7 +145,7 @@ def _grant_state(app: App, source: str, scope: StandingScope) -> tuple[str, str]
 
 
 def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupReport:
-    """Count, or move to Trash, what the rules name; at most `config.per_run` messages."""
+    """Count, or move to Trash, what the rules name; at most `config.per_run` per mailbox."""
     ctx = app.context
     now = ctx.clock.now()
     report = CleanupReport()
@@ -164,9 +164,11 @@ def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupRep
         state, _ = _grant_state(app, source, _scope(source, frozenset(wanted), card))
         (active.add(source) if state == "active" else report.waiting.append(source))
     refs = ctx.services.refs
-    for candidate in found[: config.per_run]:
-        if candidate.source not in active:
+    taken: dict[str, int] = {}
+    for candidate in found:
+        if candidate.source not in active or taken.get(candidate.source, 0) >= config.per_run:
             continue
+        taken[candidate.source] = taken.get(candidate.source, 0) + 1
         handle = refs.remember(HandleKind.MESSAGE, candidate.source, candidate.summary.locator)
         intent = {"kind": "mail.trash", "source": candidate.source, "message": handle}
         try:
