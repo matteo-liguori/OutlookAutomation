@@ -14,6 +14,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain recipients seed [--months N]
                                         learn known recipients from each Sent folder (read-only)
+    chamberlain addon update [--restart] update the Thunderbird add-on by replacing its file
     chamberlain live-test [run|grant|sweep|report] [--only P] [--skip P] [--keep] [--dry-run]
                           [--retry RUN] [--workers N]
                                         exercise the harness against the real accounts
@@ -40,6 +41,7 @@ from chamberlain.connections import (
 from chamberlain.connections.demo import demo_document
 from chamberlain.connections.load import profile_path
 from chamberlain.connectors.caldav.setup import verify as icloud_verify
+from chamberlain.connectors.thunderbird.update import SystemDesktop, thunderbird_home, update_addon
 from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.importer.run import run_import
 from chamberlain.livetest.commands import main as live_test_main
@@ -99,6 +101,16 @@ def _parser() -> argparse.ArgumentParser:
         help="switch the Claude file guard on or off (off by default; docs/review.md)",
     )
     guard.add_argument("action", choices=["on", "off", "status"])
+    addon = commands.add_parser(
+        "addon",
+        help="update the Thunderbird add-on by replacing its file in the profile (not the UI)",
+    )
+    addon.add_argument("action", choices=["update"])
+    addon.add_argument(
+        "--restart",
+        action="store_true",
+        help="close Thunderbird normally first and start it again after",
+    )
     importing = commands.add_parser(
         "import", help="import the old harness's data (the old folder is only read)"
     )
@@ -339,6 +351,26 @@ def _import(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
+def _addon(args: argparse.Namespace, out: TextIO) -> int:
+    """Build the add-on and put it in place of the installed file in every Thunderbird profile."""
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
+        return EXIT_FAILED
+    try:
+        report = update_addon(
+            Path(data) / "bridge",
+            home=thunderbird_home(),
+            desktop=SystemDesktop(),
+            restart=args.restart,
+        )
+    except ChamberlainError as error:
+        out.write(f"{error.message} {error.fix}".rstrip() + "\n")
+        return EXIT_FAILED
+    out.write("\n".join(report.lines()) + "\n")
+    return EXIT_OK
+
+
 def _guard(args: argparse.Namespace, out: TextIO) -> int:
     """The Claude file guard: deny Claude Code's file tools the data root (an accident guard).
 
@@ -506,6 +538,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         return _recipients(args, stream)
     if args.command == "guard":
         return _guard(args, stream)
+    if args.command == "addon":
+        return _addon(args, stream)
     if args.command == "viewer":
         return _viewer(args, stream)
     if args.command == "live-test":

@@ -41,6 +41,10 @@ Python; on macOS or Linux use `.venv/bin/python`.
    built package in Thunderbird (Add-ons Manager, Install Add-on From File). It has its
    own ID, so the old add-on can keep running beside it.
 
+   To update the add-on later, never use the Add-ons Manager: run
+   `chamberlain addon update --restart`. It builds the package, closes Thunderbird normally,
+   replaces the add-on file in every profile that has it, and starts Thunderbird again.
+
 3. Calendars, if you use them. Each is a guided command that saves secrets only in the
    operating system's credential store.
 
