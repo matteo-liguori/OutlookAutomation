@@ -102,9 +102,10 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   (`mail_seen`, unique on `message_key`, the bare lower-cased Message-ID, else the locator).
   Gmail's All Mail copy, a message moved between folders and a label copy are one item. A row
   holds identity, time and suggested card; no sender or subject. Mail the owner sent (a copy in
-  a Sent folder and none in the inbox, or sent from the source's own address) is `sent`: it adds
-  its recipients to the known recipients (`WriteControl.learn_recipients`, origin
-  `sent-history`) and never counts as new mail. If it matches an open card (thread headers, or
+  a Sent folder and none in the inbox, or sent from the source's own address) is `sent` and never
+  counts as new mail. Only a copy in a Sent folder adds its recipients to the known recipients
+  (`WriteControl.learn_recipients`, origin `sent-history`, G-15): a From line that matches the
+  owner is a header anyone can forge, so it never teaches a recipient. If it matches an open card (thread headers, or
   recipients that all point to one card) it is kept for one quiet, low-priority
   `mail.new_unmatched` line with reason `sent` ("N sent by you"), whose next call lists the
   Sent folder; otherwise it needs no triage and goes with the window. An unhandled sent line
@@ -165,7 +166,10 @@ harness syncs every folder the scan reads and waits (owner ruling 2026-11-24 nig
   were last in sync (`mail_sync.complete_at`: the oldest folder's sync time, set only when every
   folder has synced and none is failing).
 - **A-25** A folder that will not sync never blocks the scan for long and is never silent. One
-  sync of one source stops at `mail_sync.time_limit_seconds` (default 300). The scan then reads on
+  sync of one source stops at `mail_sync.time_limit_seconds` (default 300), and all the syncing in
+  one tool call (every source, the tick's and `start`'s together) shares that one limit: sources
+  are synced in turn, and a source the limit cuts off is not asked, is reported like a folder that
+  would not sync (code `time-limit`) and is tried on the next tick. The scan then reads on
   with what it has, and one `source.stale` event (reason `sync`, discriminator `sync`) names how
   many folders did not sync and their roles. Folder names are remote text (E-8), so the names go
   to `doctor sources` (`sources.sync`, counts) and to the pass report, which says "Partially
@@ -181,8 +185,10 @@ harness syncs every folder the scan reads and waits (owner ruling 2026-11-24 nig
 - **A-27** While a folder would not sync, mail may have reached it dated before the watermark moved
   on. When it syncs again the scan reads that one folder on its own, from its last good sync (an
   hour earlier, at most a day back) to now, over as many ticks as it takes. Mail that sat in a
-  stuck folder for more than a day is not recovered by this (the older-mail question A-23 is about
-  the whole source): known residue.
+  stuck folder for more than a day is not read by this: the span before the one-day limit is
+  held and the same older-mail question (A-23, `source.stale` reason `older_mail`) is raised for
+  it, so nothing is skipped silently. The question covers the whole source over that span; mail
+  already read is not read twice.
 
 ## Delivery
 
@@ -191,7 +197,7 @@ harness syncs every folder the scan reads and waits (owner ruling 2026-11-24 nig
 2. **Piggyback.** Every reply may carry up to 3 `notices` for events of
    priority 80 or more that this session has not been shown.
 3. **Wake.** `chamberlain tick` exits with status 10 when undelivered events
-   exist and no session is active; a per-agent wake adapter may act on that.
+   exist and no scheduled pass is in progress (a chat never counts); a per-agent wake adapter may act on that.
    The harness works without one.
 
 - **A-9** `start` returns at most 5 work items; `next` at most 10. Neither

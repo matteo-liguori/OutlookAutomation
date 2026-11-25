@@ -33,9 +33,10 @@ def test_dkim_pass_needs_a_signing_domain_aligned_with_from() -> None:
     assert not passed("mx.google.com; dkim=pass")
 
 
-def test_dmarc_pass_needs_the_same_from_domain_when_it_names_one() -> None:
+def test_dmarc_pass_needs_the_same_from_domain() -> None:
     assert passed("mx.google.com; dmarc=pass (p=NONE) header.from=example.org")
     assert not passed("mx.google.com; dmarc=pass header.from=evil.example")
+    assert not passed("mx.google.com; dmarc=pass (p=NONE)"), "a pass that names no domain"
     assert not passed("mx.google.com; dmarc=fail header.from=example.org; spf=pass")
 
 

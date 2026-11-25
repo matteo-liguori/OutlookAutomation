@@ -57,7 +57,7 @@ Every table and every file under the data root belongs to exactly one class.
 | Operation | 30 days after terminal | Compacted (W-25) |
 | Terminal grant | 90 days | Compacted (G-2) |
 | Audit log, compact operations and grants | 730 days | Removed in whole months with a checkpoint (G-22) |
-| Backups | 7 daily + 4 weekly slots | Oldest overwritten |
+| Backups | 2 daily + 2 weekly slots | Oldest overwritten |
 | Logs | 14 days, 20 MB | Rotated |
 | Quarantined orphan | 14 days | Deleted |
 | Metrics history (`memory.metrics_history`) | one snapshot a week, 30 kept | Oldest dropped |
