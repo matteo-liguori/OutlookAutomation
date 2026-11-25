@@ -103,7 +103,8 @@ def test_the_due_pass_reaches_the_scheduled_start_as_a_work_item(rig: Rig) -> No
     assert repo.get_run(rig.ctx.db, run.handle).state is RunState.RUNNING  # type: ignore[union-attr]
 
 
-def test_a_scheduled_pass_produces_one_report_owned_by_its_run(rig: Rig) -> None:
+def test_a_scheduled_pass_produces_one_report_owned_by_and_1_related_checks(rig: Rig) -> None:
+    # a_scheduled_pass_produces_one_report_owned_by_its_run
     due_at_eight(rig)
     run = repo.recent_runs(rig.ctx.db, 1)[0]
     rig.start(purpose="scheduled", scheduled_day=run.day)
@@ -136,10 +137,7 @@ def test_a_scheduled_pass_produces_one_report_owned_by_its_run(rig: Rig) -> None
     assert read_reports(rig.ctx, run.handle) == []
     assert not blob_path(rig.ctx.data_root, sha).exists()
 
-
-def test_a_run_owned_report_survives_sweeps_until_its_lifetime_then_the_sweeper_removes_it(
-    rig: Rig,
-) -> None:
+    # a_run_owned_report_survives_sweeps_until_its_lifetime_then_the_sweeper_removes_it
     due_at_eight(rig)
     run = repo.recent_runs(rig.ctx.db, 1)[0]
     handle = store_report(rig.ctx, run.handle, "Harness-written report.")
@@ -159,7 +157,8 @@ def test_a_run_owned_report_survives_sweeps_until_its_lifetime_then_the_sweeper_
     assert not blob_path(rig.ctx.data_root, sha).exists()
 
 
-def test_the_hold_of_a_run_ends_with_the_run_row(rig: Rig) -> None:
+def test_r10_the_hold_of_a_run_ends_with_the_run_row_and_1_related_checks(rig: Rig) -> None:
+    # the_hold_of_a_run_ends_with_the_run_row
     due_at_eight(rig)
     run = repo.recent_runs(rig.ctx.db, 1)[0]
     store_report(rig.ctx, run.handle, "Report.")
@@ -169,8 +168,7 @@ def test_the_hold_of_a_run_ends_with_the_run_row(rig: Rig) -> None:
     sweep(rig.ctx, rig.clock.now(), compactors=COMPACTORS)
     assert rig.rows("SELECT * FROM artifact_owners") == []
 
-
-def test_r10_a_scheduled_start_for_an_earlier_day_must_stop(rig: Rig) -> None:
+    # r10_a_scheduled_start_for_an_earlier_day_must_stop
     due_at_eight(rig)
     run = repo.recent_runs(rig.ctx.db, 1)[0]
     rig.clock.advance(hours=24)  # the wake adapter fired a day late
@@ -184,7 +182,10 @@ def test_r10_a_scheduled_start_for_an_earlier_day_must_stop(rig: Rig) -> None:
     assert rig.start(purpose="scheduled", scheduled_day=today)["ok"]
 
 
-def test_r10_a_scheduled_session_from_an_earlier_day_stops_on_every_tool(rig: Rig) -> None:
+def test_r10_a_scheduled_session_from_an_earlier_day_stops_and_1_related_checks(
+    rig: Rig,
+) -> None:
+    # r10_a_scheduled_session_from_an_earlier_day_stops_on_every_tool
     due_at_eight(rig)
     run = repo.recent_runs(rig.ctx.db, 1)[0]
     assert rig.start(purpose="scheduled", scheduled_day=run.day)["ok"]
@@ -195,8 +196,7 @@ def test_r10_a_scheduled_session_from_an_earlier_day_stops_on_every_tool(rig: Ri
     run_tick(rig.app)
     assert repo.get_run(rig.ctx.db, run.handle).state is RunState.INCOMPLETE  # type: ignore[union-attr]
 
-
-def test_a_live_chat_never_supersedes_or_is_stopped_by_a_scheduled_run(rig: Rig) -> None:
+    # a_live_chat_never_supersedes_or_is_stopped_by_a_scheduled_run
     due_at_eight(rig)
     run = repo.recent_runs(rig.ctx.db, 1)[0]
     scheduled = rig.start(purpose="scheduled", scheduled_day=run.day)["data"]["session"]
