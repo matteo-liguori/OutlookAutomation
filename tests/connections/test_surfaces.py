@@ -17,7 +17,10 @@ def run_cli(*argv: str) -> tuple[int, dict[str, Any]]:
     return code, json.loads(out.getvalue())
 
 
-def test_s16_config_validate_lists_the_sources_without_touching_secrets(data_root: Path) -> None:
+def test_s16_s17_config_validate_lists_the_sources_without_and_3_related_checks(
+    data_root: Path,
+) -> None:
+    # s16_config_validate_lists_the_sources_without_touching_secrets
     write_profile(data_root, full_profile())
     code, shown = run_cli("--data", str(data_root), "config", "validate")
     assert code == cli.EXIT_OK
@@ -25,24 +28,21 @@ def test_s16_config_validate_lists_the_sources_without_touching_secrets(data_roo
     assert shown["sources"]["calendar:icloud"] == {"kind": "caldav", "enabled": True}
     assert "calendar:primary" in shown["connectors"]
 
-
-def test_s17_config_show_prints_the_profile_and_no_secret(data_root: Path) -> None:
+    # s17_config_show_prints_the_profile_and_no_secret
     write_profile(data_root, full_profile())
     code, shown = run_cli("--data", str(data_root), "config", "show")
     assert code == cli.EXIT_OK
     assert shown["sources"]["mail:work"]["mailbox"] == "me@example.test"
     assert "password" not in json.dumps(shown).replace("password:me@icloud.example", "")
 
-
-def test_s16_config_validate_reports_a_bad_profile_as_an_error_reply(data_root: Path) -> None:
+    # s16_config_validate_reports_a_bad_profile_as_an_error_reply
     write_profile(data_root, {"version": 1, "timezone": "Nowhere/None"})
     code, reply = run_cli("--data", str(data_root), "config", "validate")
     assert code == cli.EXIT_FAILED
     assert reply["error"]["code"] == "config.invalid"
     assert reply["error"]["field"] == "timezone"
 
-
-def test_s16_a_tool_call_reports_a_bad_profile_instead_of_crashing(data_root: Path) -> None:
+    # s16_a_tool_call_reports_a_bad_profile_instead_of_crashing
     write_profile(data_root, {"version": 7})
     code, reply = run_cli("--data", str(data_root), "doctor")
     assert code == cli.EXIT_FAILED

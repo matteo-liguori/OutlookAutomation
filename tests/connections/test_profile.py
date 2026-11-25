@@ -23,13 +23,13 @@ from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
-def test_s16_a_missing_profile_is_an_empty_one(data_root: Path) -> None:
-    assert load_connections(data_root).sources == {}
-
-
-def test_s16_a_full_profile_builds_every_connector_kind(
+def test_s16_s17_a_missing_profile_is_an_empty_one_and_3_related_checks(
     data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # s16_a_missing_profile_is_an_empty_one
+    assert load_connections(data_root).sources == {}
+
+    # s16_a_full_profile_builds_every_connector_kind
     write_profile(data_root, full_profile())
     connections = load_connections(data_root)
     runtime = build_runtime(connections, data_root, clock, secrets=secrets)
@@ -44,9 +44,7 @@ def test_s16_a_full_profile_builds_every_connector_kind(
     assert runtime.policy.sends_per_hour == 10
     assert runtime.policy.zone == "Europe/London"
 
-
-def test_s16_the_caldav_register_output_is_a_valid_source(data_root: Path) -> None:
-    """`caldav.setup register` writes exactly these four keys; they must load."""
+    # s16_the_caldav_register_output_is_a_valid_source: `caldav.setup register` writes exactly t
     write_profile(
         data_root,
         {
@@ -63,8 +61,7 @@ def test_s16_the_caldav_register_output_is_a_valid_source(data_root: Path) -> No
     )
     assert "calendar:icloud" in load_connections(data_root).sources
 
-
-def test_s17_no_field_can_hold_a_secret(data_root: Path) -> None:
+    # s17_no_field_can_hold_a_secret
     document = full_profile()
     document["sources"]["calendar:icloud"]["password"] = "hunter2-hunter2"
     write_profile(data_root, document)
@@ -79,9 +76,8 @@ def test_s17_no_field_can_hold_a_secret(data_root: Path) -> None:
 Mutation = Callable[[dict[str, Any]], object]
 
 
-@pytest.mark.parametrize(
-    "mutate",
-    [
+def test_s16_a_malformed_profile_is_config_invalid_not_a_traceback(data_root: Path) -> None:
+    mutations: list[Mutation] = [
         lambda d: d.update(version=2),
         lambda d: d.update(timezone="Mars/Olympus"),
         lambda d: d["sources"].update({"mail:bad": {"kind": "caldav"}}),
@@ -90,17 +86,14 @@ Mutation = Callable[[dict[str, Any]], object]
         lambda d: d["write_policy"].update(sends_per_hour=500),
         lambda d: d["sources"].update({"mail:Upper": d["sources"]["mail:work"]}),
         lambda d: d["sources"].update({"calendar:oops": d["sources"]["mail:work"]}),
-    ],
-)
-def test_s16_a_malformed_profile_is_config_invalid_not_a_traceback(
-    data_root: Path, mutate: Mutation
-) -> None:
-    document = copy.deepcopy(full_profile())
-    mutate(document)
-    write_profile(data_root, document)
-    with pytest.raises(ChamberlainError) as raised:
-        load_connections(data_root)
-    assert raised.value.code is ErrorCode.CONFIG_INVALID
+    ]
+    for index, mutate in enumerate(mutations):
+        document = copy.deepcopy(full_profile())
+        mutate(document)
+        write_profile(data_root, document)
+        with pytest.raises(ChamberlainError) as raised:
+            load_connections(data_root)
+        assert raised.value.code is ErrorCode.CONFIG_INVALID, index
 
 
 def test_s16_a_yaml_syntax_error_is_config_invalid(data_root: Path) -> None:
@@ -112,16 +105,16 @@ def test_s16_a_yaml_syntax_error_is_config_invalid(data_root: Path) -> None:
     assert raised.value.code is ErrorCode.CONFIG_INVALID
 
 
-def test_g12_the_policy_cannot_loosen_a_mandatory_row() -> None:
+def test_g12_s16_the_policy_cannot_loosen_a_mandatory_row_and_1_related_checks(
+    data_root: Path, secrets: MemorySecrets, clock: ManualClock
+) -> None:
+    # g12_the_policy_cannot_loosen_a_mandatory_row
     connections = parse_connections({"write_policy": {"other": "none"}})
     with pytest.raises(ChamberlainError) as raised:
         build_runtime(connections, Path("unused"), ManualClock())
     assert raised.value.code is ErrorCode.CONFIG_INVALID
 
-
-def test_s16_disabled_sources_get_no_connector(
-    data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s16_disabled_sources_get_no_connector
     document = full_profile()
     document["sources"]["calendar:icloud"]["enabled"] = False
     write_profile(data_root, document)
@@ -129,34 +122,30 @@ def test_s16_disabled_sources_get_no_connector(
     assert "calendar:icloud" not in router.calendar
 
 
-def test_s17_an_insecure_caldav_url_is_refused_when_building(
+def test_s17_s16_an_insecure_caldav_url_is_refused_when_building_and_3_related_checks(
     data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # s17_an_insecure_caldav_url_is_refused_when_building
     document = full_profile()
     document["sources"]["calendar:icloud"]["url"] = "http://caldav.example.test/cal/"
     connections = parse_connections(document)
     with pytest.raises(ChamberlainError):
         build_router(connections, data_root, clock, secrets=secrets)
 
-
-def test_s16_save_and_load_round_trip_and_second_save_is_a_no_op(data_root: Path) -> None:
+    # s16_save_and_load_round_trip_and_second_save_is_a_no_op
     connections = parse_connections(full_profile())
     assert save_connections(data_root, connections) is True
     assert save_connections(data_root, connections) is False
     assert load_connections(data_root) == connections
     assert yaml.safe_load(dump_connections(connections))["version"] == 1
 
-
-def test_s17_show_has_no_secret_values(secrets: MemorySecrets) -> None:
+    # s17_show_has_no_secret_values
     secrets.set("chamberlain.caldav", "password:me@icloud.example", "app-password-value")
     shown = str(render_redacted(parse_connections(full_profile())))
     assert "app-password-value" not in shown
     assert "password:me@icloud.example" in shown  # the reference, not the secret
 
-
-def test_s16_open_app_with_no_profile_runs_with_no_sources(
-    data_root: Path, clock: ManualClock
-) -> None:
+    # s16_open_app_with_no_profile_runs_with_no_sources
     app = open_app(data_root, clock=clock)
     try:
         assert app.call("doctor", {}).ok
@@ -164,9 +153,10 @@ def test_s16_open_app_with_no_profile_runs_with_no_sources(
         app.close()
 
 
-def test_s16_open_app_fills_the_sources_table_once(
+def test_s16_open_app_fills_the_sources_table_once_and_1_related_checks(
     data_root: Path, secrets: MemorySecrets, clock: ManualClock
 ) -> None:
+    # s16_open_app_fills_the_sources_table_once
     write_profile(data_root, full_profile())
     app = open_app(data_root, clock=clock, secrets=secrets)
     try:
@@ -194,10 +184,7 @@ def test_s16_open_app_fills_the_sources_table_once(
     finally:
         again.close()
 
-
-def test_s16_a_source_removed_from_the_profile_is_disabled_not_deleted(
-    data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s16_a_source_removed_from_the_profile_is_disabled_not_deleted
     write_profile(data_root, full_profile())
     open_app(data_root, clock=clock, secrets=secrets).close()
     document = full_profile()
@@ -213,18 +200,16 @@ def test_s16_a_source_removed_from_the_profile_is_disabled_not_deleted(
         app.close()
 
 
-def test_s16_a_malformed_profile_stops_open_app_before_the_store_is_created(
-    data_root: Path, clock: ManualClock
+def test_s16_a_malformed_profile_stops_open_app_before_the_and_1_related_checks(
+    data_root: Path, clock: ManualClock, secrets: MemorySecrets
 ) -> None:
+    # s16_a_malformed_profile_stops_open_app_before_the_store_is_created
     write_profile(data_root, {"version": 9})
     with pytest.raises(ChamberlainError):
         open_app(data_root, clock=clock)
     assert not (data_root / "chamberlain.sqlite3").exists()
 
-
-def test_s16_an_owl_source_is_unavailable_not_a_crash(
-    data_root: Path, secrets: MemorySecrets, clock: ManualClock
-) -> None:
+    # s16_an_owl_source_is_unavailable_not_a_crash
     owl = full_profile()["sources"]["calendar:work"]
     write_profile(data_root, {"version": 1, "sources": {"calendar:work": owl}})
     app = open_app(data_root, clock=clock, secrets=secrets)
@@ -235,7 +220,10 @@ def test_s16_an_owl_source_is_unavailable_not_a_crash(
         app.close()
 
 
-def test_authorised_senders_in_the_profile_reach_the_store_at_start(data_root: Path) -> None:
+def test_authorised_senders_in_the_profile_reach_the_and_1_related_checks(
+    data_root: Path,
+) -> None:
+    # authorised_senders_in_the_profile_reach_the_store_at_start
     from chamberlain.connections import open_app
     from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, get_state
 
@@ -258,8 +246,7 @@ def test_authorised_senders_in_the_profile_reach_the_store_at_start(data_root: P
     assert "me@example.org" in stored
     assert "pa@example.org" in stored
 
-
-def test_a_bad_authorised_sender_scope_is_config_invalid(data_root: Path) -> None:
+    # a_bad_authorised_sender_scope_is_config_invalid
     write_profile(
         data_root,
         {

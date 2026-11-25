@@ -14,7 +14,10 @@ def _run(*argv: str) -> tuple[int, dict[str, object]]:
     return code, json.loads(out.getvalue())
 
 
-def test_demo_init_writes_a_demo_only_profile_into_a_new_folder(tmp_path: Path) -> None:
+def test_demo_init_writes_a_demo_only_profile_into_a_and_3_related_checks(
+    tmp_path: Path,
+) -> None:
+    # demo_init_writes_a_demo_only_profile_into_a_new_folder
     root = tmp_path / "demo"
     code, shown = _run("demo", "init", str(root))
     assert code == cli.EXIT_OK
@@ -27,14 +30,12 @@ def test_demo_init_writes_a_demo_only_profile_into_a_new_folder(tmp_path: Path) 
     finally:
         app.close()
 
-
-def test_demo_init_accepts_an_existing_empty_folder(tmp_path: Path) -> None:
+    # demo_init_accepts_an_existing_empty_folder
     (tmp_path / "empty").mkdir()
     code, _ = _run("demo", "init", str(tmp_path / "empty"))
     assert code == cli.EXIT_OK
 
-
-def test_demo_init_refuses_a_folder_that_holds_anything(tmp_path: Path) -> None:
+    # demo_init_refuses_a_folder_that_holds_anything
     keep = tmp_path / "real"
     keep.mkdir()
     (keep / "notes.txt").write_text("mine", encoding="utf-8")
@@ -43,8 +44,7 @@ def test_demo_init_refuses_a_folder_that_holds_anything(tmp_path: Path) -> None:
     assert reply["error"]["code"] == "config.invalid"  # type: ignore[index]
     assert [p.name for p in keep.iterdir()] == ["notes.txt"]
 
-
-def test_the_readme_documents_the_demo_command() -> None:
+    # the_readme_documents_the_demo_command
     readme = (Path(__file__).parents[2] / "README.md").read_text(encoding="utf-8")
     assert "## Try it without real accounts" in readme
     assert "demo init" in readme
