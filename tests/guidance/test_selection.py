@@ -53,34 +53,32 @@ def ids(picked: Any) -> list[str]:
     return [c.rule.id for c in picked.full]
 
 
-def test_a15_rules_are_ranked_by_priority_then_id():
+def test_a15_rules_are_ranked_by_priority_then_id_and_3_related_checks() -> None:
+    # a15_rules_are_ranked_by_priority_then_id
     rules = (rule("b.two", "x", 50), rule("a.one", "x", 50), rule("c.top", "x", 80))
     assert ids(select(rules, situation(), {})) == ["c.top", "a.one", "b.two"]
 
-
-def test_a15_selection_is_deterministic():
+    # a15_selection_is_deterministic
     rules = tuple(rule(f"r.{i}", "text " * 10, i * 7 % 40) for i in range(9))
     first = select(rules, situation(), {})
     assert first == select(rules, situation(), {})
 
-
-def test_selection_step_2_a_delivered_rule_at_this_version_is_dropped():
+    # selection_step_2_a_delivered_rule_at_this_version_is_dropped
     rules = (rule("a.one", "x", 50),)
     assert ids(select(rules, situation(), {("a.one", "session"): 1})) == []
     assert ids(select(rules, situation(), {("a.one", "session"): 0})) == ["a.one"]
 
-
-def test_selection_step_2_a_new_version_is_delivered_again():
+    # selection_step_2_a_new_version_is_delivered_again
     newer = rule("a.one", "x", 50, version=2)
     assert ids(select((newer,), situation(), {("a.one", "session"): 1})) == ["a.one"]
 
 
-def test_selection_once_per_always_repeats():
+def test_selection_once_per_always_repeats_and_3_related_checks() -> None:
+    # selection_once_per_always_repeats
     always = rule("a.one", "x", 50, once_per="always")
     assert ids(select((always,), situation(), {("a.one", "session"): 1})) == ["a.one"]
 
-
-def test_selection_once_per_operation_is_scoped_to_each_operation():
+    # selection_once_per_operation_is_scoped_to_each_operation
     when = {"event": "operation.uncertain"}
     per_op = rule("a.one", "x", 50, when=when, once_per="operation")
     one, two = uncertain(), uncertain("evt_bbbbbbbbbbbbbbbb", "op_bbbbbbbbbbbbbbbb")
@@ -89,8 +87,7 @@ def test_selection_once_per_operation_is_scoped_to_each_operation():
     )
     assert [c.scopes for c in picked.full] == [("op_bbbbbbbbbbbbbbbb",)]
 
-
-def test_selection_step_4_whole_rules_only_never_cut():
+    # selection_step_4_whole_rules_only_never_cut
     rules = (
         rule("a.big", "y" * 500, 60),
         rule("b.small", "z" * 200, 50),
@@ -101,15 +98,15 @@ def test_selection_step_4_whole_rules_only_never_cut():
     assert all(len(c.rule.text) in (500, 200) for c in picked.full)
     assert [r.id for r in picked.pointers] == ["c.tiny"]
 
-
-def test_selection_step_5_a_rule_that_does_not_fit_becomes_a_pointer():
+    # selection_step_5_a_rule_that_does_not_fit_becomes_a_pointer
     rules = (rule("a.big", "y" * 600, 60), rule("b.next", "z" * 300, 50))
     picked = select(rules, situation(), {})
     assert ids(picked) == ["a.big"]
     assert [r.id for r in picked.pointers] == ["b.next"]
 
 
-def test_selection_pointers_cost_budget_and_are_capped_at_three():
+def test_a16_selection_pointers_cost_budget_and_are_capped_and_3_related_checks() -> None:
+    # selection_pointers_cost_budget_and_are_capped_at_three
     wide = tuple(rule(f"p.{i}", "z" * 400, 10 + i) for i in range(6))
     assert len(select(wide, situation(), {}).pointers) <= 3
     used = sum(len(c.rule.text) for c in select(wide, situation(), {}).full)
@@ -118,23 +115,20 @@ def test_selection_pointers_cost_budget_and_are_capped_at_three():
         <= GUIDANCE_REPLY_CHARS
     )
 
-
-def test_a16_an_urgent_rule_keeps_its_place_ahead_of_lower_ones():
+    # a16_an_urgent_rule_keeps_its_place_ahead_of_lower_ones
     urgent = rule("a.urgent", "u" * 600, 95)
     lower = tuple(rule(f"l.{i}", "l" * 150, 60) for i in range(4))
     picked = select((*lower, urgent), situation(), {})
     assert ids(picked)[0] == "a.urgent"
     assert sum(len(c.rule.text) for c in picked.full) <= GUIDANCE_REPLY_CHARS
 
-
-def test_selection_event_filters_use_the_event_attributes():
+    # selection_event_filters_use_the_event_attributes
     when = {"event": "operation.uncertain", "intent_kind": "mail.send"}
     only_sends = rule("a.sends", "x", 50, when=when)
     plain = situation("start", (uncertain(),))
     assert ids(select((only_sends,), plain, {})) == []
 
-
-def test_selection_result_and_error_triggers():
+    # selection_result_and_error_triggers
     by_result = rule("a.cov", "x", 50, when={"result": "coverage.complete == false"})
     by_error = rule("a.err", "x", 40, when={"error": "not_authorised"})
     sit = Situation(
@@ -145,12 +139,12 @@ def test_selection_result_and_error_triggers():
     assert ids(select((by_result, by_error), ok, {})) == []
 
 
-def test_selection_a_rule_with_no_trigger_is_never_pushed():
+def test_a15_selection_a_rule_with_no_trigger_is_never_pushed_and_1_related_checks() -> None:
+    # selection_a_rule_with_no_trigger_is_never_pushed
     only_fetched = rule("a.only", "x", 99, when={})
     assert ids(select((only_fetched,), situation(), {})) == []
 
-
-def test_a15_the_start_event_rules_of_the_real_set_fit_the_budget():
+    # a15_the_start_event_rules_of_the_real_set_fit_the_budget
     sit = Situation("start", {"purpose": "scheduled"}, {}, None, None, (uncertain(),))
     picked = select(load_rules(), sit, {})
     assert sum(len(c.rule.text) for c in picked.full) <= GUIDANCE_REPLY_CHARS
