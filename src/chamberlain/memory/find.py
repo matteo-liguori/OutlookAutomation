@@ -12,6 +12,7 @@ from chamberlain.domain.calendar import CalendarQuery
 from chamberlain.domain.contacts import ContactQuery
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery, MessageSummary, message_key
+from chamberlain.limits import FIND_MAIL_DAYS
 from chamberlain.memory import refs, repo
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
@@ -205,7 +206,7 @@ def _mail(ctx: Context, request: FindRequest) -> Snapshot:
                 MailQuery(
                     folder_id=folder_id,
                     text=request.query,
-                    since=request.since,
+                    since=request.since or ctx.clock.now() - timedelta(days=FIND_MAIL_DAYS),
                     until=request.until,
                     unread=request.unread,
                     limit=SNAPSHOT_MAX,

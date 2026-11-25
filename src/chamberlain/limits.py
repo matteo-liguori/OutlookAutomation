@@ -108,3 +108,8 @@ RECURRENCE_COUNT_MAX: Final = 1_000
 RECURRENCE_ZONE_MAX: Final = 64
 RECURRENCE_EXPAND_MAX: Final = 500
 """Most occurrences one window read may expand from a single series."""
+
+FIND_MAIL_DAYS: Final = 90
+"""A mail `find` without `since` searches this many days back. Thunderbird lists a folder oldest
+first and the add-on scans at most a bounded number of messages, so an unbounded search of a
+large mailbox missed recent mail or timed out (found live, 2026-11-25)."""

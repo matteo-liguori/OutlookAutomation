@@ -152,6 +152,7 @@ class FindRequest(ToolRequest):
     within: Handle | None = None
     source: SourceId | None = None
     since: Timestamp | None = None
+    """Mail: without it the last 90 days are searched; give an earlier date to look further back."""
     until: Timestamp | None = None
     unread: bool | None = None
     folder: FolderRole | None = None

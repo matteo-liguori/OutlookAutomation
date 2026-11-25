@@ -11,7 +11,7 @@ import os
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Protocol, cast
 
@@ -85,6 +85,10 @@ class Probe(Protocol):
         ...
 
 
+MARKED_MAIL_DAYS = 30
+"""How far back the probe looks for marked mail; runs and sweeps are recent."""
+
+
 class RealWaiter:
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
@@ -150,7 +154,11 @@ class PortProbe:
         found: list[MailCopy] = []
         cursor: str | None = None
         for _ in range(10):
-            page = port.search(source, MailQuery(text=text, limit=200), cursor)
+            # Recent mail only: marked mail is always from a recent run, and a full-text
+            # search of a large mailbox with no date bound times out in Thunderbird (found
+            # live, 2026-11-25).
+            since = self._ctx.clock.now() - timedelta(days=MARKED_MAIL_DAYS)
+            page = port.search(source, MailQuery(text=text, since=since, limit=200), cursor)
             for item in page.items:
                 if text in item.subject:
                     found.append(

@@ -306,3 +306,17 @@ def test_t8_e13_find_scopes_cards_stored_calendar_contacts_and_1_related_checks(
     note = call(app, "open", handle="note_0123456789abcdef")
     assert note.error is not None
     assert note.error.code.value == "request.wrong_kind"
+
+
+def test_a_mail_search_without_a_date_looks_back_ninety_days(
+    app: App, fake: FakeProvider, clock: ManualClock
+) -> None:
+    """Found live: an unbounded search of a large mailbox missed recent mail or timed out."""
+    now = clock.now()
+    fake.mail.add_message("mail:test", internet_message_id="<new@x>", subject="Visa", date=now)
+    fake.mail.add_message(
+        "mail:test", internet_message_id="<old@x>", subject="Visa", date=now - timedelta(days=120)
+    )
+    assert len(hits(call(app, "find", scope="mail", query="Visa"))) == 1
+    since = (now - timedelta(days=200)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    assert len(hits(call(app, "find", scope="mail", query="Visa", since=since))) == 2
