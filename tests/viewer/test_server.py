@@ -5,6 +5,7 @@ alone, and a request over a socket meets the same gate (05-grants.md G-17, G-18)
 import http.client
 import io
 import json
+import re
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -117,7 +118,13 @@ def test_g17_the_viewer_cannot_be_told_to_listen_elsewhere() -> None:
     options = {a.dest for a in cli._parser()._actions}
     assert "host" not in options
     viewer_parser = cli._parser()._subparsers._group_actions[0].choices["viewer"]  # type: ignore[union-attr]
-    assert {a.dest for a in viewer_parser._actions} == {"help", "port", "no_open"}
+    assert {a.dest for a in viewer_parser._actions} == {
+        "help",
+        "port",
+        "no_open",
+        "print_url",
+        "browser",
+    }
 
 
 def test_the_viewer_command_prints_no_token(
@@ -125,6 +132,7 @@ def test_the_viewer_command_prints_no_token(
 ) -> None:
     opened: list[str] = []
     served: list[Viewer] = []
+    monkeypatch.delenv(cli.CLAUDE_CODE_ENV, raising=False)
     monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url) or True)
     monkeypatch.setattr(Viewer, "serve_forever", lambda self: served.append(self))
     out = io.StringIO()
@@ -196,3 +204,23 @@ def test_a_malformed_profile_stops_the_viewer_with_an_error_not_a_traceback(
     code = cli.main(["--data", str(root), "viewer", "--no-open"], out)
     assert code == cli.EXIT_FAILED
     assert "config.invalid" in out.getvalue()
+
+
+def test_under_claude_code_the_viewer_prints_an_address_for_the_builtin_browser(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No system browser; a ready address with the token in the fragment; --browser undoes it."""
+    opened: list[str] = []
+    monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(Viewer, "serve_forever", lambda self: None)
+    monkeypatch.setenv(cli.CLAUDE_CODE_ENV, "1")
+    out = io.StringIO()
+    assert cli.main(["--data", str(tmp_path / "data"), "viewer"], out) == 0
+    assert opened == []
+    assert re.search(r"http://127\.0\.0\.1:\d+/#token=\S{40,}", out.getvalue())
+    assert "built-in browser" in out.getvalue()
+
+    out = io.StringIO()
+    assert cli.main(["--data", str(tmp_path / "data"), "viewer", "--browser"], out) == 0
+    assert len(opened) == 1
+    assert "#token=" not in out.getvalue()

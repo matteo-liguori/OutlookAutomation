@@ -121,8 +121,17 @@ def purge_ended_sessions(db: sqlite3.Connection, before: str) -> int:
     return cursor.rowcount
 
 
-def any_active_session(db: sqlite3.Connection) -> bool:
-    row = db.execute("SELECT 1 FROM sessions WHERE ended_at IS NULL LIMIT 1").fetchone()
+def scheduled_pass_in_progress(db: sqlite3.Connection) -> bool:
+    """True while a scheduled session is still working its pass (a chat never counts).
+
+    A scheduled session whose run already has a report (or ended without one) no longer
+    holds the wake signal, so the next due pass can start without waiting for it to idle out.
+    """
+    row = db.execute(
+        "SELECT 1 FROM sessions WHERE purpose = 'scheduled' AND ended_at IS NULL "
+        "AND handle NOT IN (SELECT session FROM runs WHERE session IS NOT NULL "
+        "AND state IN ('finished', 'incomplete', 'missed')) LIMIT 1"
+    ).fetchone()
     return row is not None
 
 

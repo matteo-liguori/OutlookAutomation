@@ -90,6 +90,9 @@ def _stamp(ctx: Context) -> str:
 
 
 def wake_status(ctx: Context) -> int:
-    """10 when events wait for a session and none is active, else 0 (A-6, Delivery 3)."""
+    """10 when events wait and no scheduled pass is in progress, else 0 (A-6, Delivery 3).
+
+    A chat with the agent never holds the signal back: only another scheduled pass at work does.
+    """
     waiting = repo.count_undelivered(ctx.db) > 0
-    return WAKE_EXIT_STATUS if waiting and not repo.any_active_session(ctx.db) else 0
+    return WAKE_EXIT_STATUS if waiting and not repo.scheduled_pass_in_progress(ctx.db) else 0

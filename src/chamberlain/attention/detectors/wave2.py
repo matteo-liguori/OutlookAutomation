@@ -91,8 +91,13 @@ def update_available(data: DetectorInput) -> Iterable[EventDraft]:
 
 
 def schedule_pass_due(data: DetectorInput) -> Iterable[EventDraft]:
-    """One event while a pass is due or running; it ends when the run does (A-2)."""
-    for run in data.runs_due:
+    """One event for the pass being worked, else for the oldest pass that is due (A-2).
+
+    A second due pass waits its turn, so the session working the first never gets its item.
+    """
+    running = [run for run in data.runs_due if run.state == "running"]
+    waiting = [run for run in data.runs_due if run.state == "due"][:1]
+    for run in running or waiting:
         yield EventDraft(
             EventKind.SCHEDULE_PASS_DUE,
             run.handle,

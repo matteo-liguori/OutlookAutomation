@@ -194,6 +194,7 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
     estimate: int | None = None
     catch_up: _Walk | None = None
     catch_ups: dict[str, _Walk] = {}
+    stuck_hold: repo.Held | None = None
     port: MailPort | None = None
     frontier = through - MAIL_REQUIRED_OVERLAP
     if first:
@@ -247,7 +248,25 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
                 )
             except Exception:
                 log_failure(log, "reading older mail failed for %s", source)
-        catch_ups = _catch_up(ctx, port, source, started, take)
+        catch_ups, unread_from = _catch_up(ctx, port, source, started, take)
+        if unread_from is not None:
+            stuck_hold = _stuck_hold(
+                held
+                if hold_from is None
+                else repo.Held(_fmt(hold_from), _fmt(through), "", None, None),
+                unread_from,
+                started - MAIL_STANDARD,
+            )
+            if stuck_hold is not None:
+                stuck_hold = repo.Held(
+                    stuck_hold.start,
+                    stuck_hold.end,
+                    "asking",
+                    _estimate(
+                        port, source, skipped, _parse(stuck_hold.start), _parse(stuck_hold.end)
+                    ),
+                    None,
+                )
     except Exception:
         log_failure(log, "mail scan failed for %s", source)
         failed = True
@@ -272,13 +291,22 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
             )
             if sent:
                 card = suggester.suggest_sent(port, source, handle, chosen)
-                learned.update(a.address for c in copies for a in (*c.to, *c.cc))
+                # Only a copy in a Sent folder teaches recipients (G-15). A From line that
+                # matches the owner is a header anyone can forge, so it never does.
+                learned.update(
+                    a.address
+                    for c in copies
+                    if roles.get(c.folder_id) is FolderRole.SENT
+                    for a in (*c.to, *c.cc)
+                )
             else:
                 card = suggester.suggest(port, source, handle, chosen)
             rows.append((key, chosen.locator, handle, _fmt(chosen.date), card, sent))
 
     complete = not failed and health is HealthState.OK and frontier >= started
     held_now = _held_after(held, hold_from, through, estimate, catch_up)
+    if stuck_hold is not None:
+        held_now = stuck_hold
     boundary = _fmt(started - MAIL_OVERLAP)
     if held_now is not None:
         boundary = min(boundary, held_now.start)
@@ -324,26 +352,49 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
     return Scanned(False)
 
 
+def _stuck_hold(
+    current: repo.Held | None, unread_from: datetime, cut: datetime
+) -> repo.Held | None:
+    """The older-mail span to ask about for mail a stuck folder kept back more than a day (A-27).
+
+    None when the question already covers it (asked, answered or declined). Otherwise the
+    span grows to take in `[unread_from, cut)` and the owner is asked again.
+    """
+    if current is not None and _parse(current.start) <= unread_from:
+        return None
+    start, end = unread_from, cut
+    if current is not None:
+        end = max(cut, _parse(current.end))
+    return repo.Held(_fmt(start), _fmt(end), "asking", None, None)
+
+
 def _catch_up(
     ctx: Context, port: MailPort, source: str, started: datetime, take: Take
-) -> dict[str, _Walk]:
+) -> tuple[dict[str, _Walk], datetime | None]:
     """Read, on its own, each folder that failed to sync and has synced again (A-27).
 
     While a folder would not sync, mail may have reached it dated before the watermark moved on;
     the ordinary window would never look there again. Each such folder is read from its last good
     sync (an hour earlier, at most a day back) to now. A walk that does not finish keeps its
     place for the next tick.
+
+    Also returns where the oldest folder's unread span begins when it is more than a day back:
+    that older mail is not read here, it is asked about like the whole-mailbox case (A-23).
     """
     found: dict[str, _Walk] = {}
+    unread_from: datetime | None = None
     for row in repo.sync_folder_rows(ctx.db, source):
         if row.catchup_from is None or row.failure:
             continue
-        lo = max(_parse(row.catchup_from) - MAIL_REQUIRED_OVERLAP, started - MAIL_STANDARD)
+        wanted = _parse(row.catchup_from) - MAIL_REQUIRED_OVERLAP
+        lo = max(wanted, started - MAIL_STANDARD)
+        if wanted < lo and (unread_from is None or wanted < unread_from):
+            unread_from = wanted
         try:
             found[row.folder_id] = _walk(port, source, lo, started, None, take, row.folder_id)
         except Exception:
             log_failure(log, "reading folder %s of %s failed", row.folder_id, source)
-    return found
+    return found, unread_from
 
 
 def _held_after(

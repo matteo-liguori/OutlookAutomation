@@ -1,4 +1,4 @@
-"""Database backups in fixed slots (7 daily, 4 weekly), without any artifact bytes.
+"""Database backups in fixed slots (2 daily, 2 weekly), without any artifact bytes.
 
 Contract: docs/contracts/06-memory.md (M-24 and the lifetime table). A backup is
 the SQLite file only: the artifact folder is never copied, so a backup cannot

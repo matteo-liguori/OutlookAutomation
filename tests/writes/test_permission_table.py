@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from chamberlain.domain import permissions
+from chamberlain.domain.calendar import EventFields
 from chamberlain.domain.grant_rules import requirement_for, stricter
 from chamberlain.domain.grants import Requirement as R
 from chamberlain.domain.intents import (
@@ -16,6 +17,7 @@ from chamberlain.domain.intents import (
     MailSend,
     WriteIntent,
 )
+from chamberlain.testing.write_rig import CALENDAR, WriteRig
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 CAL = "calendar:a"
@@ -121,3 +123,23 @@ def test_the_viewer_explains_a_click_from_the_table() -> None:
     reason = permissions.click_reason()
     assert "Sending mail" in reason
     assert "invites a new address" in reason
+
+
+def test_inviting_someone_the_owner_writes_to_in_any_mailbox_needs_only_the_owners_word(
+    rig: WriteRig,
+) -> None:
+    """The table says "someone you have written to": known across every mail source (G-12a).
+
+    Before, the engine looked only under the calendar's own id, so nobody was known for an event.
+    """
+    friend, stranger = "friend@elsewhere.example", "stranger@elsewhere.example"
+
+    def needs(*guests: str) -> str:
+        intent = CalendarCreate(source=rig_calendar, event=EventFields(**event(guests)))  # type: ignore[arg-type]
+        return rig.engine().propose_intent(intent).requirement.value
+
+    rig_calendar = CALENDAR
+    assert needs(friend) == "human_confirmation"
+    rig.know(friend)  # learnt from the mail source's Sent folder, not under the calendar's id
+    assert needs(friend) == "agent_evidence"
+    assert needs(friend, stranger) == "human_confirmation"

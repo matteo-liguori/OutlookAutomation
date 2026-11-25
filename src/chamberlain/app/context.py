@@ -7,6 +7,7 @@ and docs/contracts/02-tools.md (T-16). Shared file (docs/OWNERSHIP.md).
 import sqlite3
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -66,6 +67,16 @@ class TickSteps:
     """After the inbox is reconciled, at most once per interval: the sweeper (M-21)."""
 
 
+@dataclass
+class SyncBudget:
+    """The one overall time limit for all the folder syncing inside a single tool call.
+
+    The clock starts the first time something syncs; sources then take what is left (A-25).
+    """
+
+    started: datetime | None = None
+
+
 @dataclass(frozen=True)
 class Context:
     db: sqlite3.Connection
@@ -77,6 +88,8 @@ class Context:
     """Set by the app from the request, after validation (T-3)."""
     tick_steps: TickSteps = TickSteps()
     """The tick's extra steps belong to the context, so two apps never share them (A-6)."""
+    sync_budget: SyncBudget | None = None
+    """Set per tool call and per operator tick. None: each source keeps its own limit."""
 
 
 @dataclass(frozen=True)

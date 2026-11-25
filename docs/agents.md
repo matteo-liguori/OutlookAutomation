@@ -50,6 +50,13 @@ chamberlain prompt                              # the standing instructions
 Every call prints one JSON reply. The exit code is 0 when it worked, 2 for a
 bad request, 3 when the answer is uncertain, and 1 otherwise.
 
+## Showing the viewer
+
+Run `chamberlain viewer`. Under Claude Code it prints a local address instead of opening the
+system browser: open that address in Claude's built-in browser pane (the viewer runs until
+stopped), or give it to the user if you have no browser of your own. Only the user presses
+confirm and approve buttons in the viewer.
+
 ## Keeping Claude Code out of the data root
 
 `chamberlain guard on` adds deny rules so Claude Code's file tools cannot read or edit the data

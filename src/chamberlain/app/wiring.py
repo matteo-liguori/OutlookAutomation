@@ -14,6 +14,7 @@ tick's steps are put in the context: crash recovery and run planning on every ca
 
 import sqlite3
 from collections.abc import Callable
+from dataclasses import replace
 from importlib import import_module
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from chamberlain.app.context import (
     Handler,
     Hooks,
     SourceRouter,
+    SyncBudget,
     TickSteps,
 )
 from chamberlain.app.core import App
@@ -172,5 +174,5 @@ def run_tick(app: App, *, force: bool = True) -> tuple[bool, int]:
     The wake status is 10 when events wait for a session and none is active, so a
     scheduler can start one (07-attention.md, delivery 3); 0 otherwise.
     """
-    ran = attention_tick.tick(app.context, force=force)
+    ran = attention_tick.tick(replace(app.context, sync_budget=SyncBudget()), force=force)
     return ran, attention_tick.wake_status(app.context)

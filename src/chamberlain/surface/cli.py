@@ -6,7 +6,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain schema <tool>           print a tool's request and response schema
     chamberlain prompt                  print the standing prompt
     chamberlain tick                    run one tick for the operating system scheduler
-    chamberlain viewer [--port N] [--no-open]
+    chamberlain viewer [--port N] [--no-open | --print-url | --browser]
                                         serve the local viewer on 127.0.0.1 (never prints the token)
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
     chamberlain config validate|show    check or print config/connections.yaml (no secrets)
@@ -58,6 +58,8 @@ from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
 DATA_ENV = "CHAMBERLAIN_DATA"
 SESSION_ENV = "CHAMBERLAIN_SESSION"
+CLAUDE_CODE_ENV = "CLAUDECODE"
+"""Set to 1 by Claude Code in the shells it starts."""
 
 EXIT_OK = 0
 EXIT_FAILED = 1
@@ -132,6 +134,17 @@ def _parser() -> argparse.ArgumentParser:
     )
     viewer.add_argument("--port", type=int, default=0, help="port (default: a random free one)")
     viewer.add_argument("--no-open", action="store_true", help="do not open the browser")
+    viewer.add_argument(
+        "--print-url",
+        action="store_true",
+        help="do not open the system browser; print a ready-to-open address (the default under "
+        "Claude Code, so the Claude app's built-in browser pane can open it)",
+    )
+    viewer.add_argument(
+        "--browser",
+        action="store_true",
+        help="open the system browser even under Claude Code",
+    )
     for spec in TOOLS:
         tool = commands.add_parser(spec.name.value, help=spec.description)
         tool.add_argument("--json", dest="request", default="{}", help="the request as JSON")
@@ -405,7 +418,16 @@ def _viewer(args: argparse.Namespace, out: TextIO) -> int:
         _print(out, reply.model_dump(mode="json", exclude_none=True))
         return EXIT_FAILED
     try:
-        viewer = launch(Path(data), port=args.port, open_browser=not args.no_open, out=out)
+        print_url = args.print_url or (
+            os.environ.get(CLAUDE_CODE_ENV) == "1" and not args.browser and not args.no_open
+        )
+        viewer = launch(
+            Path(data),
+            port=args.port,
+            open_browser=not (args.no_open or print_url),
+            print_url=print_url,
+            out=out,
+        )
     except ChamberlainError as error:
         _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
         return EXIT_FAILED

@@ -236,6 +236,12 @@ def known_recipients(db: sqlite3.Connection, source_id: str) -> frozenset[str]:
     return frozenset(row["address"] for row in rows) | own_addresses(db, source_id)
 
 
+def known_recipients_anywhere(db: sqlite3.Connection) -> frozenset[str]:
+    """Known recipients of every source (G-12a: a calendar invitation looks across all mail)."""
+    rows = db.execute("SELECT address FROM known_recipients").fetchall()
+    return frozenset(row["address"] for row in rows)
+
+
 def add_known_recipient(
     db: sqlite3.Connection, source_id: str, address: str, grant: str, at: str
 ) -> None:

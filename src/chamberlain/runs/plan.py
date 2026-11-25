@@ -113,6 +113,23 @@ def _attach_sessions(ctx: Context) -> None:
             )
 
 
+def _miss_late(ctx: Context, now: datetime) -> None:
+    """A pass still waiting for its session more than `MAX_LATE` after its time is missed.
+
+    The wake signal now starts due passes promptly (a chat no longer holds it back), so a
+    pass that was not started within six hours is not run late, as docs/scheduling.md says.
+    """
+    for run in repo.runs_in_states(ctx.db, (RunState.DUE.value,)):
+        if (
+            now
+            - datetime.strptime(run.due_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
+            > MAX_LATE
+        ):
+            repo.set_run_state(
+                ctx.db, run.handle, RunState.MISSED.value, finished_at=stamp(ctx.clock)
+            )
+
+
 def _settle_running(ctx: Context, now: datetime) -> tuple[list[RunRow], list[RunRow]]:
     """Finish runs that have a report; end running ones whose session is gone.
 
@@ -149,6 +166,7 @@ def plan_runs(ctx: Context) -> None:
     with transaction(ctx.db):
         _create_due(ctx, now)
         _attach_sessions(ctx)
+        _miss_late(ctx, now)
         _close_old_days(ctx)
         finished, ended = _settle_running(ctx, now)
     for run in ended:
@@ -168,9 +186,15 @@ def plan_runs(ctx: Context) -> None:
 
 
 def due_passes(ctx: Context) -> list[dict[str, str]]:
-    """What a wake adapter needs to start a scheduled session: handle, schedule, kind, day."""
+    """What a wake adapter needs to start a scheduled session: handle, schedule, kind, day.
+
+    One pass at a time: the oldest due pass, and none while another is being worked. Two
+    passes never share a session; the next one is listed once the first has its report.
+    """
     kinds = {schedule.name: schedule.kind.value for schedule in repo.schedules(ctx.db)}
-    runs = repo.runs_in_states(ctx.db, (RunState.DUE.value,))
+    if repo.runs_in_states(ctx.db, (RunState.RUNNING.value,)):
+        return []
+    runs = repo.runs_in_states(ctx.db, (RunState.DUE.value,))[:1]
     return [
         {
             "run": run.handle,

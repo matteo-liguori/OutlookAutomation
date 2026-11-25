@@ -749,10 +749,17 @@ class Engine:
             source_sends_last_hour=repo.sends_since(
                 self.db, intent.source, format_ts(now - timedelta(hours=1)), handle
             ),
-            known_recipients=repo.known_recipients(self.db, intent.source),
+            known_recipients=self._known_for(intent),
             event_attendees=_attendees_in(refs),
             owner_addresses=repo.owner_addresses(self.db),
         )
+
+    def _known_for(self, intent: WriteIntent) -> frozenset[str]:
+        """Mail: this mailbox's known recipients. A calendar invitation: those of any source."""
+        known = repo.known_recipients(self.db, intent.source)
+        if isinstance(intent, _CALENDAR_INTENTS):
+            known |= repo.known_recipients_anywhere(self.db)
+        return known
 
     def _active_grants(self, source: str, reserved: str | None) -> list[GrantRow]:
         grants = repo.grants_in_states(self.db, (GrantState.ACTIVE,), source)
