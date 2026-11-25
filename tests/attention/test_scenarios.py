@@ -85,19 +85,19 @@ def test_t7_a15_a_first_start_with_nothing_waiting_and_1_related_checks(full_app
 def test_a2_an_uncertain_send_is_work_and_brings_its_rule(full_app: App, seed: Any):
     op = seed.operation("mail.send")
     reply = full_app.call("start", {"agent": "test"})
-    assert ids(reply) == ["send.uncertain", "session.first"]
+    assert ids(reply) == ["write.unsettled", "session.first"]
     assert reply.data is not None
     work = reply.data.work
     assert [w.kind.value for w in work] == ["operation.uncertain"]
-    assert work[0].next.tool is ToolName.RECONCILE
-    assert work[0].next.args == {"operation": op}
+    assert work[0].next.tool is ToolName.OPEN
+    assert work[0].next.args == {"handle": op, "part": "summary"}
     assert reply.next[0] == work[0].next
 
 
 def test_a15_an_uncertain_calendar_write_gets_the_general_rule(full_app: App, seed: Any):
     seed.operation("calendar.create")
     reply = full_app.call("start", {"agent": "test"})
-    assert ids(reply) == ["write.uncertain", "session.first"]
+    assert ids(reply) == ["write.unsettled", "session.first"]
 
 
 def test_a15_a_grant_needing_the_user_brings_its_rule(full_app: App, seed: Any):
@@ -185,7 +185,7 @@ def test_e4_a19_every_work_item_names_a_valid_call_and_1_related_checks(
     reply = full_app.call("find", {"session": session, "scope": "mail"})
     assert [n.kind.value for n in reply.notices] == ["operation.uncertain"]
     assert reply.notices[0].next is not None
-    assert reply.notices[0].next.args == {"operation": op}
+    assert reply.notices[0].next.args == {"handle": op, "part": "summary"}
     assert reply.next == (reply.notices[0].next,)
     again = full_app.call("find", {"session": session, "scope": "mail"})
     assert again.notices == ()
@@ -249,20 +249,22 @@ def test_golden_an_uncertain_send_start_reply(full_app: App, seed: Any):
             "event": "<evt>",
             "kind": "operation.uncertain",
             "subject": "<op>",
-            "summary": "Operation <op> may have happened and is not settled.",
+            "summary": "mail.send <op> is still unsettled after a day; "
+            "the harness could not find it.",
             "next": {
-                "tool": "reconcile",
-                "args": {"operation": "<op>"},
-                "why": "Read what happened. Never send again.",
+                "tool": "open",
+                "args": {"handle": "<op>", "part": "summary"},
+                "why": "Read what it was meant to do, then look for it yourself. "
+                "Never do it twice.",
             },
         }
     ]
     assert golden["data"]["session"] == "<ses>"
     assert golden["data"]["more_work"] == 0
     assert golden["ok"] is True
-    assert [g["id"] for g in golden["guidance"]] == ["send.uncertain", "session.first"]
+    assert [g["id"] for g in golden["guidance"]] == ["write.unsettled", "session.first"]
     assert golden["guidance"][0]["version"] >= 1
-    assert golden["next"][0]["tool"] == "reconcile"
+    assert golden["next"][0]["tool"] == "open"
 
 
 def test_golden_next_after_handling_returns_the_rest_and_1_related_checks(
@@ -294,17 +296,19 @@ def test_golden_next_after_handling_returns_the_rest_and_1_related_checks(
                 "event": "<evt>",
                 "kind": "operation.uncertain",
                 "subject": "<op>",
-                "summary": "Operation <op> may have happened and is not settled.",
+                "summary": "calendar.update <op> is still unsettled after a day; "
+                "the harness could not find it.",
                 "next": {
-                    "tool": "reconcile",
-                    "args": {"operation": "<op>"},
-                    "why": "Read what happened. Never send again.",
+                    "tool": "open",
+                    "args": {"handle": "<op>", "part": "summary"},
+                    "why": "Read what it was meant to do, then look for it yourself. "
+                    "Never do it twice.",
                 },
             }
         ],
         "remaining": 0,
     }
-    assert ids(reply) == ["write.uncertain"]
+    assert ids(reply) == ["write.unsettled"]
 
 
 def test_a26_two_events_that_overlap_are_raised_with_their_rule_and_clear_when_apart(

@@ -45,7 +45,6 @@ REPORT_RELATIVE = Path("import") / "report.json"
 NEXT_STEPS = (
     "Reinstall the Thunderbird add-on once (python -m chamberlain.connectors.thunderbird.setup).",
     "Open the viewer and confirm each standing grant again; none is active until you do.",
-    "Resolve each uncertain operation in the viewer: it happened, or it did not.",
     "Read config/owner-instructions.yaml: your own rules, now given to the agent. Delete any "
     "topic that only describes the old commands.",
     "Keep the old data folder untouched as the fallback; run only one system with write access.",

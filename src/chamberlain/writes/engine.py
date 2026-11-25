@@ -98,7 +98,7 @@ from chamberlain.writes.authorise import (
 )
 from chamberlain.writes.control import cancel_operation
 from chamberlain.writes.grants import GrantService
-from chamberlain.writes.imported import advice_for, parse_summary, repeats, summary_of_intent
+from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.imported_match import found_live
 from chamberlain.writes.models import GrantRow, OperationRow, StoredReceipt, WritePolicy
 from chamberlain.writes.recheck import look_in_recipient_mailboxes, sender_places
@@ -301,9 +301,7 @@ class Engine:
         sha = intent_hash(completed)
         existing = self._existing(completed, sha, card)
         if existing is not None:
-            self._note_redo(existing)
             return self._proposal_for(existing, completed)
-        self._note_repeat_of_imported(completed)
         handle = new_handle(HandleKind.OPERATION)
         decision = self._decide(completed, handle, sha, card, reserved=None, refs=refs)
         if isinstance(completed, MailSend):
@@ -494,27 +492,6 @@ class Engine:
             truncated=cut,
             origin=op.handle,
         )
-
-    def _note_redo(self, op: OperationRow) -> None:
-        """Something asked to do an unsettled write again: attention may speak about it again."""
-        if op.state in MAY_HAVE_HAPPENED_STATES:
-            repo.mark_redo(self.db, op.handle, stamp(self.ctx.clock))
-
-    def _note_repeat_of_imported(self, intent: WriteIntent) -> None:
-        """A new write that looks like an uncertain imported one marks that one as redone."""
-        new = summary_of_intent(intent)
-        if new is None:
-            return
-        for op in repo.operations_in_states(self.db, (OperationState.UNCERTAIN,)):
-            old = parse_summary(op.summary_json)
-            if (
-                op.intent_json is None
-                and op.source_id == intent.source
-                and op.kind.value == intent.kind
-                and old is not None
-                and repeats(old, new)
-            ):
-                self._note_redo(op)
 
     def _existing(self, intent: WriteIntent, sha: str, card: str | None) -> OperationRow | None:
         """An identical live operation, or a recent one that may not repeat (W-18, W-19)."""
@@ -969,7 +946,7 @@ class Engine:
             original,
             OperationState.SUPERSEDED,
             actor=self.actor(),
-            summary=f"Sent again as {resend}; the grant use passed to it.",
+            summary=f"Done again as {resend}; the grant use passed to it.",
             receipt_json=build_receipt(original, OperationState.SUPERSEDED, self._now()),
         )
         if moved is None:
@@ -1429,8 +1406,7 @@ class Engine:
             ErrorCode.OPERATION_UNCERTAIN,
             "This write came from the old harness and could not be found on the live source. "
             f"It will never be retried. {advice_for(op.kind)} If you can see it, call reconcile "
-            "again with happened and your evidence; otherwise leave it: the harness closes it, "
-            "and the owner can also resolve it in the viewer.",
+            "again with happened and your evidence; otherwise leave it: the old harness owns it.",
         )
 
     def _settle_happened(
@@ -1493,7 +1469,7 @@ class Engine:
     def _look_for_send(
         self, op: OperationRow, *, actor: str, record: bool, allow_absent: bool = False
     ) -> tuple[OperationRow, str | None]:
-        """Read Sent, Outbox and Drafts (the connector's reconcile), then any recipient Inbox.
+        """Read the target (a send: Sent, Outbox and Drafts, then any recipient Inbox).
 
         Returns the operation and `found` (settled confirmed), `queued`, `missing`, or None when
         nothing could be concluded (the read failed, or the operation is no longer uncertain).
@@ -1508,11 +1484,13 @@ class Engine:
         )
         if row.state is OperationState.CONFIRMED:
             return row, "found"
-        if (
-            row.state is not OperationState.UNCERTAIN
-            or reading is None
-            or not isinstance(intent, MailSend)
-        ):
+        if row.state is not OperationState.UNCERTAIN or reading is None:
+            return row, None
+        if not isinstance(intent, MailSend):
+            if reading.absent and not reading.queued:
+                if record:
+                    self._record_recheck(row, "missing", [f"the {row.kind.value} target"], actor)
+                return row, "missing"
             return row, None
         looked = [sender_places(row.source_id)]
         if reading.queued:
@@ -1580,7 +1558,11 @@ class Engine:
         for attachment in getattr(intent, "attachments", ()):
             if not self.ctx.services.artifacts.info(attachment.artifact).live:
                 raise ChamberlainError(ErrorCode.ARTIFACT_EXPIRED, "An attachment has expired.")
-        completed = intent.model_copy(update={"message_id": None})
+        completed = (
+            intent.model_copy(update={"message_id": None})
+            if isinstance(intent, MailSend)
+            else intent
+        )
         sha = intent_hash(completed)
         refs = self._refs(old)
         handle = new_handle(HandleKind.OPERATION)
@@ -1591,7 +1573,8 @@ class Engine:
                 "The permission behind the first send no longer covers sending it again.",
                 fix="Ask the owner, in chat, whether to send it again.",
             )
-        self._scan_before_storing(completed, handle, refs, decision)
+        if isinstance(completed, MailSend):
+            self._scan_before_storing(completed, handle, refs, decision)
         with transaction(self.db):
             repo.insert_operation(
                 self.db,
@@ -1621,16 +1604,16 @@ class Engine:
             self.ctx.services.evidence.link(item, handle)
         return self._proposal_for(self.get(handle), completed)
 
-    def _resendable(self, old: OperationRow) -> MailSend:
+    def _resendable(self, old: OperationRow) -> WriteIntent:
         """Refuse, with a plain reason, anything that is not an uncertain send awaiting a resend."""
-        if old.kind is not IntentKind.MAIL_SEND or old.intent_json is None:
+        if old.intent_json is None:
             raise ChamberlainError(
                 ErrorCode.REQUEST_WRONG_KIND,
-                "Only a mail send the harness holds the text of can be sent again.",
+                "Only a write the harness holds the full request of can be done again. "
+                "One from the old harness cannot.",
                 field="redo_of",
             )
         intent = self.intent_of(old)
-        assert isinstance(intent, MailSend)
         if repo.resend_of(self.db, old.handle) is not None:
             return intent
         if old.redo_of is not None:
@@ -1645,14 +1628,14 @@ class Engine:
         if old.state is not OperationState.UNCERTAIN:
             raise ChamberlainError(
                 ErrorCode.OPERATION_ALREADY_SETTLED,
-                f"That send is {old.state.value}; there is nothing to send again.",
+                f"That write is {old.state.value}; there is nothing to do again.",
             )
         if old.rechecked_at is None:
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID,
-                "Too early. A send is not sent again before the harness has looked for it "
+                "Too early. A write is not done again before the harness has looked for it "
                 f"after {UNCERTAIN_SEND_RECHECK_HOURS} hours.",
-                fix="Wait for the report that it is missing. Until then do not send it again.",
+                fix="Wait for the item that says it is missing. Until then do not do it again.",
                 field="redo_of",
             )
         return intent
@@ -1663,7 +1646,7 @@ class Engine:
         if old.state is not OperationState.UNCERTAIN:
             raise ChamberlainError(
                 ErrorCode.OPERATION_ALREADY_SETTLED,
-                f"That send is {old.state.value}; there is nothing to send again.",
+                f"That write is {old.state.value}; there is nothing to do again.",
             )
         row, outcome = self._look_for_send(old, actor=self.actor(), record=True)
         if row.state is OperationState.CONFIRMED:

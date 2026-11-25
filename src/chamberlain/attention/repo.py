@@ -395,30 +395,21 @@ def grants_for_review(db: sqlite3.Connection, now: str) -> list[GrantRow]:
     return [GrantRow(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
 
 
-_NO_RESEND = (
-    "((o.intent_json IS NULL OR o.grant IS NULL OR EXISTS (SELECT 1 FROM grants g "
-    "WHERE g.handle = o.grant "
-    "AND g.state IN ('spent', 'expired', 'revoked', 'lapsed', 'declined')))"
-    " AND NOT (o.kind = 'mail.send' AND o.intent_json IS NOT NULL))"
-)
 _RECHECKED = "(o.kind = 'mail.send' AND o.state = 'uncertain' AND o.recheck_result IS NOT NULL)"
-_TOLD = (
-    "SELECT max(e.delivered_at) FROM events e "
-    "WHERE e.kind = 'operation.uncertain' AND e.subject = o.handle AND e.delivered_at IS NOT NULL"
-)
 
 
-def uncertain_operations(db: sqlite3.Connection) -> list[OperationRow]:
-    """Operations that may have happened. One nothing can resend is told to the agent once.
+def uncertain_operations(db: sqlite3.Connection, before: str) -> list[OperationRow]:
+    """Writes the harness could not settle in 24 hours: the agent is told once (A-4).
 
-    It is raised again only if something tried to do the same write after that notice
-    (`redo_at`); otherwise it waits quietly to be closed (owner ruling).
+    `before` is the dispatch time they must be older than. A write from the old harness (no
+    stored request) is never listed: it is closed at import. A send the look found missing or
+    stuck is listed by `rechecked_sends` instead.
     """
     rows = db.execute(
-        "SELECT o.handle, o.kind, o.state FROM operations o "
-        "WHERE o.state IN ('uncertain', 'reconciling') AND NOT (o.state = 'uncertain' "
-        f"AND {_NO_RESEND} AND ({_TOLD}) IS NOT NULL "
-        f"AND (o.redo_at IS NULL OR o.redo_at <= ({_TOLD}))) AND NOT {_RECHECKED}"
+        "SELECT o.handle, o.kind, o.state FROM operations o WHERE o.state = 'uncertain' "
+        "AND o.intent_json IS NOT NULL AND o.dispatched_at <= ? "
+        f"AND NOT {_RECHECKED} ORDER BY o.created_at, o.handle",
+        (before,),
     )
     return [OperationRow(r["handle"], r["kind"], r["state"]) for r in rows]
 

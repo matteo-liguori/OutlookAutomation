@@ -128,11 +128,11 @@ def test_a3_a_review_due_grant_comes_back_after_seven_days(
     assert len(live(db)) == 1
 
 
-def test_a4_an_uncertain_operation_cannot_be_handled_by_the_agent(
+def test_a4_a_sign_in_event_cannot_be_handled_by_the_agent(
     db: sqlite3.Connection, clock: ManualClock
 ):
-    op = EventDraft(EventKind.OPERATION_UNCERTAIN, "op_0000000000000001", "o", 95)
-    inbox.reconcile(db, clock, [op], evaluated=frozenset({EventKind.OPERATION_UNCERTAIN}))
+    op = EventDraft(EventKind.SOURCE_SIGN_IN_NEEDED, "mail:test", "o", 95)
+    inbox.reconcile(db, clock, [op], evaluated=frozenset({EventKind.SOURCE_SIGN_IN_NEEDED}))
     assert handle_all(db, clock) == []
     assert len(live(db)) == 1
 
@@ -233,8 +233,8 @@ def test_a1_a3_random_sequences_never_duplicate_or_lose_a_true_condition(
 
 
 GRANT = EventDraft(EventKind.GRANT_REVIEW_DUE, "grant_0000000000000001", "g", 60)
-OP = EventDraft(EventKind.OPERATION_UNCERTAIN, "op_0000000000000001", "o", 95)
-BOTH = frozenset({EventKind.GRANT_REVIEW_DUE, EventKind.OPERATION_UNCERTAIN})
+OP = EventDraft(EventKind.SOURCE_SIGN_IN_NEEDED, "mail:test", "o", 95)
+BOTH = frozenset({EventKind.GRANT_REVIEW_DUE, EventKind.SOURCE_SIGN_IN_NEEDED})
 steps_strategy = st.lists(
     st.sampled_from(["on", "off", "deliver", "handle", "wait", "wait_long"]), max_size=40
 )
@@ -259,7 +259,7 @@ def test_a3_a4_quiet_periods_and_unhandleable_events_hold_in_random_runs(steps: 
                     handled_at_hours = None
                 keys = {e.kind for e in repo.live_events(db)}
                 if is_true:
-                    assert EventKind.OPERATION_UNCERTAIN in keys
+                    assert EventKind.SOURCE_SIGN_IN_NEEDED in keys
                     quiet = handled_at_hours is not None and elapsed - handled_at_hours < 168
                     assert (EventKind.GRANT_REVIEW_DUE in keys) is not quiet
                 else:

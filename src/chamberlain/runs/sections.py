@@ -55,7 +55,6 @@ class Facts:
         self.sources = repo.source_facts(ctx.db)
         self.filing = repo.filing_facts(ctx.db, self.since)
         self.unsynced = repo.sync_failures(ctx.db)
-        self.uncertain = repo.count_uncertain_operations(ctx.db)
         self.gaps: list[str] = []
         """Reasons the pass is only partly verified, filled by the builders."""
 
@@ -92,12 +91,6 @@ def access_problems(facts: Facts) -> str:
                 "at every check."
             )
             facts.gaps.append(f"{source.id} had folders that did not sync")
-    if facts.uncertain:
-        lines.append(
-            f"- {facts.uncertain} change(s) may or may not have happened. Settle them in the "
-            "viewer under Needs you."
-        )
-        facts.gaps.append("a change is unsettled")
     return "\n".join(lines)
 
 

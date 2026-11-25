@@ -81,8 +81,8 @@ def test_a16_a_rule_that_does_not_fit_becomes_a_pointer_until_asked_for(ctx: Con
         error_category=None,
         events=(uncertain,),
     )
-    picked = select(rules, situation, {}, budget=300)
-    assert picked.full[0].rule.id == "send.uncertain"
+    picked = select(rules, situation, {}, budget=340)
+    assert picked.full[0].rule.id == "write.unsettled"
     assert picked.pointers
     assert all(p.id not in {c.rule.id for c in picked.full} for p in picked.pointers)
     assert len(picked.pointers) <= 3

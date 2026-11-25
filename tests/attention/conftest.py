@@ -92,8 +92,9 @@ class Seed:
         now = self.ts()
         self.db.execute(
             "INSERT INTO operations (handle, idempotency_key, kind, source_id, state, "
-            "intent_sha256, created_at, updated_at) VALUES (?, ?, ?, 'mail:test', ?, ?, ?, ?)",
-            (handle, handle, kind, state, SHA, now, now),
+            "intent_sha256, intent_json, dispatched_at, created_at, updated_at) "
+            "VALUES (?, ?, ?, 'mail:test', ?, ?, '{}', ?, ?, ?)",
+            (handle, handle, kind, state, SHA, self.ts(hours=-25), now, now),
         )
         return handle
 

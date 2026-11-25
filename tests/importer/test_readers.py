@@ -85,13 +85,13 @@ def test_w_the_sweep_and_write_maintenance_keep_what_the_owner_still_needs(
     try:
         db = app.context.db
         before_ops = db.execute(
-            "SELECT handle, state FROM operations WHERE state = 'uncertain' ORDER BY handle"
+            "SELECT handle, state FROM operations WHERE state = 'abandoned' ORDER BY handle"
         ).fetchall()
         clock.advance(hours=48)
         sweep(app.context, clock.now(), compactors=COMPACTORS)
         maintain(app.context)
         after_ops = db.execute(
-            "SELECT handle, state FROM operations WHERE state = 'uncertain' ORDER BY handle"
+            "SELECT handle, state FROM operations WHERE state = 'abandoned' ORDER BY handle"
         ).fetchall()
         assert [tuple(r) for r in after_ops] == [tuple(r) for r in before_ops]
         assert len(before_ops) == 5

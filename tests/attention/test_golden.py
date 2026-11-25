@@ -45,7 +45,7 @@ def test_start_next_and_guide_golden(app: App, seed: Any) -> None:
     nxt = app.call("next", {"session": session, "handled": events[:1]})
     assert nxt.ok
     golden("next", nxt)
-    guide = app.call("guide", {"session": session, "id": "send.uncertain"})
+    guide = app.call("guide", {"session": session, "id": "write.unsettled"})
     assert guide.ok
     golden("guide", guide)
     index = app.call("guide", {})

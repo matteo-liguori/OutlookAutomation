@@ -29,6 +29,7 @@ from chamberlain.attention.tuning import (
 from chamberlain.attention.watermark import scan
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, Response
 from chamberlain.domain.capabilities import HealthState, SourceHealth
+from chamberlain.limits import UNCERTAIN_SEND_RECHECK_HOURS
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.migrate import stamp
 
@@ -166,6 +167,10 @@ def _sync_gaps(ctx: Context) -> tuple[SyncGap, ...]:
     )
 
 
+UNSETTLED_AFTER = timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS)
+"""How long the harness alone looks for an uncertain write before the agent is told (A-4)."""
+
+
 def stamp_before(ctx: Context, span: timedelta) -> str:
     """The stored form of the instant `span` before now."""
     return (ctx.clock.now() - span).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -197,7 +202,7 @@ def collect(ctx: Context) -> Collected:
         linked_cards=links,
         grants=tuple(repo.grants_awaiting_human(ctx.db)),
         review_grants=tuple(repo.grants_for_review(ctx.db, now)),
-        operations=tuple(repo.uncertain_operations(ctx.db)),
+        operations=tuple(repo.uncertain_operations(ctx.db, stamp_before(ctx, UNSETTLED_AFTER))),
         sends=tuple(repo.rechecked_sends(ctx.db)),
         budgets=tuple(repo.over_budget(ctx.db)),
         orphan_batch=scan,

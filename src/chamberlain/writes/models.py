@@ -99,8 +99,6 @@ class OperationRow:
     """Display and matching text of an operation imported from an old journal. Never an intent."""
     attempted_at: datetime | None = None
     """When the old journal says the write was tried. Not the import time."""
-    redo_at: datetime | None = None
-    """When something tried to do the same write again (it makes attention speak again)."""
     rechecked_at: datetime | None = None
     """When the harness made its one 24-hour look for an uncertain send (W-37)."""
     recheck_result: str | None = None

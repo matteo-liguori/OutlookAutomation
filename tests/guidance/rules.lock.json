@@ -120,8 +120,8 @@
   "version": 2
  },
  "reconcile.read": {
-  "hash": "3a04f5c85fa331594bbdb84955b604beb8a431e76bfb3d61e9c195963aac3d92",
-  "version": 2
+  "hash": "3e4f2186b5965cc29db87ce4be9cbac71b224702db713862e7fd652f87f3e1bf",
+  "version": 3
  },
  "reminder.back": {
   "hash": "4c9cae6af691f69ce4ff012d83da6fca75f59625a18c761f8321381b460c5d8d",
@@ -136,16 +136,12 @@
   "version": 1
  },
  "send.missing": {
-  "hash": "31769c2ea813d7e4c62c7eea64069417023358ade0eaef2e6767efa6ad45ad9e",
-  "version": 1
+  "hash": "5fe919ed21c7981e5f4186f41eceb4fd7e49f6c7efefb353698de2b7d7352e08",
+  "version": 2
  },
  "send.stuck": {
   "hash": "cb859b975e566bae3d8d79d03d1192e8b78e74d90c2bded628c9fb1493c2778f",
   "version": 1
- },
- "send.uncertain": {
-  "hash": "00ef359ea137c0842436a4cb8b335ae17166fd7722fba1c660111a79563e9c9c",
-  "version": 2
  },
  "session.first": {
   "hash": "8ec82bba61dd550dd0a3fa333aa689b01c6d8d63c82987645234f39c8181be55",
@@ -179,8 +175,8 @@
   "hash": "fa7f22681ed902f172ae0bd96644744be67df9cba129d3a51807b46aa0b250c4",
   "version": 1
  },
- "write.uncertain": {
-  "hash": "6f4f7ac04b92225d40ed739a8462de9f7fca2bc9379ae9fbe1874e7e2d35c5cc",
+ "write.unsettled": {
+  "hash": "1c5f581ca74ec3b8c2e40e90b97f20608d2dc35d376c2e8a248d6a1d435a22a1",
   "version": 1
  }
 }
