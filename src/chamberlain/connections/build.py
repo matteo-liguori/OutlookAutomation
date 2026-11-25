@@ -162,7 +162,18 @@ def build_router(
             else:
                 contacts[sid] = provider.contacts
 
-    return SourceRouter(mail=mail, calendar=calendar, contacts=contacts, demo=frozenset(demo_ids))
+    information_only = frozenset(
+        sid
+        for sid, source in connections.sources.items()
+        if sid in calendar and not getattr(source, "commitments", True)
+    )
+    return SourceRouter(
+        mail=mail,
+        calendar=calendar,
+        contacts=contacts,
+        demo=frozenset(demo_ids),
+        information_only=information_only,
+    )
 
 
 def policy_of(connections: Connections) -> WritePolicy:

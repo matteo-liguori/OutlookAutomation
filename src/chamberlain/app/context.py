@@ -32,6 +32,8 @@ class SourceRouter:
     contacts: Mapping[str, ContactsPort] = field(default_factory=dict[str, ContactsPort])
     demo: frozenset[str] = frozenset()
     """Source IDs backed by synthetic demo data. Replies are marked while any exist."""
+    information_only: frozenset[str] = frozenset()
+    """Calendars the owner keeps for information (`commitments: false`): no clash checks."""
 
     def mail_port(self, source: str) -> MailPort:
         return _route(self.mail, source)

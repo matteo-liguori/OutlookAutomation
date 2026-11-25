@@ -67,7 +67,10 @@ def collect(old: OldInstallation, report: ImportReport) -> dict[str, str]:
     watches = [c for c in old.context if c.kind == "keyword-watch" and c.enabled and c.terms]
     if facts:
         found[FACTS] = "\n".join(
-            f"- {c.entity}: {c.text}" if c.entity else f"- {c.text}" for c in facts
+            f"- {c.entity}: {c.text}"
+            if c.entity and not c.text.startswith(c.entity)
+            else f"- {c.text}"
+            for c in facts
         )
     if watches:
         found[WATCHES] = "\n".join(

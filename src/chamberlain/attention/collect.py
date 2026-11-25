@@ -132,11 +132,16 @@ def _read_calendar(ctx: Context, source: str) -> list[CalendarSlot] | None:
 def _calendars(
     ctx: Context, snapshots: tuple[SourceSnapshot, ...]
 ) -> tuple[tuple[CalendarSlot, ...], set[str]]:
-    """The owner's timed events across every calendar, and the calendars not fully read."""
+    """The owner's timed events across every commitment calendar, and those not fully read.
+
+    A calendar kept for information only (`commitments: false`) is left out: its events are
+    other people's plans, not clashes."""
     states = {s.id: s.state for s in snapshots}
     slots: list[CalendarSlot] = []
     unreadable: set[str] = set()
     for source in sorted(ctx.sources.calendar):
+        if source in ctx.sources.information_only:
+            continue
         if states.get(source) is not HealthState.OK:
             unreadable.add(source)
             continue

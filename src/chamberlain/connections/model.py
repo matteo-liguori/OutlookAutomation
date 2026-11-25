@@ -24,6 +24,10 @@ class _Source(Model):
     label: str = Field(default="", max_length=80)
     enabled: bool = True
     """A disabled source stays in the file (and the `sources` table) but gets no connector."""
+    commitments: bool = True
+    """Calendars only: the owner's own commitments. A calendar kept for information (a family or
+    shared calendar) sets this false: it is read and reported, but its events never count as a
+    clash (A-26)."""
 
 
 class ThunderbirdMailSource(_Source):

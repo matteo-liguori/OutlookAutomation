@@ -363,3 +363,11 @@ def test_a26_two_events_that_overlap_are_raised_with_their_rule_and_clear_when_a
     fake.world.events["calendar:second"][late].fields = fields("Dentist", 14)
     tick.tick(ctx, force=True)
     assert [e.kind.value for e in repo.live_events(ctx.db)] == []
+
+    # A calendar kept for information only (commitments: false) never makes a clash.
+    fake.world.events["calendar:second"][late].fields = fields("Dentist", 9, 2)
+    informational = replace(
+        ctx, sources=replace(ctx.sources, information_only=frozenset({"calendar:second"}))
+    )
+    tick.tick(informational, force=True)
+    assert [e.kind.value for e in repo.live_events(ctx.db)] == []
