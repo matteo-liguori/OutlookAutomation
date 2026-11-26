@@ -4,15 +4,15 @@ Contract: docs/contracts/08-ports.md (P-9 to P-12, P-16). A backend supplies
 provider facts and one mutation; this port owns the decisions. Reconcile reads only.
 """
 
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import Literal
 
 from pydantic import JsonValue
 
 from chamberlain.connectors.calendar_support.http import write_may_have_landed
-from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, EventFields
-from chamberlain.domain.capabilities import CapabilitySet, SourceHealth
+from chamberlain.domain.calendar import EventFields
 from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
@@ -28,7 +28,6 @@ from chamberlain.domain.operations import (
     ReconcileResult,
     ReconcileStatus,
 )
-from chamberlain.ports.page import Page
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
@@ -81,32 +80,6 @@ class WriteFailure(Exception):
         self.status = status
 
 
-class CalendarBackend(Protocol):
-    """Provider reads, request encoding and one raw mutation; no settlement decisions."""
-
-    def capabilities(self, source: str) -> CapabilitySet: ...
-
-    def health(self, source: str) -> SourceHealth: ...
-
-    def events(
-        self, source: str, query: CalendarQuery, cursor: str | None = None
-    ) -> Page[CalendarEvent]: ...
-
-    def read(self, source: str, locator: str) -> CalendarEvent: ...
-
-    def resolve(self, source: str, locator: str) -> Current: ...
-
-    def validate(self, intent: CalendarIntent, current: Current | None) -> None: ...
-
-    def encode(self, intent: CalendarIntent, current: Current | None) -> dict[str, JsonValue]: ...
-
-    def preflight(self, prepared: Prepared) -> None: ...
-
-    def write(self, prepared: Prepared) -> WriteReply: ...
-
-    def observe(self, prepared: Prepared, reply: WriteReply | None) -> Observation: ...
-
-
 def payload(prepared: Prepared) -> dict[str, JsonValue]:
     value = prepared.data.get("payload")
     if not isinstance(value, dict):
@@ -114,44 +87,46 @@ def payload(prepared: Prepared) -> dict[str, JsonValue]:
     return value
 
 
-def _text(prepared: Prepared, name: str) -> str:
-    value = prepared.data.get(name)
+def prepared_text(data: Mapping[str, JsonValue], name: str) -> str:
+    value = data.get(name)
     if not isinstance(value, str):
         raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, f"The prepared {name} is missing.")
     return value
 
 
 def locator(prepared: Prepared) -> str:
-    return _text(prepared, "locator")
+    return prepared_text(prepared.data, "locator")
 
 
 def expected_etag(prepared: Prepared) -> str:
-    return _text(prepared, "expected_etag")
+    return prepared_text(prepared.data, "expected_etag")
 
 
 def fields(prepared: Prepared) -> EventFields:
     return EventFields.model_validate(prepared.data.get("fields"))
 
 
-class CalendarPort:
+class CalendarWritePort(ABC):
     """Common preparation, one-dispatch verification and read-only reconciliation."""
 
-    def __init__(self, backend: CalendarBackend) -> None:
-        self.backend = backend
+    @abstractmethod
+    def resolve(self, source: str, locator: str) -> Current: ...
 
-    def capabilities(self, source: str) -> CapabilitySet:
-        return self.backend.capabilities(source)
+    @abstractmethod
+    def validate(self, intent: CalendarIntent, current: Current | None) -> None: ...
 
-    def health(self, source: str) -> SourceHealth:
-        return self.backend.health(source)
+    @abstractmethod
+    def encode(self, intent: CalendarIntent, current: Current | None) -> dict[str, JsonValue]: ...
 
-    def events(
-        self, source: str, query: CalendarQuery, cursor: str | None = None
-    ) -> Page[CalendarEvent]:
-        return self.backend.events(source, query, cursor)
+    def preflight(self, prepared: Prepared) -> None:
+        """Optional provider-side check before dispatch, using reads only."""
+        return None
 
-    def read(self, source: str, locator: str) -> CalendarEvent:
-        return self.backend.read(source, locator)
+    @abstractmethod
+    def write(self, prepared: Prepared) -> WriteReply: ...
+
+    @abstractmethod
+    def observe(self, prepared: Prepared, reply: WriteReply | None) -> Observation: ...
 
     def prepare(self, intent: CalendarIntent, refs: Mapping[str, str]) -> Prepared:
         current: Current | None = None
@@ -166,7 +141,7 @@ class CalendarPort:
             target = refs.get(intent.event_ref)
             if target is None:
                 raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not known.")
-            current = self.backend.resolve(intent.source, target)
+            current = self.resolve(intent.source, target)
             if current.etag != intent.expected_etag:
                 raise ChamberlainError(
                     ErrorCode.REMOTE_CHANGED, "The event changed since it was read."
@@ -176,8 +151,8 @@ class CalendarPort:
                     ErrorCode.CAPABILITY_UNSUPPORTED,
                     "A repeating event is written only with the scope that names it.",
                 )
-        self.backend.validate(intent, current)
-        encoded = self.backend.encode(intent, current)
+        self.validate(intent, current)
+        encoded = self.encode(intent, current)
         data: dict[str, JsonValue] = {
             "payload": encoded,
             "locator": None if current is None else current.locator,
@@ -192,11 +167,11 @@ class CalendarPort:
 
     def dispatch(self, prepared: Prepared, key: str) -> DispatchResult:
         try:
-            self.backend.preflight(prepared)
+            self.preflight(prepared)
         except Exception as error:
             return DispatchResult(outcome=DispatchOutcome.NOT_APPLIED, detail=str(error)[:300])
         try:
-            reply = self.backend.write(prepared)
+            reply = self.write(prepared)
         except WriteFailure as error:
             clean = not error.sent or not error.mutation_possible
             if error.status is not None and not write_may_have_landed(error.status):
@@ -209,7 +184,7 @@ class CalendarPort:
             # Once a backend write has been called, an unclassified failure cannot prove absence.
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail=type(error).__name__)
         try:
-            observation = self.backend.observe(prepared, reply)
+            observation = self.observe(prepared, reply)
         except Exception as error:
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail=type(error).__name__)
         done = (
@@ -225,7 +200,7 @@ class CalendarPort:
 
     def reconcile(self, prepared: Prepared, key: str) -> ReconcileResult:
         try:
-            observed = self.backend.observe(prepared, None)
+            observed = self.observe(prepared, None)
         except Exception as error:
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail=type(error).__name__)
         if not observed.complete:

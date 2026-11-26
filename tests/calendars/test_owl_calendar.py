@@ -11,7 +11,6 @@ from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.calendar_support.port import payload
 from chamberlain.connectors.fake.world import Fault
 from chamberlain.connectors.thunderbird.calendar import (
-    OwlBackend,
     OwlBinding,
     OwlCalendarConfig,
     ThunderbirdCalendar,
@@ -311,14 +310,12 @@ def test_p4_paging_through_the_limit_is_not_reported_as_a_coverage_gap() -> None
 
 def test_private_freshness_probe_and_lost_create_recovery() -> None:
     port, bridge, _ = build()
-    backend = port.backend
-    assert isinstance(backend, OwlBackend)
     token = "a" * 32
-    assert backend.probe(SOURCE, token)
+    assert port.probe(SOURCE, token)
     assert [cmd for cmd, write in bridge.requests if write] == ["calendar_write"] * 2
     bridge.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
     with pytest.raises(BridgeFailure):
-        backend.probe(SOURCE, token)
+        port.probe(SOURCE, token)
     uid = f"chamberlain-freshness-{token}@chamberlain.local"
     recovered = port.read(SOURCE, uid)
     assert recovered.fields.visibility == "private"
@@ -326,8 +323,8 @@ def test_private_freshness_probe_and_lost_create_recovery() -> None:
     # Exchange may have assigned a new UID before the create reply was lost.
     del bridge.items[uid]
     bridge.items["exchange-uid"] = ics.build_new("exchange-uid", recovered.fields, START)
-    assert backend.probe(SOURCE, token, cleanup_only=True)
+    assert port.probe(SOURCE, token, cleanup_only=True)
     assert not bridge.items
     written = sum(write for _, write in bridge.requests)
-    assert backend.probe(SOURCE, token, cleanup_only=True)
+    assert port.probe(SOURCE, token, cleanup_only=True)
     assert sum(write for _, write in bridge.requests) == written

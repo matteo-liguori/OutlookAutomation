@@ -10,6 +10,7 @@ import base64
 import hashlib
 import json
 from collections.abc import Callable, Mapping
+from functools import partial
 from typing import Any, Final, cast
 from urllib.parse import quote, urlencode
 
@@ -20,9 +21,11 @@ from chamberlain.connectors.calendar_support.http import (
     HttpTransport,
     TransportFailure,
     UrllibTransport,
+    calendar_unavailable,
 )
+from chamberlain.connectors.calendar_support.paging import bad_cursor, cursor_value
 from chamberlain.connectors.calendar_support.port import (
-    CalendarPort,
+    CalendarWritePort,
     Current,
     Observation,
     WriteFailure,
@@ -31,6 +34,7 @@ from chamberlain.connectors.calendar_support.port import (
     fields,
     locator,
     payload,
+    prepared_text,
 )
 from chamberlain.connectors.google_calendar import mapping
 from chamberlain.connectors.google_calendar.config import GoogleBinding, GoogleCalendarConfig
@@ -75,20 +79,15 @@ _EDIT_METHODS = {
 TokenSource = Callable[[str], str]
 Json = dict[str, Any]
 
+_unavailable = partial(calendar_unavailable, message="Google Calendar did not answer.")
+
 
 def _quote(value: str) -> str:
     return quote(value, safe="")
 
 
-def _text(data: Mapping[str, JsonValue], key: str) -> str:
-    value = data.get(key)
-    if not isinstance(value, str):
-        raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "A prepared field is missing.")
-    return value
-
-
-class _GoogleBackend:
-    """Google identity, wire format, and observations of writes."""
+class GoogleCalendar(CalendarWritePort):
+    """Calendar port backed by the Google Calendar API."""
 
     def __init__(
         self,
@@ -326,7 +325,7 @@ class _GoogleBackend:
         identity_suffices = False
         values = payload(prepared)
         if kind is IntentKind.CALENDAR_RESPOND:
-            matches = _own_answer(item) == _text(values, "response")
+            matches = _own_answer(item) == prepared_text(values, "response")
         elif kind is not IntentKind.CALENDAR_DELETE:
             wanted = fields(prepared)
             body = values.get("body")
@@ -442,24 +441,11 @@ class _GoogleBackend:
     def _created(self, binding: GoogleBinding, prepared: Prepared) -> Json | None:
         values = payload(prepared)
         if "event_id" in values:
-            return self._get_by_id(binding, _text(values, "event_id"))
+            return self._get_by_id(binding, prepared_text(values, "event_id"))
         uid = prepared.reconcile_token
         if uid is None:
             raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "The event UID was not stored.")
         return self._find_by_uid(binding, uid)
-
-
-class GoogleCalendar(CalendarPort):
-    """Calendar port backed by the Google Calendar API."""
-
-    def __init__(
-        self,
-        config: GoogleCalendarConfig,
-        tokens: TokenSource,
-        clock: Clock,
-        transport: HttpTransport | None = None,
-    ) -> None:
-        super().__init__(_GoogleBackend(config, tokens, clock, transport))
 
 
 def event_id_for(uid: str) -> str:
@@ -482,20 +468,13 @@ def _receipt(item: Json) -> ProviderReceipt:
     )
 
 
-def _unavailable(detail: str) -> ChamberlainError:
-    return ChamberlainError(
-        ErrorCode.SOURCE_UNAVAILABLE, "Google Calendar did not answer.", detail=detail
-    )
-
-
 def _encode_cursor(token: str) -> str:
     return "g1." + base64.urlsafe_b64encode(token.encode()).decode()
 
 
 def _decode_cursor(cursor: str) -> str:
+    token = cursor_value(cursor, "g1")
     try:
-        if not cursor.startswith("g1."):
-            raise ValueError(cursor)
-        return base64.b64decode(cursor[3:], altchars=b"-_", validate=True).decode()
+        return base64.b64decode(token, altchars=b"-_", validate=True).decode()
     except ValueError:
-        raise ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid.") from None
+        raise bad_cursor() from None

@@ -18,6 +18,12 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
 
 
+def calendar_unavailable(
+    detail: str, *, message: str = "The calendar server did not answer.", fix: str | None = None
+) -> ChamberlainError:
+    return ChamberlainError(ErrorCode.SOURCE_UNAVAILABLE, message, detail=detail, fix=fix)
+
+
 @dataclass(frozen=True)
 class HttpReply:
     status: int

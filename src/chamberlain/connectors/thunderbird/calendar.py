@@ -18,8 +18,14 @@ from pydantic import Field, JsonValue
 
 from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.calendar_support.fields import same_content
+from chamberlain.connectors.calendar_support.http import calendar_unavailable
+from chamberlain.connectors.calendar_support.paging import (
+    matches_window,
+    offset_cursor,
+    offset_page,
+)
 from chamberlain.connectors.calendar_support.port import (
-    CalendarPort,
+    CalendarWritePort,
     Current,
     Observation,
     WriteFailure,
@@ -78,7 +84,7 @@ class OwlCalendarConfig(Model):
     bindings: dict[SourceId, OwlBinding]
 
 
-class OwlBackend:
+class ThunderbirdCalendar(CalendarWritePort):
     """Implements `chamberlain.ports.CalendarPort` over the Thunderbird calendar bridge."""
 
     def __init__(
@@ -101,7 +107,11 @@ class OwlBackend:
         try:
             usable = self._compatible(self._bridge.hello())
         except BridgeFailure as failure:
-            raise _unavailable(failure) from None
+            raise calendar_unavailable(
+                str(failure),
+                message="Thunderbird did not answer for the calendar.",
+                fix="Install the current Chamberlain Thunderbird add-on and restart Thunderbird.",
+            ) from None
         if not usable:
             return CapabilitySet(source=source, capabilities=())
         return CapabilitySet(
@@ -151,7 +161,7 @@ class OwlBackend:
         self, source: str, query: CalendarQuery, cursor: str | None = None
     ) -> Page[CalendarEvent]:
         binding = self._binding(source)
-        offset = _decode_cursor(cursor)
+        offset = offset_cursor(cursor, "o1")
         wanted = min(offset + query.limit + 1, _SCAN_CAP)
         result = self._query(binding, query.start, query.end, wanted)
         found: list[CalendarEvent] = []
@@ -163,20 +173,8 @@ class OwlBackend:
             except ChamberlainError:
                 unreadable += 1
                 continue
-            if event.status.value == "cancelled" and not query.include_cancelled:
-                continue
-            fields = event.fields
-            if fields.end < query.start or fields.start > query.end:
-                continue
-            if (
-                query.text
-                and query.text.casefold() not in f"{fields.title}\n{fields.description}".casefold()
-            ):
-                continue
-            found.append(event)
-        found.sort(key=lambda e: (e.fields.start, e.locator))
-        window = found[offset : offset + query.limit]
-        more = offset + query.limit < len(found)
+            if matches_window(query, event.fields, event.status):
+                found.append(event)
         gaps = [Gap(source=source, reason=str(g)) for g in result.gaps]
         if unreadable:
             gaps.append(Gap(source=source, reason="Some calendar items could not be read."))
@@ -188,12 +186,7 @@ class OwlBackend:
             gaps.append(Gap(source=source, reason="The calendar did not report a complete scan."))
         if returned >= wanted and wanted >= _SCAN_CAP:
             gaps.append(Gap(source=source, reason="The scan stopped at its limit."))
-        return Page[CalendarEvent](
-            items=tuple(window),
-            cursor=f"o1.{offset + query.limit}" if more else None,
-            complete=not more and not gaps,
-            gaps=tuple(gaps[:1]),
-        )
+        return offset_page(found, gaps, offset, query.limit, "o1")
 
     def read(self, source: str, locator: str) -> CalendarEvent:
         binding = self._binding(source)
@@ -474,18 +467,6 @@ class OwlBackend:
         return result.item
 
 
-class ThunderbirdCalendar(CalendarPort):
-    def __init__(
-        self,
-        config: OwlCalendarConfig,
-        bridge: BridgeClient,
-        clock: Clock,
-        *,
-        freshness_store: FreshnessStore | None = None,
-    ) -> None:
-        super().__init__(OwlBackend(config, bridge, clock, freshness_store=freshness_store))
-
-
 def _stored(current: Current) -> wire.CalendarItem:
     if not isinstance(current.raw, wire.CalendarItem):
         raise ValueError("Missing Owl calendar item")
@@ -558,21 +539,3 @@ def _verified_text(item: wire.CalendarItem, event_id: str, wanted: EventFields) 
 
 def _receipt(event_id: str, text: str) -> ProviderReceipt:
     return ProviderReceipt(locator=event_id, etag=ics.text_etag(text), verification=_CLIENT_ONLY)
-
-
-def _unavailable(failure: BridgeFailure) -> ChamberlainError:
-    return ChamberlainError(
-        ErrorCode.SOURCE_UNAVAILABLE,
-        "Thunderbird did not answer for the calendar.",
-        fix="Install the current Chamberlain Thunderbird add-on and restart Thunderbird.",
-        detail=str(failure),
-    )
-
-
-def _decode_cursor(cursor: str | None) -> int:
-    if cursor is None:
-        return 0
-    prefix, _, number = cursor.partition(".")
-    if prefix != "o1" or not number.isdigit():
-        raise ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid.")
-    return int(number)

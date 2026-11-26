@@ -12,12 +12,11 @@ from pydantic import JsonValue
 from chamberlain.app.context import SourceRouter
 from chamberlain.app.core import App
 from chamberlain.connections.owl_freshness import OwlFreshnessStore
-from chamberlain.connectors.calendar_support.port import CalendarPort
 from chamberlain.connectors.thunderbird import protocol as wire
 from chamberlain.connectors.thunderbird.calendar import (
-    OwlBackend,
     OwlBinding,
     OwlCalendarConfig,
+    ThunderbirdCalendar,
 )
 from chamberlain.connectors.thunderbird.client import BridgeClient, Reply
 from chamberlain.domain.capabilities import HealthState
@@ -66,7 +65,7 @@ class Bridge(BridgeClient):
         return Reply(wire.CalendarListResult.model_validate({"calendars": [self.entry]}))
 
 
-class Port(OwlBackend):
+class Port(ThunderbirdCalendar):
     def __init__(self, root: Path, clock: ManualClock):
         self.fake_bridge = Bridge()
         super().__init__(
@@ -118,7 +117,7 @@ def test_passive_planning_never_probes_and_reuses_only_existing_freshness(tmp_pa
     with passive_health_checks():
         plan = build_plan(
             config,
-            SourceRouter(calendar={SOURCE: CalendarPort(port)}),
+            SourceRouter(calendar={SOURCE: port}),
             only=("calendar.create_update_delete",),
         )
     assert plan[0].skip == f"{SOURCE} is stale"
@@ -128,7 +127,7 @@ def test_passive_planning_never_probes_and_reuses_only_existing_freshness(tmp_pa
     with passive_health_checks():
         plan = build_plan(
             config,
-            SourceRouter(calendar={SOURCE: CalendarPort(port)}),
+            SourceRouter(calendar={SOURCE: port}),
             only=("calendar.create_update_delete",),
         )
     assert not plan[0].skip
@@ -137,7 +136,7 @@ def test_passive_planning_never_probes_and_reuses_only_existing_freshness(tmp_pa
 
 def test_dry_run_uses_passive_health_even_when_calendar_is_selected(tmp_path: Path) -> None:
     port, clock = setup_port(tmp_path)
-    sources = SourceRouter(calendar={SOURCE: CalendarPort(port)})
+    sources = SourceRouter(calendar={SOURCE: port})
     app = cast(App, SimpleNamespace(context=SimpleNamespace(sources=sources)))
     env = cast(Environment, SimpleNamespace(clock=clock))
     config = LiveTestConfig(enabled=True, calendars={SOURCE: LiveCalendar()})
@@ -151,7 +150,7 @@ def test_dry_run_uses_passive_health_even_when_calendar_is_selected(tmp_path: Pa
 
 def test_unselected_or_explicitly_skipped_sources_do_not_trigger_probe(tmp_path: Path) -> None:
     port, _ = setup_port(tmp_path)
-    sources = SourceRouter(calendar={SOURCE: CalendarPort(port)})
+    sources = SourceRouter(calendar={SOURCE: port})
     config = LiveTestConfig(enabled=True, calendars={SOURCE: LiveCalendar()})
     plan = build_plan(config, sources, only=("harness.doctor_clean",))
     assert len(plan) == 1

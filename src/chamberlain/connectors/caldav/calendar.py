@@ -26,10 +26,16 @@ from chamberlain.connectors.calendar_support.http import (
     HttpTransport,
     TransportFailure,
     UrllibTransport,
+    calendar_unavailable,
     require_secure,
 )
+from chamberlain.connectors.calendar_support.paging import (
+    matches_window,
+    offset_cursor,
+    offset_page,
+)
 from chamberlain.connectors.calendar_support.port import (
-    CalendarPort,
+    CalendarWritePort,
     Current,
     Observation,
     WriteFailure,
@@ -37,6 +43,7 @@ from chamberlain.connectors.calendar_support.port import (
     expected_etag,
     fields,
     payload,
+    prepared_text,
 )
 from chamberlain.connectors.calendar_support.rrule import same_rule
 from chamberlain.domain.calendar import (
@@ -103,20 +110,9 @@ class _Resource:
     occurrence: str | None
 
 
-class CalDavCalendar(CalendarPort):
+class CalDavCalendar(CalendarWritePort):
     """The common calendar port over CalDAV calendar collections."""
 
-    def __init__(
-        self,
-        config: CalDavConfig,
-        passwords: PasswordSource,
-        clock: Clock,
-        transport: HttpTransport | None = None,
-    ) -> None:
-        super().__init__(_CalDavBackend(config, passwords, clock, transport))
-
-
-class _CalDavBackend:
     def __init__(
         self,
         config: CalDavConfig,
@@ -202,7 +198,7 @@ class _CalDavBackend:
         self, source: str, query: CalendarQuery, cursor: str | None = None
     ) -> Page[CalendarEvent]:
         binding = self._binding(source)
-        offset = _decode_cursor(cursor)
+        offset = offset_cursor(cursor, "c1")
         found: list[CalendarEvent] = []
         gaps: list[Gap] = []
         body = dav.query_window(query.start, query.end, expand=True)
@@ -212,16 +208,7 @@ class _CalDavBackend:
                     gaps.append(
                         Gap(source=source, reason="The server did not expand a recurring event.")
                     )
-                if parsed.status is EventStatus.CANCELLED and not query.include_cancelled:
-                    continue
-                fields = parsed.fields
-                if fields.end < query.start or fields.start > query.end:
-                    continue
-                if (
-                    query.text
-                    and query.text.casefold()
-                    not in f"{fields.title}\n{fields.description}".casefold()
-                ):
+                if not matches_window(query, parsed.fields, parsed.status):
                     continue
                 found.append(
                     _event(
@@ -232,15 +219,7 @@ class _CalDavBackend:
                         own_address(binding),
                     )
                 )
-        found.sort(key=lambda e: (e.fields.start, e.locator))
-        window = found[offset : offset + query.limit]
-        more = offset + query.limit < len(found)
-        return Page[CalendarEvent](
-            items=tuple(window),
-            cursor=f"c1.{offset + query.limit}" if more else None,
-            complete=not more and not gaps,
-            gaps=tuple(gaps[:1]),
-        )
+        return offset_page(found, gaps, offset, query.limit, "c1")
 
     def read(self, source: str, locator: str) -> CalendarEvent:
         binding = self._binding(source)
@@ -345,18 +324,15 @@ class _CalDavBackend:
             )
         return data
 
-    def preflight(self, prepared: Prepared) -> None:
-        """The conditional HTTP request performs the collision check atomically."""
-
     def write(self, prepared: Prepared) -> WriteReply:
         data = payload(prepared)
         kind = prepared.intent_kind
-        name = _text(data, "name")
+        name = prepared_text(data, "name")
         headers: dict[str, str]
         if kind is IntentKind.CALENDAR_DELETE and "ics" not in data:
             method, body, headers = "DELETE", None, {"If-Match": expected_etag(prepared)}
         else:
-            method, body = "PUT", _text(data, "ics").encode("utf-8")
+            method, body = "PUT", prepared_text(data, "ics").encode("utf-8")
             headers = dict(_CALENDAR_TYPE)
             if kind is IntentKind.CALENDAR_CREATE:
                 headers["If-None-Match"] = "*"
@@ -376,7 +352,7 @@ class _CalDavBackend:
     def observe(self, prepared: Prepared, reply: WriteReply | None) -> Observation:
         binding = self._binding(prepared.source)
         data = payload(prepared)
-        name = _text(data, "name")
+        name = prepared_text(data, "name")
         kind = prepared.intent_kind
         occurrence = data.get("occurrence")
         fetched = self._fetch(binding, name)
@@ -404,7 +380,7 @@ class _CalDavBackend:
             if kind is IntentKind.CALENDAR_UPDATE and actual is not None:
                 # The occurrence update preserves the series' guests. Compare the complete
                 # encoded override, including any private classification and those guests.
-                wanted = ics.occurrence_of(_text(data, "ics"), occurrence)
+                wanted = ics.occurrence_of(prepared_text(data, "ics"), occurrence)
                 matches = wanted is not None and _same(actual, wanted.fields, binding)
             return Observation(
                 present=not deleted,
@@ -415,13 +391,13 @@ class _CalDavBackend:
                 receipt=receipt,
             )
         if kind is IntentKind.CALENDAR_RESPOND:
-            answer = dict(master.partstats).get(_text(data, "address"))
-            matches = answer == _PARTSTAT[_text(data, "response")]
+            answer = dict(master.partstats).get(prepared_text(data, "address"))
+            matches = answer == _PARTSTAT[prepared_text(data, "response")]
         elif kind is IntentKind.CALENDAR_UPDATE:
             wanted = fields(prepared)
             if wanted.recurrence is None:
                 # A series update that supplies no rule must keep the original rule.
-                encoded = ics.master_of(_text(data, "ics"))
+                encoded = ics.master_of(prepared_text(data, "ics"))
                 wanted = wanted.model_copy(update={"recurrence": encoded.rule})
             matches = _same(master, wanted, binding)
         else:
@@ -486,7 +462,7 @@ class _CalDavBackend:
         try:
             reply = self._send(binding, "GET", self._resource(binding, name))
         except TransportFailure as error:
-            raise _unavailable(str(error)) from None
+            raise calendar_unavailable(str(error)) from None
         if reply.status == 404:
             return None
         _check(reply, (200,))
@@ -499,12 +475,12 @@ class _CalDavBackend:
         try:
             reply = self._send(binding, "REPORT", url, body, {"Depth": "1"})
         except TransportFailure as error:
-            raise _unavailable(str(error)) from None
+            raise calendar_unavailable(str(error)) from None
         _check(reply, (207,))
         try:
             responses = dav.parse_multistatus(reply.body)
         except ValueError:
-            raise _unavailable("unreadable multistatus") from None
+            raise calendar_unavailable("unreadable multistatus") from None
         collection_path = urlsplit(self._collection(binding)).path
         found: list[tuple[str, str, str]] = []
         for response in responses:
@@ -514,7 +490,7 @@ class _CalDavBackend:
             if response.calendar_data and response.etag:
                 found.append((name, response.etag, response.calendar_data))
             elif strict:
-                raise _unavailable("incomplete UID report")
+                raise calendar_unavailable("incomplete UID report")
         return found
 
     def _occurrence(
@@ -544,7 +520,7 @@ def _check(reply: HttpReply, accepted: tuple[int, ...]) -> None:
             "The calendar server did not accept the saved sign-in.",
             detail=f"http {reply.status}",
         )
-    raise _unavailable(f"http {reply.status}")
+    raise calendar_unavailable(f"http {reply.status}")
 
 
 def own_address(binding: CalDavBinding) -> str | None:
@@ -650,25 +626,3 @@ def _event(
 
 def _receipt(name: str, etag: str | None) -> ProviderReceipt:
     return ProviderReceipt(locator=name, etag=etag or None, verification=_VERIFIED)
-
-
-def _text(data: Mapping[str, JsonValue], key: str) -> str:
-    value = data.get(key)
-    if not isinstance(value, str):
-        raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "A prepared field is missing.")
-    return value
-
-
-def _unavailable(detail: str) -> ChamberlainError:
-    return ChamberlainError(
-        ErrorCode.SOURCE_UNAVAILABLE, "The calendar server did not answer.", detail=detail
-    )
-
-
-def _decode_cursor(cursor: str | None) -> int:
-    if cursor is None:
-        return 0
-    prefix, _, number = cursor.partition(".")
-    if prefix != "c1" or not number.isdigit():
-        raise ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid.")
-    return int(number)
