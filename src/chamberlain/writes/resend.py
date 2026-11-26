@@ -32,16 +32,13 @@ def original_of(engine: core.Engine, op: OperationRow) -> OperationRow | None:
 
 def supersede(engine: core.Engine, original: OperationRow, resend: str) -> None:
     """The send ends `superseded`; its grant use passes to the resend (W-38)."""
-    moved = engine.transition(
+    engine.transition_required(
         original,
         OperationState.SUPERSEDED,
+        f"Done again as {resend}; the grant use passed to it.",
+        changed="The send this one replaces just changed.",
         actor=engine.actor(),
-        summary=f"Done again as {resend}; the grant use passed to it.",
     )
-    if moved is None:
-        raise ChamberlainError(
-            ErrorCode.OPERATION_ALREADY_SETTLED, "The send this one replaces just changed."
-        )
 
 
 def abandon(engine: core.Engine, op: OperationRow) -> OperationRow | None:
@@ -86,7 +83,7 @@ def look_for_send(
     before = engine.get(op.handle)
     if before.state is not OperationState.UNCERTAIN or before.intent_json is None:
         return before, None
-    intent = engine.intent_of(before)
+    intent = before.intent()
     row, reading = engine.reconcile_reading(
         before, window=(1, 0), allow_absent=allow_absent, actor=actor
     )
@@ -184,7 +181,7 @@ def _resendable(engine: core.Engine, old: OperationRow) -> WriteIntent:
             "One from the old harness cannot.",
             field="redo_of",
         )
-    intent = engine.intent_of(old)
+    intent = old.intent()
     if repo.resend_of(engine.db, old.handle) is not None:
         return intent
     if old.redo_of is not None:

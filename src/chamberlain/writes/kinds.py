@@ -32,10 +32,12 @@ from chamberlain.domain.operations import (
 )
 from chamberlain.domain.permissions import recipients_of
 from chamberlain.domain.recurrence import describe
+from chamberlain.ports.calendar import CalendarPort
+from chamberlain.ports.mail import MailPort
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.safelog import log_failure
 from chamberlain.writes import read_state
-from chamberlain.writes.models import OperationRow, WritePolicy
+from chamberlain.writes.models import OperationRow
 from chamberlain.writes.render import (
     EVENT_ATTENDEES_REF,
     EVENT_ORGANISER_REF,
@@ -112,13 +114,16 @@ KINDS: Final = {
 }
 
 
-def capabilities(ctx: Context, source: str, kind: IntentKind) -> CapabilitySet:
+def port_for(ctx: Context, source: str, kind: IntentKind) -> MailPort | CalendarPort:
+    """The connector a write of `kind` goes through; an outside action has none."""
     if kind is IntentKind.OUTSIDE_ACTION:
         raise _no_connector()
-    port = (
-        ctx.sources.calendar_port(source) if KINDS[kind].calendar else ctx.sources.mail_port(source)
-    )
-    return port.capabilities(source)
+    sources = ctx.sources
+    return sources.calendar_port(source) if KINDS[kind].calendar else sources.mail_port(source)
+
+
+def capabilities(ctx: Context, source: str, kind: IntentKind) -> CapabilitySet:
+    return port_for(ctx, source, kind).capabilities(source)
 
 
 def require_write(caps: CapabilitySet, kind: IntentKind) -> Capability:
@@ -176,7 +181,6 @@ def complete(
     ctx: Context,
     intent: WriteIntent,
     located: Located,
-    policy: WritePolicy,
     card: str | None = None,
 ) -> WriteIntent:
     spec = KINDS[intent.kind]
@@ -194,19 +198,19 @@ def complete(
             )
         completed["from_folder"] = folders.pop()
     if isinstance(intent, MailMove) and not intent.mark_read:
-        completed["mark_read"] = _filing_marks_read(ctx, intent, policy, card)
+        completed["mark_read"] = _filing_marks_read(ctx, intent, card)
     if isinstance(intent, CalendarRespond):
         completed["organiser"] = located.organiser
     if isinstance(intent, CalendarCreate | CalendarUpdate):
         rule = intent.event.recurrence
         if rule is not None and rule.zone is None:
             completed["event"] = intent.event.model_copy(
-                update={"recurrence": rule.model_copy(update={"zone": policy.zone})}
+                update={"recurrence": rule.model_copy(update={"zone": ctx.write_policy.zone})}
             )
     return intent.model_copy(update=completed)
 
 
-def _filing_marks_read(ctx: Context, move: MailMove, policy: WritePolicy, card: str | None) -> bool:
+def _filing_marks_read(ctx: Context, move: MailMove, card: str | None) -> bool:
     """The filing preference acts only through an active read-state grant (G-24)."""
     if not read_state.options(ctx.db).filing_marks_read:
         return False
@@ -216,18 +220,20 @@ def _filing_marks_read(ctx: Context, move: MailMove, policy: WritePolicy, card: 
         is not None
     ):
         return True
-    read_state.propose_missing(ctx.db, ctx.clock, ctx.services.audit, [source], policy=policy)
+    read_state.propose_missing(
+        ctx.db, ctx.clock, ctx.services.audit, [source], policy=ctx.write_policy
+    )
     return False
 
 
 def prepare_intent(
-    ctx: Context, intent: WriteIntent, policy: WritePolicy, card: str | None = None
+    ctx: Context, intent: WriteIntent, card: str | None = None
 ) -> tuple[WriteIntent, Located]:
     caps = capabilities(ctx, intent.source, intent.kind)
     cap = require_write(caps, intent.kind)
     located = locate(ctx, intent)
     _check_calendar_features(caps, intent, located)
-    completed = complete(ctx, intent, located, policy, card)
+    completed = complete(ctx, intent, located, card)
     _check_limits(ctx, completed, cap)
     return completed, located
 
@@ -292,14 +298,7 @@ def port_reconcile(
     ctx: Context, intent: WriteIntent, prepared: Prepared, key: str
 ) -> ReconcileResult:
     try:
-        if isinstance(intent, OutsideAction):
-            raise _no_connector()
-        port = (
-            ctx.sources.calendar_port(intent.source)
-            if KINDS[intent.kind].calendar
-            else ctx.sources.mail_port(intent.source)
-        )
-        return port.reconcile(prepared, key)
+        return port_for(ctx, intent.source, intent.kind).reconcile(prepared, key)
     except Exception:
         log_failure(log, "reconcile failed")
         return ReconcileResult(status=ReconcileStatus.UNKNOWN)

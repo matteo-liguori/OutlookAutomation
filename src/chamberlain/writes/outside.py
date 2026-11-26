@@ -42,7 +42,7 @@ def check_outside(engine: core.Engine, intent: OutsideAction, card: str | None) 
             field="intent",
             detail="owner-only-step",
         )
-    if card is not None and not repo.card_is_open(engine.db, card):
+    if card is not None and repo.card_state(engine.db, card) != "open":
         raise ChamberlainError(
             ErrorCode.REQUEST_INVALID, "That card does not exist or is closed.", field="card"
         )
@@ -52,7 +52,7 @@ def do_outside(engine: core.Engine, op: OperationRow, report: str | None) -> Ope
     """Reserve the use, or record the assistant's report. Never touches a port (W-46)."""
     if op.state in TERMINAL_STATES:
         return engine.terminal_reply(op)
-    intent = engine.intent_of(op)
+    intent = op.intent()
     if not isinstance(intent, OutsideAction):
         raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Not an outside action.")
     if op.state is OperationState.PROPOSED:
@@ -68,7 +68,7 @@ def do_outside(engine: core.Engine, op: OperationRow, report: str | None) -> Ope
         raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
     if report is None:
         return op
-    moved = engine.transition(
+    return engine.transition_required(
         op,
         OperationState.AGENT_REPORTED,
         "The assistant reported doing this outside Chamberlain; not checked.",
@@ -77,9 +77,6 @@ def do_outside(engine: core.Engine, op: OperationRow, report: str | None) -> Ope
         ),
         dispatched_at=engine.now(),  # when it counts against a daily limit
     )
-    if moved is None:
-        raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
-    return moved
 
 
 def close_unreported_outside(engine: core.Engine) -> int:

@@ -15,13 +15,19 @@ from typing import Any, cast
 
 from chamberlain.domain.grant_rules import intent_hash, parse_ts
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
-from chamberlain.domain.intents import IntentKind
-from chamberlain.domain.operations import RELEASING_STATES, OperationState, outside_details
+from chamberlain.domain.intents import IntentKind, MailSend
+from chamberlain.domain.operations import (
+    RELEASING_STATES,
+    TERMINAL_STATES,
+    OperationState,
+    outside_details,
+)
 from chamberlain.domain.senders import AuthorisedSenders
 from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, get_state
 from chamberlain.writes.models import GrantRow, OperationRow
 
 _RELEASING = tuple(state.value for state in RELEASING_STATES)
+_TERMINAL = tuple(state.value for state in TERMINAL_STATES)
 
 
 _GRANT_COLUMNS = tuple(f.name for f in fields(GrantRow) if f.name != "scope")
@@ -142,14 +148,9 @@ def proposed_one_off(
     return None if row is None else _grant(row)
 
 
-def card_is_closed(db: sqlite3.Connection, card: str) -> bool:
+def card_state(db: sqlite3.Connection, card: str) -> str | None:
     row = db.execute("SELECT state FROM cards WHERE handle = ?", (card,)).fetchone()
-    return row is not None and row["state"] == "closed"
-
-
-def card_is_open(db: sqlite3.Connection, card: str) -> bool:
-    row = db.execute("SELECT state FROM cards WHERE handle = ?", (card,)).fetchone()
-    return row is not None and row["state"] == "open"
+    return None if row is None else str(row["state"])
 
 
 def evidence_facts(db: sqlite3.Connection, handle: str) -> tuple[str | None, str | None] | None:
@@ -165,9 +166,8 @@ def compactable_grants(db: sqlite3.Connection, before: str) -> list[str]:
         "AND state IN ('spent', 'revoked', 'expired', 'declined', 'lapsed') "
         "AND ended_at IS NOT NULL AND ended_at <= ? "
         "AND NOT EXISTS (SELECT 1 FROM operations o WHERE o.grant = grants.handle "
-        "AND o.state NOT IN ('confirmed', 'failed_clean', 'confirmed_absent', 'cancelled', "
-        "'abandoned', 'superseded', 'agent_reported'))",
-        (before,),
+        f"AND o.state NOT IN ({_marks(_TERMINAL)}))",
+        (before, *_TERMINAL),
     ).fetchall()
     return [row["handle"] for row in rows]
 
@@ -564,9 +564,8 @@ def stale_outside(db: sqlite3.Connection, before: str) -> list[OperationRow]:
 def compactable_operations(db: sqlite3.Connection, before: str) -> list[OperationRow]:
     rows = db.execute(
         "SELECT * FROM operations WHERE compacted_at IS NULL AND settled_at IS NOT NULL "
-        "AND settled_at <= ? AND state IN ('confirmed', 'failed_clean', 'confirmed_absent', "
-        "'cancelled', 'abandoned', 'superseded', 'agent_reported')",
-        (before,),
+        f"AND settled_at <= ? AND state IN ({_marks(_TERMINAL)})",
+        (before, *_TERMINAL),
     ).fetchall()
     return [_operation(row) for row in rows]
 
@@ -607,17 +606,7 @@ class AuditRow:
 
 
 def _audit(row: sqlite3.Row) -> AuditRow:
-    return AuditRow(
-        seq=row["seq"],
-        at=row["at"],
-        actor=row["actor"],
-        kind=row["kind"],
-        subject=row["subject"],
-        summary=row["summary"],
-        payload_sha256=row["payload_sha256"],
-        prev_hash=row["prev_hash"],
-        hash=row["hash"],
-    )
+    return AuditRow(**{f.name: row[f.name] for f in fields(AuditRow)})
 
 
 def audit_last(db: sqlite3.Connection) -> AuditRow | None:
@@ -702,22 +691,22 @@ class SendRow:
 _RECHECKED = "(o.kind = 'mail.send' AND o.state = 'uncertain' AND o.recheck_result IS NOT NULL)"
 
 
-def grants_awaiting_human(db: sqlite3.Connection) -> list[GrantAlert]:
-    rows = db.execute(
-        "SELECT handle, state, requirement, card FROM grants WHERE state = 'proposed' "
-        "AND requirement = 'human_confirmation'"
-    )
+def _alerts(db: sqlite3.Connection, where: str, args: tuple[str, ...] = ()) -> list[GrantAlert]:
+    rows = db.execute(f"SELECT handle, state, requirement, card FROM grants WHERE {where}", args)
     return [GrantAlert(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
+
+
+def grants_awaiting_human(db: sqlite3.Connection) -> list[GrantAlert]:
+    return _alerts(db, "state = 'proposed' AND requirement = 'human_confirmation'")
 
 
 def grants_for_review(db: sqlite3.Connection, now: str) -> list[GrantAlert]:
-    rows = db.execute(
-        "SELECT handle, state, requirement, card FROM grants WHERE kind = 'standing' AND "
-        "((state IN ('active', 'suspended') AND review_at IS NOT NULL AND review_at <= ?) "
-        "OR state = 'expired')",
+    return _alerts(
+        db,
+        "kind = 'standing' AND ((state IN ('active', 'suspended') "
+        "AND review_at IS NOT NULL AND review_at <= ?) OR state = 'expired')",
         (now,),
     )
-    return [GrantAlert(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
 
 
 def uncertain_operations(db: sqlite3.Connection, before: str) -> list[OperationAlert]:
@@ -742,34 +731,23 @@ def rechecked_sends(db: sqlite3.Connection) -> list[SendRow]:
     They stay in this list until settled.
     """
     rows = db.execute(
-        "SELECT o.handle, o.recheck_result, o.card, o.source_id, o.intent_json, o.dispatched_at, "
-        "o.created_at FROM operations o WHERE "
-        f"{_RECHECKED} AND o.recheck_result IN ('missing', 'queued') "
-        "ORDER BY o.created_at, o.handle"
+        f"SELECT o.* FROM operations o WHERE {_RECHECKED} "
+        "AND o.recheck_result IN ('missing', 'queued') ORDER BY o.created_at, o.handle"
     ).fetchall()
     found: list[SendRow] = []
-    for r in rows:
-        try:
-            parsed: object = json.loads(r["intent_json"] or "{}")
-        except ValueError:
-            parsed = {}
-        intent: dict[str, object] = (
-            cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
-        )
-        to: list[str] = []
-        for part in ("to", "cc", "bcc"):
-            listed = intent.get(part)
-            if isinstance(listed, list):
-                to.extend(str(a) for a in cast(list[object], listed) if isinstance(a, str))
+    for row in rows:
+        op = _operation(row)
+        intent = op.intent()
+        assert isinstance(intent, MailSend)
         found.append(
             SendRow(
-                r["handle"],
-                r["recheck_result"],
-                r["card"],
-                tuple(to),
-                str(intent.get("subject", "")),
-                parse_ts(r["dispatched_at"] or r["created_at"]),
-                r["source_id"],
+                op.handle,
+                str(op.recheck_result),
+                op.card,
+                (*intent.to, *intent.cc, *intent.bcc),
+                intent.subject,
+                op.dispatched_at or op.created_at,
+                op.source_id,
             )
         )
     return found

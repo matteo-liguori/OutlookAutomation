@@ -1,17 +1,4 @@
-"""The write state machine (docs/contracts/04-writes.md, 05-grants.md; board R1 to R7).
-
-Rule zero: no write without verifiable authority, and no blind resend.
-
-* `propose` stores a complete intent and says what authority it needs.
-* `do` reserves a grant use (authorise, in one transaction), prepares,
-  journals `dispatched` (committed before the connector is called) and
-  dispatches exactly once. Nothing ever dispatches an operation twice.
-* An uncertain operation leaves that state only through read-only
-  `reconcile`.
-* A dispatch holds a lease (R5). Recovery touches only expired leases, and a
-  late `applied` from a process that lost its lease is recorded as reconcile
-  evidence.
-"""
+"""The write state machine: propose, do, reconcile (docs/contracts/04-writes.md, R1 to R7)."""
 
 import json
 import logging
@@ -88,7 +75,7 @@ from chamberlain.writes.authorise import (
     authorise,
     requirement_needed,
 )
-from chamberlain.writes.control import cancel_operation, release_holds
+from chamberlain.writes.control import release_holds
 from chamberlain.writes.grants import GrantService
 from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.imported_match import found_live
@@ -152,6 +139,13 @@ def clock_pause(ctx: Context) -> Callable[[float], None]:
             time.sleep(seconds)
 
     return pause
+
+
+def _stored_code(op: OperationRow) -> ErrorCode | None:
+    try:
+        return ErrorCode(op.error_code) if op.error_code else None
+    except ValueError:
+        return None
 
 
 class Engine:
@@ -233,26 +227,27 @@ class Engine:
                 OperationState.ABANDONED,
                 OperationState.FAILED_CLEAN,
             ):
-                self.release_attachments(moved)
+                release_holds(self.ctx.services.artifacts, moved)
             return moved
 
-    def close_unreported_outside(self) -> int:
-        return outside.close_unreported_outside(self)
-
-    def recheck_sends(self) -> int:
-        return resend.recheck_sends(self)
-
-    def abandon(self, op: OperationRow) -> OperationRow | None:
-        return resend.abandon(self, op)
-
-    def propose_redo(
+    def transition_required(
         self,
-        original: str,
+        op: OperationRow,
+        to: OperationState,
+        summary: str,
         *,
-        card: str | None = None,
-        evidence: tuple[str, ...] = (),
-    ) -> Proposal:
-        return resend.propose_redo(self, original, card=card, evidence=evidence)
+        changed: str = "That operation changed.",
+        actor: str | None = None,
+        expected_lease: str | bool | None = False,
+        **columns: str | int | None,
+    ) -> OperationRow:
+        """`transition`; a row another worker moved first raises OPERATION_ALREADY_SETTLED."""
+        moved = self.transition(
+            op, to, summary, actor=actor, expected_lease=expected_lease, **columns
+        )
+        if moved is None:
+            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, changed)
+        return moved
 
     # --- small helpers ------------------------------------------------------------
 
@@ -280,10 +275,6 @@ class Engine:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "There is no such operation.")
         return op
 
-    @staticmethod
-    def intent_of(op: OperationRow) -> WriteIntent:
-        return op.intent()
-
     def located(self, op: OperationRow) -> kinds.Located:
         return kinds.Located.from_refs(op.refs())
 
@@ -302,7 +293,7 @@ class Engine:
             outside.check_outside(self, intent, card)
             completed, located = intent, kinds.Located()
         else:
-            completed, located = kinds.prepare_intent(self.ctx, intent, self.policy, card)
+            completed, located = kinds.prepare_intent(self.ctx, intent, card)
         return self.propose_completed(completed, located, card, evidence)
 
     def propose_completed(
@@ -442,7 +433,7 @@ class Engine:
                     "A standing permission for outside actions belongs to one card.",
                     field="card",
                 )
-            if scope.card is not None and not repo.card_is_open(self.db, scope.card):
+            if scope.card is not None and repo.card_state(self.db, scope.card) != "open":
                 raise ChamberlainError(
                     ErrorCode.REQUEST_INVALID,
                     "That card does not exist or is closed.",
@@ -477,7 +468,7 @@ class Engine:
     def attach_approval(self, operation: str, evidence: str) -> Proposal:
         """Attach the user's in-chat approval to an earlier proposal (G-13, G-14)."""
         op = self.get(operation)
-        intent = self.intent_of(op)
+        intent = op.intent()
         if op.state is not OperationState.PROPOSED:
             return self.proposal_for(op, intent)
         grant = repo.proposed_one_off(self.db, op.source_id, op.intent_sha256)
@@ -496,17 +487,18 @@ class Engine:
             self.ctx.services.evidence.link(evidence, activated.handle)
         return self.proposal_for(self.get(operation), intent)
 
-    def _check_evidence(self, evidence: str, intent: WriteIntent) -> None:
-        """The approval is the user's own words from this session, or an authenticated email
-        from an authorised sender recorded by `keep` (G-13, G-13a). Other remote text is refused."""
-        facts = repo.evidence_facts(self.db, evidence)
+    def _recorded_in_session(self, evidence: str) -> bool:
         session = self.ctx.session
-        recorded_in_session = session is not None and self.ctx.services.evidence.created_in_session(
+        return session is not None and self.ctx.services.evidence.created_in_session(
             evidence, session
         )
+
+    def _check_evidence(self, evidence: str, intent: WriteIntent) -> None:
+        """Approval evidence: the user's own words or an authorised sender's (G-13, G-13a)."""
+        facts = repo.evidence_facts(self.db, evidence)
         ref = None if facts is None else facts[1]
         instruction = parse_instruction_ref(ref)
-        if not recorded_in_session or (ref is not None and instruction is None):
+        if not self._recorded_in_session(evidence) or (ref is not None and instruction is None):
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID,
                 "Approval must be evidence recording the user's own words in this session.",
@@ -691,7 +683,7 @@ class Engine:
                 raise self.needs_reconcile(handle)
         if op.state in TERMINAL_STATES:
             return self.terminal_reply(op)
-        intent = self.intent_of(op)
+        intent = op.intent()
         if op.redo_of is not None and op.state is OperationState.PROPOSED:
             resend.guard_resend(self, op.redo_of)
         op = self.reserve(op, intent)
@@ -720,12 +712,8 @@ class Engine:
         if op.state in (OperationState.CONFIRMED, OperationState.AGENT_REPORTED):
             return op
         if op.state is OperationState.FAILED_CLEAN:
-            try:
-                code = ErrorCode(op.error_code or "")
-            except ValueError:
-                code = ErrorCode.SOURCE_UNAVAILABLE
             raise ChamberlainError(
-                code,
+                _stored_code(op) or ErrorCode.SOURCE_UNAVAILABLE,
                 f"Operation {op.handle} changed nothing. Propose the write again if still wanted.",
                 fix="Nothing was changed. Propose the write again if it is still wanted.",
                 retryable=False,
@@ -777,7 +765,7 @@ class Engine:
         if reserved.redo_of is not None:
             replaced = repo.get_operation(self.db, reserved.redo_of)
             if replaced is not None:
-                self.release_attachments(replaced)
+                release_holds(self.ctx.services.artifacts, replaced)
         return reserved
 
     def _fail_clean(
@@ -810,14 +798,11 @@ class Engine:
             error_code=code.value,
         )
 
-    def release_attachments(self, op: OperationRow) -> None:
-        release_holds(self.ctx.services.artifacts, op)
-
     def _prepare(self, op: OperationRow) -> OperationRow:
         """Read-only. A failure cannot have changed anything and frees the grant (W-11)."""
         if op.state is OperationState.PREPARED:
             return op
-        intent = self.intent_of(op)
+        intent = op.intent()
         refs = op.refs()
         grant = repo.get_grant(self.db, op.grant) if op.grant else None
         if grant is not None and grant.scope is not None and grant.scope.allow_duplicate:
@@ -844,15 +829,12 @@ class Engine:
             raise ChamberlainError(
                 ErrorCode.SOURCE_UNAVAILABLE, "The source could not prepare the write."
             ) from error
-        moved = self.transition(
+        return self.transition_required(
             op,
             OperationState.PREPARED,
-            summary="Prepared by a read-only connector call.",
+            "Prepared by a read-only connector call.",
             prepared_json=prepared.model_dump_json(exclude_none=True),
         )
-        if moved is None:
-            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
-        return moved
 
     def _read_attachments(self, intent: WriteIntent) -> dict[str, bytes]:
         """Attachment bytes from the artifact store, matched by hash (W-3)."""
@@ -868,7 +850,7 @@ class Engine:
 
     def _dispatch(self, op: OperationRow) -> OperationRow:
         """Journal `dispatched`, commit, then make the one mutation call (W-7, W-8)."""
-        intent = self.intent_of(op)
+        intent = op.intent()
         if op.prepared_json is None:
             raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "A prepared write is missing.")
         prepared = Prepared.model_validate_json(op.prepared_json)
@@ -878,15 +860,13 @@ class Engine:
             self._fail_clean(op, error.code)
             raise
         now = self.ctx.clock.now()
-        journal = self.transition(
+        journal = self.transition_required(
             op,
             OperationState.DISPATCHED,
-            summary="Journalled before the one mutation call.",
+            "Journalled before the one mutation call.",
             dispatched_at=format_ts(now),
             worker=self.worker,
         )
-        if journal is None:
-            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
         try:
             result = kinds.port_dispatch(
                 self.ctx, intent, prepared, journal.idempotency_key, payloads
@@ -978,7 +958,7 @@ class Engine:
         """
         if op.server_verified or op.intent_json is None:
             return
-        intent = self.intent_of(op)
+        intent = op.intent()
         try:
             reading = self._reconcile_loop(op, intent, prepared, self._window(op))
         except Exception:
@@ -1044,7 +1024,7 @@ class Engine:
     ) -> tuple[OperationRow, ReconcileResult | None]:
         """`_reconcile`, and what the connector said (None when no read was made)."""
         who = actor or self.actor()
-        intent = self.intent_of(op)
+        intent = op.intent()
         if op.prepared_json is None:
             return op, None
         prepared = Prepared.model_validate_json(op.prepared_json)
@@ -1101,11 +1081,7 @@ class Engine:
     def reconcile(
         self, handle: str, *, happened_evidence: str | None = None
     ) -> tuple[OperationRow, bool]:
-        """Settle an uncertain operation by reading, never by resending (T-13).
-
-        `happened_evidence` is the agent's own record that the write did happen (the safe
-        direction). That it did not happen is never settled here without a connector's proof.
-        """
+        """Settle an uncertain operation by reading, never by resending (T-13, W-12)."""
         self.recover()
         before = self.get(handle)
         if before.state is not OperationState.UNCERTAIN:
@@ -1145,22 +1121,19 @@ class Engine:
         if evidence is not None:
             self._check_seen(evidence)
         with transaction(self.db):
-            moved = self.transition(
+            moved = self.transition_required(
                 op,
                 OperationState.CONFIRMED,
-                summary=summary,
+                summary,
                 receipt_json=build_receipt(op, OperationState.CONFIRMED, self.now()),
             )
-            if moved is None:
-                raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That changed.")
             if evidence is not None:
                 self.ctx.services.evidence.link(evidence, moved.handle)
         return moved, True
 
     def _check_seen(self, evidence: str) -> None:
         """Evidence that it happened is something this session recorded. It frees nothing."""
-        session = self.ctx.session
-        if session is None or not self.ctx.services.evidence.created_in_session(evidence, session):
+        if not self._recorded_in_session(evidence):
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID,
                 "Give evidence recorded in this session of what you saw.",
@@ -1186,28 +1159,11 @@ class Engine:
             moved += 1 if row is not None else 0
         return moved
 
-    def cancel(self, handle: str, *, actor: str) -> OperationRow:
-        """Withdraw an operation before it is prepared (T-11). Never touches dispatched ones."""
-        return cancel_operation(
-            self.db,
-            self.ctx.clock,
-            self.audit,
-            self.grants,
-            handle,
-            actor=actor,
-            release=self.release_attachments,
-        )
-
     # --- views --------------------------------------------------------------------
 
     def view(self, op: OperationRow) -> OperationView:
         resent = repo.resend_of(self.db, op.handle)
         stored = op.receipt()
-        code: ErrorCode | None
-        try:
-            code = ErrorCode(op.error_code) if op.error_code else None
-        except ValueError:
-            code = None
         return OperationView(
             handle=op.handle,
             intent_kind=op.kind,
@@ -1218,7 +1174,7 @@ class Engine:
                 client_verified=op.client_verified, server_verified=op.server_verified
             ),
             may_have_happened=op.state in MAY_HAVE_HAPPENED_STATES,
-            error_code=code,
+            error_code=_stored_code(op),
             result_ref=None if stored is None else stored.result_ref,
             items_ok=0 if stored is None else stored.summary.items_ok,
             items_failed=0 if stored is None else stored.summary.items_failed,

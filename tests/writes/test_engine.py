@@ -417,8 +417,8 @@ def test_r3_propose_runs_the_connector_scan_before_the_operation_is_stored(
 
 def test_t11_cancel_only_before_prepare_and_never_after_dispatch(rig: WriteRig) -> None:
     op = rig.ready_send()
-    cancelled = rig.engine().cancel(op.handle, actor="agent:x")
-    assert cancelled.state is S.CANCELLED
+    rig.ctx.services.writes.cancel_operation(op.handle, actor="agent:x")
+    assert rig.engine().get(op.handle).state is S.CANCELLED
     with fails(ErrorCode.OPERATION_ALREADY_SETTLED):
         rig.engine().do(op.handle)
     second = rig.ready_send(subject="Second")
@@ -426,7 +426,7 @@ def test_t11_cancel_only_before_prepare_and_never_after_dispatch(rig: WriteRig) 
     with fails(ErrorCode.OPERATION_UNCERTAIN):
         rig.engine().do(second.handle)
     with fails(ErrorCode.OPERATION_NEEDS_RECONCILE):
-        rig.engine().cancel(second.handle, actor="agent:x")
+        rig.ctx.services.writes.cancel_operation(second.handle, actor="agent:x")
 
 
 def test_w25_settled_operations_compact_to_a_one_line_receipt(rig: WriteRig) -> None:
@@ -564,7 +564,7 @@ def test_w17_a_racing_do_cannot_fail_clean_a_dispatched_operation(rig: WriteRig)
     grant = rig.grant_for(op)
     rig.db.execute("UPDATE grants SET state = 'revoked' WHERE handle = ?", (grant.handle,))
     with fails(ErrorCode.OPERATION_NEEDS_RECONCILE):
-        eng.reserve(stale, eng.intent_of(stale))
+        eng.reserve(stale, stale.intent())
     after = eng.get(op.handle)
     assert after.state is S.DISPATCHED
     assert after.error_code is None

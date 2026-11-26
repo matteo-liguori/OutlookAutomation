@@ -64,17 +64,17 @@ def _verb(intent: WriteIntent) -> str:
     if isinstance(intent, CalendarCreate) and intent.event.recurrence is not None:
         return "Create a repeating calendar event"
     if isinstance(intent, CalendarUpdate | CalendarDelete) and intent.scope is not None:
-        deleting = isinstance(intent, CalendarDelete)
-        if intent.scope == "occurrence":
+        one = intent.scope == "occurrence"
+        if isinstance(intent, CalendarDelete):
             return (
                 "Cancel one date of a repeating event"
-                if deleting
-                else ("Change one date of a repeating event")
+                if one
+                else "Delete a repeating event, every date"
             )
         return (
-            "Delete a repeating event, every date"
-            if deleting
-            else ("Change a repeating event, every date")
+            "Change one date of a repeating event"
+            if one
+            else "Change a repeating event, every date"
         )
     return _VERB[IntentKind(intent.kind)]
 

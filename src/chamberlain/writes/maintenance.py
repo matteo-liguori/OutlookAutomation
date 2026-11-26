@@ -13,7 +13,7 @@ from chamberlain.domain.grant_rules import format_ts
 from chamberlain.limits import AUDIT_DAYS, OPERATION_COMPACT_DAYS, UNCERTAIN_ABANDON_DAYS
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
-from chamberlain.writes import repo
+from chamberlain.writes import outside, repo, resend
 from chamberlain.writes.audit import AuditChain, prune
 from chamberlain.writes.core import Engine
 from chamberlain.writes.models import StoredReceipt, WritePolicy
@@ -45,15 +45,14 @@ def compact_operations(ctx: Context, now: datetime | None = None) -> int:
     return count
 
 
-def abandon_stale(ctx: Context, policy: WritePolicy | None = None) -> int:
+def abandon_stale(engine: Engine) -> int:
     """Close unsettled operations nobody can resend after 14 days. Frees nothing.
 
     A mail send the harness holds the text of is never closed this way (W-40)."""
-    cutoff = format_ts(ctx.clock.now() - timedelta(days=UNCERTAIN_ABANDON_DAYS))
-    engine = Engine(ctx, policy)
+    cutoff = format_ts(engine.ctx.clock.now() - timedelta(days=UNCERTAIN_ABANDON_DAYS))
     closed = 0
-    for op in repo.stale_uncertain(ctx.db, cutoff):
-        closed += 1 if engine.abandon(op) is not None else 0
+    for op in repo.stale_uncertain(engine.db, cutoff):
+        closed += 1 if resend.abandon(engine, op) is not None else 0
     return closed
 
 
@@ -61,11 +60,11 @@ def maintain(ctx: Context, policy: WritePolicy | None = None) -> MaintenanceRepo
     """One pass: crash recovery, grant timers, compaction, then the audit window."""
     engine = Engine(ctx, policy)
     recovered = engine.recover()
-    engine.close_unreported_outside()
-    rechecked = engine.recheck_sends()
+    outside.close_unreported_outside(engine)
+    rechecked = resend.recheck_sends(engine)
     changed = engine.grants.sweep()
     compacted = compact_operations(ctx)
-    abandoned = abandon_stale(ctx, policy)
+    abandoned = abandon_stale(engine)
     before = format_ts(ctx.clock.now() - timedelta(days=AUDIT_DAYS))
     with transaction(ctx.db):
         removed = repo.delete_compacted_operations(ctx.db, before)

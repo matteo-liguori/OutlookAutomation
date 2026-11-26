@@ -22,7 +22,7 @@ from chamberlain.schema.tools import (
     ReconcileRequest,
     ReconcileResponse,
 )
-from chamberlain.writes import repo
+from chamberlain.writes import repo, resend
 from chamberlain.writes.audit import verify
 from chamberlain.writes.core import Engine
 from chamberlain.writes.models import Proposal
@@ -59,8 +59,8 @@ def make_handlers(pause: Callable[[float], None] | None = None) -> dict[ToolName
                 request.intent, card=request.card, evidence=request.evidence
             )
         elif request.redo_of is not None:
-            proposal = eng.propose_redo(
-                request.redo_of, card=request.card, evidence=request.evidence
+            proposal = resend.propose_redo(
+                eng, request.redo_of, card=request.card, evidence=request.evidence
             )
         elif request.standing is not None:
             proposal = eng.propose_standing(request.standing, card=request.card)
