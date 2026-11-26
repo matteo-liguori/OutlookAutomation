@@ -2,8 +2,7 @@
 
 The pass is replayed over the fake provider through the real wiring: four unread
 messages are read, carded, two answered, two marked read, and the cards closed. The
-numbers it measures are printed (`pytest -s`) and recorded on the board as the baseline
-for wave 2; the assertions are the targets, not the baseline.
+numbers it measures are printed (`pytest -s`); the assertions are the targets.
 """
 
 import json

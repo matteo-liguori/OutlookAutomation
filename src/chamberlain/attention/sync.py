@@ -27,6 +27,7 @@ from chamberlain.ports.sync import (
     FolderSync,
     SyncReport,
 )
+from chamberlain.runs import repo as runs_repo
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 from chamberlain.store.schema import MAIL_SYNC_KEY, get_state
@@ -206,7 +207,7 @@ def ensure_all_fresh(ctx: Context) -> None:
 def _lead(ctx: Context, now: datetime) -> timedelta | None:
     """How far ahead of its time a scheduled pass is, when one is due within its lead."""
     longest: timedelta | None = None
-    for item in repo.presync_schedules(ctx.db):
+    for item in runs_repo.presync_schedules(ctx.db):
         try:
             zone = ZoneInfo(item.zone)
         except (ZoneInfoNotFoundError, ValueError, OSError):

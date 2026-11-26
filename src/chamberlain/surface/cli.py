@@ -11,7 +11,6 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
     chamberlain config validate|show    check or print config/connections.yaml (no secrets)
     chamberlain config add-test-calendar <source>  enroll a configured calendar for live tests
-    chamberlain demo init <data root>   write a demo-only profile into an empty data root
     chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain recipients seed [--months N]
                                         learn known recipients from each Sent folder (read-only)
@@ -43,8 +42,8 @@ from chamberlain.connections import (
     open_app,
     render_redacted,
 )
-from chamberlain.connections.demo import demo_document
-from chamberlain.connections.load import add_test_calendar, profile_path
+from chamberlain.connections.load import add_test_calendar
+from chamberlain.connections.setup import provider_setup
 from chamberlain.connectors.caldav.setup import verify as icloud_verify
 from chamberlain.connectors.thunderbird.update import SystemDesktop, thunderbird_home, update_addon
 from chamberlain.dataroot import refuse_inside_checkout
@@ -53,19 +52,16 @@ from chamberlain.importer.run import run_import
 from chamberlain.livetest.commands import main as live_test_main
 from chamberlain.livetest.runner import DEFAULT_WORKERS, RunOptions
 from chamberlain.ports.clock import SystemClock
-from chamberlain.review.claude_guard import add as add_guard
-from chamberlain.review.claude_guard import check as check_guard
-from chamberlain.review.claude_guard import remove as remove_guard
 from chamberlain.runs.plan import due_passes
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Reply, error_reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.schema.registry import BY_NAME, STANDING_PROMPT, TOOLS, get_tool
 from chamberlain.schema.tools import DoctorCheck
+from chamberlain.surface.runner import DATA_ENV, configured_caller
 from chamberlain.surface.viewer.server import launch
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
-DATA_ENV = "CHAMBERLAIN_DATA"
 SESSION_ENV = "CHAMBERLAIN_SESSION"
 CLAUDE_CODE_ENV = "CLAUDECODE"
 """Set to 1 by Claude Code in the shells it starts."""
@@ -97,6 +93,9 @@ def _parser() -> argparse.ArgumentParser:
     schema = commands.add_parser("schema", help="print a tool's schema")
     schema.add_argument("tool", choices=sorted(BY_NAME))
     commands.add_parser("prompt", help="print the standing prompt")
+    setup = commands.add_parser("setup", help="configure a calendar or Thunderbird connection")
+    setup.add_argument("provider", choices=["thunderbird", "google", "icloud"])
+    setup.add_argument("options", nargs=argparse.REMAINDER, help="provider setup options")
     config = commands.add_parser("config", help="check or manage the connection profile")
     config_actions = config.add_subparsers(dest="action", required=True)
     config_actions.add_parser("validate", help="check the connection profile")
@@ -105,14 +104,6 @@ def _parser() -> argparse.ArgumentParser:
         "add-test-calendar", help="enroll an existing calendar for live tests"
     )
     enroll.add_argument("source", help="configured calendar source ID, such as calendar:work")
-    demo = commands.add_parser("demo", help="try Chamberlain without real accounts")
-    demo.add_argument("action", choices=["init"])
-    demo.add_argument("root", help="an empty (or new) folder to use as the demo data root")
-    guard = commands.add_parser(
-        "guard",
-        help="switch the Claude file guard on or off (off by default; docs/review.md)",
-    )
-    guard.add_argument("action", choices=["on", "off", "status"])
     cleanup = commands.add_parser(
         "cleanup", help="move old mail to Trash by the cleanup rules (plan, grant or run)"
     )
@@ -245,15 +236,7 @@ def _call_tool(args: argparse.Namespace, out: TextIO) -> int:
             )
         )
     else:
-        try:
-            app = open_app(Path(data))
-        except ChamberlainError as error:
-            reply = error_reply(error)
-        else:
-            try:
-                reply = app.call(args.command, request)
-            finally:
-                app.close()
+        reply = configured_caller(Path(data))(args.command, request)
     _print(out, reply.model_dump(mode="json", exclude_none=True))
     return exit_code(reply)
 
@@ -334,40 +317,6 @@ def _config(args: argparse.Namespace, out: TextIO) -> int:
     except ChamberlainError as error:
         _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
         return EXIT_FAILED
-
-
-def _demo(args: argparse.Namespace, out: TextIO) -> int:
-    """Write a demo-only profile. It refuses any folder that already holds something."""
-    root = Path(args.root)
-    try:
-        if root.exists() and (not root.is_dir() or any(root.iterdir())):
-            raise ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "The demo data root is not empty.",
-                fix="Name a new or empty folder; demo init never touches an existing one.",
-            )
-        path = profile_path(root)
-        path.parent.mkdir(parents=True)
-        path.write_text(demo_document(), encoding="utf-8")
-    except (ChamberlainError, OSError) as error:
-        if isinstance(error, OSError):
-            error = ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "The demo profile could not be written.",
-                detail=str(error),
-            )
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
-    _print(
-        out,
-        {
-            "ok": True,
-            "demo": True,
-            "profile": str(path),
-            "next": f"chamberlain --data {root} start",
-        },
-    )
-    return EXIT_OK
 
 
 def _import(args: argparse.Namespace, out: TextIO) -> int:
@@ -476,29 +425,6 @@ def _addon(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
-def _guard(args: argparse.Namespace, out: TextIO) -> int:
-    """The Claude file guard: deny Claude Code's file tools the data root (an accident guard).
-
-    Off by default while the harness is developed; `on` when the agent runs unattended."""
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
-        return EXIT_FAILED
-    root = Path(data)
-    try:
-        if args.action == "on":
-            where = add_guard(root)
-            out.write(f"Guard on: Claude Code's file tools are denied the data root ({where}).\n")
-        elif args.action == "off":
-            out.write("Guard off.\n" if remove_guard(root) else "Guard was already off.\n")
-        else:
-            out.write("Guard on.\n" if check_guard(root).present else "Guard off.\n")
-    except ChamberlainError as error:
-        out.write(f"{error.message}\n")
-        return EXIT_FAILED
-    return EXIT_OK
-
-
 def _recipients(args: argparse.Namespace, out: TextIO) -> int:
     """Read each mail source's Sent folder and record its recipients as known (G-15)."""
     data = args.data or os.environ.get(DATA_ENV)
@@ -594,8 +520,7 @@ def _viewer(args: argparse.Namespace, out: TextIO) -> int:
 
 def _refused_data_root(args: argparse.Namespace, out: TextIO) -> int | None:
     """Stop before anything is written when the data root is inside the code checkout."""
-    data = getattr(args, "root", None) if args.command == "demo" else None
-    data = data or args.data or os.environ.get(DATA_ENV)
+    data = args.data or os.environ.get(DATA_ENV)
     if not data:
         return None
     try:
@@ -604,6 +529,33 @@ def _refused_data_root(args: argparse.Namespace, out: TextIO) -> int | None:
         _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
         return EXIT_FAILED
     return None
+
+
+def _setup(args: argparse.Namespace, out: TextIO) -> int:
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        _print(
+            out,
+            error_reply(
+                ChamberlainError(ErrorCode.CONFIG_INVALID, "Set CHAMBERLAIN_DATA or pass --data.")
+            ).model_dump(mode="json", exclude_none=True),
+        )
+        return EXIT_INVALID
+    return provider_setup(args.provider, args.options, Path(data), out)
+
+
+_COMMANDS = {
+    "setup": _setup,
+    "tick": _tick,
+    "config": _config,
+    "import": _import,
+    "recipients": _recipients,
+    "addon": _addon,
+    "export": _export,
+    "cleanup": _cleanup,
+    "viewer": _viewer,
+    "live-test": _live_test,
+}
 
 
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
@@ -631,29 +583,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     refused = _refused_data_root(args, stream)
     if refused is not None:
         return refused
-    if args.command == "tick":
-        return _tick(args, stream)
-    if args.command == "config":
-        return _config(args, stream)
-    if args.command == "demo":
-        return _demo(args, stream)
-    if args.command == "import":
-        return _import(args, stream)
-    if args.command == "recipients":
-        return _recipients(args, stream)
-    if args.command == "guard":
-        return _guard(args, stream)
-    if args.command == "addon":
-        return _addon(args, stream)
-    if args.command == "export":
-        return _export(args, stream)
-    if args.command == "cleanup":
-        return _cleanup(args, stream)
-    if args.command == "viewer":
-        return _viewer(args, stream)
-    if args.command == "live-test":
-        return _live_test(args, stream)
-    return _call_tool(args, stream)
+    command = _COMMANDS.get(args.command, _call_tool)
+    return command(args, stream)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,5 @@
 """App.call: docs/contracts/02-tools.md (T-3, T-5, T-16), 03-envelope-errors.md (E-2, E-14)."""
 
-from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -8,8 +7,7 @@ import pytest
 from chamberlain.app.context import Context, Handler, Result
 from chamberlain.app.core import App
 from chamberlain.app.doctor import make_doctor
-from chamberlain.app.doubles import RecordingAuditLog
-from chamberlain.app.wiring import TRACK_MODULES, build_app, load_tracks
+from chamberlain.app.wiring import build_app
 from chamberlain.limits import MAX_REPLY_CHARS
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.base import Model, ToolName
@@ -24,6 +22,7 @@ from chamberlain.schema.tools import (
     StartResponse,
     ToolRequest,
 )
+from chamberlain.writes.repo import audit_rows
 
 SESSION = "ses_0123456789abcdef"
 OPERATION = "op_0123456789abcdef"
@@ -155,18 +154,17 @@ def test_t5_a19_a7_g23_every_call_ticks_first_and_is_decorated_after_and_3_relat
     assert hooks.ticks == 1
 
     # g23_every_call_writes_one_audit_row_without_content
-    audit = RecordingAuditLog()
-    audited = replace(ctx, services=replace(ctx.services, audit=audit))
-    app = app_with(audited, start=start)
+    app = app_with(ctx, start=start)
     app.call("start", {"agent": "private-agent-label"})
     app.call("do", {"operation": OPERATION, "session": SESSION})
-    assert [row.summary.split(" (")[0] for row in audit.rows] == [
+    rows = audit_rows(ctx.db)[-2:]
+    assert [row.summary.split(" (")[0] for row in rows] == [
         "start: ok",
         "do: tool.not_implemented",
     ]
-    assert all(row.summary.endswith(" chars)") for row in audit.rows)
-    assert audit.rows[1].actor == f"agent:{SESSION}"
-    assert "private-agent-label" not in repr(audit.rows)
+    assert all(row.summary.endswith(" chars)") for row in rows)
+    assert rows[1].actor == f"agent:{SESSION}"
+    assert "private-agent-label" not in repr(rows)
 
     # doctor_reports_the_schema_checks
     reply = App(ctx, {ToolName.DOCTOR: make_doctor()}).call("doctor", {"check": "schema"})
@@ -178,15 +176,9 @@ def test_t5_a19_a7_g23_every_call_ticks_first_and_is_decorated_after_and_3_relat
     }
 
 
-def test_r10_wiring_collects_the_track_modules_and_2_related_checks(
+def test_r10_the_wired_app_runs_doctor_and_preserves_the_tool_guard(
     clock: ManualClock, tmp_path_factory: pytest.TempPathFactory, ctx: Context
 ) -> None:
-    # wiring_collects_the_track_modules
-    handlers, hooks = load_tracks()
-    assert ToolName.DOCTOR in handlers
-    assert hooks is not None
-    assert len(TRACK_MODULES) == 3
-
     # build_app_opens_a_store_under_the_data_root
     root = tmp_path_factory.mktemp("root") / "data"
     app = build_app(root, clock=ManualClock())

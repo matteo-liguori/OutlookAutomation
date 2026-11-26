@@ -9,10 +9,8 @@ from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.client import typed
 from chamberlain.connectors.thunderbird.frames import CHUNK_BYTES
 from chamberlain.connectors.thunderbird.identity import (
-    bare,
     encode_locator,
     normalise_body,
-    normalise_subject,
     parse_address,
 )
 from chamberlain.connectors.thunderbird.mail_reads import (
@@ -31,6 +29,7 @@ from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.intents import (
     IntentKind,
 )
+from chamberlain.domain.mail import bare, normalise_subject
 from chamberlain.domain.operations import (
     DispatchOutcome,
     DispatchResult,

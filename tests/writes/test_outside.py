@@ -5,6 +5,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
+from tests.store.legacy import legacy_migrations
 
 from chamberlain.domain.canonical import canonical_json, content_hash
 from chamberlain.domain.grants import ConfirmedVia, GrantState, Requirement, StandingScope
@@ -14,14 +15,15 @@ from chamberlain.runs import sections
 from chamberlain.runs.models import RunRow, RunState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import MEMORY, connect
-from chamberlain.store.migrate import discover, migrate, stamp
+from chamberlain.store.migrate import migrate, stamp
 from chamberlain.surface.viewer import pages
-from chamberlain.testing.write_rig import CALENDAR, CALENDAR_B, CALENDAR_PLAIN, MAIL, WriteRig
 from chamberlain.writes import repo
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.confirm import grant_detail, list_grants
 from chamberlain.writes.maintenance import maintain
 from chamberlain.writes.models import WritePolicy
 from chamberlain.writes.read_state import propose_missing, scope_for
+from support.write_rig import CALENDAR, CALENDAR_B, CALENDAR_PLAIN, MAIL, WriteRig
 
 CARD = "card_0123456789abcdef"
 FORM = OutsideCategory.FORM_FILL
@@ -306,7 +308,9 @@ def test_a_store_with_old_grants_migrates_without_changing_what_they_mean() -> N
 
     clock = ManualClock()
     db = connect(MEMORY)
-    migrate(db, clock, backup_dir=None, migrations=[m for m in discover() if m.version < 230])
+    migrate(
+        db, clock, backup_dir=None, migrations=[m for m in legacy_migrations() if m.version < 230]
+    )
     scope = scope_for(MAIL)
     hash_before = content_hash(scope)
     stored = stamp(clock)
@@ -332,7 +336,7 @@ def test_a_store_with_old_grants_migrates_without_changing_what_they_mean() -> N
     )
     db.execute("UPDATE operations SET state = 'confirmed' WHERE handle = 'op_old0000000001'")
 
-    migrate(db, clock, backup_dir=None)
+    migrate(db, clock, backup_dir=None, migrations=legacy_migrations())
 
     grant = repo.get_grant(db, "grant_old000000001")
     assert grant is not None
@@ -346,12 +350,10 @@ def test_a_store_with_old_grants_migrates_without_changing_what_they_mean() -> N
         grant.handle
     ]
     assert repo.get_operation(db, "op_old0000000001") is not None
-    assert propose_missing(db, clock, _Audit(), [MAIL], policy=WritePolicy()) == [], (
+    audit = AuditChain(db, clock)
+    before = repo.audit_count(db)
+    assert propose_missing(db, clock, audit, [MAIL], policy=WritePolicy()) == [], (
         "the owner is not asked again"
     )
+    assert repo.audit_count(db) == before
     db.close()
-
-
-class _Audit:
-    def append(self, **_: object) -> int:
-        raise AssertionError("nothing should be proposed or written")

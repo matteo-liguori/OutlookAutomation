@@ -1,6 +1,6 @@
-"""One-shot importer from the old harness data root. Wave 2.
+"""Importer from the old harness data root.
 
 Contract: docs/rebuild-plan.md (Migrating current users' private data) and
 docs/contracts/04-writes.md (unfinished journals import as `abandoned`, left with the old harness).
-Sketch: docs/waves/wave-2.md. Reads the old data root; never modifies it.
+Reads the old data root; never modifies it.
 """

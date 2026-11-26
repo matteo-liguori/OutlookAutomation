@@ -14,21 +14,18 @@ import argparse
 import json
 import os
 import sys
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
 from chamberlain import __version__
-from chamberlain.connections import open_app
 from chamberlain.dataroot import refuse_inside_checkout
-from chamberlain.schema.base import Model
-from chamberlain.schema.envelope import Reply, error_reply
 from chamberlain.schema.errors import ChamberlainError
 from chamberlain.schema.registry import STANDING_PROMPT, TOOLS
+from chamberlain.surface.runner import DATA_ENV, ToolCaller, configured_caller
 
-DATA_ENV = "CHAMBERLAIN_DATA"
 PROTOCOL_VERSION = "2025-06-18"
-ToolCaller = Callable[[str, Mapping[str, Any]], Reply[Model]]
+
 
 _METHOD_NOT_FOUND = -32601
 _PARSE_ERROR = -32700
@@ -93,25 +90,6 @@ def serve(stdin: TextIO, stdout: TextIO, call_tool: ToolCaller | None = None) ->
         if answer is not None:
             stdout.write(json.dumps(answer, ensure_ascii=False) + "\n")
             stdout.flush()
-
-
-def configured_caller(data_root: Path) -> ToolCaller:
-    """Call tools on the app that `config/connections.yaml` describes, one app per call.
-
-    A broken profile is a `config.invalid` reply to the call, never a crashed server.
-    """
-
-    def call_tool(name: str, arguments: Mapping[str, Any]) -> Reply[Model]:
-        try:
-            app = open_app(data_root)
-        except ChamberlainError as error:
-            return error_reply(error)
-        try:
-            return app.call(name, arguments)
-        finally:
-            app.close()
-
-    return call_tool
 
 
 def main(argv: Sequence[str] | None = None) -> int:

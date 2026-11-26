@@ -12,9 +12,9 @@ from pathlib import Path
 from typing import cast
 
 from chamberlain.domain.cards import card_size
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.metrics import tree_bytes
-from chamberlain.memory.timeutil import parse, ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.tools import StoredBytesHistory
 from chamberlain.store.db import table_names

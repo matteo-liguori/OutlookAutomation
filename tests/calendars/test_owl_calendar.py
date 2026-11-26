@@ -25,8 +25,8 @@ from chamberlain.domain.operations import DispatchOutcome, ReconcileStatus
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.calendar_contract import CalendarPortContract
-from chamberlain.testing.rigs import CalendarRig
+from support.calendar_contract import CalendarPortContract
+from support.rigs import CalendarRig
 
 SOURCE = "calendar:test"
 START = datetime(2027, 3, 1, 10, 0, tzinfo=UTC)

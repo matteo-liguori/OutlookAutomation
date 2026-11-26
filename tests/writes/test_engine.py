@@ -1,9 +1,9 @@
-"""The write state machine against the fake provider (04-writes.md, 11-ported-test-intent.md)."""
+"""The write state machine against the fake provider (04-writes.md)."""
 
 from contextlib import AbstractContextManager
 
 import pytest
-from hypothesis import HealthCheck, given, settings
+from hypothesis import HealthCheck, example, given, settings
 from hypothesis import strategies as st
 
 from chamberlain.connectors.fake import Fault
@@ -25,7 +25,9 @@ from chamberlain.limits import (
     SETTLE_AFTER_MINUTES,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
-from chamberlain.testing.write_rig import (
+from chamberlain.writes import repo
+from chamberlain.writes.maintenance import maintain
+from support.write_rig import (
     CALENDAR,
     MAIL,
     SESSION,
@@ -33,8 +35,6 @@ from chamberlain.testing.write_rig import (
     WriteRig,
     make_rig,
 )
-from chamberlain.writes import repo
-from chamberlain.writes.maintenance import maintain
 
 S = OperationState
 
@@ -212,27 +212,6 @@ def test_p11_an_uncertain_move_reconciles_without_a_second_mutation(rig: WriteRi
     assert op.state is S.CONFIRMED
     assert rig.fake.dispatch_count(key) == 1
     assert rig.fake.mail.copies(MAIL, "<mv@example.org>", "f-archive") == 1
-
-
-def test_w12_absence_needs_proof_capability_and_time() -> None:
-    rig = make_rig(send_absence_provable=True)
-    try:
-        op = rig.ready_send()
-        rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
-        with fails(ErrorCode.OPERATION_UNCERTAIN):
-            rig.engine().do(op.handle)
-        early, _ = rig.engine().reconcile(op.handle)
-        assert early.state is S.UNCERTAIN
-        rig.clock.advance(minutes=11)
-        late, changed = rig.engine().reconcile(op.handle)
-        assert changed
-        assert late.state is S.CONFIRMED_ABSENT
-        grant = repo.get_grant(rig.db, late.grant or "")
-        assert grant is not None
-        assert grant.state.value == "active"
-        assert rig.sent_copies() == 0
-    finally:
-        rig.close()
 
 
 def test_w12_an_unprovable_absence_stays_uncertain_forever(rig: WriteRig) -> None:
@@ -584,6 +563,8 @@ def test_w9_w25_the_tick_seams_recover_compact_and_sweep_grants(rig: WriteRig) -
 
 @settings(max_examples=25, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(elapsed=st.integers(min_value=0, max_value=1200))
+@example(elapsed=0)
+@example(elapsed=SETTLE_AFTER_MINUTES * 60)
 def test_w12_an_absent_proof_never_frees_a_grant_before_deadline_plus_margin(elapsed: int) -> None:
     """Coordinator ruling: a late-landing timed-out write must not be released early."""
     rig = make_rig(send_absence_provable=True)
@@ -593,12 +574,17 @@ def test_w12_an_absent_proof_never_frees_a_grant_before_deadline_plus_margin(ela
         with fails(ErrorCode.OPERATION_UNCERTAIN):
             rig.engine().do(op.handle)
         rig.clock.advance(seconds=elapsed)
-        after, _ = rig.engine().reconcile(op.handle)
+        after, changed = rig.engine().reconcile(op.handle)
         floor = CONNECTOR_DEADLINE_SECONDS + ABSENCE_MARGIN_SECONDS
         if elapsed < floor:
             assert after.state is S.UNCERTAIN
         if elapsed >= SETTLE_AFTER_MINUTES * 60:
+            assert changed
             assert after.state is S.CONFIRMED_ABSENT
+            grant = repo.get_grant(rig.db, after.grant or "")
+            assert grant is not None
+            assert grant.state.value == "active"
+        assert rig.sent_copies() == 0
     finally:
         rig.close()
 

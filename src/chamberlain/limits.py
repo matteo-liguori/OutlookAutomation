@@ -1,7 +1,7 @@
 """Every number the contracts quote, defined once.
 
 Contract: docs/contracts/10-targets.md (and the files it points to). Changing a
-value here is a contract change: post it on docs/BOARD.md first.
+value here is a contract change; update its contract and proving tests together.
 """
 
 from typing import Final

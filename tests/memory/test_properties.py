@@ -28,11 +28,11 @@ from memory_helpers import (
 
 from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.domain.canonical import sha256_bytes
+from chamberlain.domain.timefmt import parse
 from chamberlain.memory import repo
 from chamberlain.memory.artifacts import ArtifactService, blob_path
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.sweeper import DATA_ROOT_LAYOUT, SweepCrash, SweepHooks, rule_names, sweep
-from chamberlain.memory.timeutil import parse
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError
 

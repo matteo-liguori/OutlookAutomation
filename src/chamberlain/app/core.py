@@ -10,6 +10,7 @@ from dataclasses import replace
 from typing import Any
 
 from chamberlain.app.context import Context, Handler, Hooks, SyncBudget
+from chamberlain.domain.actors import agent_actor
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.limits import MAX_REPLY_CHARS, SUMMARY_MAX
 from chamberlain.schema.base import Model, ToolName
@@ -94,9 +95,6 @@ class App:
             reply = Reply[Model](
                 ok=True, data=result.data, coverage=result.coverage, next=result.next
             )
-        if ctx.sources.demo and reply.coverage is not None:
-            marked = reply.coverage.model_copy(update={"demo": True})
-            reply = reply.model_copy(update={"coverage": marked})
         if self._hooks is not None:
             reply = self._hooks.decorate(ctx, spec, request, reply)
         return reply
@@ -130,7 +128,7 @@ class App:
         name = spec.name.value if spec is not None else "unknown"
         outcome = "ok" if reply.error is None else reply.error.code.value
         session = raw.get("session")
-        actor = f"agent:{session}" if isinstance(session, str) else "agent:none"
+        actor = agent_actor(session if isinstance(session, str) else None)
         try:
             with transaction(self._context.db):
                 self._context.services.audit.append(

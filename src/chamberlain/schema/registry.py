@@ -27,7 +27,7 @@ class ToolSpec:
     request: type[t.ToolRequest]
     response: type[Model]
     owner: str
-    """The wave-1 track that implements the handler."""
+    """The module that implements the handler."""
     needs_session: bool = True
 
     def input_schema(self) -> dict[str, Any]:

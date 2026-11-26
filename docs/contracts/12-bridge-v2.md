@@ -1,7 +1,7 @@
 # 12 Thunderbird bridge protocol, version 3
 
 Binding for the Thunderbird connector (`src/chamberlain/connectors/thunderbird/`)
-and its add-on (`.../addon/`). Written by wave-1 track (d). The machine-readable
+and its add-on (`.../addon/`). The machine-readable
 form is `protocol.py`. The add-on's TypeScript types and protocol constants
 are generated from it (`typegen.py`, section 9). Where this prose and
 `protocol.py` disagree, post on the board.

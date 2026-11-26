@@ -3,6 +3,7 @@
 Contract: docs/contracts/09-storage.md (S-3, S-4), 06-memory.md (M-40).
 """
 
+import json
 import sqlite3
 from dataclasses import dataclass
 
@@ -215,11 +216,11 @@ def unreported_worrying(db: sqlite3.Connection) -> list[FindingRow]:
 
 
 def mark_reported(db: sqlite3.Connection, ids: list[int], now: str) -> None:
-    for finding in ids:
-        db.execute(
-            "UPDATE review_findings SET reported_at = ? WHERE id = ? AND reported_at IS NULL",
-            (now, finding),
-        )
+    db.execute(
+        "UPDATE review_findings SET reported_at = ? WHERE reported_at IS NULL "
+        "AND id IN (SELECT value FROM json_each(?))",
+        (now, json.dumps(ids)),
+    )
 
 
 # --- the pass that just ended (a SELECT on the runs track's table) -------------------------

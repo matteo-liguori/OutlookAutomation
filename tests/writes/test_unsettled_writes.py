@@ -9,8 +9,8 @@ from collections.abc import Iterator
 from datetime import timedelta
 
 import pytest
+from tests.store.legacy import legacy_migrations
 
-from chamberlain.attention import repo as attention_repo
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.grant_rules import format_ts
 from chamberlain.domain.operations import OperationState
@@ -18,11 +18,11 @@ from chamberlain.limits import UNCERTAIN_SEND_RECHECK_HOURS
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import MEMORY, connect
-from chamberlain.store.migrate import discover, migrate
-from chamberlain.testing.write_rig import CALENDAR, MAIL, OWNER, WriteRig, make_rig
+from chamberlain.store.migrate import migrate
 from chamberlain.writes import repo
 from chamberlain.writes.maintenance import maintain
 from chamberlain.writes.models import StoredReceipt
+from support.write_rig import CALENDAR, MAIL, OWNER, WriteRig, make_rig
 
 S = OperationState
 
@@ -38,7 +38,7 @@ def rig() -> Iterator[WriteRig]:
 def asked_about(rig: WriteRig) -> list[str]:
     """What attention would hand the agent as `operation.uncertain` right now."""
     before = format_ts(rig.clock.now() - timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS))
-    return [o.handle for o in attention_repo.uncertain_operations(rig.db, before)]
+    return [o.handle for o in repo.uncertain_operations(rig.db, before)]
 
 
 def test_a_lost_calendar_write_goes_to_the_agent_after_a_day_and_may_be_done_again_once(
@@ -100,7 +100,7 @@ def test_migration_0220_closes_imported_uncertain_operations_and_leaves_the_rest
     clock: ManualClock,
 ) -> None:
     db = connect(MEMORY)
-    upto = [m for m in discover() if m.version <= 201]
+    upto = [m for m in legacy_migrations() if m.version <= 201]
     assert migrate(db, clock, backup_dir=None, migrations=upto)[-1] == 201
     when = "2026-01-01T00:00:00Z"
     sha = "a" * 64
@@ -117,7 +117,7 @@ def test_migration_0220_closes_imported_uncertain_operations_and_leaves_the_rest
             (handle, key, state, sha, intent, when, when),
         )
     db.commit()
-    assert migrate(db, clock, backup_dir=None)[0] == 220
+    assert migrate(db, clock, backup_dir=None, migrations=legacy_migrations())[0] == 220
     states = {r["handle"]: r["state"] for r in db.execute("SELECT handle, state FROM operations")}
     assert states == {
         "op_0000000000000001": "abandoned",
@@ -129,7 +129,5 @@ def test_migration_0220_closes_imported_uncertain_operations_and_leaves_the_rest
     ).fetchone()[0]
     assert StoredReceipt.model_validate_json(receipt).summary.state is S.ABANDONED
     later = "2099-01-01T00:00:00Z"
-    assert "op_0000000000000001" not in [
-        o.handle for o in attention_repo.uncertain_operations(db, later)
-    ]
+    assert "op_0000000000000001" not in [o.handle for o in repo.uncertain_operations(db, later)]
     db.close()

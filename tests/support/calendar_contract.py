@@ -29,7 +29,7 @@ from chamberlain.domain.intents import (
 )
 from chamberlain.domain.operations import DispatchOutcome, Prepared, ReconcileStatus
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.rigs import CalendarRig, Fault
+from support.rigs import CalendarRig, Fault
 
 START = datetime(2027, 3, 1, 10, 0, tzinfo=UTC)
 LATE = 600.0

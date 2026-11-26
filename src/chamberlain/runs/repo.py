@@ -6,9 +6,11 @@ artifacts, artifact_owners) are only read (S-3). Callers wrap writes in
 """
 
 import sqlite3
+from dataclasses import dataclass
 
 from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME
 from chamberlain.runs.models import NoteRow, PassKind, RunRow, RunState, ScheduleRow
+from chamberlain.store.schema import get_state
 
 
 def _schedule(row: sqlite3.Row) -> ScheduleRow:
@@ -206,3 +208,91 @@ def notes_since(db: sqlite3.Connection, since: str) -> list[NoteRow]:
 
 def delete_notes_before(db: sqlite3.Connection, before: str) -> int:
     return db.execute("DELETE FROM user_notes WHERE created_at < ?", (before,)).rowcount
+
+
+@dataclass(frozen=True)
+class DueRun:
+    """A scheduled pass that is due or in progress (the `runs` table, runs track)."""
+
+    handle: str
+    schedule: str
+    kind: str
+    day: str
+    outline: str | None = None
+    """The stored item that tells the agent what to write; set once a session works the pass."""
+    state: str = "due"
+    has_report: bool = False
+
+
+@dataclass(frozen=True)
+class OpenNote:
+    """A note the person left in the viewer (the `user_notes` table, runs track)."""
+
+    id: int
+    text: str
+
+
+@dataclass(frozen=True)
+class PresyncSchedule:
+    """A scheduled pass the tick may sync ahead of (the `schedules` table, runs track)."""
+
+    at_local: str
+    weekdays: frozenset[int]
+    zone: str
+    minutes: int
+
+
+def presync_schedules(db: sqlite3.Connection) -> list[PresyncSchedule]:
+    rows = db.execute(
+        "SELECT at_local, weekdays, zone, presync_minutes FROM schedules "
+        "WHERE enabled = 1 AND presync_minutes > 0"
+    )
+    return [
+        PresyncSchedule(
+            r["at_local"],
+            frozenset(int(d) for d in r["weekdays"].split(",") if d),
+            r["zone"],
+            r["presync_minutes"],
+        )
+        for r in rows
+    ]
+
+
+def due_runs(db: sqlite3.Connection) -> list[DueRun]:
+    """Passes that are due or running; the runs track writes `runs` and `schedules`."""
+    rows = db.execute(
+        "SELECT r.handle, r.schedule, s.kind, r.day, r.state, "
+        "(SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
+        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename = :outline "
+        " ORDER BY a.created_at DESC LIMIT 1) AS outline, "
+        "EXISTS (SELECT 1 FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
+        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename IS NOT :outline) "
+        " AS has_report "
+        "FROM runs r JOIN schedules s ON s.name = r.schedule "
+        "WHERE r.state IN ('due', 'running') ORDER BY r.due_at, r.handle",
+        {"outline": REPORT_OUTLINE_FILENAME},
+    )
+    return [
+        DueRun(
+            r["handle"],
+            r["schedule"],
+            r["kind"],
+            r["day"],
+            outline=r["outline"],
+            state=r["state"],
+            has_report=bool(r["has_report"]),
+        )
+        for r in rows
+    ]
+
+
+def open_notes(db: sqlite3.Connection, since: str) -> list[OpenNote]:
+    rows = db.execute(
+        "SELECT id, text FROM user_notes WHERE state = 'open' AND created_at >= ? ORDER BY id",
+        (since,),
+    )
+    return [OpenNote(int(r["id"]), r["text"]) for r in rows]
+
+
+def update_tag(db: sqlite3.Connection) -> str | None:
+    return get_state(db, "runs.update_tag") or None

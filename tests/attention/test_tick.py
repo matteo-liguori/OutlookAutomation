@@ -9,20 +9,20 @@ import pytest
 from chamberlain.app.context import Context, TickSteps
 from chamberlain.app.core import App
 from chamberlain.attention import repo, tick
+from chamberlain.attention.collect import collect
 from chamberlain.attention.detectors import DETECTORS
 from chamberlain.attention.models import (
-    ActionRow,
-    CardRow,
     DetectorInput,
-    GrantRow,
     MailBatch,
-    OperationRow,
     SourceSnapshot,
 )
 from chamberlain.connectors.fake import FakeProvider, Fault
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind
+from chamberlain.memory.repo import ActionRow, CardRow
 from chamberlain.ports.clock import ManualClock
+from chamberlain.writes.repo import GrantAlert as GrantRow
+from chamberlain.writes.repo import OperationAlert as OperationRow
 
 
 def kinds(ctx: Context) -> list[str]:
@@ -165,7 +165,7 @@ def test_a6_a_tick_already_running_elsewhere_is_not_started_again(
     ctx: Context, monkeypatch: pytest.MonkeyPatch
 ):
     """Another caller arriving while a tick collects skips it (found live: eight at once)."""
-    real = tick.collect
+    real = collect
     inner: list[bool] = []
 
     def collect_while_another_caller_arrives(context: Context) -> Any:

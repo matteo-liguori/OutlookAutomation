@@ -45,7 +45,7 @@ from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
 from chamberlain.ports.contacts import ContactsPort
 from chamberlain.ports.mail import MailPort
-from chamberlain.testing.rigs import Fault
+from support.rigs import Fault
 
 ADDON_DIR: Final = (
     Path(__file__).resolve().parents[2]

@@ -1,6 +1,6 @@
 """Interfaces between the core and the outside world.
 
-Contract: docs/contracts/08-ports.md. Shared package (docs/OWNERSHIP.md).
+Contract: docs/contracts/08-ports.md.
 """
 
 from chamberlain.ports.calendar import CalendarPort

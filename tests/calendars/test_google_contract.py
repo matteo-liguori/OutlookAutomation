@@ -8,8 +8,8 @@ from chamberlain.connectors.google_calendar.calendar import GoogleCalendar
 from chamberlain.connectors.google_calendar.config import GoogleBinding, GoogleCalendarConfig
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
-from chamberlain.testing.calendar_contract import CalendarPortContract
-from chamberlain.testing.rigs import CalendarRig
+from support.calendar_contract import CalendarPortContract
+from support.rigs import CalendarRig
 
 
 def build(clock: ManualClock) -> tuple[GoogleCalendar, FakeGoogleApi]:

@@ -9,11 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from chamberlain.app.context import SourceRouter
-from chamberlain.connections.demo import demo_provider
 from chamberlain.connections.model import (
     CalDavSource,
     Connections,
-    DemoSource,
     GoogleCalendarSource,
     OwlCalendarSource,
     ThunderbirdContactsSource,
@@ -152,18 +150,6 @@ def build_router(
         )
         calendar.update(dict.fromkeys(caldav_sources, dav))
 
-    demo_ids = sorted(connections.of_kind(DemoSource))
-    if demo_ids:
-        provider = demo_provider(demo_ids, clock)
-        for sid in demo_ids:
-            role = sid.partition(":")[0]
-            if role == "mail":
-                mail[sid] = provider.mail
-            elif role == "calendar":
-                calendar[sid] = provider.calendar
-            else:
-                contacts[sid] = provider.contacts
-
     information_only = frozenset(
         sid
         for sid, source in connections.sources.items()
@@ -173,7 +159,6 @@ def build_router(
         mail=mail,
         calendar=calendar,
         contacts=contacts,
-        demo=frozenset(demo_ids),
         information_only=information_only,
     )
 

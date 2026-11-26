@@ -1,4 +1,4 @@
-"""Board rulings R1 to R7 and R11 as tests (docs/BOARD.md, 2026-11-24 12:40 UTC)."""
+"""Write safety and reconciliation rulings R1 to R7 and R11."""
 
 import pytest
 from hypothesis import HealthCheck, given, settings
@@ -19,7 +19,6 @@ from chamberlain.domain.operations import (
     Verification,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import MAIL, WriteRig, make_rig
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
@@ -29,6 +28,7 @@ from chamberlain.writes.core import (
     MAIL_SETTLE_ATTEMPTS,
     MAIL_SETTLE_WINDOW_SECONDS,
 )
+from support.write_rig import MAIL, WriteRig, make_rig
 
 S = OperationState
 NO_FIXTURES = settings(
@@ -332,7 +332,7 @@ def test_r5_property_only_an_expired_lease_is_recovered(elapsed: int) -> None:
     try:
         op = rig.ready_send()
         rig.mail.crash_after_dispatch = True
-        from chamberlain.testing.write_rig import SimulatedCrash
+        from support.write_rig import SimulatedCrash
 
         with pytest.raises(SimulatedCrash):
             rig.engine(worker="doomed").do(op.handle)

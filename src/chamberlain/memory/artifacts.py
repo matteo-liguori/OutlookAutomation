@@ -15,10 +15,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from chamberlain.app.services import ArtifactInfo
 from chamberlain.domain.artifacts import ArtifactKind, OwnerKind, owner_kind_of
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.handles import HandleKind, new_handle
+from chamberlain.domain.timefmt import minus, plus, ts
 from chamberlain.limits import (
     ARTIFACT_DEFAULT_DAYS,
     ARTIFACT_MAX_DAYS,
@@ -31,7 +31,6 @@ from chamberlain.limits import (
     TOTAL_ARTIFACT_BYTES,
 )
 from chamberlain.memory import repo
-from chamberlain.memory.timeutil import minus, plus, ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
@@ -153,8 +152,18 @@ def _bad_import(message: str) -> ChamberlainError:
     return ChamberlainError(ErrorCode.REQUEST_INVALID, message, field="import_path")
 
 
+@dataclass(frozen=True)
+class ArtifactInfo:
+    handle: str
+    sha256: str
+    size: int
+    media_type: str
+    filename: str | None
+    live: bool
+
+
 class ArtifactService:
-    """Implements `ArtifactStore` (app/services.py) and the memory-side extras."""
+    """Artifacts bound to a store, clock and configured storage budget."""
 
     def __init__(
         self,
@@ -166,7 +175,7 @@ class ArtifactService:
         self._db = db
         self._clock = clock
         self._root = data_root
-        self._budgets = budgets or Budgets()
+        self.budgets = budgets or Budgets()
 
     # --- owners (M-4) -----------------------------------------------------------
 
@@ -252,11 +261,11 @@ class ArtifactService:
             (sha,),
         )
         added = 0 if already else size
-        if repo.total_stored_bytes(self._db) + added > self._budgets.total_bytes:
+        if repo.total_stored_bytes(self._db) + added > self.budgets.total_bytes:
             raise self._over_budget("The store is full.")
         if kind in (OwnerKind.ACTION, OwnerKind.CARD):
             card = owner if kind is OwnerKind.CARD else repo.card_of_action(self._db, owner)
-            if card and repo.card_live_bytes(self._db, card) + size > self._budgets.per_card_bytes:
+            if card and repo.card_live_bytes(self._db, card) + size > self.budgets.per_card_bytes:
                 raise self._over_budget("This card holds as much as it may.")
 
     def _over_budget(self, message: str) -> ChamberlainError:

@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, TypeGuard
 from zoneinfo import ZoneInfo
 
-from chamberlain.memory.timeutil import ts
+from chamberlain.domain.timefmt import ts
 
 NAMESPACE = "chamberlain-import-v1"
 ELLIPSIS = "…"

@@ -14,6 +14,7 @@ from pydantic import Field
 from chamberlain.app.context import Context
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery, MessageSummary
 from chamberlain.ports.mail import MailPort
+from chamberlain.ports.page import pages
 from chamberlain.schema.base import Model
 from chamberlain.schema.errors import ChamberlainError
 
@@ -124,13 +125,8 @@ def candidates(
 
 
 def _all(port: MailPort, source: str, query: MailQuery) -> Iterator[MessageSummary]:
-    cursor: str | None = None
-    while True:
-        page = port.search(source, query, cursor)
+    for page in pages(lambda cursor: port.search(source, query, cursor)):
         yield from page.items
-        if page.cursor is None:
-            return
-        cursor = page.cursor
 
 
 def _ids_in(port: MailPort, source: str, folders: set[str], until: datetime) -> set[str] | None:

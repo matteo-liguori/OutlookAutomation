@@ -3,6 +3,7 @@
 Contract: docs/contracts/08-ports.md (P-4).
 """
 
+from collections.abc import Callable, Iterator
 from typing import Self
 
 from pydantic import BaseModel, model_validator
@@ -33,3 +34,18 @@ class Page[ItemT: BaseModel](Model):
         if not self.complete and self.cursor is None and not self.gaps:
             raise ValueError("an incomplete page names a cursor or a gap")
         return self
+
+
+def pages[T: BaseModel](
+    read: Callable[[str | None], Page[T]], *, limit: int | None = None
+) -> Iterator[Page[T]]:
+    """Yield each response with its gaps and terminal status intact."""
+    cursor = None
+    count = 0
+    while limit is None or count < limit:
+        page = read(cursor)
+        yield page
+        count += 1
+        cursor = page.cursor
+        if cursor is None:
+            return

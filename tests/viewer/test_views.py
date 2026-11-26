@@ -73,6 +73,8 @@ def test_w41_uncertain_history_is_read_only_and_outside_needs_you(rig: Rig) -> N
     )
     shown = get(rig, "/api/uncertain")["operations"]
     assert [o["handle"] for o in shown] == [operation]
+    assert shown[0]["imported"] is False
+    assert shown[0]["attempted_at"] == "2026-01-05T08:59:00Z"
     assert "Did this go out?" in shown[0]["rendered"]
     assert "The exact body text." in shown[0]["rendered"]
     assert "uncertain_operations" not in get(rig, "/api/overview")["needs_you"]

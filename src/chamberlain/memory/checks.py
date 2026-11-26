@@ -6,10 +6,10 @@ Contract: docs/contracts/02-tools.md (doctor) and 06-memory.md (M-23, M-26, M-27
 from typing import Literal
 
 from chamberlain.app.context import Context
+from chamberlain.domain.timefmt import minus
 from chamberlain.limits import EVIDENCE_PER_OPEN_CARD_TARGET
 from chamberlain.memory import repo
 from chamberlain.memory.artifacts import blob_path
-from chamberlain.memory.timeutil import minus
 from chamberlain.schema.tools import CheckResult
 from chamberlain.store.schema import get_state
 

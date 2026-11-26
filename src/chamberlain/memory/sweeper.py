@@ -18,6 +18,7 @@ from pydantic import Field
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
+from chamberlain.domain.timefmt import minus, plus, ts
 from chamberlain.limits import (
     EXPORT_DAYS,
     LOG_DAYS,
@@ -38,7 +39,6 @@ from chamberlain.memory.artifacts import (
     blob_path,
 )
 from chamberlain.memory.history import record_snapshot
-from chamberlain.memory.timeutil import minus, plus, ts
 from chamberlain.schema.base import Model
 from chamberlain.store.db import DB_NAME, transaction
 from chamberlain.store.schema import set_state
@@ -164,7 +164,9 @@ def sweep(
     `compactors` are the other tracks' rules for their own tables (operation and grant
     compaction, event expiry, audit windows), supplied at wiring and run in `records`.
     """
-    run = _Run(ctx, now, budgets or Budgets(), hooks or SweepHooks(), compactors)
+    run = _Run(
+        ctx, now, budgets or ctx.services.artifacts.budgets, hooks or SweepHooks(), compactors
+    )
     for name, rule in _RULES:
         rule(run)
         if run.hooks.after_rule is not None:

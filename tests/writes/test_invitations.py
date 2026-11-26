@@ -16,7 +16,10 @@ from chamberlain.domain.intents import (
 )
 from chamberlain.domain.operations import OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import (
+from chamberlain.writes.authorise import authorise, requirement_needed
+from chamberlain.writes.confirm import confirm_grant
+from chamberlain.writes.render import EVENT_ATTENDEES_REF, describe_intent
+from support.write_rig import (
     CALENDAR,
     CALENDAR_B,
     CALENDAR_PLAIN,
@@ -24,9 +27,6 @@ from chamberlain.testing.write_rig import (
     OWNER_B,
     WriteRig,
 )
-from chamberlain.writes.authorise import authorise, requirement_needed
-from chamberlain.writes.confirm import confirm_grant
-from chamberlain.writes.render import EVENT_ATTENDEES_REF, describe_intent
 
 START = datetime(2026, 2, 1, 12, tzinfo=UTC)
 END = datetime(2026, 2, 1, 13, tzinfo=UTC)

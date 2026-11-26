@@ -19,6 +19,50 @@ from chamberlain.store.db import DB_NAME, connect, table_names, transaction
 _FILE_NAME = re.compile(r"^(\d{4})_([a-z0-9_]+)\.sql$")
 _TABLE = "schema_migrations"
 
+LEGACY_MANIFEST: dict[int, tuple[str, str]] = {
+    1: ("initial", "e84daca27fc289d3cbef7d99bdfb6256c2cbbe656113d01226796d2bd262388b"),
+    30: ("writes", "b25953034d8fb7ae4f70c7437ba96576dae09433aa4ae0473f634142d372a3a9"),
+    50: ("runs", "ea3daa2c1084a94e6e939d35cec939f1ccecfedff2d2d64e703719568c8c563d"),
+    60: ("mail_watermark", "2a79dcd657e15dd849f6a8f8f8ee49e9a44bb92bfcfbd0a597096ff954888abc"),
+    70: ("operation_abandoned", "5a3bd7369c3e8074bbeabdb3dbb5a7c9fd0ee6a3b750daf81046228a94564c33"),
+    71: (
+        "known_recipient_origin",
+        "da412aeedf3df34fdc5672f83d49af16a77c45aff22f89aa7de42946eae036ac",
+    ),
+    80: (
+        "card_context_and_complex",
+        "63fe5b817216ea97e49a7e8f12742b91043f916dddc72f075f32f089978b4bef",
+    ),
+    110: (
+        "uncertain_send_recheck",
+        "cc436a4f917d1d1d6ee497db6077270e0406586133cd9058b7ebdf55a506ef91",
+    ),
+    120: (
+        "mail_scan_all_folders",
+        "d422f621827a7ee6a20a69c6250e58f4cac854370d7089be746c4dcc1b824c11",
+    ),
+    130: ("report_dashboard", "8bebc717a74daba27641e8e63ac7d681a9b77b16547f419f137c503613f24b09"),
+    140: ("action_important", "52e1b1637a0724471fa2d656554656fd5ebb8007e34cc138b80abbcd4a9397e2"),
+    150: ("mail_folder_sync", "5e28e2acbd0d04ab964684f92fdd1d31f673432401b77a0ef54f8c88454247c8"),
+    190: ("review", "e79da369752d5e920c06751e9294fce9e346a35acf783bb6fed382a1c08df741"),
+    200: ("imported_items", "cc9fad16ac4121414f2945fd6bbf174037754661b4045fdde9d03cf640757ff2"),
+    201: ("read_marked", "fa718a9d5fd0fbb8c0caa2f1131601fcd960cd940801fb113d2657b28107d90e"),
+    220: (
+        "imported_uncertain_closed",
+        "43dab83d4a75933b05519201a75f027e9a510c8a8cbdb70781fe65b53f4270b3",
+    ),
+    230: ("outside_actions", "8233b1a2a61bc64a00eeee140abf212bee18e1cf485258811fb33db6e5f9e4ad"),
+    240: ("owl_freshness", "bdeab0e829d95571ffcfcc9ac8831571ea20f7b8224cc587819e2b37b476ffdd"),
+    250: (
+        "retire_mail_new_for_card",
+        "c4416e489133894d0256721f2d575e4669b2c2deae4562977732f2117d88c142",
+    ),
+    260: ("calendar_prepared", "c98e1ef5a35bcd4fb40f34bb9bdd61860910bbb05a689d313cd9f9ebb5986176"),
+}
+BASELINE_VERSION = 270
+BRIDGE_VERSION = 260
+BRIDGE_FILE = "_upgrade_0250.sql"
+
 
 @dataclass(frozen=True)
 class Migration:
@@ -42,7 +86,7 @@ def discover(directory: Path | None = None) -> list[Migration]:
         files = [
             (entry.name, entry.read_text(encoding="utf-8"))
             for entry in resources.files("chamberlain.store.migrations").iterdir()
-            if entry.name.endswith(".sql")
+            if entry.name.endswith(".sql") and entry.name != BRIDGE_FILE
         ]
     else:
         files = [(p.name, p.read_text(encoding="utf-8")) for p in directory.glob("*.sql")]
@@ -88,6 +132,17 @@ def pending(connection: sqlite3.Connection, migrations: Sequence[Migration]) -> 
     """What would be applied, after checking S-9 and S-11."""
     applied = applied_versions(connection)
     known = {m.version: m for m in migrations}
+    # The baseline stamp keeps the original ledger intact. Verify those preserved
+    # entries against the immutable manifest before ignoring them for future steps.
+    if BASELINE_VERSION in known and BASELINE_VERSION in applied and 1 in applied:
+        legacy = {
+            version: value for version, value in applied.items() if version < BASELINE_VERSION
+        }
+        if legacy != LEGACY_MANIFEST:
+            raise _fail("The pre-baseline migration ledger is incomplete or changed.")
+        applied = {
+            version: value for version, value in applied.items() if version >= BASELINE_VERSION
+        }
     for version, (name, checksum) in sorted(applied.items()):
         if version not in known:
             raise _fail(f"The database has migration {version:04d}, which this code does not.")
@@ -103,6 +158,93 @@ def pending(connection: sqlite3.Connection, migrations: Sequence[Migration]) -> 
     return todo
 
 
+def _schema_signature(connection: sqlite3.Connection) -> list[tuple[str, str, str, str | None]]:
+    """Every table, index and trigger, including implicit indexes and their owner."""
+    return [
+        (row[0], row[1], row[2], row[3])
+        for row in connection.execute(
+            "SELECT type, name, tbl_name, sql FROM sqlite_master "
+            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+        )
+    ]
+
+
+def _expected_schema(baseline: Migration) -> list[tuple[str, str, str, str | None]]:
+    reference = sqlite3.connect(":memory:")
+    try:
+        reference.execute(
+            "CREATE TABLE IF NOT EXISTS schema_migrations ("
+            "version INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+            "checksum TEXT NOT NULL, applied_at TEXT NOT NULL) STRICT"
+        )
+        for statement in split_statements(baseline.sql):
+            reference.execute(statement)
+        return _schema_signature(reference)
+    finally:
+        reference.close()
+
+
+def _adopt_baseline(
+    connection: sqlite3.Connection,
+    clock: Clock,
+    baseline: Migration,
+    backup_dir: Path | None,
+) -> list[int]:
+    """Stamp a known current store; optionally run the narrow 0250 -> 0260 bridge."""
+    applied = applied_versions(connection)
+    if not applied or BASELINE_VERSION in applied or 1 not in applied:
+        return []
+    prior = {v: entry for v, entry in LEGACY_MANIFEST.items() if v < BRIDGE_VERSION}
+    if applied not in (prior, LEGACY_MANIFEST):
+        raise _fail(
+            "This store is not at the supported pre-baseline version or its ledger changed. "
+            "Open it with the preceding Chamberlain version and finish its migrations first."
+        )
+    bridge = (
+        resources.files("chamberlain.store.migrations")
+        .joinpath(BRIDGE_FILE)
+        .read_text(encoding="utf-8")
+    )
+    migration = Migration(BRIDGE_VERSION, LEGACY_MANIFEST[BRIDGE_VERSION][0], bridge)
+    if migration.checksum != LEGACY_MANIFEST[BRIDGE_VERSION][1]:
+        raise _fail("The calendar migration bridge does not match the recorded version.")
+    if backup_dir is not None:
+        _backup(connection, backup_dir / f"pre-migration-{BASELINE_VERSION:04d}.sqlite3")
+    try:
+        with transaction(connection):
+            # Another opener may have adopted while this one made the backup.
+            actual = applied_versions(connection)
+            if BASELINE_VERSION in actual:
+                return []
+            if actual not in (prior, LEGACY_MANIFEST):
+                raise _fail("The pre-baseline migration ledger changed during adoption.")
+            if _schema_signature(connection) != _expected_schema(baseline):
+                raise _fail("The pre-baseline schema differs from the expected current schema.")
+            done: list[int] = []
+            if actual == prior:
+                for statement in split_statements(bridge):
+                    connection.execute(statement)
+                connection.execute(
+                    "INSERT INTO schema_migrations (version, name, checksum, applied_at) "
+                    "VALUES (?, ?, ?, ?)",
+                    (BRIDGE_VERSION, migration.name, migration.checksum, stamp(clock)),
+                )
+                done.append(BRIDGE_VERSION)
+            connection.execute(
+                "INSERT INTO schema_migrations (version, name, checksum, applied_at) "
+                "VALUES (?, ?, ?, ?)",
+                (baseline.version, baseline.name, baseline.checksum, stamp(clock)),
+            )
+            done.append(baseline.version)
+            return done
+    except sqlite3.Error as error:
+        raise ChamberlainError(
+            ErrorCode.STORE_MIGRATION_FAILED,
+            "The pre-baseline store could not be converted; nothing was changed.",
+            detail=str(error),
+        ) from error
+
+
 def migrate(
     connection: sqlite3.Connection,
     clock: Clock,
@@ -116,9 +258,15 @@ def migrate(
     already holds data is backed up first (S-10); pass `backup_dir=None` only
     for an in-memory database.
     """
-    todo = pending(connection, discover() if migrations is None else migrations)
+    discovered = discover() if migrations is None else migrations
+    adopted: list[int] = []
+    if migrations is None:
+        baseline = next((m for m in discovered if m.version == BASELINE_VERSION), None)
+        if baseline is not None:
+            adopted = _adopt_baseline(connection, clock, baseline, backup_dir)
+    todo = pending(connection, discovered)
     if not todo:
-        return []
+        return adopted
     if applied_versions(connection) and backup_dir is not None:
         _backup(connection, backup_dir / f"pre-migration-{todo[0].version:04d}.sqlite3")
     connection.execute(
@@ -144,7 +292,7 @@ def migrate(
                 detail=str(error),
             ) from error
         done.append(migration.version)
-    return done
+    return [*adopted, *done]
 
 
 def _backup(connection: sqlite3.Connection, target: Path) -> None:

@@ -1,6 +1,5 @@
 """The improvisation log, the review round and the Claude file guard (docs/contracts M-40)."""
 
-import io
 import json
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -11,13 +10,10 @@ import pytest
 
 from chamberlain.app.wiring import build_app
 from chamberlain.ports.clock import ManualClock
-from chamberlain.review import claude_guard, findings, normalise
-from chamberlain.review.handlers import access_checks
+from chamberlain.review import findings, normalise
 from chamberlain.review.homes import AgentHomes
 from chamberlain.review.rounds import RoundRule
 from chamberlain.review.scan import ReviewSettings, scan
-from chamberlain.schema.errors import ChamberlainError
-from chamberlain.surface import cli
 
 SECRETS = ("TOPSECRET", "alice@example.org", "Quarterly", "hunter2")
 NOW = datetime(2026, 3, 2, 9, 0, tzinfo=UTC)
@@ -195,7 +191,7 @@ def test_a_review_round_reaches_the_agent_and_only_worrying_reaches_the_owner(ri
     assert "NEW" in text
 
     def keep(owner: str, text: str) -> dict[str, Any]:
-        request = {"session": sid, "kind": "finding", "owner": owner, "reason": "review"}
+        request = {"session": sid, "kind": "note", "owner": owner, "reason": "review"}
         return rig.call("keep", {**request, "text": text})
 
     event = item["event"]
@@ -227,52 +223,3 @@ def test_a_review_round_reaches_the_agent_and_only_worrying_reaches_the_owner(ri
     rig.clock.advance(hours=25)
     rig.call("start", {"agent": "t", "purpose": "interactive"})
     assert ctx.db.execute("SELECT count(*) FROM review_rounds").fetchone()[0] == 2
-
-
-def test_the_claude_guard_adds_once_keeps_other_rules_and_is_checked_by_doctor(
-    rig: Rig, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    data = rig.root / "data"
-    settings = rig.homes.claude / "settings.json"
-    settings.parent.mkdir(parents=True)
-    settings.write_text(
-        json.dumps({"model": "x", "permissions": {"deny": ["Bash(rm *)"], "allow": ["Read"]}}),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("CHAMBERLAIN_AGENT_HOME", str(rig.root / "home"))
-    ctx = rig.app.context
-    off = access_checks(ctx)[0]
-    assert off.status == "ok"  # off by default while the harness is developed; not a warning
-    assert "off" in off.summary
-
-    out = io.StringIO()
-    assert cli.main(["--data", str(data), "guard", "on"], out) == cli.EXIT_OK
-    claude_guard.add(data)
-    saved = json.loads(settings.read_text(encoding="utf-8"))
-    assert saved["model"] == "x"
-    assert saved["permissions"]["allow"] == ["Read"]
-    deny = saved["permissions"]["deny"]
-    assert deny[0] == "Bash(rm *)"
-    assert len(deny) == 3
-    assert all(r.startswith(("Read(//", "Edit(//")) and r.endswith("/**)") for r in deny[1:])
-    assert access_checks(ctx)[0].status == "ok"
-
-    saved["permissions"]["deny"].remove(deny[1])
-    settings.write_text(json.dumps(saved), encoding="utf-8")
-    assert access_checks(ctx)[0].status == "warn"  # a missing rule is noticed
-
-    claude_guard.add(data)
-    out = io.StringIO()
-    assert cli.main(["--data", str(data), "guard", "off"], out) == cli.EXIT_OK
-    assert out.getvalue() == "Guard off.\n"
-    assert access_checks(ctx)[0].status == "ok"
-    remaining = json.loads(settings.read_text(encoding="utf-8"))["permissions"]["deny"]
-    assert remaining == ["Bash(rm *)"]
-    assert not claude_guard.remove(data)
-    assert claude_guard.add(data)
-    assert claude_guard.remove(data)
-
-    settings.write_text("{not json", encoding="utf-8")
-    with pytest.raises(ChamberlainError):
-        claude_guard.add(data)
-    assert settings.read_text(encoding="utf-8") == "{not json"

@@ -25,6 +25,7 @@ from chamberlain.domain.grants import GrantState, StandingScope
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import IntentKind, MailTrash
 from chamberlain.domain.operations import OperationState
+from chamberlain.domain.timefmt import ts
 from chamberlain.memory import repo as memory_repo
 from chamberlain.memory.cards import CardService
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -271,7 +272,7 @@ def daily_cleanup(ctx: Context, config: CleanupConfig) -> CleanupReport | None:
         last = get_state(ctx.db, LAST_RUN_KEY)
         if last and now - datetime.fromisoformat(last) < CLEANUP_EVERY:
             return None
-        set_state(ctx.db, ctx.clock, LAST_RUN_KEY, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
+        set_state(ctx.db, ctx.clock, LAST_RUN_KEY, ts(now))
     propose_grants(ctx, config)
     report = run_cleanup(ctx, config, dry_run=False)
     log.info(

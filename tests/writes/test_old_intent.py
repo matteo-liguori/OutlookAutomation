@@ -25,10 +25,10 @@ from chamberlain.domain.intents import (
 )
 from chamberlain.domain.operations import OperationState, ReconcileResult, ReconcileStatus
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import CALENDAR, MAIL, WriteRig
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import create_token
 from chamberlain.writes.maintenance import maintain
+from support.write_rig import CALENDAR, MAIL, WriteRig
 
 S = OperationState
 
@@ -62,7 +62,7 @@ def test_w21_an_authorised_operation_whose_grant_expires_before_dispatch_is_rele
     approved = rig.agent_approves(proposal)
     assert approved.operation is not None
     rig.mail.crash_in_prepare = True
-    from chamberlain.testing.write_rig import SimulatedCrash
+    from support.write_rig import SimulatedCrash
 
     with pytest.raises(SimulatedCrash):
         rig.engine().do(approved.operation.handle)

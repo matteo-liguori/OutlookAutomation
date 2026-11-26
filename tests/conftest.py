@@ -1,4 +1,4 @@
-"""Fixtures every track may use. Shared file (docs/OWNERSHIP.md)."""
+"""Shared fixtures for the local test suite."""
 
 import sqlite3
 from collections.abc import Iterator
@@ -6,12 +6,12 @@ from pathlib import Path
 
 import pytest
 
-from chamberlain.app.context import Context, SourceRouter
-from chamberlain.app.doubles import unwired_services
+from chamberlain.app.context import Context, Services, SourceRouter
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.ports.clock import ManualClock
 from chamberlain.store.db import MEMORY, connect
 from chamberlain.store.migrate import migrate
+from chamberlain.writes.models import WritePolicy
 
 
 @pytest.fixture(autouse=True)
@@ -58,12 +58,16 @@ def fake(clock: ManualClock) -> FakeProvider:
 
 @pytest.fixture
 def ctx(db: sqlite3.Connection, clock: ManualClock, data_root: Path, fake: FakeProvider) -> Context:
-    """A context over the in-memory store, the fake provider and service doubles."""
+    """A context over the in-memory store, the fake provider and real services."""
     sources = SourceRouter(
         mail={"mail:test": fake.mail},
         calendar={"calendar:test": fake.calendar},
         contacts={"contacts:test": fake.contacts},
     )
     return Context(
-        db=db, clock=clock, data_root=data_root, sources=sources, services=unwired_services()
+        db=db,
+        clock=clock,
+        data_root=data_root,
+        sources=sources,
+        services=Services.bind(db, clock, data_root, policy=WritePolicy()),
     )

@@ -151,7 +151,7 @@ One standing permission can cover several calendars, or several mailboxes, with 
 
 ## Confirmation channel (the viewer endpoint)
 
-The writes track builds this endpoint and its tests. The viewer UI is wave 2.
+The writes module provides this endpoint; the viewer serves it.
 
 - **G-17** Served by `chamberlain viewer` on `127.0.0.1` only, on a random
   port, never on a routable address. Every request MUST carry the viewer

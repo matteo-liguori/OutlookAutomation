@@ -12,8 +12,8 @@ This is the rebuild. The old harness stays as the fallback until you cut over.
 - The binding specification (the contracts): [docs/contracts/](docs/contracts/00-index.md)
 - When you need to click, standing permissions, known recipients and authorised senders: [docs/permissions.md](docs/permissions.md)
 - The guidance rules, as one page for your review: [docs/guidance-review.md](docs/guidance-review.md)
-- Who builds what: [docs/OWNERSHIP.md](docs/OWNERSHIP.md), [docs/waves/](docs/waves/)
-- Message board for builders: [docs/BOARD.md](docs/BOARD.md)
+- Capability preservation and proof: [docs/capability-checklist.md](docs/capability-checklist.md)
+- Working with an agent: [docs/agents.md](docs/agents.md)
 
 ## Getting started
 
@@ -174,21 +174,6 @@ chamberlain schema propose             # a tool's request and response schema
 chamberlain prompt                     # the standing prompt an agent is given
 chamberlain --data ../chamberlain-scratch doctor
 ```
-
-## Try it without real accounts
-
-The demo source is a small synthetic mailbox, calendar and address book held in memory
-(`example.invalid` addresses, every item marked `[DEMO]`). Nothing it does leaves the process.
-
-```
-.venv/Scripts/python -m chamberlain.surface.cli demo init ../chamberlain-demo
-.venv/Scripts/python -m chamberlain.surface.cli --data ../chamberlain-demo start
-```
-
-`demo init` refuses a folder that is not empty. Replies from a demo installation carry
-`"demo": true` in `coverage`, and `doctor` warns if demo and real sources are mixed.
-Use `--data ../chamberlain-demo` for any tool, or point an agent's MCP server at it
-(`python -m chamberlain.surface.mcp_server --data ../chamberlain-demo`).
 
 ## Layout
 

@@ -24,10 +24,10 @@ from dataclasses import dataclass
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
-from chamberlain.app.services import AuditLog
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import OperationState, Receipt, Verification
+from chamberlain.domain.timefmt import parse
 from chamberlain.importer.convert import add_days, derive, is_sha256, norm_ts, sha256_text, shorten
 from chamberlain.importer.old import Json, OldApproval, OldInstallation, OldJournal
 from chamberlain.importer.profile_map import MappedProfile
@@ -36,8 +36,8 @@ from chamberlain.importer.report import ImportReport
 from chamberlain.importer.summary import attempted_at, summarise
 from chamberlain.limits import EVIDENCE_MAX, EVIDENCE_PER_OPEN_CARD_TARGET
 from chamberlain.memory import repo as memory
-from chamberlain.memory.timeutil import parse
 from chamberlain.writes import repo as writes
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.imported import OperationSummary
 from chamberlain.writes.models import StoredReceipt
 
@@ -71,7 +71,7 @@ _KINDS: dict[str, IntentKind] = {
 @dataclass
 class Context:
     db: sqlite3.Connection
-    audit: AuditLog
+    audit: AuditChain
     old: OldInstallation
     mapped: MappedProfile
     zone: ZoneInfo

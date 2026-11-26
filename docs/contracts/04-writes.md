@@ -251,7 +251,7 @@ and reconcile over the fake provider with random faults, checking:
   operation `uncertain` and never releases the grant. Any `absence_provable`
   claim for sends must cover Sent, Outbox and Drafts.
 - **W-29** (R4) Move, trash and draft-update receipts return the NEW locator;
-  on `confirmed` the engine calls `RefResolver.repoint(old, new)` so a handle
+  on `confirmed` the engine calls `RefService.repoint(old, new)` so a handle
   survives filing.
 - **W-30** (R7) `ProviderReceipt.warnings` carries harness-safe codes
   (`merged_existing_copy` when a Gmail trash merges into an existing copy) and

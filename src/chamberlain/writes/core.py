@@ -25,6 +25,7 @@ from datetime import timedelta
 from typing import Final
 
 from chamberlain.app.context import Context
+from chamberlain.domain.actors import agent_actor
 from chamberlain.domain.canonical import sha256_bytes, sha256_text
 from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.grant_rules import (
@@ -45,6 +46,7 @@ from chamberlain.domain.intents import (
     MailSend,
     OutsideAction,
     WriteIntent,
+    attachments_of,
 )
 from chamberlain.domain.operations import (
     MAY_HAVE_HAPPENED_STATES,
@@ -228,7 +230,7 @@ class Engine:
     # --- small helpers ------------------------------------------------------------
 
     def actor(self) -> str:
-        return self._actor or (f"agent:{self.ctx.session}" if self.ctx.session else "agent:none")
+        return self._actor or agent_actor(self.ctx.session)
 
     def run(
         self, intent: WriteIntent, *, actor: str, grant: str, card: str | None = None
@@ -355,7 +357,7 @@ class Engine:
         )
 
     def hold_inputs(self, intent: WriteIntent, handle: str, evidence: tuple[str, ...]) -> None:
-        for attachment in kinds.attachments_of(intent):
+        for attachment in attachments_of(intent):
             self.ctx.services.artifacts.add_owner(attachment.artifact, handle)
         for item in evidence:
             self.ctx.services.evidence.link(item, handle)
@@ -792,7 +794,7 @@ class Engine:
     def release_attachments(self, op: OperationRow) -> None:
         if op.intent_json is None:
             return
-        for attachment in kinds.attachments_of(self.intent_of(op)):
+        for attachment in attachments_of(self.intent_of(op)):
             try:
                 self.ctx.services.artifacts.release_owner(attachment.artifact, op.handle)
             except ChamberlainError:
@@ -833,7 +835,7 @@ class Engine:
     def _read_attachments(self, intent: WriteIntent) -> dict[str, bytes]:
         """Attachment bytes from the artifact store, matched by hash (W-3)."""
         payloads: dict[str, bytes] = {}
-        for attachment in kinds.attachments_of(intent):
+        for attachment in attachments_of(intent):
             data = self.ctx.services.artifacts.read_bytes(attachment.artifact)
             if sha256_bytes(data) != attachment.sha256:
                 raise ChamberlainError(

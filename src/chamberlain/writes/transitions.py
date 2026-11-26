@@ -8,7 +8,6 @@ the store (every terminal operation has a receipt).
 
 import sqlite3
 
-from chamberlain.app.services import AuditLog
 from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.operations import (
     TERMINAL_STATES,
@@ -23,13 +22,14 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 from chamberlain.writes import repo
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.models import OperationRow, StoredReceipt
 
 
 def move_operation(
     db: sqlite3.Connection,
     clock: Clock,
-    audit: AuditLog,
+    audit: AuditChain,
     op: OperationRow,
     to: OperationState,
     *,

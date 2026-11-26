@@ -12,6 +12,7 @@ from chamberlain.attention.models import EventDraft, EventRow
 from chamberlain.attention.tuning import RERAISE
 from chamberlain.domain.events import NOT_AGENT_HANDLEABLE, EventKind
 from chamberlain.domain.handles import HandleKind, new_handle
+from chamberlain.domain.timefmt import ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
@@ -77,7 +78,7 @@ def reconcile(
 
 
 def _before(clock: Clock, *, days: int) -> str:
-    return (clock.now() - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(clock.now() - timedelta(days=days))
 
 
 def handle_events(db: sqlite3.Connection, clock: Clock, handles: Iterable[str]) -> list[str]:
@@ -103,7 +104,7 @@ def handle_events(db: sqlite3.Connection, clock: Clock, handles: Iterable[str]) 
             if event.kind in NOT_AGENT_HANDLEABLE or event.state.value not in ("new", "delivered"):
                 continue
             interval = RERAISE.get(event.kind)
-            quiet = None if interval is None else (now + interval).strftime("%Y-%m-%dT%H:%M:%SZ")
+            quiet = None if interval is None else ts(now + interval)
             repo.mark_handled(db, handle, stamp(clock), quiet)
             if event.kind is EventKind.MAIL_NEW_UNMATCHED and event.subject is not None:
                 repo.triage_delivered(db, event.subject, handle, sent=event.attrs.reason == "sent")

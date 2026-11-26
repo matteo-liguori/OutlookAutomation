@@ -1,29 +1,13 @@
-"""Assembling the app from the tracks.
+"""Assemble the app, its handlers and tick steps over one store (S-18, A-6)."""
 
-Each track exposes, in its own `handlers.py`:
-
-    HANDLERS: dict[ToolName, Handler]
-    DOCTOR_CHECKS: list[tuple[DoctorCheck, DoctorCheckFn]]
-
-and attention additionally exposes `HOOKS: Hooks | None`. Tracks never edit
-this file. Here the real `Services` are built (memory first, then writes with
-memory's artifact store), the configured policy goes on the context, and the
-tick's steps are put in the context: crash recovery and run planning on every call
-(`always`), the sweeper plus write maintenance after the inbox is reconciled (`extra`),
-and the owner's mail clean-up when an agent calls `start` (`on_start`).
-"""
-
-import sqlite3
 from collections.abc import Callable
 from dataclasses import replace
-from importlib import import_module
 from pathlib import Path
 
 from chamberlain.app.context import (
     Context,
-    DoctorCheckFn,
     Handler,
-    Hooks,
+    Services,
     SourceRouter,
     StartStep,
     SyncBudget,
@@ -31,15 +15,14 @@ from chamberlain.app.context import (
 )
 from chamberlain.app.core import App
 from chamberlain.app.doctor import make_doctor
-from chamberlain.app.services import Services
+from chamberlain.attention import handlers as attention_handlers
 from chamberlain.attention import tick as attention_tick
 from chamberlain.cleanup.rules import CleanupConfig
 from chamberlain.cleanup.run import daily_cleanup
-from chamberlain.memory import services as memory_services
+from chamberlain.memory import handlers as memory_handlers
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.memory.sweeper import Compactor, sweep
 from chamberlain.ports.clock import Clock, SystemClock
-from chamberlain.review import handlers as review_handlers
 from chamberlain.review import maintenance as review_maintenance
 from chamberlain.review.scan import ReviewSettings
 from chamberlain.review.scan import tick_step as review_tick_step
@@ -48,22 +31,11 @@ from chamberlain.runs import plan as run_plan
 from chamberlain.runs import updates as run_updates
 from chamberlain.runs.updates import TagLister
 from chamberlain.schema.base import ToolName
-from chamberlain.schema.registry import BY_NAME
-from chamberlain.schema.tools import DoctorCheck
 from chamberlain.store.migrate import open_store
 from chamberlain.writes import maintenance as write_maintenance
-from chamberlain.writes import services as write_services
+from chamberlain.writes.handlers import DOCTOR_CHECKS as WRITE_DOCTOR_CHECKS
 from chamberlain.writes.handlers import make_handlers
 from chamberlain.writes.models import WritePolicy
-
-TRACK_MODULES: tuple[str, ...] = (
-    "chamberlain.attention.handlers",
-    "chamberlain.memory.handlers",
-    "chamberlain.writes.handlers",
-)
-
-WRITES_MODULE = "chamberlain.writes.handlers"
-"""Write handlers are assembled by the writes track."""
 
 COMPACTORS: tuple[tuple[str, Compactor], ...] = (
     *write_maintenance.COMPACTORS,
@@ -76,44 +48,23 @@ Attention trims its own events and sessions inside its tick, so it supplies none
 track trims its run rows and notes."""
 
 
-def load_tracks() -> tuple[dict[ToolName, Handler], Hooks | None]:
-    """Collect handlers, doctor checks and hooks from the track modules."""
-    handlers: dict[ToolName, Handler] = {}
-    checks: list[tuple[DoctorCheck, DoctorCheckFn]] = []
-    hooks: Hooks | None = None
-    for module_name in TRACK_MODULES:
-        module = import_module(module_name)
-        track = module_name.split(".")[1]
-        track_handlers: dict[ToolName, Handler] = (
-            make_handlers() if module_name == WRITES_MODULE else module.HANDLERS
-        )
-        for name, handler in track_handlers.items():
-            if BY_NAME[name.value].owner != track:
-                raise RuntimeError(f"{track} registered {name.value}, which it does not own")
-            handlers[name] = handler
-        checks.extend(module.DOCTOR_CHECKS)
-        hooks = getattr(module, "HOOKS", None) or hooks
-    checks.extend(review_handlers.DOCTOR_CHECKS)
-    handlers[ToolName.DOCTOR] = make_doctor(checks)
-    return handlers, hooks
-
-
-def build_services(
-    db: sqlite3.Connection,
-    clock: Clock,
-    data_root: Path,
-    *,
-    policy: WritePolicy,
-    budgets: Budgets | None = None,
-) -> Services:
-    """The real cross-track services over one connection (09-storage.md, S-3)."""
-    artifacts, evidence, refs = memory_services.build(db, clock, data_root, budgets)
-    audit, control = write_services.build(db, clock, policy=policy, artifacts=artifacts)
-    return Services(audit=audit, artifacts=artifacts, evidence=evidence, refs=refs, writes=control)
+def app_handlers() -> dict[ToolName, Handler]:
+    return {
+        **attention_handlers.HANDLERS,
+        **memory_handlers.HANDLERS,
+        **make_handlers(),
+        ToolName.DOCTOR: make_doctor(
+            [
+                *attention_handlers.DOCTOR_CHECKS,
+                *memory_handlers.DOCTOR_CHECKS,
+                *WRITE_DOCTOR_CHECKS,
+            ]
+        ),
+    }
 
 
 def tick_steps(
-    budgets: Budgets | None,
+    *,
     update_lister: TagLister | None = None,
     review: ReviewSettings | None = None,
     cleanup: CleanupConfig | None = None,
@@ -122,7 +73,7 @@ def tick_steps(
     runs before offering work (`on_start`)."""
 
     def sweep_everything(ctx: Context) -> None:
-        sweep(ctx, ctx.clock.now(), budgets=budgets, compactors=COMPACTORS)
+        sweep(ctx, ctx.clock.now(), compactors=COMPACTORS)
 
     def maintain_writes(ctx: Context) -> None:
         write_maintenance.maintain(ctx)
@@ -153,7 +104,6 @@ def build_app(
     *,
     clock: Clock | None = None,
     sources: SourceRouter | None = None,
-    services: Services | None = None,
     policy: WritePolicy | None = None,
     budgets: Budgets | None = None,
     update_lister: TagLister | None = None,
@@ -162,8 +112,7 @@ def build_app(
 ) -> App:
     """Open the store under `data_root` and assemble the app (S-18).
 
-    `services` replaces the real ones (tests); `sources` is the connector router, which
-    the configuration step fills (wave 2). `update_lister` turns the daily tag
+    `sources` is the configured connector router. `update_lister` turns the daily tag
     check on (`runs.updates`); without it no tick ever touches the network.
     """
     the_clock = clock or SystemClock()
@@ -174,13 +123,11 @@ def build_app(
         clock=the_clock,
         data_root=data_root,
         sources=sources or SourceRouter(),
-        services=services
-        or build_services(db, the_clock, data_root, policy=configured_policy, budgets=budgets),
+        services=Services.bind(db, the_clock, data_root, policy=configured_policy, budgets=budgets),
         write_policy=configured_policy,
-        tick_steps=tick_steps(budgets, update_lister, review, cleanup),
+        tick_steps=tick_steps(update_lister=update_lister, review=review, cleanup=cleanup),
     )
-    handlers, hooks = load_tracks()
-    return App(context, handlers, hooks)
+    return App(context, app_handlers(), attention_handlers.HOOKS)
 
 
 def run_tick(app: App, *, force: bool = True) -> tuple[bool, int]:

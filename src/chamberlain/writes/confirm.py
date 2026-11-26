@@ -1,6 +1,6 @@
 """The confirmation channel: the viewer endpoint's logic, without a server (G-17 to G-19).
 
-Wave 2 mounts `ConfirmationApp` (a WSGI callable) in `chamberlain viewer` on
+`chamberlain viewer` mounts `ConfirmationApp` (a WSGI callable) on
 `127.0.0.1` and creates the token with `create_token`. Every request needs the
 token in `X-Chamberlain-Token`; state-changing requests also need an `Origin`
 equal to the viewer's own origin. A request failing either check gets 403 and

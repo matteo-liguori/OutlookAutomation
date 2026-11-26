@@ -28,8 +28,8 @@ from chamberlain.domain.intents import (
 )
 from chamberlain.limits import SENDS_PER_HOUR
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import CALENDAR, MAIL, WriteRig
 from chamberlain.writes.models import WritePolicy
+from support.write_rig import CALENDAR, MAIL, WriteRig
 
 LONDON = ZoneInfo("Europe/London")
 UTC_ZONE = ZoneInfo("UTC")

@@ -8,13 +8,13 @@ from datetime import timedelta
 
 from chamberlain.domain.grant_rules import format_ts, intent_hash
 from chamberlain.domain.handles import HandleKind, new_handle
-from chamberlain.domain.intents import MailSend, WriteIntent
+from chamberlain.domain.intents import MailSend, WriteIntent, attachments_of
 from chamberlain.domain.operations import OperationState
 from chamberlain.limits import UNCERTAIN_ABANDON_DAYS, UNCERTAIN_SEND_RECHECK_HOURS
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
-from chamberlain.writes import core, kinds, repo
+from chamberlain.writes import core, repo
 from chamberlain.writes.authorise import Deny
 from chamberlain.writes.models import OperationRow, Proposal
 from chamberlain.writes.recheck import look_in_recipient_mailboxes, sender_places
@@ -173,7 +173,7 @@ def propose_redo(
         return engine.proposal_for(existing, intent)
     guard_resend(engine, old.handle)
     old = engine.get(old.handle)
-    for attachment in kinds.attachments_of(intent):
+    for attachment in attachments_of(intent):
         if not engine.ctx.services.artifacts.info(attachment.artifact).live:
             raise ChamberlainError(ErrorCode.ARTIFACT_EXPIRED, "An attachment has expired.")
     completed = (

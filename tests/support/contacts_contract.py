@@ -9,7 +9,7 @@ import pytest
 from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.contacts import ContactQuery
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.rigs import ContactsRig
+from support.rigs import ContactsRig
 
 
 class ContactsPortContract:

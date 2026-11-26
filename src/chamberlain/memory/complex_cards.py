@@ -7,16 +7,16 @@ cannot grant itself a larger card. Every step writes one audit row.
 
 import sqlite3
 
-from chamberlain.app.services import AuditLog
 from chamberlain.domain.cards import card_size
+from chamberlain.domain.timefmt import plus, ts
 from chamberlain.limits import COMPLEX_DECLINE_DAYS
 from chamberlain.memory import repo
 from chamberlain.memory.caps import NORMAL
 from chamberlain.memory.cards import CardService
-from chamberlain.memory.timeutil import plus, ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
+from chamberlain.writes.audit import AuditChain
 
 OWNER_ACTOR = "human:viewer"
 """Who the audit log names for an owner's decision (as the viewer's other decisions)."""
@@ -27,7 +27,7 @@ def _refuse(message: str, fix: str) -> ChamberlainError:
 
 
 class ComplexCards:
-    def __init__(self, db: sqlite3.Connection, clock: Clock, audit: AuditLog) -> None:
+    def __init__(self, db: sqlite3.Connection, clock: Clock, audit: AuditChain) -> None:
         self._db = db
         self._clock = clock
         self._audit = audit

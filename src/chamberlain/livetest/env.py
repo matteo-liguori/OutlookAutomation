@@ -8,7 +8,6 @@ ports for the few checks the tools cannot make. The report names every check tha
 
 import json
 import os
-import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -19,7 +18,9 @@ from typing import Any, Protocol, cast
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery
+from chamberlain.domain.mail import strip_reply_prefix as strip_reply_prefix
 from chamberlain.ports.clock import Clock
+from chamberlain.ports.page import pages
 from chamberlain.ports.sync import FolderSync
 from chamberlain.schema.errors import ChamberlainError
 
@@ -149,14 +150,6 @@ class FileFaultInjector:
         self._path.unlink(missing_ok=True)
 
 
-_REPLY_PREFIX = re.compile(r"^(?:(?:re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
-
-
-def strip_reply_prefix(subject: str) -> str:
-    """Thunderbird reports a reply's subject without its "Re:" (found live, 2026-11-25)."""
-    return _REPLY_PREFIX.sub("", subject)
-
-
 class PortProbe:
     """Read-only: lists and reads through the ports, never changes anything (P-3)."""
 
@@ -184,13 +177,9 @@ class PortProbe:
         port = self._ctx.sources.mail_port(source)
         roles = {f.id: f.role for f in port.folders(source)}
         found: list[MailCopy] = []
-        cursor: str | None = None
-        for _ in range(10):
-            # Recent mail only: marked mail is always from a recent run, and a full-text
-            # search of a large mailbox with no date bound times out in Thunderbird (found
-            # live, 2026-11-25).
-            since = self._ctx.clock.now() - timedelta(days=MARKED_MAIL_DAYS)
-            page = port.search(source, MailQuery(text=text, since=since, limit=200), cursor)
+        since = self._ctx.clock.now() - timedelta(days=MARKED_MAIL_DAYS)
+        query = MailQuery(text=text, since=since, limit=200)
+        for page in pages(lambda cursor: port.search(source, query, cursor), limit=10):
             for item in page.items:
                 if strip_reply_prefix(text) in item.subject:
                     found.append(
@@ -204,9 +193,6 @@ class PortProbe:
                             unread=item.unread,
                         )
                     )
-            cursor = page.cursor
-            if cursor is None:
-                break
         return found
 
     def in_reply_to(self, source: str, copy: MailCopy) -> str:

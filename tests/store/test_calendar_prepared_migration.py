@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from tests.store.legacy import legacy_migrations
 
 from chamberlain.connectors.calendar_support.port import expected_etag, fields, locator, payload
 from chamberlain.domain.calendar import EventFields
@@ -11,7 +12,7 @@ from chamberlain.domain.operations import Prepared
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import MEMORY, connect
-from chamberlain.store.migrate import discover, migrate
+from chamberlain.store.migrate import migrate
 
 NOW = "2026-11-25T12:00:00Z"
 EVENT = EventFields(
@@ -54,7 +55,12 @@ def read_prepared(db, name: str) -> Prepared:
 def test_old_inflight_plans_convert_once_without_changing_facts_or_terminal_rows() -> None:
     db, clock = connect(MEMORY), ManualClock()
     try:
-        migrate(db, clock, backup_dir=None, migrations=[m for m in discover() if m.version < 260])
+        migrate(
+            db,
+            clock,
+            backup_dir=None,
+            migrations=[m for m in legacy_migrations() if m.version < 260],
+        )
         for source, connector in (
             ("calendar:g", "google_calendar"),
             ("calendar:d", "caldav"),
@@ -234,7 +240,12 @@ def test_old_inflight_plans_convert_once_without_changing_facts_or_terminal_rows
 def test_migration_refuses_to_guess_missing_identity_or_body(data: dict) -> None:
     db, clock = connect(MEMORY), ManualClock()
     try:
-        migrate(db, clock, backup_dir=None, migrations=[m for m in discover() if m.version < 260])
+        migrate(
+            db,
+            clock,
+            backup_dir=None,
+            migrations=[m for m in legacy_migrations() if m.version < 260],
+        )
         insert_source(db, "calendar:o", "thunderbird")
         valid = insert_operation(
             db,

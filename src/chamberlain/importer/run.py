@@ -14,8 +14,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import ValidationError
 
-from chamberlain.app.services import AuditLog
-from chamberlain.app.wiring import build_services
+from chamberlain.app.context import Services
 from chamberlain.connections.build import build_router, policy_of
 from chamberlain.connections.load import dump_connections, load_connections, profile_path
 from chamberlain.connections.model import GoogleCalendarSource
@@ -37,6 +36,7 @@ from chamberlain.store.db import transaction
 from chamberlain.store.migrate import open_store, stamp
 from chamberlain.store.schema import get_state, set_state
 from chamberlain.writes import read_state
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.models import WritePolicy
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
@@ -232,7 +232,7 @@ def _propose_read_grants(
     db: sqlite3.Connection,
     mapped: MappedProfile,
     the_clock: Clock,
-    audit: AuditLog,
+    audit: AuditChain,
     report: ImportReport,
     policy: WritePolicy,
 ) -> None:
@@ -277,7 +277,7 @@ def _write_rows(
     try:
         now = stamp(the_clock)
         policy = policy_of(load_connections(data_root))
-        services = build_services(db, the_clock, data_root, policy=policy)
+        services = Services.bind(db, the_clock, data_root, policy=policy)
         with transaction(db):
             artifacts = ArtifactService(db, the_clock, data_root)
             imported = records.import_cards(db, old, zone, now, report, artifacts)

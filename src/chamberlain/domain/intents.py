@@ -217,3 +217,9 @@ WriteIntent = Annotated[MailIntent | CalendarIntent | OutsideAction, Field(discr
 
 HARNESS_COMPLETED_FIELDS = frozenset({"message_id", "uid", "from_folder", "organiser"})
 """Fields the agent leaves empty; the harness fills them before hashing (W-1, W-2)."""
+
+
+def attachments_of(intent: WriteIntent) -> tuple[AttachmentRef, ...]:
+    return (
+        intent.attachments if isinstance(intent, MailSend | MailDraftSave | MailDraftUpdate) else ()
+    )

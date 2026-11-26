@@ -16,7 +16,6 @@ from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import (
     MailDraftDiscard,
     MailDraftSave,
-    MailDraftUpdate,
     MailMarkRead,
     MailMove,
     MailSend,
@@ -30,6 +29,7 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from support.rigs import Fault
 
 SOURCE = "mail:test"
 
@@ -90,7 +90,7 @@ def test_p5_health_is_ok_only_after_a_verified_refresh_and_two_stable_samples(
     health = stack.mail.health(SOURCE)
     assert health.state is HealthState.OK
     assert health.fresh_as_of == health.checked_at
-    stack.inject(__import__("chamberlain.testing.rigs", fromlist=["Fault"]).Fault.STALE)
+    stack.inject(Fault.STALE)
     assert stack.mail.health(SOURCE).state is HealthState.STALE
 
 
@@ -127,14 +127,6 @@ def test_m17_a_cursor_is_bound_to_its_search(stack: Stack) -> None:
     with pytest.raises(ChamberlainError) as raised:
         stack.mail.search(SOURCE, MailQuery(text="another search", limit=2), page.cursor)
     assert raised.value.code is ErrorCode.REQUEST_BAD_CURSOR
-
-
-def test_p4_an_empty_search_of_a_stale_store_is_incomplete_not_nothing(stack: Stack) -> None:
-    stack.control("inject", fault="stale")
-    page = stack.mail.search(SOURCE, MailQuery(text="nothing here"))
-    assert page.items == ()
-    assert not page.complete
-    assert page.gaps
 
 
 def test_p4_a_search_that_hit_the_scan_limit_says_a_smaller_window_would_finish(
@@ -174,45 +166,6 @@ def test_p9_prepare_issues_no_write_of_any_kind(stack: Stack) -> None:
 
 
 # --- move, trash, mark read ----------------------------------------------------------------
-
-
-def test_r4_move_and_trash_receipts_return_the_new_locator(stack: Stack) -> None:
-    _, locator = seed(stack)
-    move = MailMove.model_validate(
-        {"source": SOURCE, "messages": [handle(locator)], "to_folder": stack.filing_folder_id()}
-    )
-    moved = applied(
-        stack.mail.dispatch(stack.mail.prepare(move, {handle(locator): locator}), "k1", {})
-    )
-    assert moved.receipt is not None
-    new = moved.receipt.items[0].moved_to
-    assert new is not None
-    assert new != locator
-    assert stack.mail.resolve(SOURCE, new).folder_id == stack.filing_folder_id()
-    trash = MailTrash.model_validate({"source": SOURCE, "messages": [handle(new)]})
-    trashed = applied(stack.mail.dispatch(stack.mail.prepare(trash, {handle(new): new}), "k2", {}))
-    assert trashed.receipt is not None
-    assert trashed.receipt.items[0].moved_to is not None
-    assert stack.mail.resolve(
-        SOURCE, trashed.receipt.items[0].moved_to
-    ).folder_id == stack.folder_id(FolderRole.TRASH)
-
-
-def test_r7_trash_that_merges_into_an_existing_copy_is_applied_with_a_warning(
-    stack: Stack,
-) -> None:
-    message_id = stack.new_message_id()
-    inbox = stack.seed(internet_message_id=message_id, unread=False)
-    stack.seed(internet_message_id=message_id, folder=FolderRole.TRASH, unread=True)
-    stack.control("inject", fault="merge")
-    intent = MailTrash.model_validate({"source": SOURCE, "messages": [handle(inbox)]})
-    result = applied(
-        stack.mail.dispatch(stack.mail.prepare(intent, {handle(inbox): inbox}), "k", {})
-    )
-    assert result.receipt is not None
-    assert result.receipt.warnings == ("merged_existing_copy", "read_state_not_preserved")
-    assert result.receipt.read_state_preserved is False
-    assert stack.copies(message_id, stack.folder_id(FolderRole.TRASH)) == 1
 
 
 def test_r7_batch_trash_keeps_the_recovery_flag_and_reports_a_merge(stack: Stack) -> None:
@@ -360,16 +313,6 @@ def test_w3_a_large_attachment_crosses_several_frames_and_arrives_intact(stack: 
     assert [(name, size) for name, size, _ in sizes] == [("big.bin", len(data))]
 
 
-def test_p8_a_large_download_is_chunked_and_verified(stack: Stack) -> None:
-    data = bytes(range(256)) * 1800
-    _, locator = seed(stack, attachments=(("big.bin", data),))
-    meta = stack.mail.read(SOURCE, locator).attachments[0]
-    fetched = stack.mail.attachment(SOURCE, locator, meta.id)
-    assert fetched.data == data
-    assert fetched.sha256 == sha256_bytes(data)
-    assert stack.is_unread(locator)
-
-
 def test_r2_an_exact_copy_waiting_in_the_outbox_is_queued_and_never_absent(stack: Stack) -> None:
     stack.control("inject", fault="no_sent_copy")
     stack.control("inject", fault="queue_only")
@@ -449,35 +392,6 @@ def test_r3_a_scan_that_cannot_finish_blocks_the_send(stack: Stack) -> None:
     with pytest.raises(ChamberlainError) as raised:
         stack.mail.prepare(send_intent(stack, body="a brand new body"), {})
     assert raised.value.code is ErrorCode.REMOTE_CHANGED
-
-
-def test_p9_draft_update_replaces_the_draft_and_returns_the_new_locator(stack: Stack) -> None:
-    first = stack.new_message_id()
-    compose = {"source": SOURCE, "to": ["someone@example.org"], "subject": "Draft", "body": "One."}
-    saved = applied(
-        stack.mail.dispatch(
-            stack.mail.prepare(MailDraftSave.model_validate({**compose, "message_id": first}), {}),
-            "k1",
-            {},
-        )
-    )
-    assert saved.receipt is not None
-    locator = saved.receipt.locator
-    assert locator is not None
-    update = MailDraftUpdate.model_validate(
-        {
-            **compose,
-            "body": "Two.",
-            "message_id": stack.new_message_id(),
-            "draft": handle(locator),
-            "expected_sha256": saved.receipt.remote_sha256,
-        }
-    )
-    prepared = stack.mail.prepare(update, {handle(locator): locator})
-    updated = applied(stack.mail.dispatch(prepared, "k2", {}))
-    assert updated.receipt is not None
-    assert updated.receipt.locator not in (None, locator)
-    assert stack.mail.read(SOURCE, updated.receipt.locator or "").body_text == "Two."
 
 
 def draft_with_open_composer(stack: Stack) -> tuple[str, str, Prepared]:

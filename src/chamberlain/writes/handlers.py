@@ -1,7 +1,6 @@
 """Tool handlers of the writes track: propose, do, reconcile; and the audit check.
 
-Contract: docs/contracts/04-writes.md, 05-grants.md, 02-tools.md. `app/wiring.py`
-reads the names below; this track fills them and never edits the app package.
+Contract: docs/contracts/04-writes.md, 05-grants.md, 02-tools.md.
 """
 
 import re
@@ -25,7 +24,8 @@ from chamberlain.schema.tools import (
 )
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
-from chamberlain.writes.core import Engine, Proposal
+from chamberlain.writes.core import Engine
+from chamberlain.writes.models import Proposal
 
 
 def _propose_response(proposal: Proposal) -> ProposeResponse:

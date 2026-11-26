@@ -18,6 +18,7 @@ from test_caldav_contract import basic
 from test_caldav_contract import build as build_caldav
 from test_google_contract import build as build_google
 from test_owl_calendar import build as build_owl
+from tests.store.legacy import legacy_migrations
 
 from chamberlain.connectors.calendar_support.port import payload
 from chamberlain.connectors.fake.world import Fault
@@ -26,8 +27,8 @@ from chamberlain.domain.intents import CalendarCreate
 from chamberlain.domain.operations import DispatchOutcome, Prepared, ReconcileStatus
 from chamberlain.ports.clock import ManualClock
 from chamberlain.store.db import MEMORY, connect
-from chamberlain.store.migrate import discover, migrate
-from chamberlain.testing.rigs import CalendarRig
+from chamberlain.store.migrate import migrate
+from support.rigs import CalendarRig
 
 START = datetime(2027, 3, 1, 10, 0, tzinfo=UTC)
 Kit = tuple[CalendarRig, Callable[[], int]]
@@ -118,7 +119,12 @@ def test_migrated_old_create_reconciles_without_redispatch(
 
     db, clock = connect(MEMORY), ManualClock()
     try:
-        migrate(db, clock, backup_dir=None, migrations=[m for m in discover() if m.version < 260])
+        migrate(
+            db,
+            clock,
+            backup_dir=None,
+            migrations=[m for m in legacy_migrations() if m.version < 260],
+        )
         db.execute(
             "INSERT INTO sources (id,kind,connector,created_at,updated_at) "
             "VALUES (?, 'calendar', ?, 'now','now')",

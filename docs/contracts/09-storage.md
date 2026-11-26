@@ -73,25 +73,22 @@ Binding for every track that touches SQLite. Code:
 | `review_rounds` | Records | review | One row per harness review: open, done or lapsed |
 | `review_findings` | Records | review | What the agent found in a round: an idea, or something worrying (T-10c) |
 
-Cross-track needs that are not a plain read go through the service
-protocols in `src/chamberlain/app/services.py` (`AuditLog` and
-`WriteControl` from writes; `ArtifactStore`, `EvidenceStore` and
-`RefResolver` from memory), which the owning track implements and the app
-wires into `Context.services`. For example writes reads attachment bytes
-through `ArtifactStore` and looks up locators through `RefResolver`, and
-every track appends audit rows through `AuditLog`. Until the real ones are
-wired, tests use the in-memory doubles in `src/chamberlain/app/doubles.py`.
+Each table has one owning module. Other modules use its queries and services;
+they do not write its tables directly. The app wires the services into `Context`.
 
-Column definitions are in `0001_initial.sql`; that file is normative.
+Column definitions are in `0270_baseline.sql`; that file is normative.
 
 ## Migrations
 
-- **S-8** A migration is `NNNN_snake_name.sql` in `store/migrations/`,
-  applied in ascending number order, each in one transaction together with
-  its `schema_migrations` row (version, name, SHA-256 of the file, time).
+- **S-8** A fresh store starts with `0270_baseline.sql`. A later migration is
+  `NNNN_snake_name.sql` in `store/migrations/`, applied in ascending number
+  order in one transaction with its `schema_migrations` row (version, name,
+  SHA-256 of the file, time). The narrow 0250-to-0260 data bridge is not a
+  migration for a fresh store.
 - **S-9** Applied migrations are immutable. On start the runner compares
-  checksums and refuses to run if an applied file has changed
-  (`store.migration_failed`). Fix forward with a new migration.
+  checksums with the migration file or the retained pre-baseline checksum
+  manifest and refuses a mismatch (`store.migration_failed`). Fix forward
+  with a new migration.
 - **S-10** Before applying any pending migration to a database that already
   has one applied, the runner writes a backup with SQLite's online backup
   API to `backups/pre-migration-<NNNN>.sqlite3`. A failed migration rolls
@@ -100,20 +97,20 @@ Column definitions are in `0001_initial.sql`; that file is normative.
   newer than the code knows, and refuses a pending migration numbered below
   the highest applied one (out of order). In development, delete the
   database; before any release, renumber.
-- **S-12** Number ranges avoid collisions between parallel tracks:
-  `0001-0009` skeleton, `0010-0019` memory, `0020-0029` attention,
-  `0030-0039` writes, `0040-0049` wave 2, `0050-0059` viewer and runs, `0060-0069` mail awareness, `0070` onwards: every later migration (`0130-0139`: report and dashboard), always numbered above the highest one in the tree, because a live store refuses one numbered below what it has applied. Gaps are allowed. Connectors have
-  no range because they do not touch SQLite (D-10).
-- **S-13** A migration that changes a table another track reads is a
-  contract change and needs a board entry before it lands (00-index).
+- **S-12** New migrations are numbered above the highest one in the tree;
+  gaps are allowed. Connectors do not touch SQLite (D-10).
+- **S-13** A migration that changes a shared table is a contract change;
+  update its contract and proving tests with it.
 - **S-14** Migrations are SQL only. Data transformations that need Python
-  belong in the importer (wave 2), which writes through the tracks'
-  repositories.
+  belong in the importer, which uses the owning modules' repositories.
 - **S-15** While the project is alpha, there is no downgrade path and no
-  compatibility promise between versions other than the one-shot importer
-  from the old harness.
+  compatibility promise between versions other than the permanent importer
+  from the old harness. A known 0250 or 0260 store is adopted in place after
+  ledger and schema verification; its historical ledger is retained. A 0250
+  store receives the 0260 calendar-plan conversion before the baseline stamp.
+  Unrecognized or partial stores are refused without changing their records.
 
-## Configuration and secrets (wave 2 detail, fixed here)
+## Configuration and secrets
 
 - **S-16** Three layers, each a versioned Pydantic model: shared defaults
   (in the package), private settings and the private connection profile

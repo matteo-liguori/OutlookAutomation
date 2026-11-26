@@ -9,7 +9,6 @@ import sqlite3
 from collections.abc import Iterable
 from datetime import datetime, timedelta
 
-from chamberlain.app.services import AuditLog
 from chamberlain.domain.canonical import canonical_json, content_hash
 from chamberlain.domain.grant_rules import anniversary, format_ts, next_review, suspend_at
 from chamberlain.domain.grants import (
@@ -33,6 +32,7 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 from chamberlain.writes import repo
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.models import GrantRow, WritePolicy
 from chamberlain.writes.transitions import build_receipt, move_operation
 
@@ -41,7 +41,7 @@ class GrantService:
     """Everything that changes a grant, each change audited in the same transaction."""
 
     def __init__(
-        self, db: sqlite3.Connection, clock: Clock, audit: AuditLog, policy: WritePolicy
+        self, db: sqlite3.Connection, clock: Clock, audit: AuditChain, policy: WritePolicy
     ) -> None:
         self._db = db
         self._clock = clock

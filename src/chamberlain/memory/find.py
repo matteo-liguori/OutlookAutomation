@@ -5,16 +5,19 @@ Remote text appears only inside `content` (E-7). Reads go through the source
 router and never change read state (P-3).
 """
 
+from collections.abc import Callable, Iterable
 from datetime import timedelta
+
+from pydantic import BaseModel
 
 from chamberlain.app.context import Context, Result
 from chamberlain.domain.calendar import CalendarQuery
 from chamberlain.domain.contacts import ContactQuery
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery, MessageSummary, message_key
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.limits import FIND_MAIL_DAYS
 from chamberlain.memory import refs, repo
-from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.retrieval import (
     SNAPSHOT_MAX,
@@ -24,8 +27,7 @@ from chamberlain.memory.retrieval import (
     one_line,
     query_hash,
 )
-from chamberlain.memory.timeutil import parse
-from chamberlain.ports.page import Gap
+from chamberlain.ports.page import Gap, Page
 from chamberlain.schema.envelope import ContentKind, CoverageGap
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import FindRequest, FindResponse, FindScope, Hit
@@ -65,9 +67,9 @@ def _gather(ctx: Context, request: FindRequest) -> Snapshot:
 
 
 def _in_window(request: FindRequest, when: str) -> bool:
-    if request.since is not None and when < request.since.strftime("%Y-%m-%dT%H:%M:%SZ"):
+    if request.since is not None and when < ts(request.since):
         return False
-    return request.until is None or when <= request.until.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return request.until is None or when <= ts(request.until)
 
 
 def _cards(ctx: Context, request: FindRequest) -> Snapshot:
@@ -187,53 +189,65 @@ def _port_gaps(source: str, gaps: tuple[Gap, ...], more: bool) -> list[CoverageG
     return found
 
 
-def _mail(ctx: Context, request: FindRequest) -> Snapshot:
-    found: list[tuple[str, Hit]] = []
-    gaps: list[CoverageGap] = []
-    for source in _sources(request, sorted(ctx.sources.mail)):
-        port = ctx.sources.mail_port(source)
+def _over_sources[Item: BaseModel, Details](
+    request: FindRequest,
+    known: Iterable[str],
+    read: Callable[[str], tuple[Page[Item], Details] | None],
+    gaps: list[CoverageGap],
+) -> Iterable[tuple[str, Page[Item], Details]]:
+    for source in _sources(request, sorted(known)):
         try:
-            folders = {f.id: f for f in port.folders(source)}
-            folder_id = None
-            if request.folder is not None:
-                wanted = [f.id for f in folders.values() if f.role is request.folder]
-                if not wanted:
-                    gaps.append(_gap(source, "The source has no folder with that role."))
-                    continue
-                folder_id = wanted[0]
-            page = port.search(
-                source,
-                MailQuery(
-                    folder_id=folder_id,
-                    text=request.query,
-                    since=request.since or ctx.clock.now() - timedelta(days=FIND_MAIL_DAYS),
-                    until=request.until,
-                    unread=request.unread,
-                    limit=SNAPSHOT_MAX,
-                ),
-            )
+            result = read(source)
         except ChamberlainError as error:
             if error.code not in _SOFT_FAILURES:
                 raise
             gaps.append(_gap(source, "The source did not answer; nothing was changed."))
             continue
-        gaps.extend(_port_gaps(source, page.gaps, page.cursor is not None))
+        if result is not None:
+            page, details = result
+            gaps.extend(_port_gaps(source, page.gaps, page.cursor is not None))
+            yield source, page, details
+
+
+def _mail(ctx: Context, request: FindRequest) -> Snapshot:
+    found: list[tuple[str, Hit]] = []
+    gaps: list[CoverageGap] = []
+
+    def read(source: str) -> tuple[Page[MessageSummary], dict[str, Folder]] | None:
+        port = ctx.sources.mail_port(source)
+        folders = {folder.id: folder for folder in port.folders(source)}
+        folder_id = None
+        if request.folder is not None:
+            folder_id = next((f.id for f in folders.values() if f.role is request.folder), None)
+            if folder_id is None:
+                gaps.append(_gap(source, "The source has no folder with that role."))
+                return None
+        page = port.search(
+            source,
+            MailQuery(
+                folder_id=folder_id,
+                text=request.query,
+                since=request.since or ctx.clock.now() - timedelta(days=FIND_MAIL_DAYS),
+                until=request.until,
+                unread=request.unread,
+                limit=SNAPSHOT_MAX,
+            ),
+        )
+        return page, folders
+
+    for source, page, folders in _over_sources(request, ctx.sources.mail, read, gaps):
         # One hit per message: copies in several folders share a Message-ID (P-7).
         copies: dict[str, list[MessageSummary]] = {}
         for item in page.items:
             copies.setdefault(item.internet_message_id or item.locator, []).append(item)
         shown = [_representative(group, folders) for group in copies.values()]
-        handles = {
-            item.locator: refs.remember(
-                ctx.db,
-                ctx.clock,
-                HandleKind.MESSAGE,
-                source,
-                item.locator,
-                item.internet_message_id,
-            )
-            for item in shown
-        }
+        handles = refs.remember_many(
+            ctx.db,
+            ctx.clock,
+            HandleKind.MESSAGE,
+            source,
+            ((item.locator, item.internet_message_id) for item in shown),
+        )
         keys = {item.locator: message_key(item.internet_message_id, item.locator) for item in shown}
         suggestions = repo.mail_suggestions(ctx.db, source, list(keys.values()))
         for item in shown:
@@ -251,7 +265,7 @@ def _mail(ctx: Context, request: FindRequest) -> Snapshot:
                 line += f" [{', '.join(names)}]"
             found.append(
                 (
-                    item.date.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    ts(item.date),
                     Hit(
                         handle=handle,
                         kind="message",
@@ -295,20 +309,21 @@ def _calendar(ctx: Context, request: FindRequest) -> Snapshot:
     query = CalendarQuery(start=start, end=end, text=request.query, limit=250)
     found: list[Hit] = []
     gaps: list[CoverageGap] = []
-    for source in _sources(request, sorted(ctx.sources.calendar)):
-        port = ctx.sources.calendar_port(source)
-        try:
-            page = port.events(source, query)
-        except ChamberlainError as error:
-            if error.code not in _SOFT_FAILURES:
-                raise
-            gaps.append(_gap(source, "The source did not answer; nothing was changed."))
-            continue
-        gaps.extend(_port_gaps(source, page.gaps, page.cursor is not None))
+    for source, page, _ in _over_sources(
+        request,
+        ctx.sources.calendar,
+        lambda source: (ctx.sources.calendar_port(source).events(source, query), None),
+        gaps,
+    ):
+        handles = refs.remember_many(
+            ctx.db,
+            ctx.clock,
+            HandleKind.CALENDAR_EVENT,
+            source,
+            ((item.locator, None) for item in page.items),
+        )
         for item in page.items:
-            handle = refs.remember(
-                ctx.db, ctx.clock, HandleKind.CALENDAR_EVENT, source, item.locator
-            )
+            handle = handles[item.locator]
             found.append(
                 Hit(
                     handle=handle,
@@ -333,18 +348,21 @@ def _contacts(ctx: Context, request: FindRequest) -> Snapshot:
     query = ContactQuery(text=request.query, limit=50)
     found: list[Hit] = []
     gaps: list[CoverageGap] = []
-    for source in _sources(request, sorted(ctx.sources.contacts)):
-        port = ctx.sources.contacts_port(source)
-        try:
-            page = port.search(source, query)
-        except ChamberlainError as error:
-            if error.code not in _SOFT_FAILURES:
-                raise
-            gaps.append(_gap(source, "The source did not answer; nothing was changed."))
-            continue
-        gaps.extend(_port_gaps(source, page.gaps, page.cursor is not None))
+    for source, page, _ in _over_sources(
+        request,
+        ctx.sources.contacts,
+        lambda source: (ctx.sources.contacts_port(source).search(source, query), None),
+        gaps,
+    ):
+        handles = refs.remember_many(
+            ctx.db,
+            ctx.clock,
+            HandleKind.CONTACT,
+            source,
+            ((item.locator, None) for item in page.items),
+        )
         for item in page.items:
-            handle = refs.remember(ctx.db, ctx.clock, HandleKind.CONTACT, source, item.locator)
+            handle = handles[item.locator]
             first = item.emails[0] if item.emails else ""
             found.append(
                 Hit(
@@ -376,11 +394,7 @@ def _within(ctx: Context, request: FindRequest) -> Snapshot:
         text = "\n".join((view.title, view.goal, view.position, view.rules))
         content_kind = ContentKind.STORED_TEXT
     elif kind is HandleKind.ARTIFACT:
-        text = (
-            ArtifactService(ctx.db, ctx.clock, ctx.data_root)
-            .read_bytes(handle)
-            .decode("utf-8", errors="replace")
-        )
+        text = ctx.services.artifacts.read_bytes(handle).decode("utf-8", errors="replace")
         content_kind = ContentKind.STORED_TEXT
     elif kind is HandleKind.MESSAGE:
         source, locator = refs.locate(ctx.db, handle)

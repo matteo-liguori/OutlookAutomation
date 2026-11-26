@@ -37,21 +37,14 @@ def test_m4_no_owner_no_storage_and_1_related_checks(
     assert ended.value.code is ErrorCode.ARTIFACT_OWNER_ENDED
 
 
-def test_m6_identical_content_is_stored_once_and_shared(
-    store: ArtifactService, action: str, ctx: Context
-) -> None:
-    first = keep_text(store, action, "same bytes")
-    second = keep_text(store, action, "same bytes")
-    assert first != second
-    assert len(blobs(ctx.data_root)) == 1
-    assert store.read_bytes(first) == store.read_bytes(second) == b"same bytes"
-
-
 def test_m10_ownership_is_independent_while_bytes_deduplicate(
     store: ArtifactService, action: str, ctx: Context
 ) -> None:
     first = keep_text(store, action, "shared")
     second = keep_text(store, action, "shared")
+    assert first != second
+    assert len(blobs(ctx.data_root)) == 1
+    assert store.read_bytes(first) == store.read_bytes(second) == b"shared"
     store.release(first, None)
     sweep(ctx, ctx.clock.now())
     assert store.read_bytes(second) == b"shared"
@@ -83,7 +76,7 @@ def test_m7_interrupted_write_leaves_nothing(
     def explode(source: object, target: object) -> None:
         raise OSError("disk went away")
 
-    monkeypatch.setattr(artifacts_module.os, "replace", explode)
+    monkeypatch.setattr(os, "replace", explode)
     with pytest.raises(OSError, match="disk went away"):
         keep_text(store, action, "never lands")
     monkeypatch.undo()

@@ -1,4 +1,4 @@
-"""A test rig for the writes track: a store, the fake provider and the service doubles.
+"""A test rig for the writes track: a store and a fault-injectable fake provider.
 
 Used by `tests/writes/`. It builds the real audit log and write control over an
 in-memory store and wraps the fake mail port so a test can crash a process,
@@ -13,16 +13,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from chamberlain.app.context import Context, SourceRouter
-from chamberlain.app.doubles import (
-    MemoryArtifactStore,
-    MemoryEvidenceStore,
-    MemoryRefResolver,
-)
-from chamberlain.app.services import Services
+from chamberlain.app.context import Context, Services, SourceRouter
 from chamberlain.connectors.fake import FakeProvider
+from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.grants import StandingScope
-from chamberlain.domain.handles import HandleKind
+from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.domain.intents import CalendarCreate, IntentKind, MailSend
 from chamberlain.domain.mail import FolderRole
 from chamberlain.domain.operations import (
@@ -30,16 +25,21 @@ from chamberlain.domain.operations import (
     Prepared,
     ReconcileResult,
 )
+from chamberlain.memory.artifacts import ArtifactInfo, ArtifactService, Budgets
+from chamberlain.memory.evidence import EvidenceService
+from chamberlain.memory.refs import RefService
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
 from chamberlain.ports.mail import MailPort
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import MEMORY, connect
 from chamberlain.store.migrate import migrate, stamp
 from chamberlain.writes import repo
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.confirm import confirm_grant
-from chamberlain.writes.core import Engine, Proposal
-from chamberlain.writes.models import GrantRow, OperationRow, WritePolicy
-from chamberlain.writes.services import build
+from chamberlain.writes.control import Control
+from chamberlain.writes.core import Engine
+from chamberlain.writes.models import GrantRow, OperationRow, Proposal, WritePolicy
 
 _NO_ROOT = Path("unused-data-root")
 MAIL = "mail:test"
@@ -113,6 +113,47 @@ ScriptedMail = ScriptedPort
 
 
 @dataclass
+class MemoryArtifactStore(ArtifactService):
+    """Artifacts in a dictionary. `put` is the test's way in."""
+
+    budgets: Budgets = field(default_factory=Budgets)
+    blobs: dict[str, bytes] = field(default_factory=lambda: {})
+    owners: dict[str, set[str]] = field(default_factory=lambda: {})
+
+    def put(self, data: bytes, owner: str) -> str:
+        handle = new_handle(HandleKind.ARTIFACT)
+        self.blobs[handle] = data
+        self.owners[handle] = {owner}
+        return handle
+
+    def info(self, handle: str) -> ArtifactInfo:
+        data = self._get(handle)
+        return ArtifactInfo(
+            handle=handle,
+            sha256=sha256_bytes(data),
+            size=len(data),
+            media_type="application/octet-stream",
+            filename=None,
+            live=bool(self.owners.get(handle)),
+        )
+
+    def read_bytes(self, handle: str) -> bytes:
+        return self._get(handle)
+
+    def add_owner(self, handle: str, owner: str) -> None:
+        self._get(handle)
+        self.owners.setdefault(handle, set()).add(owner)
+
+    def release_owner(self, handle: str, owner: str) -> None:
+        self.owners.get(handle, set()).discard(owner)
+
+    def _get(self, handle: str) -> bytes:
+        if handle not in self.blobs:
+            raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "No such artifact.")
+        return self.blobs[handle]
+
+
+@dataclass
 class WriteRig:
     db: sqlite3.Connection
     clock: ManualClock
@@ -120,8 +161,8 @@ class WriteRig:
     mail: ScriptedPort
     calendar: ScriptedPort
     artifacts: MemoryArtifactStore
-    evidence: MemoryEvidenceStore
-    refs: MemoryRefResolver
+    evidence: EvidenceService
+    refs: RefService
     ctx: Context
     policy: WritePolicy
     pauses: list[float] = field(default_factory=lambda: [])
@@ -150,7 +191,7 @@ class WriteRig:
         kind = source.partition(":")[0]
         self.db.execute(
             "INSERT OR REPLACE INTO sources (id, kind, connector, label, binding_json, state, "
-            "created_at, updated_at) VALUES (?, ?, 'demo', '', ?, 'enabled', ?, ?)",
+            "created_at, updated_at) VALUES (?, ?, 'fake', '', ?, 'enabled', ?, ?)",
             (source, kind, json.dumps({"address": address}), stored, stored),
         )
 
@@ -285,10 +326,11 @@ def make_rig(*, send_absence_provable: bool = False, policy: WritePolicy | None 
     mail = ScriptedPort(fake.mail)
     calendar = ScriptedPort(fake.calendar)
     artifacts = MemoryArtifactStore()
-    evidence = MemoryEvidenceStore()
-    refs = MemoryRefResolver()
+    evidence = EvidenceService(db, clock)
+    refs = RefService(db, clock)
     configured_policy = policy if policy is not None else WritePolicy()
-    audit, control = build(db, clock, policy=configured_policy, artifacts=artifacts)
+    audit = AuditChain(db, clock)
+    control = Control(db, clock, audit, configured_policy, artifacts)
     ctx = Context(
         db=db,
         clock=clock,

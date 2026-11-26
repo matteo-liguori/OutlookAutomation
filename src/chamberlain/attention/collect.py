@@ -16,6 +16,7 @@ from chamberlain.attention.models import (
     DetectorInput,
     HeldMail,
     MailGap,
+    OpenReview,
     SourceSnapshot,
     SyncGap,
 )
@@ -29,9 +30,15 @@ from chamberlain.attention.tuning import (
 from chamberlain.attention.watermark import scan
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, Response
 from chamberlain.domain.capabilities import HealthState, SourceHealth
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import UNCERTAIN_SEND_RECHECK_HOURS
+from chamberlain.memory import repo as memory_repo
+from chamberlain.ports.page import pages
+from chamberlain.review import repo as review_repo
+from chamberlain.runs import repo as runs_repo
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.migrate import stamp
+from chamberlain.writes import repo as writes_repo
 
 log = logging.getLogger("chamberlain.attention")
 
@@ -70,7 +77,7 @@ def _health(ctx: Context) -> tuple[SourceSnapshot, ...]:
             source,
             state,
             stamp(ctx.clock),
-            None if fresh is None else fresh.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            None if fresh is None else ts(fresh),
         )
         snapshots.append(SourceSnapshot(source, state))
     return tuple(snapshots)
@@ -117,9 +124,7 @@ def _read_calendar(ctx: Context, source: str) -> list[CalendarSlot] | None:
         start=now, end=now + CONFLICT_WINDOW, limit=CONFLICT_PAGE_LIMIT, include_cancelled=False
     )
     slots: list[CalendarSlot] = []
-    cursor: str | None = None
-    for _ in range(CONFLICT_PAGES):
-        page = port.events(source, query, cursor)
+    for page in pages(lambda cursor: port.events(source, query, cursor), limit=CONFLICT_PAGES):
         for event in page.items:
             slot = _slot(event)
             if slot is not None:
@@ -128,7 +133,6 @@ def _read_calendar(ctx: Context, source: str) -> list[CalendarSlot] | None:
             return None
         if page.cursor is None:
             return slots if page.complete else None
-        cursor = page.cursor
     return None
 
 
@@ -180,7 +184,7 @@ UNSETTLED_AFTER = timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS)
 
 def stamp_before(ctx: Context, span: timedelta) -> str:
     """The stored form of the instant `span` before now."""
-    return (ctx.clock.now() - span).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(ctx.clock.now() - span)
 
 
 def collect(ctx: Context) -> Collected:
@@ -189,8 +193,8 @@ def collect(ctx: Context) -> Collected:
     snapshots = _health(ctx)
     unreadable = _mail(ctx, snapshots)
     slots, unreadable_calendars = _calendars(ctx, snapshots)
-    scan, orphans = repo.orphan_batch(ctx.db)
-    links = repo.card_links(ctx.db)
+    scan, orphans = memory_repo.orphan_batch(ctx.db)
+    links = memory_repo.card_links(ctx.db)
     data = DetectorInput(
         now=ctx.clock.now(),
         sources=snapshots,
@@ -201,23 +205,27 @@ def collect(ctx: Context) -> Collected:
             HeldMail(source, h.start, h.end, h.state, h.estimate)
             for source, h in repo.mail_held(ctx.db)
         ),
-        actions=tuple(repo.due_actions(ctx.db, now)),
-        cards=tuple(repo.cards_needing_review(ctx.db, now)),
-        open_cards=tuple(repo.open_cards(ctx.db)),
-        complex_decisions=tuple(repo.complex_decisions(ctx.db, stamp_before(ctx, NOTE_OPEN))),
+        actions=tuple(memory_repo.due_actions(ctx.db, now)),
+        cards=tuple(memory_repo.cards_needing_review(ctx.db, now)),
+        open_cards=tuple(memory_repo.open_card_summaries(ctx.db)),
+        complex_decisions=tuple(
+            memory_repo.complex_decisions(ctx.db, stamp_before(ctx, NOTE_OPEN))
+        ),
         linked_ids=frozenset(links),
         linked_cards=links,
-        grants=tuple(repo.grants_awaiting_human(ctx.db)),
-        review_grants=tuple(repo.grants_for_review(ctx.db, now)),
-        operations=tuple(repo.uncertain_operations(ctx.db, stamp_before(ctx, UNSETTLED_AFTER))),
-        sends=tuple(repo.rechecked_sends(ctx.db)),
-        budgets=tuple(repo.over_budget(ctx.db)),
+        grants=tuple(writes_repo.grants_awaiting_human(ctx.db)),
+        review_grants=tuple(writes_repo.grants_for_review(ctx.db, now)),
+        operations=tuple(
+            writes_repo.uncertain_operations(ctx.db, stamp_before(ctx, UNSETTLED_AFTER))
+        ),
+        sends=tuple(writes_repo.rechecked_sends(ctx.db)),
+        budgets=tuple(memory_repo.over_budget(ctx.db)),
         orphan_batch=scan,
         orphan_count=orphans,
-        runs_due=tuple(repo.due_runs(ctx.db)),
-        notes=tuple(repo.open_notes(ctx.db, stamp_before(ctx, NOTE_OPEN))),
+        runs_due=tuple(runs_repo.due_runs(ctx.db)),
+        notes=tuple(runs_repo.open_notes(ctx.db, stamp_before(ctx, NOTE_OPEN))),
         calendar_slots=slots,
-        update_tag=repo.update_tag(ctx.db),
-        reviews=tuple(repo.open_reviews(ctx.db)),
+        update_tag=runs_repo.update_tag(ctx.db),
+        reviews=tuple(OpenReview(r.id, r.new_patterns) for r in review_repo.open_rounds(ctx.db)),
     )
     return Collected(data, frozenset(unreadable), frozenset(unreadable_calendars))

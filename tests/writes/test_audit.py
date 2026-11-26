@@ -9,9 +9,9 @@ import pytest
 from chamberlain.limits import AUDIT_DAYS
 from chamberlain.store.db import transaction
 from chamberlain.store.schema import get_state
-from chamberlain.testing.write_rig import WriteRig
 from chamberlain.writes import repo
 from chamberlain.writes.audit import CHECKPOINT_KEY, HEAD_KEY, AuditChain, prune, verify
+from support.write_rig import WriteRig
 
 
 def audit_of(rig: WriteRig) -> AuditChain:
@@ -196,8 +196,8 @@ def test_g23_every_grant_and_operation_transition_writes_one_row(rig: WriteRig) 
 
 def test_g23_every_tool_call_writes_one_tool_call_row(rig: WriteRig) -> None:
     from chamberlain.app.core import App
-    from chamberlain.testing.write_rig import SESSION
     from chamberlain.writes.handlers import HANDLERS
+    from support.write_rig import SESSION
 
     app = App(rig.ctx, HANDLERS)
     before = repo.audit_count(rig.db)

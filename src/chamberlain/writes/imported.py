@@ -15,6 +15,7 @@ from chamberlain.domain.intents import (
     MailSend,
     WriteIntent,
 )
+from chamberlain.domain.timefmt import ts
 from chamberlain.schema.base import Model
 
 ADVICE_CALENDAR = "Check the calendar for this event."
@@ -74,11 +75,7 @@ def summary_of_intent(intent: WriteIntent) -> OperationSummary | None:
         )
     if isinstance(intent, CalendarCreate | CalendarUpdate):
         fields = intent.event
-        start = (
-            fields.start.date().isoformat()
-            if fields.all_day
-            else fields.start.strftime("%Y-%m-%dT%H:%M:%SZ")
-        )
+        start = fields.start.date().isoformat() if fields.all_day else ts(fields.start)
         return OperationSummary(title=fields.title[:SUMMARY_TEXT_MAX], start=start)
     return None
 

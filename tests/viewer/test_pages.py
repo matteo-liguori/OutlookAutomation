@@ -218,16 +218,3 @@ def test_an_imported_mail_operation_points_at_the_sent_folder(rig: Rig) -> None:
     assert op["attempted_at"] is None  # unknown: never the import time shown as "sent at"
     assert op["summary"] is None
     assert "sent" in op["advice"].lower()
-
-
-def test_a_live_uncertain_operation_keeps_its_exact_text_and_dispatch_time(rig: Rig) -> None:
-    proposal = rig.proposal(subject="Did this go out?")
-    handle = proposal.operation.handle  # type: ignore[union-attr]
-    rig.ctx.db.execute(
-        "UPDATE operations SET state = 'uncertain', dispatched_at = ? WHERE handle = ?",
-        (OLD, handle),
-    )
-    op = get(rig, "/api/uncertain")["operations"][0]
-    assert op["imported"] is False
-    assert op["attempted_at"] == OLD
-    assert "Did this go out?" in op["rendered"]

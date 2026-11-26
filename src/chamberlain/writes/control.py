@@ -1,6 +1,6 @@
-"""Withdrawing operations and ending grants on request (T-11, `WriteControl`).
+"""Withdrawing operations and ending grants on request (T-11).
 
-`forget` reaches grants and operations through `app.services.WriteControl`.
+`forget` reaches grants and operations through the ordinary write control.
 A grant is revoked (a status change, G-2); an operation is cancelled only
 before it is prepared, and a dispatched one can never be touched here.
 """
@@ -11,17 +11,18 @@ from collections.abc import Callable, Iterable
 
 from pydantic import TypeAdapter
 
-from chamberlain.app.services import ArtifactStore, AuditLog
-from chamberlain.domain.intents import WriteIntent
+from chamberlain.domain.intents import WriteIntent, attachments_of
 from chamberlain.domain.operations import (
     MAY_HAVE_HAPPENED_STATES,
     TERMINAL_STATES,
     OperationState,
 )
+from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.migrate import stamp
 from chamberlain.writes import repo
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.grants import GrantService
 from chamberlain.writes.models import OperationRow, WritePolicy
 from chamberlain.writes.transitions import build_receipt, move_operation
@@ -30,12 +31,12 @@ log = logging.getLogger("chamberlain.writes")
 _INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
 
 
-def release_holds(artifacts: ArtifactStore | None, op: OperationRow) -> None:
+def release_holds(artifacts: ArtifactService | None, op: OperationRow) -> None:
     """Let go of the attachments an operation held (M-11)."""
     if artifacts is None or op.intent_json is None:
         return
     intent = _INTENT.validate_json(op.intent_json)
-    for attachment in getattr(intent, "attachments", ()):
+    for attachment in attachments_of(intent):
         try:
             artifacts.release_owner(attachment.artifact, op.handle)
         except ChamberlainError:
@@ -45,7 +46,7 @@ def release_holds(artifacts: ArtifactStore | None, op: OperationRow) -> None:
 def cancel_operation(
     db: sqlite3.Connection,
     clock: Clock,
-    audit: AuditLog,
+    audit: AuditChain,
     grants: GrantService,
     handle: str,
     *,
@@ -90,15 +91,15 @@ def cancel_operation(
 
 
 class Control:
-    """The `WriteControl` service (T-11)."""
+    """The write control service (T-11)."""
 
     def __init__(
         self,
         db: sqlite3.Connection,
         clock: Clock,
-        audit: AuditLog,
+        audit: AuditChain,
         policy: WritePolicy,
-        artifacts: ArtifactStore | None = None,
+        artifacts: ArtifactService | None = None,
     ) -> None:
         self._db = db
         self._clock = clock

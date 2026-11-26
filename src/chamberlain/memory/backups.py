@@ -11,9 +11,9 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import BACKUP_DAILY_SLOTS, BACKUP_WEEKLY_SLOTS
 from chamberlain.memory.artifacts import RUN_DIR
-from chamberlain.memory.timeutil import ts
 from chamberlain.ports.clock import Clock
 from chamberlain.store.db import transaction
 from chamberlain.store.schema import set_state

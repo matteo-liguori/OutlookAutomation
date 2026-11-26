@@ -1,6 +1,6 @@
 """Layering and repository rules: docs/contracts/01-domain.md (D-9 to D-13).
 
-These tests guard the boundaries that let four tracks build in parallel.
+These tests guard the domain, storage and provider import boundaries.
 """
 
 import ast
@@ -54,13 +54,6 @@ FORBIDDEN: dict[str, tuple[str, ...]] = {
     ),
 }
 
-TRACK_PEERS: dict[str, tuple[str, ...]] = {
-    "memory": ("chamberlain.attention", "chamberlain.writes"),
-    "attention": ("chamberlain.memory", "chamberlain.writes"),
-    "writes": ("chamberlain.memory", "chamberlain.attention"),
-}
-"""Tracks meet through the schema and `app.services`, not each other's code (S-3)."""
-
 EXPECTED_PACKAGES = (
     "domain",
     "schema",
@@ -78,7 +71,6 @@ EXPECTED_PACKAGES = (
     "surface/viewer",
     "importer",
     "guidance",
-    "testing",
 )
 
 
@@ -108,11 +100,9 @@ def _violations(package: str, banned: tuple[str, ...]) -> list[str]:
     return problems
 
 
-def test_d9_d10_d11_layering_and_s3_tracks_do_not_import_each_other() -> None:
+def test_d9_d10_d11_layering() -> None:
     for package in sorted(FORBIDDEN):
         assert not _violations(package, FORBIDDEN[package]), package
-    for package in sorted(TRACK_PEERS):
-        assert not _violations(package, TRACK_PEERS[package]), package
 
 
 def test_d13_imports_are_at_module_top() -> None:

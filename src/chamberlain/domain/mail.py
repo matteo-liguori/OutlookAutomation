@@ -4,6 +4,7 @@ Contract: docs/contracts/08-ports.md (Reading). Text here is remote text; the
 app wraps it in `Content` before it reaches a reply (E-7).
 """
 
+import re
 from enum import StrEnum
 
 from pydantic import Field
@@ -21,12 +22,35 @@ class FolderRole(StrEnum):
     OTHER = "other"
 
 
+def bare(message_id: str) -> str:
+    """The Message-ID as the add-on uses it: no angle brackets."""
+    text = message_id.strip()
+    if text.startswith("<") and text.endswith(">"):
+        return text[1:-1]
+    return text
+
+
+_REPLY_PREFIX = re.compile(r"^(?:(?:re|fw|fwd)\s*:\s*)+", re.IGNORECASE)
+
+
+def strip_reply_prefix(subject: str) -> str:
+    return _REPLY_PREFIX.sub("", subject)
+
+
+def normalise_subject(text: str) -> str:
+    return " ".join(strip_reply_prefix(text).split()).lower()
+
+
+def folded_message_id(value: str) -> str:
+    return value.strip().strip("<>").strip().casefold()
+
+
 def message_key(internet_message_id: str, locator: str) -> str:
     """One identity for every copy of a message: the bare, lower-cased Message-ID.
 
     A message with no Message-ID falls back to its locator, so it is still counted once.
     """
-    bare = internet_message_id.strip().strip("<>").strip().casefold()
+    bare = folded_message_id(internet_message_id)
     return bare if bare else f"loc:{locator}"
 
 

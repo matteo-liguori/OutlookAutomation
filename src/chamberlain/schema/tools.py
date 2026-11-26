@@ -421,8 +421,6 @@ class KeepKind(StrEnum):
     ARTIFACT = "artifact"
     LABEL = "label"
     """The owner is a calendar event; the text is its category and, after a bar, a short title."""
-    FINDING = "finding"
-    """The owner is a `harness.review` item; the text is `idea` or `worrying`, a bar, a sentence."""
 
 
 class KeepRequest(ToolRequest):
@@ -442,7 +440,7 @@ class KeepRequest(ToolRequest):
         given = [v for v in (self.text, self.from_handle, self.import_path) if v is not None]
         if len(given) != 1:
             raise ValueError("give exactly one of text, from_handle or import_path")
-        if self.kind in (KeepKind.NOTE, KeepKind.LABEL, KeepKind.FINDING) and self.text is None:
+        if self.kind in (KeepKind.NOTE, KeepKind.LABEL) and self.text is None:
             raise ValueError(f"{self.kind.value}s are given as text")
         if self.kind is KeepKind.EVIDENCE and (
             self.import_path is not None or self.attachment is not None

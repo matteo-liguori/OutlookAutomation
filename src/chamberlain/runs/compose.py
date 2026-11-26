@@ -23,7 +23,6 @@ from pydantic import Field
 
 from chamberlain.app.context import Context
 from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME, ArtifactKind
-from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.review import findings as review_findings
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs import sections
@@ -235,7 +234,7 @@ def ensure_outline(ctx: Context, run: RunRow) -> str | None:
         return existing
     template, _ = load_template(ctx.data_root)
     try:
-        kept = ArtifactService(ctx.db, ctx.clock, ctx.data_root).keep_bytes(
+        kept = ctx.services.artifacts.keep_bytes(
             data=outline_text(template, run).encode("utf-8"),
             kind=ArtifactKind.TEXT,
             owner=run.handle,

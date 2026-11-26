@@ -1,5 +1,5 @@
-"""CalDAV connector for iCloud and other standard calendars (CalendarPort). Wave 2.
+"""CalDAV connector for iCloud and other standard calendars (CalendarPort).
 
-Contract: docs/contracts/08-ports.md. Sketch: docs/waves/wave-2.md. Tested
+Contract: docs/contracts/08-ports.md. Tested
 against a local Radicale server.
 """

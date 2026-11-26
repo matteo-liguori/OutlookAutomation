@@ -32,7 +32,7 @@ def test_a_data_root_inside_the_checkout_is_refused_everywhere_it_is_opened(
     assert main(["--data", str(inside), "doctor"], out) == 1
     assert json.loads(out.getvalue())["error"]["code"] == "config.invalid"
     assert main(["--data", str(inside), "tick"], io.StringIO()) == 1
-    assert main(["demo", "init", str(inside)], io.StringIO()) == 1
+    assert main(["--data", str(inside), "setup", "thunderbird"], io.StringIO()) == 1
     assert not inside.exists()
 
 

@@ -32,7 +32,7 @@ The whole of what an agent is told in advance (`schema.registry.STANDING_PROMPT`
 
 ## The twelve
 
-Owner is the wave-1 track that implements the handler.
+Owner identifies the module responsible for each handler.
 
 | Tool | Purpose | Owner |
 | --- | --- | --- |
@@ -138,7 +138,7 @@ Response: `handle`, `kind`, `size`, `sha256`, `expires_at?`.
   title. It stores a row in `event_labels` (06, M-39), not an artifact, and the
   calendar itself is never changed. A repeat replaces the earlier label.
   A pass report is an ordinary `kind: artifact` kept under the run (M-39).
-- **T-10c** `kind: finding` records what the agent found in a harness review. `owner` is the
+- **T-10c** `kind: note` records what the agent found in a harness review. `owner` is the
   `evt_` handle of a `harness.review` item whose round is open, and `text` is `idea` or `worrying`,
   a bar, and one plain sentence (400 characters). It stores a row in `review_findings` (06, M-40),
   not an artifact. Only a `worrying` finding reaches the owner. `open` on a `harness.review` item

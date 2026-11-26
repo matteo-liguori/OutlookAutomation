@@ -8,7 +8,6 @@ harness proposes that grant once and never confirms it.
 
 import sqlite3
 
-from chamberlain.app.services import AuditLog
 from chamberlain.domain.canonical import content_hash
 from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
 from chamberlain.domain.intents import IntentKind
@@ -16,6 +15,7 @@ from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.ports.clock import Clock
 from chamberlain.store.schema import READ_STATE_KEY, get_state
 from chamberlain.writes import repo
+from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.grants import GrantService
 from chamberlain.writes.models import GrantRow, WritePolicy
 
@@ -60,7 +60,7 @@ def active_grant(db: sqlite3.Connection, source: str) -> GrantRow | None:
 def propose_missing(
     db: sqlite3.Connection,
     clock: Clock,
-    audit: AuditLog,
+    audit: AuditChain,
     sources: list[str],
     *,
     policy: WritePolicy,

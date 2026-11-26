@@ -16,6 +16,7 @@ from pathlib import Path
 
 from chamberlain import __version__
 from chamberlain.app.context import Context
+from chamberlain.domain.timefmt import ts
 from chamberlain.runs.tuning import TAG_PREFIX, UPDATE_CHECK_EVERY, UPDATE_RETRY_AFTER
 from chamberlain.schema.errors import ChamberlainError
 from chamberlain.store.db import transaction
@@ -109,7 +110,7 @@ def check_for_update(
     except (OSError, subprocess.SubprocessError, ChamberlainError):
         log.warning("update check failed")
         with transaction(ctx.db):
-            retry = (now - UPDATE_CHECK_EVERY + UPDATE_RETRY_AFTER).strftime("%Y-%m-%dT%H:%M:%SZ")
+            retry = ts(now - UPDATE_CHECK_EVERY + UPDATE_RETRY_AFTER)
             set_state(ctx.db, ctx.clock, "runs.update_checked_at", retry)
         return recorded_update(ctx)
     with transaction(ctx.db):

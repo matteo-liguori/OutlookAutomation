@@ -1,6 +1,6 @@
 """Application core: one entry point, the context, and the seams between tracks.
 
-Contract: docs/contracts/02-tools.md (T-16). Shared package (docs/OWNERSHIP.md).
+Contract: docs/contracts/02-tools.md (T-16).
 
     core.py      App.call: validate, tick, handle, decorate, bound, audit
     context.py   Context, Result, Handler, Hooks, SourceRouter

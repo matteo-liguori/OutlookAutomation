@@ -10,7 +10,6 @@ import pytest
 from memory_helpers import blobs, keep_text, make_context, table_dump
 
 from chamberlain.app.context import Context
-from chamberlain.app.doubles import RecordingAuditLog
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.limits import BACKUP_DAILY_SLOTS, BACKUP_WEEKLY_SLOTS
 from chamberlain.memory import backups, repo
@@ -23,6 +22,7 @@ from chamberlain.memory.sweeper import SweepCrash, SweepHooks, rule_names, sweep
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.schema import get_state
+from chamberlain.writes.repo import audit_rows
 
 
 def held(ctx: Context) -> list[repo.Row]:
@@ -33,10 +33,8 @@ def test_m21_a_sweep_is_audited_as_one_row_and_idempotent(
     ctx: Context, store: ArtifactService, action: str, clock: ManualClock
 ) -> None:
     keep_text(store, action, "something")
-    audit = ctx.services.audit
-    assert isinstance(audit, RecordingAuditLog)
     sweep(ctx, clock.now())
-    assert [row.kind for row in audit.rows] == ["sweep"]
+    assert [row.kind for row in audit_rows(ctx.db)] == ["sweep"]
     clock.advance(hours=24 * 40)
     first = sweep(ctx, clock.now())
     assert first.changed()
@@ -44,7 +42,7 @@ def test_m21_a_sweep_is_audited_as_one_row_and_idempotent(
     second = sweep(ctx, clock.now())
     assert not second.changed()
     assert (table_dump(ctx.db), blobs(ctx.data_root)) == before
-    assert [row.kind for row in audit.rows] == ["sweep", "sweep", "sweep"]
+    assert [row.kind for row in audit_rows(ctx.db)] == ["sweep", "sweep", "sweep"]
 
 
 @pytest.mark.parametrize("crash_after", rule_names())
@@ -293,7 +291,7 @@ def test_m24_a_backup_never_holds_bytes_and_a_restore_cannot_revive_expired_cont
         sweep(ctx, clock.now())
         assert blobs(ctx.data_root) == set()
         ctx.db.close()
-        restored, report = restore(slot, ctx.data_root, clock, ctx.services)
+        restored, report = restore(slot, ctx.data_root, clock)
         row = restored.execute("SELECT state FROM artifacts WHERE handle = ?", (art,)).fetchone()
         assert row is None or row["state"] != "live"  # the sweeper ran before first use
         assert blobs(ctx.data_root) == set()
@@ -367,10 +365,8 @@ def test_m3_other_tracks_compactors_run_inside_the_one_sweep(
     report = sweep(ctx, clock.now(), compactors=[("operations_compacted", compact_operations)])
     assert report.total("operations_compacted") == 3
     assert seen == [clock.now()]
-    audit = ctx.services.audit
-    assert isinstance(audit, RecordingAuditLog)
-    assert len(audit.rows) == 1
-    assert "operations_compacted=3" in audit.rows[0].summary
+    assert len(audit_rows(ctx.db)) == 1
+    assert "operations_compacted=3" in audit_rows(ctx.db)[0].summary
 
 
 def test_m26_a_directory_junction_is_never_followed_or_left_held_forever(

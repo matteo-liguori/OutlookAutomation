@@ -10,7 +10,7 @@ import pytest
 from chamberlain.connections.load import profile_path
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.registry import STANDING_PROMPT, TOOLS
-from chamberlain.surface import cli, mcp_server
+from chamberlain.surface import cli, mcp_server, runner
 
 NAMES = [spec.name.value for spec in TOOLS]
 
@@ -91,7 +91,7 @@ def test_t14_cli_lists_the_twelve_tools_and_3_related_checks(
     assert json.loads(text)["error"]["code"] == "request.unknown_handle"
 
     # cli_refuses_to_guess_a_data_root
-    monkeypatch.delenv(cli.DATA_ENV, raising=False)
+    monkeypatch.delenv(runner.DATA_ENV, raising=False)
     code, text = run_cli("doctor")
     assert code == cli.EXIT_FAILED
     assert json.loads(text)["error"]["code"] == "config.invalid"

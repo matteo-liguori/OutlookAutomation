@@ -13,8 +13,8 @@ from chamberlain.app.context import Context, Result
 from chamberlain.domain.calendar import EventFields
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.domain.handles import HandleKind, handle_kind
+from chamberlain.domain.timefmt import ts
 from chamberlain.memory import refs, repo
-from chamberlain.memory.timeutil import ts
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import KeepKind, KeepRequest, KeepResponse
 from chamberlain.store.db import transaction

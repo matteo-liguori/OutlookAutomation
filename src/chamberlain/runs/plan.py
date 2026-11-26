@@ -19,6 +19,7 @@ from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
 from chamberlain.domain.handles import HandleKind, new_handle
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import SESSION_IDLE_HOURS
 from chamberlain.runs import compose, repo
 from chamberlain.runs.models import RunRow, RunState, ScheduleRow
@@ -38,7 +39,7 @@ INCOMPLETE_REPORT = (
 
 
 def _utc(moment: datetime) -> str:
-    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(moment)
 
 
 def local_day(ctx: Context, zone: str) -> str:

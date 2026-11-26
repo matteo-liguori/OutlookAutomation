@@ -1,7 +1,7 @@
 """ContactsPort: read-only address book search.
 
 Contract: docs/contracts/08-ports.md. The executable form is
-`chamberlain.testing.contacts_contract.ContactsPortContract`.
+`tests/support/contacts_contract.py`.
 """
 
 from typing import Protocol, runtime_checkable

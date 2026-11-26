@@ -13,9 +13,9 @@ from chamberlain.domain.operations import (
     check_transition,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import MAIL, WriteRig
 from chamberlain.writes import repo
 from chamberlain.writes.transitions import build_receipt, move_operation
+from support.write_rig import MAIL, WriteRig
 
 S = OperationState
 ARROWS = {

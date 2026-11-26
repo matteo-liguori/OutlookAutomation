@@ -9,7 +9,6 @@ from typing import Any
 
 import pytest
 
-from chamberlain.attention import repo as attention_repo
 from chamberlain.attention.detectors.operations import send_missing
 from chamberlain.attention.models import DetectorInput
 from chamberlain.connectors.fake import Fault
@@ -18,9 +17,9 @@ from chamberlain.domain.operations import OperationState
 from chamberlain.limits import UNCERTAIN_ABANDON_DAYS, UNCERTAIN_SEND_RECHECK_HOURS
 from chamberlain.ports.mail import MailPort
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import MAIL, OWNER, OWNER_B, WriteRig, make_rig
 from chamberlain.writes import repo
 from chamberlain.writes.maintenance import maintain
+from support.write_rig import MAIL, OWNER, OWNER_B, WriteRig, make_rig
 
 MAIL_B = "mail:two"
 S = OperationState
@@ -57,7 +56,7 @@ def get(rig: WriteRig, handle: str):  # type: ignore[no-untyped-def]
 
 def reasons(rig: WriteRig) -> list[str]:
     """What the harness would raise for the agent: the `send.missing` events."""
-    sends = tuple(attention_repo.rechecked_sends(rig.db))
+    sends = tuple(repo.rechecked_sends(rig.db))
     drafts = send_missing(DetectorInput(now=rig.clock.now(), sends=sends))
     return [d.attrs.reason or "" for d in drafts if d.kind is EventKind.SEND_MISSING]
 

@@ -31,8 +31,7 @@ Every tool reply, on every surface, is one JSON object:
   a `cursor` (more pages) or at least one gap `{source, reason}` (something
   could not be looked at). An incomplete result MUST NOT be presented as
   complete, and an empty incomplete result MUST NOT be reported as "nothing
-  found". `demo: true` appears while the installation has demo sources
-  (synthetic data); it is absent otherwise.
+  found".
 - **E-4** `NextStep` is `{tool, args, why}`. `args` MUST validate against
   that tool's request model. `why` is at most 120 characters.
 - **E-5** `GuidanceItem` is `{id, version, text?, more?}`: either the text,

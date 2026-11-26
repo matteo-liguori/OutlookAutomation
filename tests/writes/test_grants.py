@@ -12,11 +12,11 @@ from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig, make_rig
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import confirm_grant, grant_detail, list_grants
 from chamberlain.writes.maintenance import maintain
 from chamberlain.writes.models import WritePolicy
+from support.write_rig import MAIL, SESSION, WriteRig, make_rig
 
 S = OperationState
 
@@ -337,12 +337,8 @@ def test_g13_agent_evidence_must_be_this_sessions_own_words_not_remote_content(
     assert (
         codes(rig, lambda: rig.engine().attach_approval(handle, other)) is ErrorCode.REQUEST_INVALID
     )
-    from_mail = rig.evidence.add(text="send it", owner=handle, session=SESSION)
-    stamp = "2026-01-05T09:00:00Z"
-    rig.db.execute(
-        "INSERT INTO evidence (handle, text, ref, session, created_at) "
-        "VALUES (?, 'send it', ?, ?, ?)",
-        (from_mail, "msg_0123456789abcdef", SESSION, stamp),
+    from_mail = rig.evidence.add(
+        text="send it", owner=handle, session=SESSION, ref="msg_0123456789abcdef"
     )
     assert (
         codes(rig, lambda: rig.engine().attach_approval(handle, from_mail))
@@ -352,16 +348,19 @@ def test_g13_agent_evidence_must_be_this_sessions_own_words_not_remote_content(
     approved = rig.engine().attach_approval(handle, own)
     assert approved.ready
     assert approved.grant is not None
-    assert own in rig.evidence.links
-    assert approved.grant.handle in rig.evidence.links[own]
+    linked = rig.db.execute(
+        "SELECT 1 FROM evidence_refs WHERE evidence = ? AND owner = ?",
+        (own, approved.grant.handle),
+    ).fetchone()
+    assert linked is not None
     assert grant_of(rig, approved.grant.handle).confirmed_via == "agent_evidence"
 
 
 def test_g14_an_unknown_recipient_cannot_be_approved_by_the_agent(rig: WriteRig) -> None:
     proposal = rig.engine().propose_intent(rig.send(to=("stranger@example.org",)))
     assert proposal.requirement.value == "human_confirmation"
-    evidence = rig.evidence.add(text="Yes", owner="x", session=SESSION)
     assert proposal.operation is not None
+    evidence = rig.evidence.add(text="Yes", owner=proposal.operation.handle, session=SESSION)
     code = codes(rig, lambda: rig.engine().attach_approval(proposal.operation.handle, evidence))  # type: ignore[union-attr]
     assert code is ErrorCode.GRANT_HUMAN_CONFIRMATION_REQUIRED
     assert proposal.grant is not None

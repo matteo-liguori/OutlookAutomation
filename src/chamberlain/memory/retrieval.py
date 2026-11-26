@@ -12,9 +12,9 @@ from pydantic import BaseModel
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
+from chamberlain.domain.timefmt import plus, ts
 from chamberlain.limits import CURSOR_HOURS, HIT_LINE_MAX, PAGE_CHARS
 from chamberlain.memory import repo
-from chamberlain.memory.timeutil import plus, ts
 from chamberlain.schema.base import Model
 from chamberlain.schema.envelope import ContentKind, ContentLine, Coverage, CoverageGap
 from chamberlain.schema.errors import ChamberlainError, ErrorCode

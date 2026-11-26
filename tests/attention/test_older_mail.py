@@ -17,6 +17,7 @@ from chamberlain.attention.handlers import source_checks
 from chamberlain.attention.tuning import MAIL_STANDARD
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.ports.clock import ManualClock
+from chamberlain.writes.repo import audit_rows
 
 SOURCE = "mail:test"
 
@@ -94,7 +95,7 @@ def test_a_the_last_day_is_read_at_once_and_the_older_and_1_related_checks(
         "SELECT COUNT(*) FROM events WHERE kind = 'source.stale' AND state IN ('new','delivered')"
     ).fetchone()[0]
     assert live == 0
-    assert any(r.kind == "mail.older_yes" for r in ctx.services.audit.rows)
+    assert any(r.kind == "mail.older_yes" for r in audit_rows(ctx.db))
     assert older_check(ctx).status == "ok"
 
 
@@ -110,7 +111,7 @@ def test_a_no_leaves_the_older_mail_unread_and_visible_and_a_later_yes_still_wor
     go(ctx, clock, 6)
     assert seen(ctx) == {"new0@x", "new1@x"}, "a no reads nothing more"
     assert older_check(ctx).status == "warn", "the uncovered span stays visible"
-    assert any(r.kind == "mail.older_no" for r in ctx.services.audit.rows)
+    assert any(r.kind == "mail.older_no" for r in audit_rows(ctx.db))
     stale = app.call("next", {"session": session}).data.work
     left = [w for w in stale if w.kind.value == "source.stale"]
     assert len(left) == 1, "a source.stale names the span that stays unread"

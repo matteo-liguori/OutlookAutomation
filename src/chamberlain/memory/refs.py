@@ -1,15 +1,16 @@
 """Refs: stable handles for remote messages, events and contacts.
 
 Contract: docs/contracts/01-domain.md (D-5, D-6), 06-memory.md (M-20) and the
-board ruling R4 (`repoint`). Implements `RefResolver` (app/services.py). A ref
+board ruling R4 (`repoint`). A ref
 is a pointer, never content: it maps a handle to a source and a stable locator.
 """
 
 import sqlite3
+from collections.abc import Iterable
 
 from chamberlain.domain.handles import REF_KINDS, HandleKind, ref_handle
+from chamberlain.domain.timefmt import ts
 from chamberlain.memory import repo
-from chamberlain.memory.timeutil import ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
@@ -35,30 +36,49 @@ def remember(
     repointed after a write keeps naming the item under its new locator.
     Distinct physical copies have distinct locators and so distinct handles (M-20).
     """
+    return remember_many(db, clock, kind, source, [(locator, internet_message_id)])[locator]
+
+
+def remember_many(
+    db: sqlite3.Connection,
+    clock: Clock,
+    kind: HandleKind,
+    source: str,
+    copies: Iterable[tuple[str, str | None]],
+) -> dict[str, str]:
+    """Record one source's refs in one transaction, retaining repointed handles."""
     if kind not in REF_KINDS:
         raise ChamberlainError(ErrorCode.REQUEST_WRONG_KIND, "Only remote items have refs.")
     name = _KIND_NAME[kind]
     now = ts(clock.now())
+    handles: dict[str, str] = {}
     with transaction(db):
-        existing = repo.find_ref(db, source, name, locator)
-        if existing is not None:
-            handle = str(existing["handle"])
-            repo.touch_ref(db, handle, internet_message_id, now)
-            return handle
-        handle = ref_handle(kind, source, locator)
-        if repo.get_ref(db, handle) is not None:
-            # The deterministic handle is held by a repointed ref: derive another.
-            handle = ref_handle(kind, source, f"{locator}\n{now}")
-        repo.insert_ref(
-            db,
-            handle=handle,
-            kind=name,
-            source=source,
-            locator=locator,
-            internet_message_id=internet_message_id,
-            now=now,
-        )
-    return handle
+        for locator, internet_message_id in copies:
+            existing = repo.find_ref(db, source, name, locator)
+            if existing is not None:
+                handle = str(existing["handle"])
+                repo.touch_ref(db, handle, internet_message_id, now)
+            else:
+                handle = ref_handle(kind, source, locator)
+                if repo.get_ref(db, handle) is not None:
+                    handle = ref_handle(kind, source, f"{locator}\n{now}")
+                repo.insert_ref(
+                    db,
+                    handle=handle,
+                    kind=name,
+                    source=source,
+                    locator=locator,
+                    internet_message_id=internet_message_id,
+                    now=now,
+                )
+            handles[locator] = handle
+    return handles
+
+
+def existing_handles(
+    db: sqlite3.Connection, kind: HandleKind, source: str, locators: Iterable[str]
+) -> dict[str, str]:
+    return repo.ref_handles(db, source, _KIND_NAME[kind], list(locators))
 
 
 def locate(db: sqlite3.Connection, handle: str) -> tuple[str, str]:

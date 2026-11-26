@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from tests.store.legacy import legacy_migrations
 
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -34,7 +35,7 @@ def empty() -> Iterator[sqlite3.Connection]:
 
 def test_s8_packaged_migrations_are_numbered_and_start_at_one() -> None:
     found = discover()
-    assert found[0].version == 1
+    assert found[0].version == 270
     assert [m.version for m in found] == sorted({m.version for m in found})
 
 
@@ -167,7 +168,7 @@ def test_m35_migration_0080_keeps_every_artifact_owner_of_a_store_at_0071(
 ) -> None:
     """A live store at 0071 holds real owner rows; the rebuild must carry all of them."""
     db = connect(MEMORY)
-    upto = [m for m in discover() if m.version <= 71]
+    upto = [m for m in legacy_migrations() if m.version <= 71]
     assert migrate(db, clock, backup_dir=None, migrations=upto)[-1] == 71
     for n, (kind, owner) in enumerate(
         [
@@ -191,7 +192,7 @@ def test_m35_migration_0080_keeps_every_artifact_owner_of_a_store_at_0071(
         )
     db.commit()
     before = [tuple(r) for r in db.execute("SELECT * FROM artifact_owners ORDER BY artifact")]
-    assert migrate(db, clock, backup_dir=None)[0] == 80
+    assert migrate(db, clock, backup_dir=None, migrations=legacy_migrations())[0] == 80
     after = [tuple(r) for r in db.execute("SELECT * FROM artifact_owners ORDER BY artifact")]
     assert after == before
     index = db.execute(
@@ -210,7 +211,7 @@ def test_m36_migration_0120_gives_each_seen_message_one_key_and_drops_second_cop
 ) -> None:
     """A live store at 0080 stored one row per copy; it must come out with one row per message."""
     db = connect(MEMORY)
-    upto = [m for m in discover() if m.version <= 80]
+    upto = [m for m in legacy_migrations() if m.version <= 80]
     assert migrate(db, clock, backup_dir=None, migrations=upto)[-1] == 80
     when = "2026-01-01T00:00:00Z"
     copies = [
@@ -236,7 +237,7 @@ def test_m36_migration_0120_gives_each_seen_message_one_key_and_drops_second_cop
         (when, when, when, when),
     )
     db.commit()
-    assert migrate(db, clock, backup_dir=None)[-1] >= 120
+    assert migrate(db, clock, backup_dir=None, migrations=legacy_migrations())[-1] >= 120
     rows = db.execute("SELECT locator, message_key, sent FROM mail_seen ORDER BY seq").fetchall()
     assert [(r["locator"], r["message_key"], r["sent"]) for r in rows] == [
         ("f-inbox/<A@x>", "a@x", 0),
@@ -255,7 +256,7 @@ def test_m36_migration_0120_gives_each_seen_message_one_key_and_drops_second_cop
 def test_a1_migration_0250_retires_only_old_card_mail_events(
     empty: sqlite3.Connection, clock: ManualClock
 ) -> None:
-    before = [m for m in discover() if m.version < 250]
+    before = [m for m in legacy_migrations() if m.version < 250]
     migrate(empty, clock, backup_dir=None, migrations=before)
     empty.executemany(
         "INSERT INTO events (handle, kind, dedupe_key, priority, summary, detected_at) "
@@ -266,6 +267,6 @@ def test_a1_migration_0250_retires_only_old_card_mail_events(
             ("evt_0000000000000003", "operation.uncertain", "unsettled"),
         ],
     )
-    assert 250 in migrate(empty, clock, backup_dir=None)
+    assert 250 in migrate(empty, clock, backup_dir=None, migrations=legacy_migrations())
     kinds = {row["kind"] for row in empty.execute("SELECT kind FROM events")}
     assert kinds == {"mail.new_unmatched", "operation.uncertain"}

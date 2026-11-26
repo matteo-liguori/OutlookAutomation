@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from chamberlain.domain.timefmt import ts
 from chamberlain.review import normalise
 
 CLAUDE = "claude"
@@ -68,7 +69,7 @@ def stamp(value: object) -> str | None:
         return None
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=UTC)
-    return moment.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(moment)
 
 
 def _as_text(value: object) -> str | None:
@@ -159,7 +160,7 @@ def _claude_line(obj: dict[str, Any], read: Read, seen: set[str]) -> None:
         _call(CLAUDE, block.get("name"), block, stamp(obj.get("timestamp")), read)
 
 
-def _codex_line(obj: dict[str, Any], read: Read) -> None:
+def _codex_line(obj: dict[str, Any], read: Read, _seen: set[str]) -> None:
     payload = obj.get("payload")
     if not isinstance(payload, dict):
         return
@@ -177,6 +178,8 @@ def _codex_line(obj: dict[str, Any], read: Read) -> None:
     name = "local_shell" if ptype == "local_shell_call" else payload.get("name")
     _call(CODEX, name, payload, stamp(obj.get("timestamp")), read)
 
+
+_READERS = {CLAUDE: _claude_line, CODEX: _codex_line}
 
 _INTERESTING = {
     CLAUDE: (b'"tool_use"', b'"cwd"'),
@@ -197,6 +200,7 @@ def read_region(agent: str, data: bytes, *, want_calls: bool = True) -> Read:
     if end < 0:
         return read
     read.consumed = end + 1
+    reader = _READERS[agent]
     seen: set[str] = set()
     for line in data[:end].split(b"\n"):
         markers = (b'"tool_use"',) if agent == CLAUDE and read.cwd else _INTERESTING[agent]
@@ -208,22 +212,9 @@ def read_region(agent: str, data: bytes, *, want_calls: bool = True) -> Read:
             continue
         if not isinstance(obj, dict):
             continue
-        if not want_calls:
-            read.cwd = read.cwd or _cwd_only(agent, obj)
-            if read.cwd:
-                break
-            continue
-        if agent == CLAUDE:
-            _claude_line(obj, read, seen)
-        else:
-            _codex_line(obj, read)
+        target = read if want_calls else Read()
+        reader(obj, target, seen)
+        if not want_calls and target.cwd:
+            read.cwd = target.cwd
+            break
     return read
-
-
-def _cwd_only(agent: str, obj: dict[str, Any]) -> str | None:
-    probe = Read()
-    if agent == CLAUDE:
-        _claude_line(obj, probe, set())
-    else:
-        _codex_line(obj, probe)
-    return probe.cwd

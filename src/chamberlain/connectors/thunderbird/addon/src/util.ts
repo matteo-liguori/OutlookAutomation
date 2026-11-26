@@ -35,7 +35,8 @@ function clip(value: unknown, limit: number): string {
 
 /** Message-IDs cross the bridge bare, without angle brackets. */
 function bare(id: string): string {
-  return String(id).replace(/^<|>$/g, "");
+  const value = id.trim();
+  return value.startsWith("<") && value.endsWith(">") ? value.slice(1, -1) : value;
 }
 
 /** Reply prefixes and case do not count in a subject comparison. */

@@ -1,0 +1,42 @@
+{
+  "ids": [
+    [
+      " <A@Host> ",
+      "A@Host"
+    ],
+    [
+      "x@H",
+      "x@H"
+    ],
+    [
+      "<open",
+      "<open"
+    ],
+    [
+      "tail>",
+      "tail>"
+    ],
+    [
+      "<>",
+      ""
+    ]
+  ],
+  "subjects": [
+    [
+      "Re: FwD:  Rent    due",
+      "rent due"
+    ],
+    [
+      "Report: RE: x",
+      "report: re: x"
+    ],
+    [
+      "Re: ÄÖ",
+      "äö"
+    ],
+    [
+      "Fwd:",
+      ""
+    ]
+  ]
+}

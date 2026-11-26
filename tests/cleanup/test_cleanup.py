@@ -5,7 +5,8 @@ from datetime import timedelta
 from pathlib import Path
 
 from chamberlain.app.core import App
-from chamberlain.app.wiring import load_tracks, tick_steps
+from chamberlain.app.wiring import app_handlers, tick_steps
+from chamberlain.attention.handlers import HOOKS
 from chamberlain.cleanup.rules import CleanupConfig, CleanupRule, own_folders
 from chamberlain.cleanup.run import CleanupReport, daily_cleanup, propose_grants, run_cleanup
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery
@@ -141,8 +142,8 @@ def test_an_agents_start_runs_the_clean_up_and_reports_it(tmp_path: Path) -> Non
             FAKE_MAIL_A, internet_message_id="<old@x>", date=now - timedelta(days=4 * 365)
         )
         on = RULES.model_copy(update={"enabled": True})
-        steps = tick_steps(None, cleanup=on)
-        app = App(replace(lab.app.context, tick_steps=steps), *load_tracks())
+        steps = tick_steps(cleanup=on)
+        app = App(replace(lab.app.context, tick_steps=steps), app_handlers(), HOOKS)
 
         first = app.call("start", {"agent": "codex"})
         assert first.data is not None

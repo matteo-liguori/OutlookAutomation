@@ -11,6 +11,7 @@ from chamberlain.app.core import App
 from chamberlain.attention import tick
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.ports.clock import ManualClock
+from chamberlain.writes.repo import known_recipients
 
 SOURCE = "mail:test"
 
@@ -166,7 +167,7 @@ def test_a_mail_that_arrives_after_the_batch_was_shown_and_2_related_checks(
     )
     fake.mail.add_message(SOURCE, internet_message_id="<in@x>")
     go(ctx, clock)
-    learned = {address for _, address in ctx.services.writes.learned}
+    learned = known_recipients(ctx.db, SOURCE)
     assert {"bob@example.org", "carol@example.org"} <= learned
     work = app.call("start", {}).data.work
     mail = [w for w in work if w.kind.value == "mail.new_unmatched"]

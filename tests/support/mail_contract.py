@@ -29,7 +29,7 @@ from chamberlain.domain.intents import (
 from chamberlain.domain.mail import FolderRole, MailQuery
 from chamberlain.domain.operations import DispatchOutcome, Prepared, ReconcileStatus
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.rigs import Fault, MailRig
+from support.rigs import Fault, MailRig
 
 LATE = 600.0
 """Seconds after which a slow write has certainly landed."""
@@ -138,7 +138,8 @@ class MailPortContract:
         assert sorted(item.locator for item in page.items) == sorted([first, second])
 
     def test_p8_attachment_bytes_come_with_their_hash(self, rig: MailRig) -> None:
-        payload = bytes(range(256)) * 4
+        # Large enough to cross several frames on a bridge with chunked attachments.
+        payload = bytes(range(256)) * 1800
         locator = rig.seed(
             internet_message_id=rig.new_message_id(), attachments=(("blob.bin", payload),)
         )
@@ -146,6 +147,7 @@ class MailPortContract:
         fetched = rig.port.attachment(rig.source, locator, meta.id)
         assert fetched.data == payload
         assert fetched.sha256 == sha256_bytes(payload)
+        assert rig.is_unread(locator)
 
     # --- move and trash -------------------------------------------------------
 
@@ -163,10 +165,13 @@ class MailPortContract:
         result = rig.port.dispatch(self._prepare_move(rig, locator), "k-move", {})
         assert result.outcome is DispatchOutcome.APPLIED
         assert result.receipt is not None
-        assert result.receipt.items[0].moved_to is not None
+        moved_to = result.receipt.items[0].moved_to
+        assert moved_to is not None
+        assert moved_to != locator
         assert rig.copies(message_id, rig.folder_id(FolderRole.INBOX)) == 0
         assert rig.copies(message_id, rig.filing_folder_id()) == 1
-        assert rig.is_unread(result.receipt.items[0].moved_to)
+        assert rig.port.resolve(rig.source, moved_to).folder_id == rig.filing_folder_id()
+        assert rig.is_unread(moved_to)
 
     def test_w23_move_marks_read_only_when_told_to(self, rig: MailRig) -> None:
         locator = rig.seed(internet_message_id=rig.new_message_id())
@@ -183,6 +188,11 @@ class MailPortContract:
         intent = MailTrash.model_validate({"source": rig.source, "messages": [handle]})
         result = rig.port.dispatch(rig.port.prepare(intent, {handle: locator}), "k-trash", {})
         assert result.outcome is DispatchOutcome.APPLIED
+        assert result.receipt is not None
+        moved_to = result.receipt.items[0].moved_to
+        assert moved_to is not None
+        assert moved_to != locator
+        assert rig.port.resolve(rig.source, moved_to).folder_id == rig.folder_id(FolderRole.TRASH)
         assert rig.copies(message_id, rig.folder_id(FolderRole.TRASH)) == 1
         assert rig.copies(message_id, rig.folder_id(FolderRole.INBOX)) == 0
 
@@ -418,6 +428,11 @@ class MailPortContract:
         )
         updated = rig.port.dispatch(rig.port.prepare(update, {handle: locator}), "k-draft-2", {})
         assert updated.outcome is DispatchOutcome.APPLIED
+        assert updated.receipt is not None
+        revised = updated.receipt.locator
+        assert revised is not None
+        assert revised != locator
+        assert rig.port.read(rig.source, revised).body_text == changed["body"]
         drafts = rig.folder_id(FolderRole.DRAFTS)
         assert rig.copies(first_id, drafts) == 0
         assert rig.copies(second_id, drafts) == 1

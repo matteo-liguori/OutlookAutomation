@@ -14,6 +14,7 @@ from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 
 from chamberlain.app.core import App
+from chamberlain.domain.timefmt import ts
 from chamberlain.livetest.authority import ensure_card, require_grants
 from chamberlain.livetest.catalogue import build_plan
 from chamberlain.livetest.config import LiveTestConfig
@@ -35,7 +36,6 @@ from chamberlain.livetest.model import (
 )
 from chamberlain.livetest.registry import Planned, Scope
 from chamberlain.livetest.scenarios_harness import doctor_states
-from chamberlain.livetest.timeutil import iso
 from chamberlain.ports.health import passive_health_checks
 from chamberlain.schema.errors import ChamberlainError
 
@@ -313,7 +313,7 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
     if options.retry_ids:
         plan = [p for p in plan if p.id in options.retry_ids]
     run_id = make_run_id(env, options)
-    started_at = iso(env.clock.now())
+    started_at = ts(env.clock.now())
     names = tuple(sorted({s for p in plan for s in (p.target.source, p.target.other) if s}))
     if options.dry_run:
         results = tuple(_skipped(p, True) for p in plan)
@@ -390,7 +390,7 @@ def _report(
     return RunReport(
         run_id=run_id,
         started_at=started_at,
-        finished_at=iso(env.clock.now()),
+        finished_at=ts(env.clock.now()),
         mode=mode,
         dry_run=options.dry_run,
         kept=options.keep,

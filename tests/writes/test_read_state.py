@@ -7,8 +7,8 @@ from chamberlain.domain.grants import GrantState
 from chamberlain.domain.intents import MailMove
 from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.store.schema import READ_STATE_KEY, set_state
-from chamberlain.testing.write_rig import MAIL, WriteRig
 from chamberlain.writes import read_state, repo
+from support.write_rig import MAIL, WriteRig
 
 
 def _option(rig: WriteRig, **options: bool) -> None:

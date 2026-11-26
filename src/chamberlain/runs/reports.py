@@ -11,7 +11,6 @@ from dataclasses import dataclass
 
 from chamberlain.app.context import Context
 from chamberlain.domain.artifacts import ArtifactKind
-from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.runs import repo
 from chamberlain.runs.tuning import REPORT_HOURS
 from chamberlain.schema.errors import ChamberlainError
@@ -36,7 +35,7 @@ def store_report(ctx: Context, run: str, text: str) -> str | None:
     if row is None:
         return None
     data = text.encode("utf-8")[:REPORT_MAX_BYTES]
-    kept = ArtifactService(ctx.db, ctx.clock, ctx.data_root).keep_bytes(
+    kept = ctx.services.artifacts.keep_bytes(
         data=data,
         kind=ArtifactKind.TEXT,
         owner=run,

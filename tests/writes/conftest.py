@@ -4,7 +4,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from chamberlain.testing.write_rig import WriteRig, make_rig
+from support.write_rig import WriteRig, make_rig
 
 
 @pytest.fixture

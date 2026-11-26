@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from chamberlain.connectors.thunderbird import frames, native_host, protocol
+from chamberlain.connectors.thunderbird import frames, protocol
 from chamberlain.connectors.thunderbird.client import (
     BridgeClient,
     BridgeFailure,
@@ -615,8 +615,9 @@ def test_b10_deadlines_nest_addon_then_host_then_client() -> None:
 
 
 def test_b10_the_addon_deadlines_in_the_typescript_match_the_contract() -> None:
-    addon_src = Path(native_host.__file__).parent / "addon" / "src" / "background.ts"
-    source = addon_src.read_text(encoding="utf-8")
+    from chamberlain.connectors.thunderbird.typegen import render
+
+    source = render()
     default = Deadlines()
     assert f"READ_DEADLINE_MS = {int(default.addon_read * 1000):_}" in source
     assert f"WRITE_DEADLINE_MS = {int(default.addon_write * 1000):_}" in source
@@ -640,7 +641,7 @@ def test_b10_the_bridge_directory_is_restricted_to_the_current_user(
         calls.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
 
-    monkeypatch.setattr(native_host.subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "run", fake_run)
     monkeypatch.setattr(sys, "platform", "win32")
     monkeypatch.setenv("USERNAME", "tester")
     monkeypatch.setenv("USERDOMAIN", "LAB")

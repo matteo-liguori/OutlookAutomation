@@ -17,7 +17,9 @@ from chamberlain.domain.intents import CalendarCreate, CalendarDelete, CalendarU
 from chamberlain.domain.operations import OperationState
 from chamberlain.domain.recurrence import describe, expand
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.testing.write_rig import (
+from chamberlain.writes.models import WritePolicy
+from chamberlain.writes.render import describe_intent
+from support.write_rig import (
     CALENDAR,
     CALENDAR_B,
     CALENDAR_PLAIN,
@@ -26,8 +28,6 @@ from chamberlain.testing.write_rig import (
     WriteRig,
     make_rig,
 )
-from chamberlain.writes.models import WritePolicy
-from chamberlain.writes.render import describe_intent
 
 FIRST = datetime(2026, 3, 2, 9, tzinfo=UTC)  # a Monday
 WINDOW = CalendarQuery(

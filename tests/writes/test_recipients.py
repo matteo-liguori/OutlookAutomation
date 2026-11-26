@@ -5,11 +5,15 @@ import json
 from datetime import timedelta
 from pathlib import Path
 
-from chamberlain.connectors.fake import Fault
+import pytest
+
+from chamberlain.app.context import SourceRouter
+from chamberlain.app.wiring import build_app
+from chamberlain.connectors.fake import FakeProvider, Fault
 from chamberlain.surface import cli
-from chamberlain.testing.write_rig import MAIL, WriteRig
 from chamberlain.writes import repo
 from chamberlain.writes.seed import seed_source
+from support.write_rig import MAIL, WriteRig
 
 
 def bind_mailbox(rig: WriteRig, mailbox: str) -> None:
@@ -96,17 +100,19 @@ def test_a_source_that_cannot_be_read_is_reported_not_raised(rig: WriteRig) -> N
     assert report.reason
 
 
-def test_the_cli_seeds_every_mail_source_and_prints_counts(tmp_path: Path) -> None:
-    root = tmp_path / "demo"
-    out = io.StringIO()
-    assert cli.main(["demo", "init", str(root)], out) == cli.EXIT_OK
+def test_the_cli_seeds_every_mail_source_and_prints_counts(
+    tmp_path: Path, fake: FakeProvider, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path
+    router = SourceRouter(mail={"mail:test": fake.mail}, calendar={}, contacts={})
+    monkeypatch.setattr(cli, "open_app", lambda root: build_app(root, sources=router))
     out = io.StringIO()
     code = cli.main(["--data", str(root), "recipients", "seed", "--months", "6"], out)
     shown = json.loads(out.getvalue())
     assert code == cli.EXIT_OK
     assert shown["months"] == 6
     [source] = shown["sources"]
-    assert source["source"] == "mail:demo"
+    assert source["source"] == "mail:test"
     assert source["complete"] is True
     assert source["added"] == 0
 

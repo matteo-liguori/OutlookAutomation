@@ -74,7 +74,8 @@ ban-relative-imports = "all"
 # --- pyright ----------------------------------------------------------------
 [tool.pyright]
 include = ["src", "tests"]
-strict = ["src"]
+strict = ["src", "tests/support"]
+extraPaths = ["tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 venvPath = "."
@@ -84,7 +85,7 @@ reportMissingTypeStubs = false
 # --- pytest -----------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests"]
 addopts = "-q --strict-markers --strict-config --import-mode=importlib -p no:cacheprovider"
 markers = [
   "live: needs a real, disposable account; never runs in the gate",

@@ -9,7 +9,6 @@ from typing import Any
 
 from chamberlain.app.context import SourceRouter
 from chamberlain.app.wiring import build_app
-from chamberlain.connections.demo import demo_document
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.registry import TOOLS
@@ -53,10 +52,10 @@ def _structured(answer: dict[str, Any]) -> dict[str, Any]:
     return reply
 
 
-def test_the_server_over_a_real_stdio_process_on_a_demo_profile(data_root: Path) -> None:
+def test_the_server_over_a_real_stdio_process_on_a_minimal_profile(data_root: Path) -> None:
     profile = data_root / "config" / "connections.yaml"
     profile.parent.mkdir(parents=True)
-    profile.write_text(demo_document(), encoding="utf-8")
+    profile.write_text("version: 1\nsources: {}\n", encoding="utf-8")
     server = subprocess.Popen(
         [sys.executable, "-m", "chamberlain.surface.mcp_server", "--data", str(data_root)],
         stdin=subprocess.PIPE,
@@ -85,13 +84,7 @@ def test_the_server_over_a_real_stdio_process_on_a_demo_profile(data_root: Path)
         ask("initialize")
         listed = ask("tools/list")
         assert [t["name"] for t in listed["result"]["tools"]] == NAMES
-        session = call("start", {})["data"]["session"]
-        found = call("find", {"session": session, "scope": "mail", "query": "invoice"})
-        assert found["coverage"]["demo"] is True
-        hit = found["data"]["hits"][0]
-        assert "[DEMO]" in hit["content"]["text"]
-        opened = call("open", {"session": session, "handle": hit["handle"], "part": "body"})
-        assert "Synthetic demo data" in opened["data"]["content"]["text"]
+        call("doctor", {"check": "schema"})
         unknown = ask("tools/call", {"name": "nope"})
         assert unknown["result"]["isError"] is True
     finally:

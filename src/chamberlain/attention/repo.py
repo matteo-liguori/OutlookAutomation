@@ -1,37 +1,23 @@
-"""All SQL of the attention track (S-4): its own tables, and SELECTs on others'.
+"""Queries and updates for attention's tables (S-4).
 
 Contract: docs/contracts/09-storage.md (S-3, S-4), 07-attention.md (A-8).
 Only `sessions`, `events`, `guidance_deliveries`, `source_health`, `mail_watermarks`, `mail_sync`,
 `mail_sync_folders` and `mail_seen` are written.
 """
 
-import json
 import sqlite3
 from dataclasses import dataclass
-from typing import cast
 
 from chamberlain.attention.models import (
-    ActionRow,
-    BudgetRow,
-    CardRow,
-    ComplexDecision,
-    DueRun,
     EventAttrs,
     EventDraft,
     EventRow,
-    GrantRow,
     MailBatch,
-    OpenNote,
-    OpenReview,
-    OperationRow,
-    SendRow,
     SessionRow,
 )
-from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME as OUTLINE_FILENAME
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind, EventState
-from chamberlain.domain.grant_rules import parse_ts
-from chamberlain.limits import TOTAL_ARTIFACT_BYTES
+from chamberlain.store.schema import get_state
 
 _EVENT_COLUMNS = (
     "handle, kind, subject, dedupe_key, priority, summary, attrs_json, state, detected_at, "
@@ -296,15 +282,15 @@ def write_health(
     fresh_as_of: str | None,
 ) -> bool:
     """Record health for a source that has a `sources` row; False when it has none."""
-    if db.execute("SELECT 1 FROM sources WHERE id = ?", (source,)).fetchone() is None:
-        return False
-    db.execute(
-        "INSERT INTO source_health (source_id, state, checked_at, fresh_as_of) VALUES (?, ?, ?, ?) "
-        "ON CONFLICT (source_id) DO UPDATE SET state = excluded.state, "
-        "checked_at = excluded.checked_at, fresh_as_of = excluded.fresh_as_of",
-        (source, state.value, checked_at, fresh_as_of),
+    return bool(
+        db.execute(
+            "INSERT INTO source_health (source_id, state, checked_at, fresh_as_of) "
+            "SELECT id, ?, ?, ? FROM sources WHERE id = ? "
+            "ON CONFLICT (source_id) DO UPDATE SET state = excluded.state, "
+            "checked_at = excluded.checked_at, fresh_as_of = excluded.fresh_as_of",
+            (state.value, checked_at, fresh_as_of, source),
+        ).rowcount
     )
-    return True
 
 
 def read_health(db: sqlite3.Connection) -> dict[str, HealthState]:
@@ -312,227 +298,8 @@ def read_health(db: sqlite3.Connection) -> dict[str, HealthState]:
     return {r["source_id"]: HealthState(r["state"]) for r in rows}
 
 
-# --- reads of other tracks' tables (A-8) ------------------------------------
-
-
-def due_actions(db: sqlite3.Connection, now: str) -> list[ActionRow]:
-    """Open actions on open cards that are due, or whose snooze has ended."""
-    rows = db.execute(
-        "SELECT a.handle, a.card, a.due_at, a.snooze_until FROM actions a "
-        "JOIN cards c ON c.handle = a.card WHERE a.state = 'open' AND c.state = 'open' "
-        "AND ((a.due_at IS NOT NULL AND a.due_at <= ?) "
-        "OR (a.snooze_until IS NOT NULL AND a.snooze_until <= ?))",
-        (now, now),
-    )
-    return [ActionRow(r["handle"], r["card"], r["due_at"], r["snooze_until"]) for r in rows]
-
-
-def cards_needing_review(db: sqlite3.Connection, now: str) -> list[CardRow]:
-    rows = db.execute(
-        "SELECT c.handle, c.title, c.review_at, c.over_cap, EXISTS ("
-        "SELECT 1 FROM imported_context i JOIN artifacts a ON a.handle = i.artifact "
-        "JOIN artifact_owners o ON o.artifact = a.handle AND o.owner_kind = 'card' "
-        "AND o.owner = c.handle WHERE i.card = c.handle AND a.state = 'live' "
-        "AND a.expires_at > ?) AS has_context FROM cards c WHERE c.state = 'open' "
-        "AND (c.over_cap = 1 OR (c.review_at IS NOT NULL AND c.review_at <= ?))",
-        (now, now),
-    )
-    return [
-        CardRow(
-            r["handle"], r["title"], r["review_at"], bool(r["over_cap"]), bool(r["has_context"])
-        )
-        for r in rows
-    ]
-
-
-def complex_decisions(db: sqlite3.Connection, since: str) -> list[ComplexDecision]:
-    """Answers the owner gave to a larger-limit request since `since`, for open cards."""
-    rows = db.execute(
-        "SELECT x.card, x.state, x.decided_at, x.blocked_until FROM complex_cards x "
-        "JOIN cards c ON c.handle = x.card WHERE c.state = 'open' "
-        "AND x.state IN ('approved', 'declined') AND x.decided_at >= ? ORDER BY x.card",
-        (since,),
-    )
-    return [
-        ComplexDecision(r["card"], r["state"], r["decided_at"], r["blocked_until"]) for r in rows
-    ]
-
-
-def open_cards(db: sqlite3.Connection) -> list[CardRow]:
-    rows = db.execute("SELECT handle, title, review_at, over_cap FROM cards WHERE state = 'open'")
-    return [CardRow(r["handle"], r["title"], r["review_at"], bool(r["over_cap"])) for r in rows]
-
-
-def card_links(db: sqlite3.Connection) -> dict[str, str]:
-    """Linked message handle and Message-ID to card, for open cards."""
-    rows = db.execute(
-        "SELECT l.ref, l.internet_message_id, l.card FROM card_links l "
-        "JOIN cards c ON c.handle = l.card WHERE c.state = 'open'"
-    )
-    found: dict[str, str] = {}
-    for r in rows:
-        found[r["ref"]] = r["card"]
-        if r["internet_message_id"]:
-            found[r["internet_message_id"]] = r["card"]
-    return found
-
-
-def grants_awaiting_human(db: sqlite3.Connection) -> list[GrantRow]:
-    rows = db.execute(
-        "SELECT handle, state, requirement, card FROM grants WHERE state = 'proposed' "
-        "AND requirement = 'human_confirmation'"
-    )
-    return [GrantRow(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
-
-
-def grants_for_review(db: sqlite3.Connection, now: str) -> list[GrantRow]:
-    rows = db.execute(
-        "SELECT handle, state, requirement, card FROM grants WHERE kind = 'standing' AND "
-        "((state IN ('active', 'suspended') AND review_at IS NOT NULL AND review_at <= ?) "
-        "OR state = 'expired')",
-        (now,),
-    )
-    return [GrantRow(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
-
-
-_RECHECKED = "(o.kind = 'mail.send' AND o.state = 'uncertain' AND o.recheck_result IS NOT NULL)"
-
-
-def uncertain_operations(db: sqlite3.Connection, before: str) -> list[OperationRow]:
-    """Writes the harness could not settle in 24 hours: the agent is told once (A-4).
-
-    `before` is the dispatch time they must be older than. A write from the old harness (no
-    stored request) is never listed: it is closed at import. A send the look found missing or
-    stuck is listed by `rechecked_sends` instead.
-    """
-    rows = db.execute(
-        "SELECT o.handle, o.kind, o.state FROM operations o WHERE o.state = 'uncertain' "
-        "AND o.intent_json IS NOT NULL AND o.dispatched_at <= ? "
-        f"AND NOT {_RECHECKED} ORDER BY o.created_at, o.handle",
-        (before,),
-    )
-    return [OperationRow(r["handle"], r["kind"], r["state"]) for r in rows]
-
-
-def rechecked_sends(db: sqlite3.Connection) -> list[SendRow]:
-    """Uncertain sends whose 24-hour look found them missing or queued: the agent decides.
-
-    They stay in this list until a person or the agent settles them; nothing closes them.
-    """
-    rows = db.execute(
-        "SELECT o.handle, o.recheck_result, o.card, o.source_id, o.intent_json, o.dispatched_at, "
-        "o.created_at FROM operations o WHERE "
-        f"{_RECHECKED} AND o.recheck_result IN ('missing', 'queued') "
-        "ORDER BY o.created_at, o.handle"
-    ).fetchall()
-    found: list[SendRow] = []
-    for r in rows:
-        try:
-            parsed: object = json.loads(r["intent_json"] or "{}")
-        except ValueError:
-            parsed = {}
-        intent: dict[str, object] = (
-            cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
-        )
-        to: list[str] = []
-        for part in ("to", "cc", "bcc"):
-            listed = intent.get(part)
-            if isinstance(listed, list):
-                to.extend(str(a) for a in cast(list[object], listed) if isinstance(a, str))
-        found.append(
-            SendRow(
-                r["handle"],
-                r["recheck_result"],
-                r["card"],
-                tuple(to),
-                str(intent.get("subject", "")),
-                parse_ts(r["dispatched_at"] or r["created_at"]),
-                r["source_id"],
-            )
-        )
-    return found
-
-
-def _system(db: sqlite3.Connection, key: str) -> str | None:
-    row = db.execute("SELECT value FROM system_state WHERE key = ?", (key,)).fetchone()
-    return None if row is None else str(row["value"])
-
-
-def over_budget(db: sqlite3.Connection) -> list[BudgetRow]:
-    """Memory writes `memory.over_budget` as "0" or "<scope>:<bytes>/<limit>[,...]"."""
-    value = _system(db, "memory.over_budget")
-    if value is None or value in ("", "0"):
-        return []
-    found: list[BudgetRow] = []
-    for part in value.split(","):
-        scope, _, figures = part.rpartition(":")
-        used, _, limit = figures.partition("/")
-        if used.isdigit() and limit.isdigit():
-            card = scope if scope.startswith("card_") else None
-            found.append(BudgetRow(card, int(used), int(limit)))
-    if not found:
-        found.append(BudgetRow(None, 0, TOTAL_ARTIFACT_BYTES))
-    return found
-
-
-def orphan_batch(db: sqlite3.Connection) -> tuple[str | None, int]:
-    """Latest scan with held orphans, and how many are held (M-26)."""
-    scan = _system(db, "memory.last_orphan_scan_at")
-    if scan is None:
-        return None, 0
-    row = db.execute(
-        "SELECT COUNT(*) AS n FROM quarantine WHERE state = 'held' AND found_at = ?", (scan,)
-    ).fetchone()
-    return scan, int(row["n"])
-
-
-def due_runs(db: sqlite3.Connection) -> list[DueRun]:
-    """Passes that are due or running; the runs track writes `runs` and `schedules`."""
-    rows = db.execute(
-        "SELECT r.handle, r.schedule, s.kind, r.day, r.state, "
-        "(SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
-        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename = :outline "
-        " ORDER BY a.created_at DESC LIMIT 1) AS outline, "
-        "EXISTS (SELECT 1 FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
-        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename IS NOT :outline) "
-        " AS has_report "
-        "FROM runs r JOIN schedules s ON s.name = r.schedule "
-        "WHERE r.state IN ('due', 'running') ORDER BY r.due_at, r.handle",
-        {"outline": OUTLINE_FILENAME},
-    )
-    return [
-        DueRun(
-            r["handle"],
-            r["schedule"],
-            r["kind"],
-            r["day"],
-            outline=r["outline"],
-            state=r["state"],
-            has_report=bool(r["has_report"]),
-        )
-        for r in rows
-    ]
-
-
-def open_notes(db: sqlite3.Connection, since: str) -> list[OpenNote]:
-    rows = db.execute(
-        "SELECT id, text FROM user_notes WHERE state = 'open' AND created_at >= ? ORDER BY id",
-        (since,),
-    )
-    return [OpenNote(int(r["id"]), r["text"]) for r in rows]
-
-
-def open_reviews(db: sqlite3.Connection) -> list[OpenReview]:
-    rows = db.execute("SELECT id, new_patterns FROM review_rounds WHERE state = 'open' ORDER BY id")
-    return [OpenReview(int(r["id"]), int(r["new_patterns"])) for r in rows]
-
-
-def update_tag(db: sqlite3.Connection) -> str | None:
-    return _system(db, "runs.update_tag") or None
-
-
 def last_tick(db: sqlite3.Connection) -> str | None:
-    return _system(db, "attention.last_tick_at")
+    return get_state(db, "attention.last_tick_at")
 
 
 # --- mail watermark and the batch awaiting triage (0060, 0120) ----------------------------
@@ -769,26 +536,6 @@ def mail_held(db: sqlite3.Connection) -> list[tuple[str, Held]]:
     ]
 
 
-def linked_message_refs(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
-    """(card, source, locator) of messages linked to open cards, newest links first."""
-    rows = db.execute(
-        "SELECT l.card AS card, r.source_id AS source_id, r.locator AS locator "
-        "FROM card_links l JOIN cards c ON c.handle = l.card AND c.state = 'open' "
-        "JOIN refs r ON r.handle = l.ref AND r.kind = 'message' ORDER BY l.created_at DESC"
-    )
-    return [(r["card"], r["source_id"], r["locator"]) for r in rows]
-
-
-def sent_recipients(db: sqlite3.Connection) -> list[tuple[str, str]]:
-    """(card, intent JSON) of sends made under open cards."""
-    rows = db.execute(
-        "SELECT o.card AS card, o.intent_json AS intent FROM operations o "
-        "JOIN cards c ON c.handle = o.card AND c.state = 'open' "
-        "WHERE o.kind = 'mail.send' AND o.intent_json IS NOT NULL"
-    )
-    return [(r["card"], r["intent"]) for r in rows]
-
-
 # --- mail folder sync (0150) ---------------------------------------------------------------
 
 
@@ -910,27 +657,7 @@ def sync_failures(db: sqlite3.Connection) -> list[tuple[str, SyncFolder]]:
     ]
 
 
-@dataclass(frozen=True)
-class PresyncSchedule:
-    """A scheduled pass the tick may sync ahead of (the `schedules` table, runs track)."""
-
-    at_local: str
-    weekdays: frozenset[int]
-    zone: str
-    minutes: int
-
-
-def presync_schedules(db: sqlite3.Connection) -> list[PresyncSchedule]:
-    rows = db.execute(
-        "SELECT at_local, weekdays, zone, presync_minutes FROM schedules "
-        "WHERE enabled = 1 AND presync_minutes > 0"
+def count_live_events(db: sqlite3.Connection) -> int:
+    return int(
+        db.execute("SELECT count(*) FROM events WHERE state IN ('new', 'delivered')").fetchone()[0]
     )
-    return [
-        PresyncSchedule(
-            r["at_local"],
-            frozenset(int(d) for d in r["weekdays"].split(",") if d),
-            r["zone"],
-            r["presync_minutes"],
-        )
-        for r in rows
-    ]

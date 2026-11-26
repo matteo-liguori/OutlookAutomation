@@ -9,11 +9,11 @@ import pytest
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.contacts import ContactsPort
 from chamberlain.ports.mail import MailPort
-from chamberlain.testing.calendar_contract import CalendarPortContract
-from chamberlain.testing.contacts_contract import ContactsPortContract
-from chamberlain.testing.fake_rigs import FakeCalendarRig, FakeContactsRig, FakeMailRig
-from chamberlain.testing.mail_contract import MailPortContract
-from chamberlain.testing.rigs import CalendarRig, ContactsRig, MailRig
+from support.calendar_contract import CalendarPortContract
+from support.contacts_contract import ContactsPortContract
+from support.fake_rigs import FakeCalendarRig, FakeContactsRig, FakeMailRig
+from support.mail_contract import MailPortContract
+from support.rigs import CalendarRig, ContactsRig, MailRig
 
 
 class TestFakeMail(MailPortContract):

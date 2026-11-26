@@ -8,7 +8,7 @@ Contract: docs/contracts/02-tools.md (`open`, T-6, T-9) and 06-memory.md
 from chamberlain.app.context import Context, Result
 from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.domain.canonical import sha256_bytes
-from chamberlain.domain.events import EventKind
+from chamberlain.domain.events import EventKind, EventState
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.domain.intents import IntentKind
@@ -20,12 +20,11 @@ from chamberlain.domain.operations import (
     recheck_text,
 )
 from chamberlain.domain.recurrence import describe
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.limits import ATTACHMENT_TEXT_MAX_BYTES
 from chamberlain.memory import attachment_text, refs, repo
-from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.retrieval import one_line
-from chamberlain.memory.timeutil import parse
 from chamberlain.ports import MailPort
 from chamberlain.review.rounds import brief
 from chamberlain.schema.envelope import Content, ContentKind
@@ -35,7 +34,6 @@ from chamberlain.schema.tools import (
     AttachmentInfo,
     CalendarEventView,
     ContactView,
-    EventState,
     EventView,
     EvidenceView,
     GrantView,
@@ -127,7 +125,7 @@ def _evidence(ctx: Context, handle: str) -> OpenResponse:
 
 
 def _artifact(ctx: Context, request: OpenRequest) -> OpenResponse:
-    store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
+    store = ctx.services.artifacts
     row = repo.get_artifact(ctx.db, request.handle)
     if row is None:
         raise _unknown()
@@ -259,7 +257,7 @@ def _header_text(message: Message) -> str:
         f"To: {names(message.to)}",
         f"Cc: {names(message.cc)}",
         f"Subject: {message.subject}",
-        f"Date: {message.date.strftime('%Y-%m-%dT%H:%M:%SZ')}",
+        f"Date: {ts(message.date)}",
         f"Message-ID: {message.internet_message_id}",
     ]
     if message.in_reply_to:

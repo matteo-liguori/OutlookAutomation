@@ -18,6 +18,7 @@ import pytest
 
 from chamberlain.app.context import Context
 from chamberlain.attention import older, repo, tick, watermark
+from chamberlain.attention.suggest import Suggester
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.connectors.fake.mail import FakeMail
 from chamberlain.connectors.fake.world import Fault
@@ -101,6 +102,28 @@ def instrument(fake: FakeProvider) -> dict[str, Any]:
 def run_tick(ctx: Context, clock: ManualClock) -> None:
     clock.advance(seconds=61)
     tick.tick(ctx, force=True)
+
+
+def test_a20_a_failed_scan_commit_keeps_the_frontier_and_leaves_no_refs(
+    ctx: Context, fake: FakeProvider, seed_sources: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert watermark.scan(ctx, SOURCE, HealthState.OK, Suggester(ctx)).complete
+    before = repo.watermark(ctx.db, SOURCE)
+    fake.mail.add_message(SOURCE, internet_message_id="<scan-rollback@x>")
+
+    def fail_save(*args: object, **kwargs: object) -> None:
+        raise OSError("store unavailable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(repo, "save_scan", fail_save)
+        with pytest.raises(OSError, match="store unavailable"):
+            watermark.scan(ctx, SOURCE, HealthState.OK, Suggester(ctx))
+    assert repo.watermark(ctx.db, SOURCE) == before
+    assert keys_seen(ctx) == {}
+    assert ctx.db.execute("SELECT count(*) FROM refs").fetchone()[0] == 0
+
+    assert watermark.scan(ctx, SOURCE, HealthState.OK, Suggester(ctx)).complete
+    assert keys_seen(ctx) == {"scan-rollback@x": False}
 
 
 def owner_says_yes(ctx: Context) -> None:

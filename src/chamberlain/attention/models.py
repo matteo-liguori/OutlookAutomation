@@ -11,7 +11,10 @@ from chamberlain.domain.events import EventKind, EventState
 from chamberlain.domain.grants import Requirement
 from chamberlain.domain.intents import IntentKind
 from chamberlain.limits import SUMMARY_MAX
+from chamberlain.memory.repo import ActionRow, BudgetRow, CardRow, ComplexDecision
+from chamberlain.runs.repo import DueRun, OpenNote
 from chamberlain.schema.base import CardHandle, Model, SourceId
+from chamberlain.writes.repo import GrantAlert, OperationAlert, SendRow
 
 
 class EventAttrs(Model):
@@ -79,72 +82,6 @@ class SessionRow:
 
 
 @dataclass(frozen=True)
-class ActionRow:
-    handle: str
-    card: str
-    due_at: str | None
-    snooze_until: str | None
-
-
-@dataclass(frozen=True)
-class CardRow:
-    handle: str
-    title: str
-    review_at: str | None
-    over_cap: bool
-    has_context: bool = False
-    """The card still holds notes carried over from the old system (M-35)."""
-
-
-@dataclass(frozen=True)
-class ComplexDecision:
-    """The owner's recent answer to a request for a larger card limit."""
-
-    card: str
-    state: str
-    decided_at: str
-    blocked_until: str | None
-
-
-@dataclass(frozen=True)
-class GrantRow:
-    handle: str
-    state: str
-    requirement: str
-    card: str | None
-
-
-@dataclass(frozen=True)
-class OperationRow:
-    handle: str
-    kind: str
-    state: str
-
-
-@dataclass(frozen=True)
-class SendRow:
-    """An uncertain mail send whose one 24-hour look found it missing or stuck (W-37)."""
-
-    handle: str
-    result: str
-    """`missing` or `queued` (waiting in the Outbox or Drafts)."""
-    card: str | None
-    recipients: tuple[str, ...]
-    subject: str
-    dispatched_at: datetime
-    source: str
-
-
-@dataclass(frozen=True)
-class BudgetRow:
-    """`scope` is a card handle or None for the global total."""
-
-    scope: str | None
-    bytes_used: int
-    limit: int
-
-
-@dataclass(frozen=True)
 class MailBatch:
     """New mail of one source awaiting triage: counts and times only, never text (E-8)."""
 
@@ -197,28 +134,6 @@ class SourceSnapshot:
 
 
 @dataclass(frozen=True)
-class DueRun:
-    """A scheduled pass that is due or in progress (the `runs` table, runs track)."""
-
-    handle: str
-    schedule: str
-    kind: str
-    day: str
-    outline: str | None = None
-    """The stored item that tells the agent what to write; set once a session works the pass."""
-    state: str = "due"
-    has_report: bool = False
-
-
-@dataclass(frozen=True)
-class OpenNote:
-    """A note the person left in the viewer (the `user_notes` table, runs track)."""
-
-    id: int
-    text: str
-
-
-@dataclass(frozen=True)
 class CalendarSlot:
     """One of the owner's events in the scanned window: where and when, never its text (E-8).
 
@@ -265,9 +180,9 @@ class DetectorInput:
     """Handles and Message-IDs already linked to a card."""
     linked_cards: dict[str, str] = field(default_factory=lambda: {})
     """Linked handle or Message-ID to card handle."""
-    grants: tuple[GrantRow, ...] = ()
-    review_grants: tuple[GrantRow, ...] = ()
-    operations: tuple[OperationRow, ...] = ()
+    grants: tuple[GrantAlert, ...] = ()
+    review_grants: tuple[GrantAlert, ...] = ()
+    operations: tuple[OperationAlert, ...] = ()
     sends: tuple[SendRow, ...] = ()
     budgets: tuple[BudgetRow, ...] = ()
     orphan_batch: str | None = None

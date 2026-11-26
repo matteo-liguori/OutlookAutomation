@@ -13,6 +13,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from chamberlain.domain.capabilities import HealthState, SourceHealth
+from chamberlain.domain.timefmt import ts
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.health import active_health_checks_allowed
 from chamberlain.schema.safelog import log_failure
@@ -31,7 +32,7 @@ LEASE_FOR = timedelta(minutes=10)
 
 
 def _stamp(value: datetime) -> str:
-    return value.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(value)
 
 
 def _recent(value: str | None, now: datetime) -> bool:

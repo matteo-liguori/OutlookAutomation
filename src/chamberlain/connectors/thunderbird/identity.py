@@ -7,12 +7,11 @@ never a session integer (P-6).
 
 import base64
 import json
-import re
 from dataclasses import dataclass
 from email.utils import parseaddr
 from typing import cast
 
-from chamberlain.domain.mail import Address
+from chamberlain.domain.mail import Address, bare
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 LOCATOR_PREFIX = "tb:"
@@ -26,14 +25,6 @@ class MessageLocator:
     folder_id: str
     message_id: str
     """Bare Message-ID, without angle brackets."""
-
-
-def bare(message_id: str) -> str:
-    """The Message-ID as the add-on uses it: no angle brackets."""
-    text = message_id.strip()
-    if text.startswith("<") and text.endswith(">"):
-        return text[1:-1]
-    return text
 
 
 def bracketed(message_id: str) -> str:
@@ -100,11 +91,6 @@ def _unknown_contact(detail: str) -> ChamberlainError:
     return ChamberlainError(
         ErrorCode.REQUEST_UNKNOWN_HANDLE, "That contact locator is not recognised.", detail=detail
     )
-
-
-def normalise_subject(text: str) -> str:
-    text = re.sub(r"^(?:(?:re|fw|fwd)\s*:\s*)+", "", text, flags=re.IGNORECASE)
-    return " ".join(text.split()).lower()
 
 
 def normalise_body(text: str) -> str:

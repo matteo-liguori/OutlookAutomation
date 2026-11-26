@@ -10,19 +10,17 @@ from chamberlain.domain.calendar import CalendarEvent
 from chamberlain.domain.capabilities import Capability, CapabilityName
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import (
-    AttachmentRef,
     CalendarCreate,
     CalendarDelete,
     CalendarRespond,
     CalendarUpdate,
     IntentKind,
-    MailDraftSave,
     MailDraftUpdate,
     MailMove,
-    MailSend,
     MailTrash,
     OutsideAction,
     WriteIntent,
+    attachments_of,
 )
 from chamberlain.domain.operations import (
     DispatchResult,
@@ -120,12 +118,6 @@ KINDS: Final = {
     IntentKind.CALENDAR_RESPOND: Kind(_CALENDAR_WRITE, ("event_ref",), calendar=True),
     IntentKind.OUTSIDE_ACTION: Kind(None, terminal_repeat=True),
 }
-
-
-def attachments_of(intent: WriteIntent) -> tuple[AttachmentRef, ...]:
-    return (
-        intent.attachments if isinstance(intent, MailSend | MailDraftSave | MailDraftUpdate) else ()
-    )
 
 
 def capability(ctx: Context, intent: WriteIntent) -> Capability:

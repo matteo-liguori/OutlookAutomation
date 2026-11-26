@@ -16,7 +16,7 @@ from typing import Any, cast
 from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind
-from chamberlain.domain.operations import RELEASING_STATES, OperationState
+from chamberlain.domain.operations import RELEASING_STATES, OperationState, outside_details
 from chamberlain.domain.senders import AuthorisedSenders
 from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, get_state
 from chamberlain.writes.models import GrantRow, OperationRow
@@ -697,3 +697,176 @@ def audit_delete_through(db: sqlite3.Connection, seq: int) -> int:
 
 def audit_count(db: sqlite3.Connection) -> int:
     return int(db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0])
+
+
+@dataclass(frozen=True)
+class GrantAlert:
+    handle: str
+    state: str
+    requirement: str
+    card: str | None
+
+
+@dataclass(frozen=True)
+class OperationAlert:
+    handle: str
+    kind: str
+    state: str
+
+
+@dataclass(frozen=True)
+class SendRow:
+    """An uncertain mail send whose one 24-hour look found it missing or stuck (W-37)."""
+
+    handle: str
+    result: str
+    """`missing` or `queued` (waiting in the Outbox or Drafts)."""
+    card: str | None
+    recipients: tuple[str, ...]
+    subject: str
+    dispatched_at: datetime
+    source: str
+
+
+_RECHECKED = "(o.kind = 'mail.send' AND o.state = 'uncertain' AND o.recheck_result IS NOT NULL)"
+
+
+def grants_awaiting_human(db: sqlite3.Connection) -> list[GrantAlert]:
+    rows = db.execute(
+        "SELECT handle, state, requirement, card FROM grants WHERE state = 'proposed' "
+        "AND requirement = 'human_confirmation'"
+    )
+    return [GrantAlert(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
+
+
+def grants_for_review(db: sqlite3.Connection, now: str) -> list[GrantAlert]:
+    rows = db.execute(
+        "SELECT handle, state, requirement, card FROM grants WHERE kind = 'standing' AND "
+        "((state IN ('active', 'suspended') AND review_at IS NOT NULL AND review_at <= ?) "
+        "OR state = 'expired')",
+        (now,),
+    )
+    return [GrantAlert(r["handle"], r["state"], r["requirement"], r["card"]) for r in rows]
+
+
+def uncertain_operations(db: sqlite3.Connection, before: str) -> list[OperationAlert]:
+    """Writes the harness could not settle in 24 hours: the agent is told once (A-4).
+
+    `before` is the dispatch time they must be older than. A write from the old harness (no
+    stored request) is never listed: it is closed at import. A send the look found missing or
+    stuck is listed by `rechecked_sends` instead.
+    """
+    rows = db.execute(
+        "SELECT o.handle, o.kind, o.state FROM operations o WHERE o.state = 'uncertain' "
+        "AND o.intent_json IS NOT NULL AND o.dispatched_at <= ? "
+        f"AND NOT {_RECHECKED} ORDER BY o.created_at, o.handle",
+        (before,),
+    )
+    return [OperationAlert(r["handle"], r["kind"], r["state"]) for r in rows]
+
+
+def rechecked_sends(db: sqlite3.Connection) -> list[SendRow]:
+    """Uncertain sends whose 24-hour look found them missing or queued: the agent decides.
+
+    They stay in this list until settled.
+    """
+    rows = db.execute(
+        "SELECT o.handle, o.recheck_result, o.card, o.source_id, o.intent_json, o.dispatched_at, "
+        "o.created_at FROM operations o WHERE "
+        f"{_RECHECKED} AND o.recheck_result IN ('missing', 'queued') "
+        "ORDER BY o.created_at, o.handle"
+    ).fetchall()
+    found: list[SendRow] = []
+    for r in rows:
+        try:
+            parsed: object = json.loads(r["intent_json"] or "{}")
+        except ValueError:
+            parsed = {}
+        intent: dict[str, object] = (
+            cast(dict[str, object], parsed) if isinstance(parsed, dict) else {}
+        )
+        to: list[str] = []
+        for part in ("to", "cc", "bcc"):
+            listed = intent.get(part)
+            if isinstance(listed, list):
+                to.extend(str(a) for a in cast(list[object], listed) if isinstance(a, str))
+        found.append(
+            SendRow(
+                r["handle"],
+                r["recheck_result"],
+                r["card"],
+                tuple(to),
+                str(intent.get("subject", "")),
+                parse_ts(r["dispatched_at"] or r["created_at"]),
+                r["source_id"],
+            )
+        )
+    return found
+
+
+def sent_recipients(db: sqlite3.Connection) -> list[tuple[str, str]]:
+    """(card, intent JSON) of sends made under open cards."""
+    rows = db.execute(
+        "SELECT o.card AS card, o.intent_json AS intent FROM operations o "
+        "JOIN cards c ON c.handle = o.card AND c.state = 'open' "
+        "WHERE o.kind = 'mail.send' AND o.intent_json IS NOT NULL"
+    )
+    return [(r["card"], r["intent"]) for r in rows]
+
+
+def audit_between(db: sqlite3.Connection, start: str, end: str, limit: int) -> list[AuditRow]:
+    """Audit rows from `start` up to (not including) `end`, newest first, excluding tool calls."""
+    rows = db.execute(
+        "SELECT * FROM audit_log "
+        "WHERE at >= ? AND at < ? AND kind != 'tool.call' ORDER BY seq DESC LIMIT ?",
+        (start, end, limit),
+    )
+    return [_audit(r) for r in rows]
+
+
+def tool_call_summaries(db: sqlite3.Connection, start: str, end: str | None = None) -> list[str]:
+    sql = "SELECT summary FROM audit_log WHERE kind = 'tool.call' AND at >= ?"
+    params = (start,)
+    if end is not None:
+        sql += " AND at < ?"
+        params = (start, end)
+    return [str(row["summary"]) for row in db.execute(sql, params)]
+
+
+def permission_metric_counts(db: sqlite3.Connection) -> tuple[int, int, int]:
+    row = db.execute(
+        "SELECT "
+        "(SELECT count(*) FROM operations WHERE state IN ('uncertain', 'reconciling')), "
+        "(SELECT count(*) FROM grants WHERE state = 'active'), "
+        "(SELECT count(*) FROM grants WHERE state = 'proposed' "
+        " AND requirement = 'human_confirmation')"
+    ).fetchone()
+    return int(row[0]), int(row[1]), int(row[2])
+
+
+@dataclass(frozen=True)
+class OutsideLine:
+    at: str
+    state: str
+    where: str
+    what: str
+    reported: str
+    card_title: str | None
+
+
+def outside_between(db: sqlite3.Connection, start: str, end: str, limit: int) -> list[OutsideLine]:
+    """Outside actions allowed between `start` and `end`, with the card they belong to (W-47)."""
+    rows = db.execute(
+        "SELECT o.created_at, o.state, o.intent_json, o.receipt_json, c.title AS card_title "
+        "FROM operations o LEFT JOIN cards c ON c.handle = o.card "
+        "WHERE o.kind = 'outside.action' AND o.state <> 'proposed' "
+        "AND o.created_at >= ? AND o.created_at < ? ORDER BY o.created_at DESC LIMIT ?",
+        (start, end, limit),
+    )
+    found: list[OutsideLine] = []
+    for r in rows:
+        where, what, reported = outside_details(r["intent_json"], r["receipt_json"])
+        found.append(
+            OutsideLine(r["created_at"], r["state"], where, what, reported, r["card_title"])
+        )
+    return found

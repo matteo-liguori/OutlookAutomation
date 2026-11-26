@@ -82,6 +82,9 @@ Keep these limits in mind:
   daily count still does; if it is reached the scenario is skipped and says so.
 - Thunderbird must be open and connected. A source that is not healthy is skipped.
 
+During connector changes, run the targeted scenarios for the affected behavior. After the
+changes are complete, run one full certification suite and then stop.
+
 ## What each scenario checks
 
 Mail, once per mailbox unless noted:

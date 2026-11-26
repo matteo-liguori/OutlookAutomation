@@ -13,6 +13,7 @@ from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
+from chamberlain.domain.timefmt import ts
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs.report_repo import LocalEventRow
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -66,7 +67,7 @@ def _day(value: str, field: str) -> date:
 
 
 def _stored(moment: datetime) -> str:
-    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(moment)
 
 
 def build(payload: dict[str, Any], zone: ZoneInfo) -> LocalEventRow:

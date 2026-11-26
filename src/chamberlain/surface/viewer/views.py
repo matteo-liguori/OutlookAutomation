@@ -13,15 +13,18 @@ from zoneinfo import ZoneInfo
 from chamberlain import __version__
 from chamberlain.app.context import Context
 from chamberlain.app.metrics import collect_metrics
+from chamberlain.attention import repo as attention_repo
 from chamberlain.domain.grants import GrantState
 from chamberlain.domain.operations import OperationState, recheck_text
+from chamberlain.domain.timefmt import ts
+from chamberlain.memory import repo as memory_repo
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs.reports import read_reports
 from chamberlain.runs.tuning import NOTE_KEEP
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.migrate import stamp
-from chamberlain.surface.viewer import repo
 from chamberlain.writes import repo as write_repo
+from chamberlain.writes import repo as writes_repo
 from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.models import OperationRow
 from chamberlain.writes.render import describe_intent
@@ -33,7 +36,7 @@ _UTC = ZoneInfo("UTC")
 
 
 def _stored(moment: datetime) -> str:
-    return moment.astimezone(_UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(moment)
 
 
 def overview(ctx: Context) -> dict[str, Any]:
@@ -47,7 +50,7 @@ def overview(ctx: Context) -> dict[str, Any]:
         for g in grants
         if g.state in (GrantState.ACTIVE, GrantState.SUSPENDED)
         and g.review_at is not None
-        and g.review_at.strftime("%Y-%m-%dT%H:%M:%SZ") <= now
+        and ts(g.review_at) <= now
     ]
     return {
         "version": __version__,
@@ -58,13 +61,13 @@ def overview(ctx: Context) -> dict[str, Any]:
         },
         "counts": {
             "active_grants": sum(1 for g in grants if g.state is GrantState.ACTIVE),
-            "open_cards": repo.count_open_cards(db),
-            "live_events": repo.count_live_events(db),
+            "open_cards": memory_repo.count_open_cards(db),
+            "live_events": attention_repo.count_live_events(db),
         },
         "known_recipients": {
             source: write_repo.recipient_counts(db, source) for source in sorted(ctx.sources.mail)
         },
-        "over_budget": repo.over_budget_flag(db),
+        "over_budget": memory_repo.over_budget_flag(db),
     }
 
 
@@ -80,7 +83,7 @@ def work(ctx: Context) -> dict[str, Any]:
                 "over_cap": c.over_cap,
                 "open_actions": c.open_actions,
             }
-            for c in repo.open_cards(ctx.db, LIST_LIMIT)
+            for c in memory_repo.open_cards(ctx.db, LIST_LIMIT)
         ],
         "actions": [
             {
@@ -91,7 +94,7 @@ def work(ctx: Context) -> dict[str, Any]:
                 "due_at": a.due_at,
                 "snooze_until": a.snooze_until,
             }
-            for a in repo.due_actions(ctx.db, until, LIST_LIMIT)
+            for a in memory_repo.upcoming_actions(ctx.db, until, LIST_LIMIT)
         ],
     }
 
@@ -165,9 +168,9 @@ def activity(ctx: Context, zone: str, day: str | None) -> dict[str, Any]:
     """What the assistant and the harness did on one local day, from the audit log."""
     shown, start, end = _day_window(ctx, zone, day)
     calls: Counter[str] = Counter()
-    for summary in repo.tool_call_summaries(ctx.db, start, end):
+    for summary in writes_repo.tool_call_summaries(ctx.db, start, end):
         calls[summary.partition(":")[0]] += 1
-    rows = repo.audit_between(ctx.db, start, end, ACTIVITY_LIMIT)
+    rows = writes_repo.audit_between(ctx.db, start, end, ACTIVITY_LIMIT)
     return {
         "day": shown,
         "tool_calls": dict(sorted(calls.items())),
@@ -242,7 +245,7 @@ def storage(ctx: Context) -> dict[str, Any]:
         "data_root_bytes": metrics.data_root_bytes,
         "open_cards": metrics.open_cards,
         "evidence_rows": metrics.evidence_rows,
-        "over_budget": repo.over_budget_flag(ctx.db),
+        "over_budget": memory_repo.over_budget_flag(ctx.db),
     }
 
 

@@ -17,6 +17,7 @@ from pydantic import JsonValue
 from pydantic.json_schema import models_json_schema
 
 from chamberlain.connectors.thunderbird import frames, protocol
+from chamberlain.connectors.thunderbird.native_host import Deadlines
 from chamberlain.schema.base import Model
 
 _JSON_VALUE: Final = (
@@ -101,8 +102,14 @@ def _object(node: dict[str, JsonValue]) -> str:
 
 
 def render() -> str:
+
     defs = definitions()
-    out = [_HEADER]
+    deadlines = Deadlines()
+    out = [
+        _HEADER,
+        f"const READ_DEADLINE_MS = {int(deadlines.addon_read * 1000):_};\n",
+        f"const WRITE_DEADLINE_MS = {int(deadlines.addon_write * 1000):_};\n",
+    ]
     out.append(_JSON_VALUE)
     for name, node in defs.items():
         if name == "JsonValue":

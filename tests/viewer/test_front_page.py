@@ -13,8 +13,8 @@ from typing import Any
 
 from viewer_rig import CALENDAR, MAIL, Rig
 
-from chamberlain.connectors.fake.world import HealthState
 from chamberlain.domain.calendar import EventFields
+from chamberlain.domain.capabilities import HealthState
 from chamberlain.runs.models import PassKind
 from chamberlain.runs.schedule import ScheduleSpec, set_schedule
 

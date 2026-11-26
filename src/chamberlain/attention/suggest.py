@@ -9,17 +9,14 @@ import json
 import logging
 
 from chamberlain.app.context import Context
-from chamberlain.attention import repo
 from chamberlain.attention.tuning import MAIL_CORRESPONDENT_LOOKUPS, MAIL_HEADER_READS
-from chamberlain.domain.mail import MessageSummary
+from chamberlain.domain.mail import MessageSummary, folded_message_id
+from chamberlain.memory import repo as memory_repo
 from chamberlain.ports.mail import MailPort
 from chamberlain.schema.safelog import log_failure
+from chamberlain.writes import repo as writes_repo
 
 log = logging.getLogger("chamberlain.attention")
-
-
-def _bare(message_id: str) -> str:
-    return message_id.strip().strip("<>").casefold()
 
 
 class Suggester:
@@ -27,15 +24,17 @@ class Suggester:
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
-        self._by_id = {_bare(k): v for k, v in repo.card_links(ctx.db).items() if "@" in k}
-        self._by_handle = repo.card_links(ctx.db)
+        self._by_handle = memory_repo.card_links(ctx.db)
+        self._by_id = {
+            folded_message_id(key): card for key, card in self._by_handle.items() if "@" in key
+        }
         self._reads: dict[str, int] = {}
         self._people: dict[str, dict[str, set[str]]] = {}
 
     def suggest(
-        self, port: MailPort, source: str, handle: str, summary: MessageSummary
+        self, port: MailPort, source: str, handle: str | None, summary: MessageSummary
     ) -> str | None:
-        found = self._by_handle.get(handle)
+        found = self._by_handle.get(handle) if handle is not None else None
         if found is not None:
             return found
         card = self._by_reply_headers(port, source, summary)
@@ -44,11 +43,11 @@ class Suggester:
         return self._by_correspondent(port, source, summary.sender.address)
 
     def suggest_sent(
-        self, port: MailPort, source: str, handle: str, summary: MessageSummary
+        self, port: MailPort, source: str, handle: str | None, summary: MessageSummary
     ) -> str | None:
         """The card a message the owner sent probably belongs to: the thread it answers, else
         the one card its recipients all point to."""
-        found = self._by_handle.get(handle)
+        found = self._by_handle.get(handle) if handle is not None else None
         if found is not None:
             return found
         card = self._by_reply_headers(port, source, summary)
@@ -73,7 +72,7 @@ class Suggester:
             except Exception:
                 log_failure(log, "reading reply headers failed for %s", source)
         for message_id in (in_reply_to, *reversed(references)):
-            card = self._by_id.get(_bare(message_id)) if message_id else None
+            card = self._by_id.get(folded_message_id(message_id)) if message_id else None
             if card is not None:
                 return card
         return None
@@ -82,7 +81,7 @@ class Suggester:
         if source in self._people:
             return self._people[source]
         people: dict[str, set[str]] = {}
-        for card, intent in repo.sent_recipients(self._ctx.db):
+        for card, intent in writes_repo.sent_recipients(self._ctx.db):
             try:
                 data: dict[str, object] = json.loads(intent)
             except ValueError:
@@ -93,7 +92,7 @@ class Suggester:
                 for address in addresses:
                     people.setdefault(str(address).casefold(), set()).add(card)
         looked = 0
-        for card, linked_source, locator in repo.linked_message_refs(self._ctx.db):
+        for card, linked_source, locator in memory_repo.linked_message_refs(self._ctx.db):
             if linked_source != source or looked >= MAIL_CORRESPONDENT_LOOKUPS:
                 continue
             looked += 1

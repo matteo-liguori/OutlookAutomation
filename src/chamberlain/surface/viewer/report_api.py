@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from chamberlain.app.context import Context
+from chamberlain.domain.timefmt import ts
 from chamberlain.runs import appointments, compose, local_events
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs.models import RunRow, RunState
@@ -77,7 +78,7 @@ def front(ctx: Context, chosen: str | None, zone: str) -> dict[str, Any]:
         "earlier": [_entry(r) for r in with_report if r is not shown][:EARLIER_LIMIT],
         "waiting": waiting,
         "appointments_due": due_appointments(ctx),
-        "now": ctx.clock.now().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "now": ts(ctx.clock.now()),
     }
 
 

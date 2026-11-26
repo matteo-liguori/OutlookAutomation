@@ -9,7 +9,6 @@ from hypothesis import strategies as st
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind, MailSend
 from chamberlain.schema.errors import ErrorCode
-from chamberlain.testing.write_rig import MAIL
 from chamberlain.writes.authorise import (
     Allow,
     Decision,
@@ -19,6 +18,7 @@ from chamberlain.writes.authorise import (
     authorise,
 )
 from chamberlain.writes.models import GrantRow, WritePolicy
+from support.write_rig import MAIL
 
 NOW = datetime(2026, 3, 1, 12, 0, tzinfo=UTC)
 SEND = MailSend(source=MAIL, to=("friend@example.org",), subject="s", body="b")

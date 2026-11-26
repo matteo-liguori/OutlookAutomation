@@ -182,10 +182,9 @@ def test_r10_the_hold_of_a_run_ends_with_the_run_row_and_1_related_checks(rig: R
     assert rig.start(purpose="scheduled", scheduled_day=today)["ok"]
 
 
-def test_r10_a_scheduled_session_from_an_earlier_day_stops_and_1_related_checks(
+def test_r10_a_scheduled_session_from_an_earlier_day_leaves_an_incomplete_run(
     rig: Rig,
 ) -> None:
-    # r10_a_scheduled_session_from_an_earlier_day_stops_on_every_tool
     due_at_eight(rig)
     run = repo.recent_runs(rig.ctx.db, 1)[0]
     assert rig.start(purpose="scheduled", scheduled_day=run.day)["ok"]
@@ -195,14 +194,6 @@ def test_r10_a_scheduled_session_from_an_earlier_day_stops_and_1_related_checks(
     assert reply["error"]["code"] == "session.stale"
     run_tick(rig.app)
     assert repo.get_run(rig.ctx.db, run.handle).state is RunState.INCOMPLETE  # type: ignore[union-attr]
-
-    # a_live_chat_never_supersedes_or_is_stopped_by_a_scheduled_run
-    due_at_eight(rig)
-    run = repo.recent_runs(rig.ctx.db, 1)[0]
-    scheduled = rig.start(purpose="scheduled", scheduled_day=run.day)["data"]["session"]
-    chat = rig.start()["data"]["session"]
-    assert chat != scheduled
-    assert rig.rows("SELECT ended_at FROM sessions WHERE handle = ?", scheduled)[0][0] is None
 
 
 def test_a_scheduled_session_that_ends_without_a_report_leaves_an_incomplete_run(

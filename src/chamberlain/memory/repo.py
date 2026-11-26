@@ -10,6 +10,9 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
+from chamberlain.limits import TOTAL_ARTIFACT_BYTES
+from chamberlain.store.schema import get_state
+
 Row = sqlite3.Row
 
 # --- liveness of owners, read from the owning tracks' tables (M-4, M-5) -------
@@ -769,6 +772,22 @@ def find_ref(db: sqlite3.Connection, source: str, kind: str, locator: str) -> Ro
     return row
 
 
+def ref_handles(
+    db: sqlite3.Connection, source: str, kind: str, locators: list[str]
+) -> dict[str, str]:
+    handles: dict[str, str] = {}
+    for offset in range(0, len(locators), 500):
+        group = locators[offset : offset + 500]
+        marks = ",".join("?" for _ in group)
+        rows = db.execute(
+            "SELECT locator, handle FROM refs WHERE source_id = ? AND kind = ? "
+            f"AND locator IN ({marks})",
+            (source, kind, *group),
+        )
+        handles.update((row["locator"], row["handle"]) for row in rows)
+    return handles
+
+
 def refs_by_locator(db: sqlite3.Connection, locator: str, source: str | None) -> list[Row]:
     if source is None:
         rows: list[Row] = db.execute("SELECT * FROM refs WHERE locator = ?", (locator,)).fetchall()
@@ -1027,3 +1046,299 @@ def event_labels_since(db: sqlite3.Connection, day: str) -> list[Row]:
 
 def delete_event_labels_before(db: sqlite3.Connection, day: str) -> int:
     return db.execute("DELETE FROM event_labels WHERE last_day < ?", (day,)).rowcount
+
+
+@dataclass(frozen=True)
+class ActionRow:
+    handle: str
+    card: str
+    due_at: str | None
+    snooze_until: str | None
+
+
+@dataclass(frozen=True)
+class CardRow:
+    handle: str
+    title: str
+    review_at: str | None
+    over_cap: bool
+    has_context: bool = False
+    """The card still holds notes carried over from the old system (M-35)."""
+
+
+@dataclass(frozen=True)
+class ComplexDecision:
+    """The owner's recent answer to a request for a larger card limit."""
+
+    card: str
+    state: str
+    decided_at: str
+    blocked_until: str | None
+
+
+@dataclass(frozen=True)
+class BudgetRow:
+    """`scope` is a card handle or None for the global total."""
+
+    scope: str | None
+    bytes_used: int
+    limit: int
+
+
+def due_actions(db: sqlite3.Connection, now: str) -> list[ActionRow]:
+    """Open actions on open cards that are due, or whose snooze has ended."""
+    rows = db.execute(
+        "SELECT a.handle, a.card, a.due_at, a.snooze_until FROM actions a "
+        "JOIN cards c ON c.handle = a.card WHERE a.state = 'open' AND c.state = 'open' "
+        "AND ((a.due_at IS NOT NULL AND a.due_at <= ?) "
+        "OR (a.snooze_until IS NOT NULL AND a.snooze_until <= ?))",
+        (now, now),
+    )
+    return [ActionRow(r["handle"], r["card"], r["due_at"], r["snooze_until"]) for r in rows]
+
+
+def cards_needing_review(db: sqlite3.Connection, now: str) -> list[CardRow]:
+    rows = db.execute(
+        "SELECT c.handle, c.title, c.review_at, c.over_cap, EXISTS ("
+        "SELECT 1 FROM imported_context i JOIN artifacts a ON a.handle = i.artifact "
+        "JOIN artifact_owners o ON o.artifact = a.handle AND o.owner_kind = 'card' "
+        "AND o.owner = c.handle WHERE i.card = c.handle AND a.state = 'live' "
+        "AND a.expires_at > ?) AS has_context FROM cards c WHERE c.state = 'open' "
+        "AND (c.over_cap = 1 OR (c.review_at IS NOT NULL AND c.review_at <= ?))",
+        (now, now),
+    )
+    return [
+        CardRow(
+            r["handle"], r["title"], r["review_at"], bool(r["over_cap"]), bool(r["has_context"])
+        )
+        for r in rows
+    ]
+
+
+def complex_decisions(db: sqlite3.Connection, since: str) -> list[ComplexDecision]:
+    """Answers the owner gave to a larger-limit request since `since`, for open cards."""
+    rows = db.execute(
+        "SELECT x.card, x.state, x.decided_at, x.blocked_until FROM complex_cards x "
+        "JOIN cards c ON c.handle = x.card WHERE c.state = 'open' "
+        "AND x.state IN ('approved', 'declined') AND x.decided_at >= ? ORDER BY x.card",
+        (since,),
+    )
+    return [
+        ComplexDecision(r["card"], r["state"], r["decided_at"], r["blocked_until"]) for r in rows
+    ]
+
+
+def open_card_summaries(db: sqlite3.Connection) -> list[CardRow]:
+    rows = db.execute("SELECT handle, title, review_at, over_cap FROM cards WHERE state = 'open'")
+    return [CardRow(r["handle"], r["title"], r["review_at"], bool(r["over_cap"])) for r in rows]
+
+
+def card_links(db: sqlite3.Connection) -> dict[str, str]:
+    """Linked message handle and Message-ID to card, for open cards."""
+    rows = db.execute(
+        "SELECT l.ref, l.internet_message_id, l.card FROM card_links l "
+        "JOIN cards c ON c.handle = l.card WHERE c.state = 'open'"
+    )
+    found: dict[str, str] = {}
+    for r in rows:
+        found[r["ref"]] = r["card"]
+        if r["internet_message_id"]:
+            found[r["internet_message_id"]] = r["card"]
+    return found
+
+
+def over_budget(db: sqlite3.Connection) -> list[BudgetRow]:
+    """Memory writes `memory.over_budget` as "0" or "<scope>:<bytes>/<limit>[,...]"."""
+    value = over_budget_flag(db)
+    if value in ("", "0"):
+        return []
+    found: list[BudgetRow] = []
+    for part in value.split(","):
+        scope, _, figures = part.rpartition(":")
+        used, _, limit = figures.partition("/")
+        if used.isdigit() and limit.isdigit():
+            card = scope if scope.startswith("card_") else None
+            found.append(BudgetRow(card, int(used), int(limit)))
+    if not found:
+        found.append(BudgetRow(None, 0, TOTAL_ARTIFACT_BYTES))
+    return found
+
+
+def orphan_batch(db: sqlite3.Connection) -> tuple[str | None, int]:
+    """Latest scan with held orphans, and how many are held (M-26)."""
+    scan = get_state(db, "memory.last_orphan_scan_at")
+    if scan is None:
+        return None, 0
+    row = db.execute(
+        "SELECT COUNT(*) AS n FROM quarantine WHERE state = 'held' AND found_at = ?", (scan,)
+    ).fetchone()
+    return scan, int(row["n"])
+
+
+def linked_message_refs(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    """(card, source, locator) of messages linked to open cards, newest links first."""
+    rows = db.execute(
+        "SELECT l.card AS card, r.source_id AS source_id, r.locator AS locator "
+        "FROM card_links l JOIN cards c ON c.handle = l.card AND c.state = 'open' "
+        "JOIN refs r ON r.handle = l.ref AND r.kind = 'message' ORDER BY l.created_at DESC"
+    )
+    return [(r["card"], r["source_id"], r["locator"]) for r in rows]
+
+
+@dataclass(frozen=True)
+class CardLine:
+    handle: str
+    title: str
+    review_at: str | None
+    over_cap: bool
+    open_actions: int
+
+
+@dataclass(frozen=True)
+class ActionLine:
+    handle: str
+    card: str
+    card_title: str
+    title: str
+    due_at: str | None
+    snooze_until: str | None
+
+
+@dataclass(frozen=True)
+class CardDetail:
+    handle: str
+    title: str
+    goal: str
+    position: str
+    review_at: str | None
+    over_cap: bool
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class OpenAction:
+    handle: str
+    card: str
+    title: str
+    due_at: str | None
+    snooze_until: str | None
+
+
+@dataclass(frozen=True)
+class ClosedAction:
+    handle: str
+    card: str
+    card_title: str
+    title: str
+    state: str
+    outcome: str | None
+    closed_at: str
+
+
+def open_cards(db: sqlite3.Connection, limit: int) -> list[CardLine]:
+    rows = db.execute(
+        "SELECT c.handle, c.title, c.review_at, c.over_cap, "
+        "(SELECT count(*) FROM actions a WHERE a.card = c.handle AND a.state = 'open') AS n "
+        "FROM cards c WHERE c.state = 'open' ORDER BY c.updated_at DESC, c.handle LIMIT ?",
+        (limit,),
+    )
+    return [
+        CardLine(r["handle"], r["title"], r["review_at"], bool(r["over_cap"]), int(r["n"]))
+        for r in rows
+    ]
+
+
+def count_open_cards(db: sqlite3.Connection) -> int:
+    return int(db.execute("SELECT count(*) FROM cards WHERE state = 'open'").fetchone()[0])
+
+
+def upcoming_actions(db: sqlite3.Connection, until: str, limit: int) -> list[ActionLine]:
+    """Open actions due by `until` (a stored timestamp), soonest first."""
+    return _action_lines(db, "a.due_at <= ?", (until, limit))
+
+
+def over_budget_flag(db: sqlite3.Connection) -> str:
+    value = get_state(db, "memory.over_budget")
+    return "0" if value is None else value
+
+
+def card_details(db: sqlite3.Connection, limit: int) -> list[CardDetail]:
+    rows = db.execute(
+        "SELECT handle, title, goal, position, review_at, over_cap, updated_at FROM cards "
+        "WHERE state = 'open' ORDER BY updated_at DESC, handle LIMIT ?",
+        (limit,),
+    )
+    return [
+        CardDetail(
+            r["handle"],
+            r["title"],
+            r["goal"],
+            r["position"],
+            r["review_at"],
+            bool(r["over_cap"]),
+            r["updated_at"],
+        )
+        for r in rows
+    ]
+
+
+def open_actions_of(db: sqlite3.Connection, cards: list[str]) -> list[OpenAction]:
+    """Open actions of the given cards, the soonest due first (those with no date last)."""
+    if not cards:
+        return []
+    marks = ", ".join("?" for _ in cards)
+    rows = db.execute(
+        "SELECT handle, card, title, due_at, snooze_until FROM actions "
+        f"WHERE state = 'open' AND card IN ({marks}) "
+        "ORDER BY due_at IS NULL, due_at, handle",
+        cards,
+    )
+    return [
+        OpenAction(r["handle"], r["card"], r["title"], r["due_at"], r["snooze_until"]) for r in rows
+    ]
+
+
+def dated_actions(db: sqlite3.Connection, start: str, end: str, limit: int) -> list[ActionLine]:
+    """Open actions due in `[start, end)`, for the calendar's important dates."""
+    return _action_lines(db, "a.due_at >= ? AND a.due_at < ?", (start, end, limit))
+
+
+def _action_lines(
+    db: sqlite3.Connection, dates: str, params: tuple[str | int, ...]
+) -> list[ActionLine]:
+    rows = db.execute(
+        "SELECT a.handle, a.card, c.title AS card_title, a.title, a.due_at, a.snooze_until "
+        "FROM actions a JOIN cards c ON c.handle = a.card "
+        f"WHERE a.state = 'open' AND {dates} ORDER BY a.due_at, a.handle LIMIT ?",
+        params,
+    )
+    return [
+        ActionLine(
+            r["handle"], r["card"], r["card_title"], r["title"], r["due_at"], r["snooze_until"]
+        )
+        for r in rows
+    ]
+
+
+def closed_actions_between(
+    db: sqlite3.Connection, start: str, end: str, limit: int
+) -> list[ClosedAction]:
+    rows = db.execute(
+        "SELECT a.handle, a.card, c.title AS card_title, a.title, a.state, a.outcome, a.closed_at "
+        "FROM actions a JOIN cards c ON c.handle = a.card "
+        "WHERE a.state IN ('done', 'dropped') AND a.closed_at >= ? AND a.closed_at < ? "
+        "ORDER BY a.closed_at DESC, a.handle LIMIT ?",
+        (start, end, limit),
+    )
+    return [
+        ClosedAction(
+            r["handle"],
+            r["card"],
+            r["card_title"],
+            r["title"],
+            r["state"],
+            r["outcome"],
+            r["closed_at"],
+        )
+        for r in rows
+    ]

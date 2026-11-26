@@ -9,7 +9,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from chamberlain.attention import repo as attention_repo
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.calendar import EventFields
 from chamberlain.domain.grants import GrantState
@@ -19,11 +18,11 @@ from chamberlain.domain.operations import OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.tools import ReconcileRequest
 from chamberlain.store.migrate import stamp
-from chamberlain.testing.write_rig import CALENDAR, MAIL, SESSION, WriteRig
 from chamberlain.writes import repo
 from chamberlain.writes.imported import OperationSummary
 from chamberlain.writes.maintenance import maintain
 from chamberlain.writes.models import OperationRow
+from support.write_rig import CALENDAR, MAIL, SESSION, WriteRig
 
 START = datetime(2026, 3, 1, 10, tzinfo=UTC)
 HANDLE = "op_import0000001"
@@ -219,4 +218,4 @@ def test_an_old_harness_operation_is_never_work_for_the_agent(rig: WriteRig) -> 
     imported(rig, IntentKind.CALENDAR_CREATE, dentist(), source=CALENDAR)
     rig.clock.advance(hours=72)
     before = stamp(rig.clock)
-    assert [o.handle for o in attention_repo.uncertain_operations(rig.db, before)] == []
+    assert [o.handle for o in repo.uncertain_operations(rig.db, before)] == []

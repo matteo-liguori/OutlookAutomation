@@ -8,25 +8,28 @@ rewrite the files after an intended change.
 
 import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 import pytest
 from memory_helpers import SESSION, add_grant, add_operation, blobs, normalise
 
-from chamberlain.app.context import Context
+from chamberlain.app.context import Context, Services
 from chamberlain.app.core import App
 from chamberlain.app.doctor import make_doctor
-from chamberlain.app.doubles import RecordingWriteControl
 from chamberlain.connectors.fake import FakeProvider
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.mail import MailQuery
 from chamberlain.limits import MAX_REPLY_CHARS, PAGE_CHARS
+from chamberlain.memory.artifacts import Budgets
 from chamberlain.memory.handlers import DOCTOR_CHECKS, HANDLERS
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Reply
+from chamberlain.schema.errors import ErrorCode
 from chamberlain.schema.tools import CardResponse, FindResponse, KeepResponse
+from chamberlain.writes import repo as writes_repo
 
 GOLDEN = Path(__file__).parent / "golden"
 
@@ -141,6 +144,7 @@ def test_t10_keep_without_a_live_owner_is_refused_with_a_fix_golden(app: App, ct
     refused = call(app, "keep", kind="artifact", owner=card, reason="r", text="body")
     assert refused.error is not None
     assert refused.error.code.value == "artifact.no_owner"
+
     ended_action = (
         card_of(call(app, "card", op="add_action", card=card, action_fields={"title": "short"}))
         .actions[0]
@@ -150,6 +154,17 @@ def test_t10_keep_without_a_live_owner_is_refused_with_a_fix_golden(app: App, ct
     ended = call(app, "keep", kind="note", owner=ended_action, reason="r", text="late")
     assert ended.error is not None
     assert ended.error.code.value == "artifact.owner_ended"
+
+
+def test_m27_keep_enforces_the_apps_configured_budget(ctx: Context, action: str) -> None:
+    services = Services.bind(
+        ctx.db, ctx.clock, ctx.data_root, policy=ctx.write_policy, budgets=Budgets(total_bytes=4)
+    )
+    app = App(replace(ctx, services=services), HANDLERS)
+    reply = call(app, "keep", kind="artifact", owner=action, reason="draft", text="five!")
+    assert reply.error is not None
+    assert reply.error.code is ErrorCode.STORAGE_OVER_BUDGET
+    assert blobs(ctx.data_root) == set()
 
 
 def test_t11_m20_forget_routes_grants_and_operations_to_writes_and_1_related_checks(
@@ -162,10 +177,12 @@ def test_t11_m20_forget_routes_grants_and_operations_to_writes_and_1_related_che
     operation = call(app, "forget", handle="op_route000000001")
     assert grant.ok
     assert operation.ok
-    writes = ctx.services.writes
-    assert isinstance(writes, RecordingWriteControl)
-    assert writes.revoked == ["grant_route00000001"]
-    assert writes.cancelled == ["op_route000000001"]
+    grant_row = writes_repo.get_grant(ctx.db, "grant_route00000001")
+    op_row = writes_repo.get_operation(ctx.db, "op_route000000001")
+    assert grant_row is not None
+    assert op_row is not None
+    assert grant_row.state.value == "revoked"
+    assert op_row.state.value == "cancelled"
     assert call(app, "forget", handle="card_0123456789abcdef").error is not None
 
     # m20_keep_caches_a_body_and_an_attachment_only_with_an_owner

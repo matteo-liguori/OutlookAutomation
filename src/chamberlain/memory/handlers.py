@@ -1,28 +1,25 @@
 """Tool handlers of the memory track: find, open, keep, forget, card.
 
-Contract: docs/contracts/06-memory.md and 02-tools.md. `app/wiring.py` reads the names below;
-this track fills them and never edits the app package. Handlers call this track's own
-services directly (they own the tables); only `ctx.services.writes` is used to reach grants
-and operations (T-11).
+Contract: docs/contracts/06-memory.md and 02-tools.md (T-8 to T-12).
 """
 
 import sqlite3
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
+from chamberlain.domain.actors import agent_actor
 from chamberlain.domain.artifacts import REPORT_OUTLINE_FILENAME, ArtifactKind
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.handles import HandleKind, handle_kind
 from chamberlain.domain.senders import AuthorisedSenders, Refusal, evaluate, instruction_ref
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.memory import refs
-from chamberlain.memory.artifacts import ArtifactService, Kept, read_import, refuse_data_root
+from chamberlain.memory.artifacts import Kept, read_import, refuse_data_root
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.checks import storage_checks
 from chamberlain.memory.complex_cards import ComplexCards
-from chamberlain.memory.evidence import EvidenceService
 from chamberlain.memory.find import find
 from chamberlain.memory.labels import keep_label
 from chamberlain.memory.reading import open_handle
-from chamberlain.memory.timeutil import parse, ts
 from chamberlain.review.findings import keep_finding
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -39,11 +36,6 @@ from chamberlain.schema.tools import (
 )
 from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, get_state
 
-
-def _actor(ctx: Context) -> str:
-    return f"agent:{ctx.session}" if ctx.session else "agent:none"
-
-
 # --- keep ----------------------------------------------------------------------------------
 
 
@@ -51,9 +43,9 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
     """Store a note, evidence, a label or an artifact under an owner (T-10, M-4)."""
     if request.kind is KeepKind.LABEL:
         return keep_label(ctx, request)
-    if request.kind is KeepKind.FINDING:
-        return keep_finding(ctx, request)
     if request.kind is KeepKind.NOTE:
+        if handle_kind(request.owner) is HandleKind.EVENT:
+            return keep_finding(ctx, request)
         assert request.text is not None
         handle = CardService(ctx.db, ctx.clock).add_note(request.owner, request.text)
         data = request.text.encode()
@@ -66,7 +58,7 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
         return _instruction_evidence(ctx, request)
     if request.kind is KeepKind.EVIDENCE:
         assert request.text is not None
-        handle = EvidenceService(ctx.db, ctx.clock).add(
+        handle = ctx.services.evidence.add(
             text=request.text, owner=request.owner, session=ctx.session
         )
         data = request.text.encode()
@@ -79,7 +71,7 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
         raise ChamberlainError(
             ErrorCode.REQUEST_INVALID, "That file name is the harness's own.", field="filename"
         )
-    store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
+    store = ctx.services.artifacts
     store.require_owner(request.owner)
     data, kind, filename, media_type = _artifact_source(ctx, request)
     kept: Kept = store.keep_bytes(
@@ -129,7 +121,7 @@ def _instruction_evidence(ctx: Context, request: KeepRequest) -> Result:
         )
     except Refusal as refusal:
         audit.append(
-            actor=_actor(ctx),
+            actor=agent_actor(ctx.session),
             kind="instruction.refused",
             subject=handle,
             summary=f"An email from {message.sender.address} was not accepted as an "
@@ -142,14 +134,14 @@ def _instruction_evidence(ctx: Context, request: KeepRequest) -> Result:
             field="from_handle",
         ) from None
     text = f"Authenticated email instruction from {instruction.sender} ({instruction.who})."
-    evidence = EvidenceService(ctx.db, ctx.clock).add(
+    evidence = ctx.services.evidence.add(
         text=text,
         owner=request.owner,
         session=ctx.session,
         ref=instruction_ref(instruction, handle),
     )
     audit.append(
-        actor=_actor(ctx),
+        actor=agent_actor(ctx.session),
         kind="instruction.accepted",
         subject=handle,
         summary=f"Email from {instruction.sender} accepted as an instruction "
@@ -219,15 +211,13 @@ def forget(ctx: Context, request: ForgetRequest) -> Result:
     handle = request.handle
     kind = handle_kind(handle)
     if kind is HandleKind.GRANT:
-        ctx.services.writes.revoke_grant(handle, actor=_actor(ctx))
+        ctx.services.writes.revoke_grant(handle, actor=agent_actor(ctx.session))
         return Result(ForgetResponse(handle=handle, released=True, deleted=False))
     if kind is HandleKind.OPERATION:
-        ctx.services.writes.cancel_operation(handle, actor=_actor(ctx))
+        ctx.services.writes.cancel_operation(handle, actor=agent_actor(ctx.session))
         return Result(ForgetResponse(handle=handle, released=True, deleted=False))
     if kind is HandleKind.ARTIFACT:
-        gone, remaining = ArtifactService(ctx.db, ctx.clock, ctx.data_root).release(
-            handle, request.owner
-        )
+        gone, remaining = ctx.services.artifacts.release(handle, request.owner)
         return Result(
             ForgetResponse(handle=handle, released=True, deleted=gone, remaining_owners=remaining)
         )
@@ -236,7 +226,7 @@ def forget(ctx: Context, request: ForgetRequest) -> Result:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "No such note.")
         return Result(ForgetResponse(handle=handle, released=True, deleted=True))
     if kind is HandleKind.EVIDENCE:
-        deleted, remaining = EvidenceService(ctx.db, ctx.clock).release(handle, request.owner)
+        deleted, remaining = ctx.services.evidence.release(handle, request.owner)
         return Result(
             ForgetResponse(
                 handle=handle, released=True, deleted=deleted, remaining_owners=remaining
@@ -260,7 +250,7 @@ def card(ctx: Context, request: CardRequest) -> Result:
     if request.complex_reason is not None:
         assert request.card is not None
         ComplexCards(ctx.db, ctx.clock, ctx.services.audit).request(
-            request.card, request.complex_reason, _actor(ctx)
+            request.card, request.complex_reason, agent_actor(ctx.session)
         )
         return Result(CardResponse(card=service.view(request.card)))
     match request.op:

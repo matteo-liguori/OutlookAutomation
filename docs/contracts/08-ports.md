@@ -250,7 +250,7 @@ nothing was dispatched twice.
 
 ## Contract suites
 
-`chamberlain.testing.mail_contract.MailPortContract`,
+`tests/support/mail_contract.py`,
 `calendar_contract.CalendarPortContract` and
 `contacts_contract.ContactsPortContract` are pytest base classes. A
 connector plugs in by subclassing and providing a `rig` fixture that

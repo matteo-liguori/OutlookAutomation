@@ -36,7 +36,11 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
 )
 from chamberlain.schema.errors import ChamberlainError
-from chamberlain.testing.write_rig import (
+from chamberlain.writes import repo
+from chamberlain.writes.audit import verify
+from chamberlain.writes.confirm import confirm_grant
+from chamberlain.writes.maintenance import maintain
+from support.write_rig import (
     CALENDAR,
     MAIL,
     SESSION,
@@ -44,10 +48,6 @@ from chamberlain.testing.write_rig import (
     WriteRig,
     make_rig,
 )
-from chamberlain.writes import repo
-from chamberlain.writes.audit import verify
-from chamberlain.writes.confirm import confirm_grant
-from chamberlain.writes.maintenance import maintain
 
 ADDRESSES = ("amy@example.org", "bob@example.org", "new@example.org")
 KNOWN = ADDRESSES[:2]

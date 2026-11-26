@@ -1,7 +1,7 @@
 """What a handler is given, and what it gives back.
 
 Contract: docs/contracts/01-domain.md (D-12: state arrives through Context)
-and docs/contracts/02-tools.md (T-16). Shared file (docs/OWNERSHIP.md).
+and docs/contracts/02-tools.md (T-16).
 """
 
 import sqlite3
@@ -9,9 +9,11 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, Self
 
-from chamberlain.app.services import Services
+from chamberlain.memory.artifacts import ArtifactService, Budgets
+from chamberlain.memory.evidence import EvidenceService
+from chamberlain.memory.refs import RefService
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.contacts import ContactsPort
@@ -21,6 +23,8 @@ from chamberlain.schema.envelope import Coverage, NextStep, Reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.registry import ToolSpec
 from chamberlain.schema.tools import CheckResult, ToolRequest
+from chamberlain.writes.audit import AuditChain
+from chamberlain.writes.control import Control
 from chamberlain.writes.models import WritePolicy
 
 
@@ -31,8 +35,6 @@ class SourceRouter:
     mail: Mapping[str, MailPort] = field(default_factory=dict[str, MailPort])
     calendar: Mapping[str, CalendarPort] = field(default_factory=dict[str, CalendarPort])
     contacts: Mapping[str, ContactsPort] = field(default_factory=dict[str, ContactsPort])
-    demo: frozenset[str] = frozenset()
-    """Source IDs backed by synthetic demo data. Replies are marked while any exist."""
     information_only: frozenset[str] = frozenset()
     """Calendars the owner keeps for information (`commitments: false`): no clash checks."""
 
@@ -85,6 +87,36 @@ class SyncBudget:
     """
 
     started: datetime | None = None
+
+
+@dataclass(frozen=True)
+class Services:
+    audit: AuditChain
+    artifacts: ArtifactService
+    evidence: EvidenceService
+    refs: RefService
+    writes: Control
+
+    @classmethod
+    def bind(
+        cls,
+        db: sqlite3.Connection,
+        clock: Clock,
+        data_root: Path,
+        *,
+        policy: WritePolicy,
+        budgets: Budgets | None = None,
+    ) -> Self:
+        """Bind all services to the same store and clock (S-3)."""
+        artifacts = ArtifactService(db, clock, data_root, budgets)
+        audit = AuditChain(db, clock)
+        return cls(
+            audit=audit,
+            artifacts=artifacts,
+            evidence=EvidenceService(db, clock),
+            refs=RefService(db, clock),
+            writes=Control(db, clock, audit, policy, artifacts),
+        )
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,7 @@ sends only to owned addresses and registers its own cleanup first, so a failure 
 still removes what exists.
 """
 
-from chamberlain.domain.mail import FolderRole
+from chamberlain.domain.mail import FolderRole, folded_message_id
 from chamberlain.livetest.authority import scratch_folder
 from chamberlain.livetest.lab import JSON, Lab, ScenarioFailure, ScenarioSkip, hit_line, text_of
 from chamberlain.livetest.registry import Scope, Target, scenario
@@ -16,10 +16,6 @@ NOT_OWNED = "someone@example.invalid"
 
 def body(lab: Lab, text: str) -> str:
     return f"{lab.marker}\n\n{text}\n\nThis is an automated test message and is safe to delete."
-
-
-def _bare(message_id: str) -> str:
-    return message_id.strip().strip("<>").casefold()
 
 
 def _own_mail(lab: Lab, source: str, subject: str) -> None:
@@ -101,7 +97,7 @@ def reply_thread(lab: Lab, t: Target) -> None:
     lab.used_probe("In-Reply-To header of the arrived reply")
     seen = lab.env.probe.in_reply_to(t.source, inbox[0])
     lab.check(
-        _bare(seen) == _bare(original_id),
+        folded_message_id(seen) == folded_message_id(original_id),
         "the reply's In-Reply-To does not name the original message",
     )
 
@@ -406,14 +402,14 @@ def trash_restore(lab: Lab, t: Target) -> None:
 def find_by_message_id(lab: Lab, t: Target) -> None:
     subject, _, _ = _self_message(lab, t, "find_by_message_id")
     copies = lab.copies(t.source, subject)
-    ids = {_bare(c.message_id) for c in copies}
+    ids = {folded_message_id(c.message_id) for c in copies}
     hits = lab.hits(t.source, subject)
     lab.check(
         len(hits) == len(ids),
         f"{len(ids)} Message-ID(s) in {len(copies)} copies, but find returned {len(hits)} hits",
     )
     for message_id in ids:
-        folders = {c.folder_id for c in copies if _bare(c.message_id) == message_id}
+        folders = {c.folder_id for c in copies if folded_message_id(c.message_id) == message_id}
         if len(folders) > 1:
             lab.check(
                 any("[" in hit_line(hit) for hit in hits),

@@ -17,6 +17,7 @@ from chamberlain.attention import repo
 from chamberlain.attention.models import SessionRow
 from chamberlain.attention.tuning import SESSIONS_KEEP_ENDED
 from chamberlain.domain.handles import HandleKind, new_handle
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import SESSION_IDLE_HOURS
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -69,8 +70,8 @@ def stop_error() -> ChamberlainError:
 
 def end_idle(db: sqlite3.Connection, clock: Clock) -> list[str]:
     """End sessions idle for `SESSION_IDLE_HOURS` and clean up old rows (A-10)."""
-    cutoff = (clock.now() - timedelta(hours=SESSION_IDLE_HOURS)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    keep = (clock.now() - SESSIONS_KEEP_ENDED).strftime("%Y-%m-%dT%H:%M:%SZ")
+    cutoff = ts(clock.now() - timedelta(hours=SESSION_IDLE_HOURS))
+    keep = ts(clock.now() - SESSIONS_KEEP_ENDED)
     with transaction(db):
         idle = repo.idle_sessions(db, cutoff)
         for handle in idle:

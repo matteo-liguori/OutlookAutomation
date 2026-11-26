@@ -7,6 +7,7 @@ follow memory's rules; only the rows that name them are trimmed here.
 from datetime import datetime
 
 from chamberlain.app.context import Context
+from chamberlain.domain.timefmt import ts
 from chamberlain.runs import local_events, repo
 from chamberlain.runs.tuning import NOTE_KEEP, RUN_KEEP
 from chamberlain.store.db import transaction
@@ -21,7 +22,7 @@ def trim_runs(ctx: Context, now: datetime) -> int:
 
 def trim_notes(ctx: Context, now: datetime) -> int:
     """Delete notes 14 days after they were left."""
-    edge = (now - NOTE_KEEP).strftime("%Y-%m-%dT%H:%M:%SZ")
+    edge = ts(now - NOTE_KEEP)
     with transaction(ctx.db):
         return repo.delete_notes_before(ctx.db, edge)
 

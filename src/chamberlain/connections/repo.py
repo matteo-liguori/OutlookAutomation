@@ -10,7 +10,6 @@ _CONNECTOR = {
     "owl": "thunderbird",
     "google": "google_calendar",
     "caldav": "caldav",
-    "demo": "demo",
 }
 
 
@@ -56,3 +55,8 @@ def sync_sources(db: sqlite3.Connection, connections: Connections, now: str) -> 
             )
             changed += 1
     return changed
+
+
+def source_labels(db: sqlite3.Connection) -> dict[str, str]:
+    rows = db.execute("SELECT id, label FROM sources")
+    return {str(r["id"]): str(r["label"]) for r in rows}

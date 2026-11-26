@@ -1,7 +1,7 @@
 """MailPort: what the core may ask of a mail connector.
 
 Contract: docs/contracts/08-ports.md. The executable form is
-`chamberlain.testing.mail_contract.MailPortContract`.
+`tests/support/mail_contract.py`.
 """
 
 from collections.abc import Mapping

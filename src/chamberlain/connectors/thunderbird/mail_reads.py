@@ -11,7 +11,6 @@ from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, typed
 from chamberlain.connectors.thunderbird.identity import (
     MessageLocator,
-    bare,
     bracketed,
     decode_locator,
     emails_only,
@@ -43,6 +42,7 @@ from chamberlain.domain.mail import (
     MailQuery,
     Message,
     MessageSummary,
+    bare,
 )
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.page import Gap, Page

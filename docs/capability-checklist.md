@@ -43,12 +43,12 @@ Regression tests include `tests/thunderbird/test_mail.py::test_w24_mark_read_rep
 
 ## C3 — Write safety
 
-Regression tests include `tests/thunderbird/test_mail.py::test_r4_move_and_trash_receipts_return_the_new_locator`, `tests/thunderbird/test_mail.py::test_r7_trash_that_merges_into_an_existing_copy_is_applied_with_a_warning`, `tests/writes/test_audit.py::test_g20_every_row_chains_to_the_previous_one_and_the_chain_verifies`, `tests/writes/test_uncertain_send.py::test_missing_everywhere_is_reported_once_and_the_agent_may_send_it_again`.
+Regression tests include the locator checks in `tests/support/mail_contract.py`, `tests/thunderbird/test_mail.py::test_r7_batch_trash_keeps_the_recovery_flag_and_reports_a_merge`, `tests/writes/test_audit.py::test_g20_every_row_chains_to_the_previous_one_and_the_chain_verifies`, `tests/writes/test_uncertain_send.py::test_missing_everywhere_is_reported_once_and_the_agent_may_send_it_again`.
 
 - [ ] State machine, journal before dispatch, one dispatch and crash leases: `tests/writes/test_transitions.py`, `tests/writes/test_properties.py`, `tests/writes/test_engine.py`.
 - [ ] Immediate settle, 24-hour recheck, `send.missing`, linked resend, supersede and abandon: `tests/writes/test_uncertain_send.py`, `tests/writes/test_unsettled_writes.py`; live `mail.fault_lost_response`.
 - [ ] Duplicate block W-27 and queued Outbox: `tests/writes/test_rulings.py`, `tests/writes/test_uncertain_send.py`; live `mail.outbox_queued`, `mail.repeat_do`.
-- [ ] New locators after moves, `merged_existing_copy`, `read_state_preserved`: `tests/thunderbird/test_mail.py`, `tests/writes/test_engine.py`; Batch repoint is checked by `tests/thunderbird/test_contract.py::test_w29_batch_reconcile_repoints_each_moved_handle`; The add-on batch read-state checks are named in C2; warning assertions for both batch and one-item cases remain to be verified.
+- [ ] New locators after moves, `merged_existing_copy`, `read_state_preserved`: `tests/support/mail_contract.py`, `tests/thunderbird/test_mail.py`, `tests/writes/test_engine.py`. Batch repoint is checked by `tests/thunderbird/test_contract.py::test_w29_batch_reconcile_repoints_each_moved_handle`. The add-on batch read-state checks are named in C2.
 - [ ] 30-day compaction and 730-day hash-chained audit: `tests/writes/test_audit.py`, `tests/writes/test_engine.py`; verify retention boundaries.
 
 ## C4 — Grants and permissions
@@ -162,3 +162,9 @@ Regression tests include `tests/calendars/test_google_setup.py::test_s17_the_loo
 ## Additional inventory
 
 - [ ] MCP stdio: `tests/surface/test_mcp_stdio.py`. Update check: `tests/runs/test_notes_updates.py`. Data-root guard: `tests/test_dataroot.py`. Demo-specific tests must be replaced where they are the sole proof of retained behavior.
+
+## Stage 4 verification
+
+The local gate passed 1,070 tests with 20 skips. The installed Thunderbird add-on is 3.0.4. The two harness scenarios passed, and the targeted test-mailbox Message-ID lookup and cross-account watermark suggestion passed after Thunderbird restarted. The mail-only scheduled pass stored its report on a disposable profile using the real test mailbox. An authenticated headless Edge session opened all ten viewer pages, and all fifteen API reads returned HTTP 200. See live runs 20261126T014932-9255 and 20261126T015115-df44.
+
+Owl freshness is settled by the owner on 2026-11-26, including KCL. The post-restoration move/trash repeat rule awaits separate owner confirmation.

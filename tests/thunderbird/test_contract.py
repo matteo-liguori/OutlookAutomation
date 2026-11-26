@@ -15,11 +15,11 @@ from chamberlain.domain.operations import DispatchOutcome, DispatchResult, Opera
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.contacts import ContactsPort
 from chamberlain.ports.mail import MailPort
-from chamberlain.testing.calendar_contract import CalendarPortContract
-from chamberlain.testing.contacts_contract import ContactsPortContract
-from chamberlain.testing.mail_contract import MailPortContract
-from chamberlain.testing.rigs import CalendarRig, ContactsRig, MailRig
-from chamberlain.testing.write_rig import MAIL, make_rig
+from support.calendar_contract import CalendarPortContract
+from support.contacts_contract import ContactsPortContract
+from support.mail_contract import MailPortContract
+from support.rigs import CalendarRig, ContactsRig, MailRig
+from support.write_rig import MAIL, make_rig
 
 
 class TestThunderbirdMail(MailPortContract):

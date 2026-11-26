@@ -1,4 +1,4 @@
-"""The append-only, hash-chained audit log (G-20 to G-23). Implements `AuditLog`.
+"""The append-only, hash-chained audit log (G-20 to G-23).
 
 Each row's hash covers the previous row's hash and the canonical row, so
 editing or deleting any row breaks the chain from that point. The newest
@@ -56,7 +56,7 @@ def _split(value: str | None) -> tuple[int, str] | None:
 
 
 class AuditChain:
-    """The `AuditLog` service bound to one connection and clock."""
+    """The audit log bound to one connection and clock."""
 
     def __init__(self, db: sqlite3.Connection, clock: Clock) -> None:
         self._db = db

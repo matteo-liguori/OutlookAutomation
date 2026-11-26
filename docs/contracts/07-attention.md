@@ -109,7 +109,7 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   holds identity, time and suggested card; no sender or subject. Mail the owner sent (a copy in
   a Sent folder and none in the inbox, or sent from the source's own address) is `sent` and never
   counts as new mail. Only a copy in a Sent folder adds its recipients to the known recipients
-  (`WriteControl.learn_recipients`, origin `sent-history`, G-15): a From line that matches the
+  (`Control.learn_recipients`, origin `sent-history`, G-15): a From line that matches the
   owner is a header anyone can forge, so it never teaches a recipient. If it matches an open card (thread headers, or
   recipients that all point to one card) it is kept for one quiet, low-priority
   `mail.new_unmatched` line with reason `sent` ("N sent by you"), whose next call lists the

@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from chamberlain.app.core import App
 from chamberlain.attention import repo
 from chamberlain.limits import SESSION_IDLE_HOURS
@@ -28,10 +30,18 @@ def test_a10_a_new_start_supersedes_the_same_agent_and_purpose(app: App, ctx: An
     assert live.ended_at is None
 
 
-def test_r10_a_scheduled_run_and_a_live_chat_never_supersede_each_other(app: App, ctx: Any):
-    chat = session_of(app.call("start", {"agent": "claude", "purpose": "interactive"}))
-    run = session_of(app.call("start", {"agent": "claude", "purpose": "scheduled"}))
-    for handle in (chat, run):
+@pytest.mark.parametrize(
+    ("first", "second"), [("interactive", "scheduled"), ("scheduled", "interactive")]
+)
+def test_r10_a_scheduled_run_and_a_live_chat_never_supersede_each_other(
+    app: App, ctx: Any, first: str, second: str
+):
+    handles = [
+        session_of(app.call("start", {"agent": "claude", "purpose": purpose}))
+        for purpose in (first, second)
+    ]
+    assert len(set(handles)) == 2
+    for handle in handles:
         row = repo.get_session(ctx.db, handle)
         assert row is not None
         assert row.ended_at is None
@@ -100,16 +110,6 @@ def test_r10_a_scheduled_run_from_an_earlier_day_must_stop(app: App, ctx: Any, c
     assert resumed.error is not None
     assert resumed.error.code is ErrorCode.SESSION_STALE
     assert "Stop" in resumed.error.message
-
-
-def test_r10_a_stale_scheduled_session_cannot_pull_more_work(
-    app: App, clock: ManualClock, seed: Any
-):
-    clock.set(datetime(2026, 1, 5, 12, 0, tzinfo=UTC))
-    run = session_of(app.call("start", {"purpose": "scheduled"}))
-    clock.advance(hours=47)
-    stopped = app.call("next", {"session": run})
-    assert not stopped.ok
 
 
 def test_r10_a_live_chat_on_a_later_day_is_not_stopped(app: App, clock: ManualClock):

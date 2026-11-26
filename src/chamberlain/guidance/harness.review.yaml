@@ -1,11 +1,11 @@
 id: harness.review
-version: 2
+version: 3
 title: Reviewing how you work
 when: {event: harness.review}
 text: >
-  Do this last. The list is what you ran outside these tools. Which repeated
-  workarounds should a harness feature replace? Does anything worry you? Keep
-  each as a finding: idea or worrying, a bar, one sentence. Then mark it
+  Do this last. Review work done outside these tools. Which
+  workarounds should a harness feature replace? What worries you? Keep
+  a note on this event for each: idea or worrying, a bar, one sentence. Then mark it
   handled. Leave it out of every report.
 max_chars: 320
 once_per: event

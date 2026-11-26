@@ -7,13 +7,14 @@ import io
 import json
 import re
 import threading
+import webbrowser
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
-from chamberlain.surface import cli
+from chamberlain.surface import cli, runner
 from chamberlain.surface.viewer import server
 from chamberlain.surface.viewer.server import Viewer, launch
 
@@ -135,7 +136,7 @@ def test_the_viewer_command_prints_no_token(
     opened: list[str] = []
     served: list[Viewer] = []
     monkeypatch.delenv(cli.CLAUDE_CODE_ENV, raising=False)
-    monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
     monkeypatch.setattr(Viewer, "serve_forever", lambda self: served.append(self))
     out = io.StringIO()
     code = cli.main(["--data", str(tmp_path / "data"), "viewer"], out)
@@ -147,7 +148,7 @@ def test_the_viewer_command_prints_no_token(
 
 
 def test_the_viewer_command_needs_a_data_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(cli.DATA_ENV, raising=False)
+    monkeypatch.delenv(runner.DATA_ENV, raising=False)
     out = io.StringIO()
     assert cli.main(["viewer"], out) == cli.EXIT_FAILED
     assert json.loads(out.getvalue())["error"]["code"] == "config.invalid"
@@ -213,7 +214,7 @@ def test_under_claude_code_the_viewer_prints_an_address_for_the_builtin_browser(
 ) -> None:
     """No system browser; a ready address with the token in the fragment; --browser undoes it."""
     opened: list[str] = []
-    monkeypatch.setattr(server.webbrowser, "open", lambda url: opened.append(url) or True)
+    monkeypatch.setattr(webbrowser, "open", lambda url: opened.append(url) or True)
     monkeypatch.setattr(Viewer, "serve_forever", lambda self: None)
     monkeypatch.setenv(cli.CLAUDE_CODE_ENV, "1")
     out = io.StringIO()

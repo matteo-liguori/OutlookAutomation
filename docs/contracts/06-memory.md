@@ -256,7 +256,7 @@ crash-mid-sweep, checking after each sweep:
   evidence of a compacted grant or operation dies with it. Attention trims its
   own events and sessions inside its tick and supplies no compactor.
 - **M-33** `forget` on an artifact reports `deleted: true` once it is no longer
-  readable; the sweeper removes the bytes later. `RefResolver.repoint` (R4)
+  readable; the sweeper removes the bytes later. `RefService.repoint` (R4)
   keeps the handle and replaces the locator after a move or draft update.
 - **M-34** `con_` handles open to the contact's name and addresses, read live
   with `ContactsPort.read`; an unreachable source is an error, never a stale view.

@@ -2,6 +2,7 @@
 // (bridge contract B-n, port rules P-n, write rules W-n).
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { ACCOUNT, createWorld, OWNER } from "./fake_thunderbird.mjs";
 import { BASE, call as callWire, requestId, startAddon, untilResponse } from "./loader.mjs";
@@ -782,4 +783,11 @@ test("contacts are matched by name and address and paged", async () => {
   const second = await call(addon, "contacts", { address_book_ids: ["book1"], text: "paging marker", limit: 2, skip: 2 });
   assert.equal(second.result.contacts.length, 1);
   assert.equal(second.result.more, false);
+});
+
+test("Message-ID and subject matching follow the shared mail vectors", () => {
+  const { addon } = setup();
+  const vectors = JSON.parse(readFileSync(new URL("./mail-vectors.json", import.meta.url), "utf8"));
+  for (const [input, want] of vectors.ids) assert.equal(addon.eval(`bare(${JSON.stringify(input)})`), want);
+  for (const [input, want] of vectors.subjects) assert.equal(addon.eval(`normaliseSubject(${JSON.stringify(input)})`), want);
 });

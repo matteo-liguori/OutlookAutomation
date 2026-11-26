@@ -1,7 +1,7 @@
 """Evidence: small immutable statements, deleted when nothing refers to them.
 
 Contract: docs/contracts/06-memory.md (M-15). Implements `EvidenceStore`
-(app/services.py). Evidence never holds a mail body, a card dump or a file.
+Evidence never holds a mail body, a card dump or a file.
 """
 
 import json
@@ -11,9 +11,9 @@ from typing import cast
 
 from chamberlain.domain.cards import EvidenceOwnerKind, evidence_owner_kind
 from chamberlain.domain.handles import HandleKind, new_handle
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import EVIDENCE_MAX
 from chamberlain.memory import repo
-from chamberlain.memory.timeutil import ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction

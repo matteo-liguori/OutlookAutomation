@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from chamberlain.app.core import App
-from chamberlain.app.wiring import load_tracks
+from chamberlain.app.wiring import app_handlers
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.grants import Requirement
 from chamberlain.schema.base import ToolName
-from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig, make_rig
 from chamberlain.writes.handlers import DOCTOR_CHECKS, HANDLERS, make_handlers
 from chamberlain.writes.models import WritePolicy
+from support.write_rig import MAIL, SESSION, WriteRig, make_rig
 
 GOLDEN = Path(__file__).parent / "golden" / "handlers.json"
 HANDLE = re.compile(r"\b(op|grant|evd)_[0-9a-f]{16}\b")
@@ -134,7 +134,7 @@ def test_e11_e12_the_uncertain_error_never_claims_to_be_retryable(rig: WriteRig)
 
 def test_t16_the_module_fills_the_names_wiring_reads() -> None:
     assert set(HANDLERS) == {ToolName.PROPOSE, ToolName.DO, ToolName.RECONCILE}
-    handlers, _ = load_tracks()
+    handlers = app_handlers()
     assert {ToolName.PROPOSE, ToolName.DO, ToolName.RECONCILE} <= set(handlers)
     assert [group.value for group, _ in DOCTOR_CHECKS] == ["audit"]
 

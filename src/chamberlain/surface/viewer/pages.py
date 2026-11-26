@@ -11,9 +11,11 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
+from chamberlain.connections import repo as connections_repo
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
 from chamberlain.domain.operations import OUTSIDE_STATE_WORDS
 from chamberlain.domain.same_event import same_event
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import CARD_POSITION_MAX
 from chamberlain.memory import repo as memory_repo
 from chamberlain.memory.labels import event_identity
@@ -21,8 +23,8 @@ from chamberlain.runs import appointments, compose
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs import report_repo as local_repo
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.surface.viewer import repo
 from chamberlain.surface.viewer.report_api import due_appointments
+from chamberlain.writes import repo as writes_repo
 
 WINDOW_MAX_DAYS = 45
 PAGES_PER_SOURCE = 4
@@ -50,7 +52,7 @@ _UTC = ZoneInfo("UTC")
 
 
 def _stored(moment: datetime) -> str:
-    return moment.astimezone(_UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(moment)
 
 
 def _parse_day(text: str | None, field: str) -> date | None:
@@ -201,7 +203,7 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
     window = CalendarQuery(
         start=_local_midnight(first, tz), end=_local_midnight(last, tz), limit=250
     )
-    labels = {**repo.source_labels(ctx.db), LOCAL_SOURCE: LOCAL_NAME}
+    labels = {**connections_repo.source_labels(ctx.db), LOCAL_SOURCE: LOCAL_NAME}
     given = {
         str(r["identity"]): (str(r["category"]), str(r["title"]))
         for r in memory_repo.event_labels_since(ctx.db, first.isoformat())
@@ -263,7 +265,7 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
             "card_title": a.card_title,
             "due": a.due_at <= _stored(ctx.clock.now()),
         }
-        for a in repo.dated_actions(ctx.db, _stored(window.start), _stored(window.end), 200)
+        for a in memory_repo.dated_actions(ctx.db, _stored(window.start), _stored(window.end), 200)
         if a.due_at is not None and a.handle not in important_handles
     ]
     return {
@@ -326,9 +328,9 @@ def reports_of_day(ctx: Context, day: str) -> dict[str, Any]:
 def cards(ctx: Context) -> dict[str, Any]:
     """Open cards as a grid: goal, position, the next actions and when it is next looked at."""
     now = _stored(ctx.clock.now())
-    details = repo.card_details(ctx.db, CARD_LIMIT)
-    by_card: dict[str, list[repo.OpenAction]] = {}
-    for action in repo.open_actions_of(ctx.db, [c.handle for c in details]):
+    details = memory_repo.card_details(ctx.db, CARD_LIMIT)
+    by_card: dict[str, list[memory_repo.OpenAction]] = {}
+    for action in memory_repo.open_actions_of(ctx.db, [c.handle for c in details]):
         by_card.setdefault(action.card, []).append(action)
     items: list[dict[str, Any]] = []
     for card in details:
@@ -377,7 +379,7 @@ def timeline(ctx: Context, zone: str, until: str | None, days: int) -> dict[str,
     start = _stored(_local_midnight(first, tz))
     end = _stored(_local_midnight(last + timedelta(days=1), tz))
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for action in repo.closed_actions_between(ctx.db, start, end, TIMELINE_LIMIT):
+    for action in memory_repo.closed_actions_between(ctx.db, start, end, TIMELINE_LIMIT):
         day = _stored_to_local(action.closed_at, tz).date().isoformat()
         grouped.setdefault(day, []).append(
             {
@@ -388,7 +390,7 @@ def timeline(ctx: Context, zone: str, until: str | None, days: int) -> dict[str,
                 "card": action.card_title,
             }
         )
-    for row in repo.audit_between(ctx.db, start, end, TIMELINE_LIMIT):
+    for row in writes_repo.audit_between(ctx.db, start, end, TIMELINE_LIMIT):
         day = _stored_to_local(row.at, tz).date().isoformat()
         grouped.setdefault(day, []).append(
             {
@@ -399,7 +401,7 @@ def timeline(ctx: Context, zone: str, until: str | None, days: int) -> dict[str,
                 "card": None,
             }
         )
-    for line in repo.outside_between(ctx.db, start, end, TIMELINE_LIMIT):
+    for line in writes_repo.outside_between(ctx.db, start, end, TIMELINE_LIMIT):
         day = _stored_to_local(line.at, tz).date().isoformat()
         said = f" It said: {line.reported}" if line.reported else ""
         grouped.setdefault(day, []).append(

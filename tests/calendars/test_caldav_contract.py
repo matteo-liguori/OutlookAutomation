@@ -11,8 +11,8 @@ from chamberlain.connectors.caldav.config import CalDavBinding, CalDavConfig
 from chamberlain.connectors.calendar_support.http import UrllibTransport
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
-from chamberlain.testing.calendar_contract import CalendarPortContract
-from chamberlain.testing.rigs import CalendarRig
+from support.calendar_contract import CalendarPortContract
+from support.rigs import CalendarRig
 
 
 def build(

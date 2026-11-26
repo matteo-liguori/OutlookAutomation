@@ -4,14 +4,14 @@ import re
 import sqlite3
 from pathlib import Path
 
-from chamberlain.app.context import Context, SourceRouter
-from chamberlain.app.doubles import unwired_services
+from chamberlain.app.context import Context, Services, SourceRouter
 from chamberlain.domain.artifacts import ArtifactKind
+from chamberlain.domain.timefmt import minus, ts
 from chamberlain.memory.artifacts import ArtifactService
-from chamberlain.memory.timeutil import minus, ts
 from chamberlain.ports.clock import ManualClock
 from chamberlain.store.db import MEMORY, connect
 from chamberlain.store.migrate import migrate
+from chamberlain.writes.models import WritePolicy
 
 SESSION = "ses_aaaaaaaa0001"
 OTHER_SESSION = "ses_aaaaaaaa0002"
@@ -89,12 +89,12 @@ def blobs(data_root: Path) -> set[str]:
 
 
 def table_dump(db: sqlite3.Connection) -> dict[str, list[tuple[object, ...]]]:
-    """Every table except system_state, as plain tuples, for change detection."""
+    """Every content table as plain tuples, for change detection across sweeps."""
     names = [
         str(r["name"])
         for r in db.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
-            "AND name NOT IN ('system_state', 'schema_migrations') ORDER BY name"
+            "AND name NOT IN ('system_state', 'schema_migrations', 'audit_log') ORDER BY name"
         )
     ]
     return {
@@ -128,5 +128,9 @@ def make_context(root: Path, clock: ManualClock) -> Context:
     db = connect(MEMORY)
     migrate(db, clock, backup_dir=None)
     return Context(
-        db=db, clock=clock, data_root=root, sources=SourceRouter(), services=unwired_services()
+        db=db,
+        clock=clock,
+        data_root=root,
+        sources=SourceRouter(),
+        services=Services.bind(db, clock, root, policy=WritePolicy()),
     )

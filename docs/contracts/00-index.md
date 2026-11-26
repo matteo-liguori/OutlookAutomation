@@ -2,8 +2,7 @@
 
 These files are the binding specification for the rebuild. The plan
 (`docs/rebuild-plan.md`) explains why; the contracts say what. Where they
-disagree, the contracts win and the disagreement is a bug to post on
-`docs/BOARD.md`.
+disagree, the contracts win and the discrepancy should be fixed alongside its regression test.
 
 | File | Area |
 | --- | --- |
@@ -17,8 +16,7 @@ disagree, the contracts win and the disagreement is a bug to post on
 | `08-ports.md` | MailPort, CalendarPort, ContactsPort, capabilities |
 | `09-storage.md` | SQLite schema, table ownership, migrations |
 | `10-targets.md` | Numeric success targets |
-| `11-ported-test-intent.md` | Old safety tests mapped to rule IDs |
-| `12-bridge-v2.md` | Thunderbird bridge protocol (written by wave-1 track d) |
+| `12-bridge-v2.md` | Thunderbird bridge protocol |
 
 ## Reading rules
 
@@ -28,25 +26,13 @@ disagree, the contracts win and the disagreement is a bug to post on
   can be searched for.
 - The Python in `src/chamberlain/schema/`, `src/chamberlain/ports/` and
   `src/chamberlain/store/migrations/` is the machine-readable form of these
-  files. When prose and code disagree, post on the board; do not pick one.
+  files. When prose and code disagree, resolve the discrepancy against the owner ruling.
 - Numbers that appear in more than one place are defined once in
   `src/chamberlain/limits.py` and quoted here.
 
 ## Changing a contract
 
-Contracts are shared files (see `docs/OWNERSHIP.md`). A builder who needs a
-change MUST:
-
-1. append a `CONTRACT-CHANGE` entry to `docs/BOARD.md` naming the file, the
-   rule IDs, the reason and who is affected;
-2. make the smallest change that works, in its own commit, touching the prose
-   and the matching code together;
-3. keep the gate green.
-
-Additive changes (a new optional field, a new error code, a new event kind)
-may be made at once after posting. Changes that remove or alter something
-another track builds against need that track's acknowledgement on the board
-first.
+Change the contract, implementation and proving tests together. Keep the local gate green.
 
 ## Scope fixed in phase A
 

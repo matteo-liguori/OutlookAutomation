@@ -1,4 +1,4 @@
-"""Google Calendar API connector (CalendarPort). Wave 2.
+"""Google Calendar API connector (CalendarPort).
 
-Contract: docs/contracts/08-ports.md. Sketch: docs/waves/wave-2.md.
+Contract: docs/contracts/08-ports.md.
 """

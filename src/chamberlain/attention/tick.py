@@ -13,6 +13,7 @@ from chamberlain.attention.collect import collect
 from chamberlain.attention.detectors import DETECTORS
 from chamberlain.attention.models import EventDraft
 from chamberlain.domain.events import EventKind
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import TICK_MIN_INTERVAL_SECONDS
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
@@ -98,7 +99,7 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
 
 
 def _stamp(ctx: Context) -> str:
-    return ctx.clock.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(ctx.clock.now())
 
 
 def wake_status(ctx: Context) -> int:

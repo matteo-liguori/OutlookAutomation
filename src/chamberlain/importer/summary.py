@@ -11,6 +11,7 @@ from zoneinfo import ZoneInfo
 
 import icalendar
 
+from chamberlain.domain.timefmt import ts
 from chamberlain.importer.convert import norm_ts, shorten
 from chamberlain.importer.old import Json, OldApproval, OldJournal
 from chamberlain.writes.imported import RECIPIENTS_MAX, SUMMARY_TEXT_MAX, OperationSummary
@@ -51,7 +52,7 @@ def _event(request: Json) -> tuple[str, str | None]:
         moment: Any = start.dt
         if isinstance(moment, datetime):
             aware = moment if moment.tzinfo else moment.replace(tzinfo=UTC)
-            return title, aware.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+            return title, ts(aware)
         if isinstance(moment, date):
             return title, moment.isoformat()
         return title, None

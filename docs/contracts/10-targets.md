@@ -14,7 +14,7 @@ target names what enforces it. Constants are in `src/chamberlain/limits.py`.
 | Guidance per reply | unbounded | 800 chars (`GUIDANCE_REPLY_CHARS`) | selection (A-14 onward) |
 | Guidance per typical mail pass | not measured | under 1,500 chars | replayed session |
 | Guidance pushed by a trigger | 4 hard-coded | over 90 percent of rules | gate test (A-13) |
-| Tokens for a typical morning pass | not measured | baseline in wave 2, then at most half | replayed session |
+| Tokens for a typical morning pass | not measured | establish a baseline, then at most half | replayed session |
 | Wrong or missing tool calls per replay | not measured | baseline, then falling | replayed session |
 
 ## Principle 2: ordered context and artifacts

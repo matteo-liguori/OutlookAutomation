@@ -7,7 +7,6 @@ from pathlib import Path
 
 from tests.integration.conftest import Stack, build_stack
 
-from chamberlain.app.doubles import RecordingAuditLog
 from chamberlain.limits import MAX_REPLY_CHARS
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.evidence import EvidenceService
@@ -21,10 +20,9 @@ REPO = Path(__file__).resolve().parents[2]
 SRC = REPO / "src" / "chamberlain"
 
 
-def test_the_wired_services_are_the_real_ones_not_the_doubles(stack: Stack) -> None:
+def test_the_app_binds_the_audit_and_memory_services(stack: Stack) -> None:
     services = stack.app.context.services
     assert isinstance(services.audit, AuditChain)
-    assert not isinstance(services.audit, RecordingAuditLog)
     assert isinstance(services.artifacts, ArtifactService)
     assert isinstance(services.evidence, EvidenceService)
     assert isinstance(services.refs, RefService)

@@ -1,4 +1,4 @@
-"""What the agent found in a review: `keep` kind `finding`, and the owner line for a worrying one.
+"""What the agent found in a review: `keep` kind `note`, and the owner line for a worrying one.
 
 Contract: docs/contracts/02-tools.md (T-10c), 06-memory.md (M-40). An idea stays in the store for
 the coordinator. A worrying finding is shown once, as a line in the next pass report.
@@ -64,7 +64,7 @@ def keep_finding(ctx: Context, request: KeepRequest) -> Result:
     return Result(
         KeepResponse(
             handle=request.owner,
-            kind=KeepKind.FINDING,
+            kind=KeepKind.NOTE,
             size=len(stored.encode()),
             sha256=sha256_text(stored),
         )

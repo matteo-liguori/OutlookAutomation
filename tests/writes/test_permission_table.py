@@ -18,7 +18,7 @@ from chamberlain.domain.intents import (
     OutsideAction,
     WriteIntent,
 )
-from chamberlain.testing.write_rig import CALENDAR, WriteRig
+from support.write_rig import CALENDAR, WriteRig
 
 DOCS = Path(__file__).resolve().parents[2] / "docs"
 CAL = "calendar:a"

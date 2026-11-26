@@ -1,4 +1,4 @@
-"""Detectors fed by the viewer and runs track (wave 2), and the calendar conflict.
+"""Detectors fed by the viewer and runs, and the calendar conflict.
 
 `calendar.conflict` reads the owner's events collected from every calendar. `user.note` comes
 from the viewer's notes,
@@ -15,13 +15,14 @@ from chamberlain.attention.models import CalendarSlot, DetectorInput, EventAttrs
 from chamberlain.attention.tuning import CONFLICT_MAX, PRIORITY
 from chamberlain.domain.events import EventKind
 from chamberlain.domain.same_event import same_event
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import SUMMARY_MAX
 
 NOTE_PREFIX = "Note from the user: "
 
 
 def _stored(moment: datetime) -> str:
-    return moment.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(moment)
 
 
 def _one_each(slots: Iterable[CalendarSlot]) -> list[CalendarSlot]:

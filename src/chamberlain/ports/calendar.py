@@ -1,7 +1,7 @@
 """CalendarPort: what the core may ask of a calendar connector.
 
 Contract: docs/contracts/08-ports.md. The executable form is
-`chamberlain.testing.calendar_contract.CalendarPortContract`.
+`tests/support/calendar_contract.py`.
 """
 
 from collections.abc import Mapping

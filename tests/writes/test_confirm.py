@@ -12,10 +12,10 @@ import pytest
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.grants import GrantState
 from chamberlain.domain.operations import OperationState
-from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import ConfirmationApp, Response, create_token
+from support.write_rig import MAIL, SESSION, WriteRig
 
 ORIGIN = "http://127.0.0.1:5555"
 TOKEN_HEADER = "X-Chamberlain-Token"

@@ -10,7 +10,7 @@ import pytest
 from conn_support import full_profile, write_profile
 
 from chamberlain.connections.load import load_connections
-from chamberlain.surface import cli, mcp_server
+from chamberlain.surface import cli, runner
 
 
 def run_cli(*argv: str) -> tuple[int, dict[str, Any]]:
@@ -59,7 +59,7 @@ def test_s16_the_tick_reports_a_bad_profile_instead_of_crashing(data_root: Path)
 
 
 def test_s16_config_commands_need_a_data_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(cli.DATA_ENV, raising=False)
+    monkeypatch.delenv(runner.DATA_ENV, raising=False)
     code, reply = run_cli("config", "show")
     assert code == cli.EXIT_FAILED
     assert reply["error"]["code"] == "config.invalid"
@@ -140,14 +140,14 @@ def test_s16_add_test_calendar_refuses_unknown_sources_or_invalid_profiles(
 
 def test_t15_the_mcp_server_calls_tools_on_the_configured_app(data_root: Path) -> None:
     write_profile(data_root, full_profile() | {"sources": {}})
-    caller = mcp_server.configured_caller(data_root)
+    caller = runner.configured_caller(data_root)
     reply = caller("doctor", {})
     assert reply.ok
 
 
 def test_t15_the_mcp_server_answers_a_bad_profile_with_an_error_reply(data_root: Path) -> None:
     write_profile(data_root, {"version": 7})
-    reply = mcp_server.configured_caller(data_root)("doctor", {})
+    reply = runner.configured_caller(data_root)("doctor", {})
     assert not reply.ok
     assert reply.error is not None
     assert reply.error.code.value == "config.invalid"
