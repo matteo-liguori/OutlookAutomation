@@ -11,8 +11,11 @@ from chamberlain.domain.mail import FolderRole
 from chamberlain.domain.operations import Prepared, ReconcileResult, ReconcileStatus
 from chamberlain.livetest.env import MailCopy
 from chamberlain.livetest.fakeworld import FAKE_CAL_A, FAKE_MAIL_A, FakeLab
+from chamberlain.livetest.lab import ScenarioFailure
 from chamberlain.livetest.markers import carries_marker
+from chamberlain.livetest.registry import Target
 from chamberlain.livetest.runner import RunOptions, execute, open_lab
+from chamberlain.livetest.scenarios_harness import doctor_clean, doctor_states
 from chamberlain.livetest.sweep import sweep
 from chamberlain.writes.core import MAIL_SETTLE_ATTEMPTS
 
@@ -155,3 +158,33 @@ def test_calendar_approval_is_the_owners_setting_or_option_and_is_recorded(lab: 
     assert by_option.run_id in texts[0]
     assert "live_test.approve_calendar_edits" in texts[-1]
     assert by_setting.run_id in texts[-1]
+
+
+def test_final_doctor_settles_delayed_trash_only_when_the_provider_can_prove_it(
+    lab: FakeLab, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    confirm_all(lab)
+    runner = open_lab(lab.app, lab.env, lab.config, OLD_RUN, RunOptions())
+    runner.baseline = doctor_states(runner)
+    lab.provider.mail.add_message(
+        FAKE_MAIL_A,
+        internet_message_id="<doctor-late@example.test>",
+        subject=runner.subject("late"),
+    )
+    [copy] = runner.copies(FAKE_MAIL_A, runner.marker)
+    op = runner.prepare(
+        {"kind": "mail.trash", "source": FAKE_MAIL_A, "messages": [runner.handle_of(copy)]}
+    )
+    lab.provider.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
+    with monkeypatch.context() as patch:
+        patch.setattr(
+            lab.provider.mail,
+            "reconcile",
+            lambda prepared, key: ReconcileResult(status=ReconcileStatus.UNKNOWN),
+        )
+        assert runner.do(op).code == "operation.uncertain"
+        with pytest.raises(ScenarioFailure, match=op):
+            doctor_clean(runner, Target())
+    doctor_clean(runner, Target())
+    assert runner.ok("open", handle=op)["view"]["state"] == "confirmed"
+    assert [d.intent_kind.value for d in lab.provider.dispatch_log] == ["mail.trash"]

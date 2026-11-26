@@ -122,7 +122,14 @@ def _dispatch(
             )
             return EXIT_OK
         out.write(f"Retrying {len(ids)} scenario(s) of {earlier.run_id}.\n")
-        options = replace(options, retry_ids=ids)
+        doctor_operations = tuple(
+            handle
+            for result in earlier.results
+            if result.id == "harness.doctor_clean" and result.id in ids
+            for handle in result.handles
+            if handle.startswith("op_")
+        )
+        options = replace(options, retry_ids=ids, doctor_operations=doctor_operations)
     if not options.dry_run:
         options = replace(
             options,

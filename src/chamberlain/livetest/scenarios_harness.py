@@ -48,6 +48,17 @@ def guidance_budgets(lab: Lab, t: Target) -> None:
     last=True,
 )
 def doctor_clean(lab: Lab, t: Target) -> None:
+    pending = {"uncertain", "reconciling"}
+    stuck: list[str] = []
+    for handle in sorted(lab.run_handles - lab.accepted_uncertain):
+        if not handle.startswith("op_"):
+            continue
+        if lab.ok("open", handle=handle)["view"]["state"] in pending:
+            # Folder cleanup can see the move before its original operation has a receipt.
+            result = lab.ok("reconcile", operation=handle)
+            if result["operation"]["state"] in pending:
+                stuck.append(handle)
+    lab.check(not stuck, "Still unsettled after read-only reconcile: " + ", ".join(stuck))
     now = doctor_states(lab)
     failing = sorted(name for name, status in now.items() if status == "fail")
     lab.check(not failing, f"doctor fails: {', '.join(failing)}")
@@ -57,11 +68,3 @@ def doctor_clean(lab: Lab, t: Target) -> None:
         if status == "warn" and lab.baseline.get(name) != "warn"
     )
     lab.check(not worse, f"doctor has new warnings: {', '.join(worse)}")
-    stuck = [
-        handle
-        for handle in sorted(lab.run_handles)
-        if handle.startswith("op_")
-        and handle not in lab.accepted_uncertain
-        and str(lab.ok("open", handle=handle)["view"]["state"]) in {"uncertain", "reconciling"}
-    ]
-    lab.check(not stuck, f"{len(stuck)} operation(s) of this run are still unsettled")

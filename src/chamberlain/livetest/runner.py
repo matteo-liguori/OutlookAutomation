@@ -59,6 +59,8 @@ class RunOptions:
     run_id: str | None = None
     retry_from: str | None = None
     """`--retry`: a run id (or `latest`) whose failed and never-run scenarios run again."""
+    doctor_operations: tuple[str, ...] = ()
+    """Operations inspected by the earlier doctor check when retrying that check."""
     retry_ids: tuple[str, ...] = ()
     """Only these exact scenario ids (`--retry`: what failed or never ran in an earlier run)."""
     progress: Callable[[RunReport], None] | None = field(default=None, compare=False)
@@ -357,6 +359,8 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
         leftovers = leftover_items(lab, plan)
     for item in plan:
         if item.spec.last and not item.skip:
+            if item.spec.id == "harness.doctor_clean":
+                lab.run_handles.update(options.doctor_operations)
             done.append(_run_one(lab, item, options.keep))
             tell()
     by_id = {r.id: r for r in done}

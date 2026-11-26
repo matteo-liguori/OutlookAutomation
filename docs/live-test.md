@@ -122,7 +122,7 @@ Harness:
 | Scenario | What it proves |
 | --- | --- |
 | `harness.guidance_budgets` | `start`, `next` and `guide` stay within the guidance and reply budgets. |
-| `harness.doctor_clean` | After the run, `doctor` shows no failure and no new warning, and no operation of the run is still unsettled. |
+| `harness.doctor_clean` | Recheck unsettled operations from the run by reading the provider once more. An inconclusive result fails the check. Doctor must show no failure or new warning. A retry inspects the original operation handles. |
 
 Anything that cannot run here is **skipped with a reason**, never dropped silently: a source
 that is missing or unhealthy, a missing capability, no pair configured, no scratch folder,
