@@ -14,7 +14,7 @@ import sqlite3
 import stat
 import subprocess
 import xml.etree.ElementTree as ET
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -25,8 +25,10 @@ import yaml
 
 from chamberlain.attention.owner_rules import path_of
 from chamberlain.connections.load import atomic_write, load_connections
+from chamberlain.connectors.caldav.setup import Check
 from chamberlain.connectors.calendar_support.secrets import SecretStore
-from chamberlain.importer.authority import DEAD_STATUSES
+from chamberlain.importer.authority import DEAD_STATUSES, standing_grant_listing
+from chamberlain.importer.automations import guess_checkout
 from chamberlain.importer.convert import derive, is_sha256, sha256_text
 from chamberlain.importer.credentials import (
     GOOGLE_CLIENT,
@@ -44,8 +46,9 @@ from chamberlain.importer.old import (
 from chamberlain.importer.profile_map import map_profile
 from chamberlain.importer.records import OPEN_ACTION, card_rules
 from chamberlain.importer.report import ImportReport
+from chamberlain.importer.retire import RunningProcess, refuse_while_running
 from chamberlain.importer.run import run_import
-from chamberlain.ports.clock import Clock
+from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.store.db import DB_NAME
 
 _LOCK: Any = importlib.import_module("msvcrt" if os.name == "nt" else "fcntl")
@@ -175,10 +178,19 @@ def _guard_paths(old_root: Path, data_root: Path) -> None:
         raise ValueError("Old and new data roots must be separate folders.")
 
 
+def backup_path(data_root: Path) -> Path:
+    """Where the importer keeps its v1 snapshot: under the data root, `import/v1-backup`.
+
+    An earlier version put it beside the data root (`<root>.v1-backup`); one that already exists
+    there is still used so an interrupted or finished migration can resume.
+    """
+    current = data_root / "import" / "v1-backup"
+    legacy = data_root.parent / (data_root.name + ".v1-backup")
+    return legacy if legacy.exists() and not current.exists() else current
+
+
 def _paths(data_root: Path) -> tuple[Path, Path]:
-    return data_root / "import" / "migration.json", data_root.parent / (
-        data_root.name + ".v1-backup"
-    )
+    return data_root / "import" / "migration.json", backup_path(data_root)
 
 
 def _load(old_root: Path, data_root: Path) -> dict[str, Any]:
@@ -203,6 +215,14 @@ def detect_migration(old_root: Path) -> dict[str, int | bool]:
         "actions": len(old.actions),
         "approvals": len(old.approvals),
     }
+
+
+def old_standing_grants(old_root: Path, clock: Clock | None = None) -> list[dict[str, Any]]:
+    """The old standing grants with their wording and a proposed v2 scope; read-only."""
+    old = read_installation(old_root)
+    return standing_grant_listing(
+        old, map_profile(old, ImportReport(), None), clock or SystemClock()
+    )
 
 
 def _saved_verification(state: dict[str, Any]) -> Verification | None:
@@ -247,11 +267,21 @@ def prepare_migration(
     *,
     clock: Clock | None = None,
     secrets: SecretStore | None = None,
+    caldav_check: Check | None = None,
+    processes: Callable[[], list[RunningProcess]] | None = None,
+    old_checkout: Path | None = None,
 ) -> MigrationStatus:
-    """Detect, preserve and import v1; safe to resume after interrupted import."""
+    """Detect, preserve and import v1; safe to resume after interrupted import.
+
+    Refuses while v1 runs (dashboard, native host, `-m monitor`; `processes` is the injectable
+    process list, `old_checkout` its folder; the CLI passes the real list). `caldav_check` signs
+    in to iCloud so the saved app password connects its calendars (the CLI passes the real one).
+    """
     _guard_paths(old_root, data_root)
     read_installation(old_root)
     state_path, backup = _paths(data_root)
+    if processes is not None and not state_path.exists():
+        refuse_while_running(processes(), old_checkout or guess_checkout(old_root))
     with _lock(data_root):
         if state_path.exists():
             state: dict[str, Any] = json.loads(state_path.read_text(encoding="utf-8"))
@@ -296,6 +326,7 @@ def prepare_migration(
                 clock=clock,
                 secrets=secrets,
                 seed_recipients=False,
+                caldav_check=caldav_check,
                 allow_external_credential=False,
             )
             state["stage"] = "imported"

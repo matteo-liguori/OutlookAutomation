@@ -59,6 +59,8 @@ NEXT_STEPS = (
 
 def _guard_paths(old_root: Path, data_root: Path) -> None:
     old, new = old_root.resolve(), data_root.resolve()
+    if old == (new / "import" / "v1-backup"):
+        return  # the migration's own snapshot lives under the data root
     if old == new or old in new.parents or new in old.parents:
         raise ChamberlainError(
             ErrorCode.CONFIG_INVALID,

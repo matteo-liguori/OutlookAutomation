@@ -19,8 +19,10 @@ Safety rules, in the order they matter:
 """
 
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
+from datetime import UTC
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -35,6 +37,7 @@ from chamberlain.importer.records import Imported, add_evidence, text_of
 from chamberlain.importer.report import ImportReport
 from chamberlain.limits import EVIDENCE_MAX, EVIDENCE_PER_OPEN_CARD_TARGET
 from chamberlain.memory import repo as memory
+from chamberlain.ports.clock import Clock
 from chamberlain.writes import repo as writes
 from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.models import StoredReceipt
@@ -94,16 +97,16 @@ def parse_key(key: str) -> tuple[str, str]:
     return head.partition("-")[2], rest
 
 
-def _source_for(ctx: Context, *candidates: Any, calendar: bool = False) -> str:
+def _source_for(mapped: MappedProfile, *candidates: Any, calendar: bool = False) -> str:
     for candidate in candidates:
         text = text_of(candidate)
-        if not calendar and text.lower() in ctx.mapped.mail_by_address:
-            return ctx.mapped.mail_by_address[text.lower()]
-        if calendar and text in ctx.mapped.calendar_by_id:
-            return ctx.mapped.calendar_by_id[text]
+        if not calendar and text.lower() in mapped.mail_by_address:
+            return mapped.mail_by_address[text.lower()]
+        if calendar and text in mapped.calendar_by_id:
+            return mapped.calendar_by_id[text]
     if calendar:
-        return ctx.mapped.default_calendar or "calendar:unknown"
-    return ctx.mapped.default_mail or "mail:unknown"
+        return mapped.default_calendar or "calendar:unknown"
+    return mapped.default_mail or "mail:unknown"
 
 
 def _journal_outcomes(old: OldInstallation) -> dict[str, str]:
@@ -123,12 +126,12 @@ def _grant_title(approval: OldApproval) -> str:
     )
 
 
-def _grant_source(ctx: Context, approval: OldApproval) -> str:
+def _grant_source(mapped: MappedProfile, approval: OldApproval) -> str:
     message = _mapping(approval.details.get("message"))
     scope = _mapping(approval.details.get("scope"))
     if text_of(scope.get("operation")).startswith("calendar"):
-        return _source_for(ctx, scope.get("calendar_id"), calendar=True)
-    return _source_for(ctx, message.get("sender"), scope.get("mailbox"), scope.get("store"))
+        return _source_for(mapped, scope.get("calendar_id"), calendar=True)
+    return _source_for(mapped, message.get("sender"), scope.get("mailbox"), scope.get("store"))
 
 
 def _scope_statement(approval: OldApproval) -> str:
@@ -186,7 +189,7 @@ def _insert_grant(
         ctx.db,
         handle=handle,
         kind=GrantKind.STANDING if standing else GrantKind.ONE_OFF,
-        source_id=_grant_source(ctx, approval),
+        source_id=_grant_source(ctx.mapped, approval),
         title=_grant_title(approval),
         summary=shorten("Imported from the old harness; confirm it again before use.", 300),
         requirement=Requirement.HUMAN_CONFIRMATION,
@@ -297,7 +300,7 @@ def _insert_operation(
     request = _mapping(journal.state.get("request"))
     calendar = kind.value.startswith("calendar.")
     source = _source_for(
-        ctx,
+        ctx.mapped,
         request.get("calendar_id") if calendar else request.get("mailbox"),
         request.get("mailbox"),
         calendar=calendar,
@@ -356,3 +359,70 @@ def _insert_operation(
         payload_sha256=intent_hash,
     )
     ctx.report.count("operations", new=True)
+
+
+_OBSOLETE_V2 = re.compile(
+    r"delivery[- ]?test|dev(?:elopment)?[- ]work|self[- ]?test|test (?:send|mail)|"
+    r"e2e|smoke|testing",
+    re.IGNORECASE,
+)
+
+
+def standing_grant_listing(
+    old: OldInstallation, mapped: MappedProfile, clock: Clock
+) -> list[dict[str, Any]]:
+    """Each live old standing grant: title, v2 source, old wording and a proposed v2 scope.
+
+    Read-only. The proposal is a hint for the agent to put to the owner, who confirms any new
+    standing permission in the viewer. Delivery tests and development work have no standing
+    scope in v2 (the live test and self-test authority cover them) and are marked obsolete.
+    """
+    rows: list[dict[str, Any]] = []
+    for approval in sorted(old.approvals, key=lambda a: a.id):
+        status = text_of(approval.details.get("status")).lower() or "approved"
+        if approval.kind != "standing" or status in DEAD_STATUSES:
+            continue
+        scope = _mapping(approval.details.get("scope"))
+        operation = text_of(scope.get("operation"))
+        title = _grant_title(approval)
+        wording = _scope_statement(approval)
+        obsolete = bool(_OBSOLETE_V2.search(f"{title} {wording}"))
+        rows.append(
+            {
+                "old_id": approval.id,
+                "title": title,
+                "source": _grant_source(mapped, approval),
+                "old_wording": wording,
+                "proposed_v2_scope": _propose(operation, scope),
+                "obsolete_in_v2": obsolete,
+                "expired_in_v1": _expired(approval, clock),
+            }
+        )
+    return rows
+
+
+def _expired(approval: OldApproval, clock: Clock) -> bool:
+    expires = text_of(approval.details.get("expires_at"))
+    try:
+        moment = parse(expires) if expires else None
+    except ValueError:
+        return False
+    if moment is not None and moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment is not None and moment <= clock.now()
+
+
+def _propose(operation: str, scope: Json) -> str:
+    """A plain-words v2 scope from an old operation name; the owner edits it in the viewer."""
+    kind = {
+        "send": "mail.send to the exact addresses (never a domain), with a daily limit",
+        "move": "mail.move/file within named folders",
+        "mark-read": "mail.mark_read for the mailbox",
+        "trash": "mail.trash within named folders",
+        "calendar-create": "calendar.create on the calendar",
+        "calendar-update": "calendar.update on the calendar (invitations: exact addresses)",
+    }
+    for key, text in kind.items():
+        if operation.endswith(key) or key in operation:
+            return text
+    return "choose the kind of action, the account and who or what it covers"
