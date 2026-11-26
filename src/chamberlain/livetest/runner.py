@@ -178,6 +178,16 @@ def _run_side_by_side(
         thread.join()
 
 
+_INVITING = ("calendar.invite_flow", "calendar.recurring_invite")
+
+
+def _invitee_mail(item: Planned, config: LiveTestConfig) -> str | None:
+    """The mailbox an inviting scenario sends its invitation to, or None."""
+    if item.skip or item.spec.id not in _INVITING:
+        return None
+    return config.calendars[item.target.source].invitee_mail
+
+
 def _used_mail_sources(plan: Sequence[Planned], config: LiveTestConfig) -> list[str]:
     used: dict[str, None] = {}
     for item in plan:
@@ -187,10 +197,8 @@ def _used_mail_sources(plan: Sequence[Planned], config: LiveTestConfig) -> list[
             used[item.target.source] = None
             if item.target.other:
                 used[item.target.other] = None
-        if item.spec.id == "calendar.invite_flow":
-            invitee = config.calendars[item.target.source].invitee_mail
-            if invitee is not None:
-                used[invitee] = None
+        if invitee := _invitee_mail(item, config):
+            used[invitee] = None
     return list(used)
 
 
@@ -279,6 +287,7 @@ def leftover_items(lab: Lab, plan: Sequence[Planned]) -> list[str]:
         p.target.source for p in plan if p.spec.scope is not Scope.CALENDAR and p.target.source
     }
     sources |= {p.target.other for p in plan if p.target.other}
+    sources |= {m for p in plan if (m := _invitee_mail(p, lab.config))}
     for source in sorted(sources):
         for copy in lab.copies(source, marker):
             if copy.folder_role.value != "trash":
@@ -303,6 +312,8 @@ def _second_chance(lab: Lab, plan: Sequence[Planned]) -> None:
                         lab.remove_mail(source, lab.marker)
             elif item.spec.scope is Scope.CALENDAR and lab.approve_edits:
                 lab.remove_events(item.target.source, lab.marker)
+                if invitee := _invitee_mail(item, lab.config):
+                    lab.remove_mail(invitee, lab.marker)
         except (ChamberlainError, ScenarioFailure, ScenarioSkip):
             continue
 
