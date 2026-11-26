@@ -149,7 +149,8 @@ def sync_source(ctx: Context, source: str, *, max_age: timedelta | None = None) 
             if updated.failure:
                 failed.append(folder.id)
             repo.save_sync_folder(ctx.db, source, updated)
-        repo.drop_sync_folders(ctx.db, source, [f.id for f in folders])
+        if folders:  # an empty listing is a client hiccup, not every folder deleted
+            repo.drop_sync_folders(ctx.db, source, [f.id for f in folders])
         rows = repo.sync_folder_rows(ctx.db, source)
         previous = repo.sync_state(ctx.db, source)
         complete = previous[0] if previous else None

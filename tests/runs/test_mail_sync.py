@@ -119,6 +119,19 @@ def test_folders_synced_too_long_ago_are_synced_again_when_the_agent_starts(rig:
     assert syncs(rig) == first + 1, "inside the freshness window nothing is asked again"
 
 
+def test_an_empty_folder_listing_keeps_what_is_known_about_each_folder(
+    rig: Rig, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configure(rig)
+    run_tick(rig.app)
+    known = attention_repo.sync_folder_rows(rig.ctx.db, MAIL)
+    assert known
+    monkeypatch.setattr(rig.fake.mail, "folders", lambda source: [])
+    rig.clock.advance(minutes=FRESH_MINUTES + 30)
+    run_tick(rig.app)
+    assert attention_repo.sync_folder_rows(rig.ctx.db, MAIL) == known
+
+
 def test_a_folder_that_will_not_sync_is_reported_waited_for_once_and_retried(
     rig: Rig, monkeypatch: pytest.MonkeyPatch
 ) -> None:
