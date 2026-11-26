@@ -18,7 +18,9 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
     Verification,
 )
+from chamberlain.memory.reading import open_handle
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.schema.tools import OpenRequest, OpenResponse
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
@@ -424,6 +426,9 @@ def test_r7_an_applied_result_with_a_warning_is_confirmed_and_surfaces_the_warni
         done = rig.engine().do(op.handle)
         assert done.state is S.CONFIRMED
         assert rig.engine().view(done).warnings == ("merged_existing_copy",)
+        opened = open_handle(rig.ctx, OpenRequest(handle=op.handle)).data
+        assert isinstance(opened, OpenResponse)
+        assert opened.view == rig.engine().view(done)  # W-30: `open` shows what the write did
     finally:
         rig.close()
 

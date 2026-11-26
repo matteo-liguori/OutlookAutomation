@@ -280,7 +280,9 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
             "card_title": a.card_title,
             "due": a.due_at <= ts(ctx.clock.now()),
         }
-        for a in memory_repo.dated_actions(ctx.db, ts(window.start), ts(window.end), 200)
+        for a in memory_repo.action_lines(
+            ctx.db, "a.due_at >= ? AND a.due_at < ?", (ts(window.start), ts(window.end)), limit=200
+        )
         if a.due_at is not None and a.handle not in important_handles
     ]
     return {
@@ -341,9 +343,20 @@ def reports_of_day(ctx: Context, day: str) -> dict[str, Any]:
 def cards(ctx: Context) -> dict[str, Any]:
     """Open cards as a grid: goal, position, the next actions and when it is next looked at."""
     now = ts(ctx.clock.now())
-    details = memory_repo.card_details(ctx.db, CARD_LIMIT)
+    details = memory_repo.card_rows(
+        ctx.db.execute(
+            "SELECT handle, title, goal, position, review_at, over_cap, updated_at FROM cards "
+            "WHERE state = 'open' ORDER BY updated_at DESC, handle LIMIT ?",
+            (CARD_LIMIT,),
+        )
+    )
     by_card: dict[str, list[memory_repo.ActionLine]] = {}
-    for action in memory_repo.open_actions_of(ctx.db, [c.handle for c in details]):
+    for action in memory_repo.action_lines(
+        ctx.db,
+        f"a.card IN ({', '.join('?' for _ in details)})",
+        tuple(c.handle for c in details),
+        "a.due_at IS NULL, a.due_at, a.handle",
+    ):
         by_card.setdefault(action.card, []).append(action)
     items: list[dict[str, Any]] = []
     for card in details:
@@ -391,15 +404,20 @@ def timeline(ctx: Context, zone: str, until: str | None, days: int) -> dict[str,
     start = ts(_local_midnight(first, tz))
     end = ts(_local_midnight(last + timedelta(days=1), tz))
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for action in memory_repo.closed_actions_between(ctx.db, start, end, TIMELINE_LIMIT):
-        day = _stored_to_local(action.closed_at, tz).date().isoformat()
+    for action in ctx.db.execute(
+        "SELECT a.title, a.state, a.outcome, a.closed_at, c.title AS card_title FROM actions a "
+        "JOIN cards c ON c.handle = a.card WHERE a.state IN ('done', 'dropped') "
+        "AND a.closed_at >= ? AND a.closed_at < ? ORDER BY a.closed_at DESC, a.handle LIMIT ?",
+        (start, end, TIMELINE_LIMIT),
+    ):
+        day = _stored_to_local(action["closed_at"], tz).date().isoformat()
         grouped.setdefault(day, []).append(
             {
-                "at": action.closed_at,
+                "at": action["closed_at"],
                 "kind": "action",
-                "title": action.title,
-                "detail": (action.outcome or action.state),
-                "card": action.card_title,
+                "title": action["title"],
+                "detail": (action["outcome"] or action["state"]),
+                "card": action["card_title"],
             }
         )
     for row in writes_repo.audit_between(ctx.db, start, end, TIMELINE_LIMIT):

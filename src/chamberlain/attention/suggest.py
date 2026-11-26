@@ -7,11 +7,11 @@ exactly one open card. A sender who fits several cards suggests nothing.
 
 import json
 import logging
+import sqlite3
 
 from chamberlain.app.context import Context
 from chamberlain.attention.tuning import MAIL_CORRESPONDENT_LOOKUPS, MAIL_HEADER_READS
 from chamberlain.domain.mail import MessageSummary, folded_message_id
-from chamberlain.memory import repo as memory_repo
 from chamberlain.ports.mail import MailPort
 from chamberlain.schema.safelog import log_failure
 from chamberlain.writes import repo as writes_repo
@@ -19,12 +19,36 @@ from chamberlain.writes import repo as writes_repo
 log = logging.getLogger("chamberlain.attention")
 
 
+def card_links(db: sqlite3.Connection) -> dict[str, str]:
+    """Linked message handle and Message-ID to card, for open cards."""
+    rows = db.execute(
+        "SELECT l.ref, l.internet_message_id, l.card FROM card_links l "
+        "JOIN cards c ON c.handle = l.card WHERE c.state = 'open'"
+    )
+    found: dict[str, str] = {}
+    for r in rows:
+        found[r["ref"]] = r["card"]
+        if r["internet_message_id"]:
+            found[r["internet_message_id"]] = r["card"]
+    return found
+
+
+def _linked_message_refs(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
+    """(card, source, locator) of messages linked to open cards, newest links first."""
+    rows = db.execute(
+        "SELECT l.card AS card, r.source_id AS source_id, r.locator AS locator "
+        "FROM card_links l JOIN cards c ON c.handle = l.card AND c.state = 'open' "
+        "JOIN refs r ON r.handle = l.ref AND r.kind = 'message' ORDER BY l.created_at DESC"
+    )
+    return [(r["card"], r["source_id"], r["locator"]) for r in rows]
+
+
 class Suggester:
     """Built once per tick; cheap until a new message arrives."""
 
     def __init__(self, ctx: Context) -> None:
         self._ctx = ctx
-        self._by_handle = memory_repo.card_links(ctx.db)
+        self._by_handle = card_links(ctx.db)
         self._by_id = {
             folded_message_id(key): card for key, card in self._by_handle.items() if "@" in key
         }
@@ -92,7 +116,7 @@ class Suggester:
                 for address in addresses:
                     people.setdefault(str(address).casefold(), set()).add(card)
         looked = 0
-        for card, linked_source, locator in memory_repo.linked_message_refs(self._ctx.db):
+        for card, linked_source, locator in _linked_message_refs(self._ctx.db):
             if linked_source != source or looked >= MAIL_CORRESPONDENT_LOOKUPS:
                 continue
             looked += 1

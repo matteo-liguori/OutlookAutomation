@@ -5,6 +5,7 @@ Contract: docs/contracts/06-memory.md (read-only views), 10-targets.md (storage 
 read-only history.
 """
 
+import sqlite3
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
@@ -60,7 +61,9 @@ def overview(ctx: Context) -> dict[str, Any]:
         },
         "counts": {
             "active_grants": sum(1 for g in grants if g.state is GrantState.ACTIVE),
-            "open_cards": memory_repo.count_open_cards(db),
+            "open_cards": db.execute("SELECT count(*) FROM cards WHERE state = 'open'").fetchone()[
+                0
+            ],
             "live_events": attention_repo.count_live_events(db),
         },
         "known_recipients": {
@@ -70,17 +73,28 @@ def overview(ctx: Context) -> dict[str, Any]:
     }
 
 
+def _open_cards(db: sqlite3.Connection) -> list[memory_repo.CardRow]:
+    return memory_repo.card_rows(
+        db.execute(
+            "SELECT c.handle, c.title, c.review_at, c.over_cap, (SELECT count(*) FROM actions a "
+            "WHERE a.card = c.handle AND a.state = 'open') AS open_actions "
+            "FROM cards c WHERE c.state = 'open' ORDER BY c.updated_at DESC, c.handle LIMIT ?",
+            (LIST_LIMIT,),
+        )
+    )
+
+
 def work(ctx: Context) -> dict[str, Any]:
     """Open cards and the actions due within a week."""
     until = ts(ctx.clock.now() + DUE_WINDOW)
     return {
         "cards": [
             pick(c, "handle", "title", "review_at", "over_cap", "open_actions")
-            for c in memory_repo.open_cards(ctx.db, LIST_LIMIT)
+            for c in _open_cards(ctx.db)
         ],
         "actions": [
             pick(a, "handle", "card", "card_title", "title", "due_at", "snooze_until")
-            for a in memory_repo.upcoming_actions(ctx.db, until, LIST_LIMIT)
+            for a in memory_repo.action_lines(ctx.db, "a.due_at <= ?", (until,), limit=LIST_LIMIT)
         ],
     }
 
