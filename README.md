@@ -6,7 +6,64 @@ hands over guidance when it is relevant, keeps every stored item owned and
 time-limited, and refuses any write that lacks verifiable permission or
 would be a blind resend.
 
-This is the rebuild. The old harness stays as the fallback until you cut over.
+**Version 2 is a rebuild.** It replaces the first version (Outlook Automation), which now lives
+on the [`v1-legacy`](https://github.com/matteo-liguori/chamberlain/tree/v1-legacy) branch. Your
+v1 data comes across with one agent-guided migration (see [Coming from v1](#coming-from-v1)).
+
+## Why move away from Outlook
+
+Version 1 drove Classic Outlook on Windows through COM, with separate adapters for Mac. That
+road is closing:
+
+- Microsoft is replacing Classic Outlook with the new Outlook for Windows, which has no COM
+  automation, so a COM-based tool has no future there.
+- Native Outlook on the Mac offers much less to automate, so Mac users always had a weaker
+  version.
+- Each client needed its own adapter, with its own quirks and its own gaps.
+
+Version 2 talks to your mail through **Thunderbird**, with a small add-on and a local bridge. The
+same code works on Windows and Mac, with Gmail, Microsoft 365 and IMAP accounts.
+Google Calendar and iCloud are written directly through their own APIs. A Microsoft 365
+calendar is reached through Thunderbird (Owl).
+
+## What is new in version 2
+
+- **Twelve typed tools instead of a large command set.** They work from the command line or as an
+  MCP server, and the same rules hold for any agent: Claude, Codex or another.
+- **The harness does the noticing.** Each scheduled pass and each chat starts with what actually
+  needs attention: new mail per card, due actions and reminders, calendar conflicts, sources that
+  stopped answering. Guidance is handed over at the moment it applies instead of in one long
+  prompt.
+- **Safer writes.** Every send, move, trash, mark-read and calendar change needs a permission
+  you can see and confirm in the viewer. Each write is dispatched exactly once and checked
+  afterwards; an uncertain write is settled by reading, never by sending it again. Everything
+  is audited.
+- **Bulk where it matters.** Filing, trashing and marking read move many messages in one write
+  and one check.
+- **A local viewer.** It shows the report of each pass, a calendar across all your accounts, the
+  permissions waiting for you, and reminders you acknowledge yourself.
+- **Mail clean-up, off by default.** Rules move old mail to Trash under one permission you
+  confirm.
+- **Conversation export.** A whole thread goes into one zip, with each attachment stored once.
+- **A live test.** It checks every capability end to end against your own mailboxes and calendars.
+- **Bounded storage.** Everything kept has an owner and an expiry, and a sweeper enforces both.
+- **Update notices** when a new version is tagged.
+
+## Coming from v1
+
+Give your agent the [agent setup guide](docs/setup-agent.md). It walks the agent through:
+
+- installing;
+- migrating your v1 data, with a backup, a resumable import and a receipt;
+- binding your accounts in Thunderbird;
+- a supervised first pass.
+
+It asks you only for the steps that need you, such as signing in or approving a permission.
+Cards, actions, grants, evidence, your instructions and your report layout all come across. Your
+v1 folder is only read, never changed, and it stays the fallback until you switch:
+[docs/cutover.md](docs/cutover.md).
+
+## More
 
 - Why and how: [docs/rebuild-plan.md](docs/rebuild-plan.md)
 - The binding specification (the contracts): [docs/contracts/](docs/contracts/00-index.md)
@@ -192,6 +249,12 @@ src/chamberlain/
   connectors/   fake/, thunderbird/, calendars
   surface/      cli.py, mcp_server.py, viewer/
   guidance/     one small rule file per rule
-  importer/     one-shot import from the old harness
-  testing/      connector contract suites and rigs
+  importer/     resumable migration from v1
+  runs/         scheduled passes, reports, update checks
+  connections/  the connection profile, setup and onboarding
+  cleanup/      the mail clean-up rules
+  export/       conversation export
+  review/       review of how agents use the harness
+  livetest/     the live test
+tests/support/  connector contract suites and rigs
 ```
