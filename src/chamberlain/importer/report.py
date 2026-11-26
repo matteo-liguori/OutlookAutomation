@@ -23,6 +23,9 @@ class ImportReport:
     in that file; the report document lists names only)."""
     old_default_instructions: list[str] = field(default_factory=list[str])
     """Old instruction topics that were only the old harness's shipped text, so not carried."""
+    instructions_to_review: list[str] = field(default_factory=list[str])
+    """Carried topics whose text names v1-only commands: the agent removes or rewrites each with
+    the owner. Flagged, never deleted."""
     read_state: dict[str, Any] = field(default_factory=dict[str, Any])
     """The old read-state settings, what they became, and the standing grants proposed."""
     appointments: list[str] = field(default_factory=list[str])
@@ -67,6 +70,7 @@ class ImportReport:
             "over_cap_cards": sorted(self.over_cap_cards),
             "owner_instructions_added": sorted(self.private_guidance),
             "old_default_instructions_not_carried": sorted(self.old_default_instructions),
+            "instructions_to_review": sorted(self.instructions_to_review),
             "read_state": self.read_state,
             "important_appointments": sorted(self.appointments),
             "kept_because_changed_since": sorted(self.kept_as_changed),

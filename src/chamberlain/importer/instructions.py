@@ -10,6 +10,7 @@ describe the old commands. Only a topic that differs from the shipped text recor
 `.state/defaults.json` is the owner's own, so only those are carried.
 """
 
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any, cast
@@ -38,6 +39,15 @@ def _literal(dumper: yaml.SafeDumper, data: str) -> yaml.ScalarNode:
 _Literal.add_representer(str, _literal)
 
 
+V1_COMMANDS = re.compile(
+    r"\bbriefing\b|\bmonitor(?:\.ps1|\s+(?:briefing|status|schedule|outlook|activation|help))"
+    r"|-m\s+monitor\b|\boutlook\s+status\b|\bactivation\s+complete\b|\bhelp\s+<topic>"
+    r"|\bschedule\s+sync\b",
+    re.IGNORECASE,
+)
+"""Words that name v1-only commands. A carried topic that uses one is flagged, never deleted."""
+
+
 def _layers(old: OldInstallation) -> dict[str, str]:
     topics: dict[str, str] = {}
     for layer in (old.profile.get("instructions"), old.customisations.get("instructions")):
@@ -57,6 +67,8 @@ def collect(old: OldInstallation, report: ImportReport) -> dict[str, str]:
             report.old_default_instructions.append(topic)
             continue
         found[topic] = text
+        if V1_COMMANDS.search(text):
+            report.instructions_to_review.append(topic)
     if baseline is None and found:
         report.warnings.append(
             "The old folder has no record of its shipped instruction texts, so every instruction "

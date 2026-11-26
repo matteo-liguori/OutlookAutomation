@@ -18,10 +18,11 @@ def test_cli_migrates_a_copy_and_switches_only_the_named_sandbox(
     secrets: MemorySecrets,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    def prepare(old: Path, root: Path) -> migrate.MigrationStatus:
+    def prepare(old: Path, root: Path, **_machine: object) -> migrate.MigrationStatus:
         return migrate.prepare_migration(old, root, secrets=secrets)
 
     monkeypatch.setattr(migration, "prepare_migration", prepare)
+    monkeypatch.setattr(migration, "app_homes", lambda: (data_root / "x", data_root / "y"))
 
     def command(stage: str, *options: str, expected: int = 0) -> dict[str, object]:
         stream = StringIO()

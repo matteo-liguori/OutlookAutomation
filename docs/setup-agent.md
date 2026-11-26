@@ -101,16 +101,13 @@ connection files.
 
 ## Move an existing installation or recover a step
 
-Use [Cutover](cutover.md) for v1. Run `chamberlain migrate detect OLD_ROOT`
-to identify the installation, then `chamberlain migrate prepare OLD_ROOT`
-to make the backup and import from it. Use `chamberlain migrate status OLD_ROOT`
-to resume and review the import receipt. Compare a supervised read-only pass,
-then run `chamberlain migrate verify OLD_ROOT` with the available verification
-evidence. Pass a source-binding snapshot with `--report-snapshot PATH` if one
-is available to compare.
-When the owner chooses the switch, review `chamberlain migrate switch --help`
-for the scheduler and sandbox arguments. Keep the old installation available
-for rollback and keep only one installation writing.
+Follow the [switchover runbook](cutover.md) for v1. It is one numbered list, from
+`chamberlain migrate detect OLD_ROOT` to `chamberlain migrate archive OLD_ROOT`, and says at each
+step what you do, what the owner does and when computer control helps. Resume with
+`chamberlain migrate status OLD_ROOT`. `chamberlain migrate grants OLD_ROOT` lists the old
+standing permissions to recreate. Review `chamberlain migrate switch --help` for the scheduler
+and sandbox options. Keep the old installation available for rollback and keep only one
+installation writing.
 
 For a profile version change, preview with `chamberlain config migrate`.
 Use `chamberlain config migrate --apply` after reviewing the plan, keep its

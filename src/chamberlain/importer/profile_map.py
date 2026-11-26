@@ -286,7 +286,15 @@ def map_profile(
                 credential=credential_name(icloud_username) if icloud_username else "pending",
             )
             mapped.icloud_source = sid
-            report.sources[sid] = "iCloud calendar (disabled until `caldav.setup register`)"
+            report.sources[sid] = (
+                "iCloud calendar (off until connected; run "
+                + (
+                    f"`chamberlain setup icloud register --apple-id {icloud_username}`"
+                    if icloud_username
+                    else "`chamberlain setup icloud credential --apple-id EMAIL`, then `register`"
+                )
+                + ")"
+            )
             continue
         if not _is_thunderbird(binding, backend) or calendar_id is None:
             report.skipped_sources.append(
