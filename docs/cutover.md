@@ -3,6 +3,8 @@
 The old data root is the fallback until you delete it. Nothing here modifies it, and at no
 point may both systems write.
 
+Use the [agent setup guide](setup-agent.md) for the resumable migration commands and the first-use checks.
+
 ## Before
 
 1. Close the old harness and any scheduled task that runs it. Copy the whole old data
@@ -16,11 +18,10 @@ point may both systems write.
 ## Import
 
 ```
-chamberlain --data <new data root> import <copy of old data root>
+chamberlain --data <new data root> migrate prepare <copy of old data root>
 ```
 
-Read the printed summary, then `<new data root>/import/report.json` (private; it also
-holds nothing private). Running the import again is safe. It adds only what is missing and
+Read the printed summary, then `<new data root>/import/report.json` (in the private data root). Running the import again is safe. It adds only what is missing and
 never overwrites a change made since, in v2, by you or the agent: card context ("context from the
 old harness"), card rules, important-appointment flags, your private instructions, the report
 layout and the read-state options. What it added is in the new report; the earlier report is kept

@@ -58,6 +58,8 @@ from chamberlain.schema.envelope import Reply, error_reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.schema.registry import BY_NAME, STANDING_PROMPT, TOOLS, get_tool
 from chamberlain.schema.tools import DoctorCheck
+from chamberlain.surface.config_updates import config_migrate, updates
+from chamberlain.surface.migration import migration_command, migration_parser
 from chamberlain.surface.runner import DATA_ENV, configured_caller
 from chamberlain.surface.viewer.server import launch
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
@@ -94,12 +96,23 @@ def _parser() -> argparse.ArgumentParser:
     schema.add_argument("tool", choices=sorted(BY_NAME))
     commands.add_parser("prompt", help="print the standing prompt")
     setup = commands.add_parser("setup", help="configure a calendar or Thunderbird connection")
-    setup.add_argument("provider", choices=["thunderbird", "google", "icloud"])
+    setup.add_argument(
+        "provider", nargs="?", choices=["select", "status", "thunderbird", "google", "icloud"]
+    )
     setup.add_argument("options", nargs=argparse.REMAINDER, help="provider setup options")
     config = commands.add_parser("config", help="check or manage the connection profile")
     config_actions = config.add_subparsers(dest="action", required=True)
     config_actions.add_parser("validate", help="check the connection profile")
     config_actions.add_parser("show", help="print the connection profile")
+    migration = config_actions.add_parser(
+        "migrate", help="preview or apply the local store upgrade"
+    )
+    migration.add_argument("--apply", action="store_true")
+    commands.add_parser("status", help="list configured sources and connector capabilities")
+    notes = commands.add_parser("updates", help="inspect local release information")
+    tags = notes.add_subparsers(dest="action", required=True)
+    tags.add_parser("notes", help="read an annotated release tag").add_argument("tag")
+    migration_parser(commands.add_parser("migrate", help="move a v1 installation to v2"))
     enroll = config_actions.add_parser(
         "add-test-calendar", help="enroll an existing calendar for live tests"
     )
@@ -290,6 +303,8 @@ def _config(args: argparse.Namespace, out: TextIO) -> int:
                 fix=f"Set {DATA_ENV} or pass --data before the tool name.",
             )
         data_root = Path(data)
+        if args.action == "migrate":
+            return config_migrate(data_root, apply=args.apply, out=out)
         if args.action == "add-test-calendar":
             backup = add_test_calendar(data_root, args.source)
             result = {"ok": True, "source": args.source, "changed": backup is not None}
@@ -531,6 +546,38 @@ def _refused_data_root(args: argparse.Namespace, out: TextIO) -> int | None:
     return None
 
 
+def _status(args: argparse.Namespace, out: TextIO) -> int:
+    data = args.data or os.environ.get(DATA_ENV)
+    if not data:
+        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
+        return EXIT_INVALID
+    try:
+        root = Path(data)
+        config = load_connections(root)
+        ports = build_runtime(config, root, SystemClock()).sources
+        bindings = {**ports.mail, **ports.calendar, **ports.contacts}
+        sources: dict[str, Any] = {}
+        for name, source in sorted(config.sources.items()):
+            row: dict[str, Any] = {
+                "enabled": source.enabled,
+                "kind": source.kind,
+                "capabilities": [],
+            }
+            if source.enabled and name in bindings:
+                try:
+                    row["capabilities"] = (
+                        bindings[name].capabilities(name).model_dump(mode="json")["capabilities"]
+                    )
+                except ChamberlainError as error:
+                    row["error"] = error.code.value
+            sources[name] = row
+        _print(out, {"sources": sources})
+    except ChamberlainError as error:
+        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+        return EXIT_FAILED
+    return EXIT_OK
+
+
 def _setup(args: argparse.Namespace, out: TextIO) -> int:
     data = args.data or os.environ.get(DATA_ENV)
     if not data:
@@ -545,6 +592,9 @@ def _setup(args: argparse.Namespace, out: TextIO) -> int:
 
 
 _COMMANDS = {
+    "migrate": migration_command,
+    "status": _status,
+    "updates": updates,
     "setup": _setup,
     "tick": _tick,
     "config": _config,

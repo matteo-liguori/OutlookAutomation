@@ -17,6 +17,8 @@ This is the rebuild. The old harness stays as the fallback until you cut over.
 
 ## Getting started
 
+Follow the [agent setup guide](docs/setup-agent.md) for a new installation or migration. The command `chamberlain setup status` shows where to resume.
+
 Use a new, empty data root for Chamberlain, never the old one. Pass it with
 `--data <folder>` or set `CHAMBERLAIN_DATA`. The folder must be outside the code checkout:
 Chamberlain refuses to start when the data root is inside the folder that holds the code or

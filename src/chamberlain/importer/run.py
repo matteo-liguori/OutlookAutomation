@@ -116,8 +116,9 @@ def _import_all(
     secrets: SecretStore | None,
     report: ImportReport,
     caldav_check: Check | None = None,
+    allow_external_credential: bool = True,
 ) -> MappedProfile:
-    icloud = icloud_credential(old_root)
+    icloud = icloud_credential(old_root, extra_dirs=None if allow_external_credential else [])
     mapped = map_profile(old, report, icloud[0] if icloud else None)
     zone = ZoneInfo(mapped.connections.timezone)
 
@@ -196,6 +197,7 @@ def run_import(
     mail: Mapping[str, MailPort] | None = None,
     seed_recipients: bool = True,
     caldav_check: Check | None = None,
+    allow_external_credential: bool = True,
 ) -> ImportReport:
     """Import an old installation. `caldav_check` signs in to iCloud (the CLI passes the
     real one); without it the iCloud calendar stays a disabled placeholder."""
@@ -210,7 +212,16 @@ def run_import(
     report.next_steps = list(NEXT_STEPS)
 
     try:
-        mapped = _import_all(old, old_root, data_root, the_clock, secrets, report, caldav_check)
+        mapped = _import_all(
+            old,
+            old_root,
+            data_root,
+            the_clock,
+            secrets,
+            report,
+            caldav_check,
+            allow_external_credential,
+        )
     except ChamberlainError:
         raise
     except (sqlite3.Error, ValidationError, ValueError, KeyError, TypeError) as error:

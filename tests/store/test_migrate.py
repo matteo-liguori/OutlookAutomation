@@ -270,3 +270,34 @@ def test_a1_migration_0250_retires_only_old_card_mail_events(
     assert 250 in migrate(empty, clock, backup_dir=None, migrations=legacy_migrations())
     kinds = {row["kind"] for row in empty.execute("SELECT kind FROM events")}
     assert kinds == {"mail.new_unmatched", "operation.uncertain"}
+
+
+def test_s10_a_retry_publishes_a_new_backup_without_replacing_the_first(
+    tmp_path: Path, clock: ManualClock
+) -> None:
+    database = connect(tmp_path / DB_NAME)
+    backups = tmp_path / "backups"
+    first = backups / "pre-migration-0003.sqlite3"
+    second = backups / "pre-migration-0003-2.sqlite3"
+    try:
+        migrate(database, clock, backup_dir=backups, migrations=[ONE])
+        database.execute("INSERT INTO one VALUES (7)")
+        with pytest.raises(ChamberlainError):
+            migrate(database, clock, backup_dir=backups, migrations=[ONE, BROKEN])
+        previous = first.read_bytes()
+        database.execute("INSERT INTO one VALUES (8)")
+        with pytest.raises(ChamberlainError):
+            migrate(database, clock, backup_dir=backups, migrations=[ONE, BROKEN])
+        assert first.read_bytes() == previous
+        assert set(backups.iterdir()) == {first, second}
+        assert set(applied_versions(database)) == {1}
+    finally:
+        database.close()
+    for path, expected in ((first, [7]), (second, [7, 8])):
+        archive = connect(path)
+        try:
+            assert [
+                row["id"] for row in archive.execute("SELECT id FROM one ORDER BY id")
+            ] == expected
+        finally:
+            archive.close()

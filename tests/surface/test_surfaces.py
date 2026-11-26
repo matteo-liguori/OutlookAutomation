@@ -138,3 +138,25 @@ def _rpc(*messages: dict[str, Any]) -> list[dict[str, Any]]:
     stdout = io.StringIO()
     mcp_server.serve(stdin, stdout)
     return [json.loads(line) for line in stdout.getvalue().splitlines()]
+
+
+def test_status_lists_enabled_capabilities_and_disabled_sources(data_root: Path) -> None:
+    profile = profile_path(data_root)
+    profile.parent.mkdir(parents=True, exist_ok=True)
+    profile.write_text(
+        "sources:\n  calendar:work:\n    kind: google\n"
+        "    account: test@example.org\n    calendar_id: primary\n"
+        "  calendar:off:\n    kind: owl\n    calendar_id: other\n    enabled: false\n",
+        encoding="utf-8",
+    )
+    code, text = run_cli("--data", str(data_root), "status")
+    assert code == 0
+    rows = json.loads(text)["sources"]
+    assert {capability["name"] for capability in rows["calendar:work"]["capabilities"]} == {
+        "calendar.read",
+        "calendar.write",
+        "calendar.invite",
+        "calendar.recurrence",
+        "calendar.occurrence",
+    }
+    assert rows["calendar:off"] == {"enabled": False, "kind": "owl", "capabilities": []}

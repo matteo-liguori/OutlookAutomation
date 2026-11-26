@@ -10,6 +10,17 @@ from chamberlain.attention.handlers import DOCTOR_CHECKS, HANDLERS, HOOKS
 from chamberlain.attention.rules import load_rules
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.errors import ErrorCode
+from chamberlain.schema.tools import GuideResponse
+
+
+def test_setup_guide_is_available_on_request(app: App) -> None:
+    pulled = app.call("guide", {"id": "setup.agent"})
+    assert isinstance(pulled.data, GuideResponse)
+    [topic] = pulled.data.rules
+    assert topic.text is not None
+    assert "docs/setup-agent.md" in topic.text
+    assert topic.id not in {rule.id for rule in load_rules()}
+    assert topic.id not in {rule.id for rule in app.call("start", {}).guidance}
 
 
 def test_t3_t7_a9_next_needs_a_session_but_start_and_guide_do_not_and_3_related_checks(
@@ -83,7 +94,8 @@ def test_a4_a17_t7_e13_a12_the_agent_cannot_close_an_uncertain_operation_and_3_r
     assert all(r.text is None for r in first.data.rules)
     second = app.call("guide", {"cursor": first.coverage.cursor})
     seen = [r.id for r in first.data.rules] + [r.id for r in second.data.rules]
-    assert seen == [r.id for r in load_rules()]
+    assert seen == [r.id for r in load_rules()] + ["setup.agent"]
+    assert all(r.text is None for r in second.data.rules)
     assert second.coverage is not None
     assert second.coverage.complete
 
@@ -129,5 +141,5 @@ def test_a4_a17_t7_e13_a12_the_agent_cannot_close_an_uncertain_operation_and_3_r
         "appointments.important",
         "calendar.checks",
     ]
-    assert index.coverage.total == len(load_rules())
+    assert index.coverage.total == len(load_rules()) + 1
     assert index.coverage.returned == 25

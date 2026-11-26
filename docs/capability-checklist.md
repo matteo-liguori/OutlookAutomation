@@ -155,11 +155,9 @@ Regression tests include `tests/importer/test_import.py::test_s14_a_second_impor
 
 ## C17 — Setup, migration and onboarding
 
-Regression tests include `tests/calendars/test_google_setup.py::test_s17_the_loopback_flow_uses_pkce_ignores_strays_and_saves_the_token`, `tests/calendars/test_caldav_setup.py::test_registering_is_idempotent_keeps_a_backup_and_holds_no_password`, `tests/thunderbird/test_setup.py::test_b10_setup_writes_only_where_told_and_registers_nothing`. These verify individual provider setup paths. The end-to-end agent-led setup and migration flow is pending.
-
-- [ ] Agent guide, resumable queryable flow, ask user only where needed, GUI collaboration, first-use check: current setup tests `tests/thunderbird/test_setup.py`, `tests/calendars/test_google_setup.py`, `tests/calendars/test_caldav_setup.py` are partial; end-to-end agent-guided fresh-install walkthrough and first-use check are gaps.
-- [ ] Provider setup commands and update detection have component tests in `tests/connections/test_setup_command.py` and `tests/runs/test_notes_updates.py`. Capability status, tagged release-note display, a supervised read-only first pass and `config migrate` still need their own evidence.
-- [ ] Resumable v1 detect/backup/import/read-only comparison/switch and recovery: `tests/importer/test_import.py::test_s14_a_second_import_changes_nothing` is partial. A dry run on a copy and end-to-end checks are gaps.
+- [x] The pull-only `setup.agent` guide, persistent selection, done/next/waiting state and provider handoffs are exercised in `tests/attention/test_handlers.py`, `tests/connections/test_onboarding.py` and the individual provider setup suites. The isolated walkthrough built the native host and XPI, used a simulated installation on loopback, bound a synthetic source, and verified a scheduled report in the viewer. Live first-use validation uses the owner's existing installation.
+- [x] The public capability listing, tagged release notes, config migration preview/apply and recoverable backups are exercised in `tests/surface/test_surfaces.py`, `tests/surface/test_config_updates.py`, `tests/runs/test_release_notes.py` and `tests/connections/test_migrate_config.py`.
+- [x] Resumable v1 detection, backup, import, comparison and switching are covered in `tests/importer/test_migration_cli.py` and `tests/importer/test_migrate_flow.py`. A copy of the active v1 installation matched 171 cards and 40 actions with zero local differences. The rehearsal used an isolated schedule manifest. Automated scheduler tests cover task identity, rollback and interrupted switching.
 
 ## Additional inventory
 

@@ -91,6 +91,24 @@ def save_refresh_token(store: SecretStore, email: str, refresh_token: str, scope
         store.set(SERVICE, ACCOUNTS_NAME, json.dumps([*known, email]))
 
 
+def stored_refresh_token(store: SecretStore, email: str) -> str | None:
+    """Read the saved refresh token without attempting Google sign-in or refreshing it."""
+    raw = store.get(SERVICE, _token_name(email))
+    if raw is None:
+        return None
+    try:
+        token: object = json.loads(raw)["refresh_token"]
+    except (KeyError, TypeError, ValueError):
+        token = None
+    if not isinstance(token, str) or not token.strip():
+        raise ChamberlainError(
+            ErrorCode.SOURCE_SIGN_IN_NEEDED,
+            "The saved Google sign-in is unreadable.",
+            fix="Link the account again in the Google calendar setup.",
+        )
+    return token
+
+
 def post_form(
     url: str, fields: Mapping[str, str], transport: HttpTransport | None = None
 ) -> dict[str, object]:
@@ -227,8 +245,8 @@ class AccessTokens:
         now = self._clock.now()
         if cached and cached[1] > now + _REFRESH_MARGIN:
             return cached[0]
-        raw = self._store.get(SERVICE, _token_name(email))
-        if raw is None:
+        refresh = stored_refresh_token(self._store, email)
+        if refresh is None:
             raise ChamberlainError(
                 ErrorCode.SOURCE_SIGN_IN_NEEDED,
                 "This Google account is not linked.",
@@ -238,7 +256,7 @@ class AccessTokens:
         tokens = self._post(
             TOKEN_URI,
             {
-                "refresh_token": json.loads(raw)["refresh_token"],
+                "refresh_token": refresh,
                 "client_id": client_id,
                 "client_secret": client_secret,
                 "grant_type": "refresh_token",

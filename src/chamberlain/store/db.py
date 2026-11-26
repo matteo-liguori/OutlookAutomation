@@ -12,12 +12,14 @@ DB_NAME = "chamberlain.sqlite3"
 MEMORY = ":memory:"
 
 
-def connect(path: Path | str) -> sqlite3.Connection:
+def connect(path: Path | str, *, must_exist: bool = False) -> sqlite3.Connection:
     """Open the store with the pragmas every caller relies on (S-1).
 
     The connection is in autocommit mode; use `transaction` for writes.
+    With `must_exist`, SQLite opens the existing file without creating a replacement.
     """
-    connection = sqlite3.connect(str(path), isolation_level=None)
+    name = Path(path).resolve().as_uri() + "?mode=rw" if must_exist else str(path)
+    connection = sqlite3.connect(name, uri=must_exist, isolation_level=None)
     connection.row_factory = sqlite3.Row
     connection.execute("PRAGMA foreign_keys = ON")
     connection.execute("PRAGMA busy_timeout = 5000")

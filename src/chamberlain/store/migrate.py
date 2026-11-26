@@ -4,12 +4,16 @@ Contract: docs/contracts/09-storage.md (S-8 to S-15).
 """
 
 import hashlib
+import os
 import re
 import sqlite3
 from collections.abc import Sequence
+from contextlib import closing
 from dataclasses import dataclass
 from importlib import resources
+from itertools import count
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.ports.clock import Clock
@@ -320,14 +324,30 @@ def migrate(
 
 
 def _backup(connection: sqlite3.Connection, target: Path) -> None:
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if target.exists():
-        target.unlink()
-    copy = sqlite3.connect(str(target))
+    """Publish a complete SQLite backup without replacing an earlier attempt's backup."""
     try:
-        connection.backup(copy)
-    finally:
-        copy.close()
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(prefix=".migration-", dir=target.parent) as work:
+            staged = Path(work) / target.name
+            with closing(sqlite3.connect(staged)) as copy:
+                connection.backup(copy)
+                if copy.execute("PRAGMA quick_check(1)").fetchone()[0] != "ok":
+                    raise _fail("The pre-migration backup did not pass SQLite's integrity check.")
+            # The staged copy is on the same filesystem. Link publishes it in one step
+            # and fails on collision, so another opener's complete backup stays in place.
+            for number in count(1):
+                name = target if number == 1 else target.with_stem(f"{target.stem}-{number}")
+                try:
+                    os.link(staged, name)
+                except FileExistsError:
+                    continue
+                return
+    except (OSError, sqlite3.Error) as error:
+        raise ChamberlainError(
+            ErrorCode.STORE_MIGRATION_FAILED,
+            "The pre-migration backup could not be saved. The next migration did not run.",
+            detail=str(error)[:300],
+        ) from error
 
 
 def stamp(clock: Clock) -> str:

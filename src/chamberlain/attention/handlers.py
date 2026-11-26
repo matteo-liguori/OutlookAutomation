@@ -42,6 +42,14 @@ SourceKind = Literal["mail", "calendar", "contacts"]
 
 log = logging.getLogger("chamberlain.attention")
 
+_SETUP_GUIDE = GuideRule(
+    id="setup.agent",
+    version=1,
+    title="Set up a new installation",
+    text="Follow docs/setup-agent.md. Choose the providers with the user and resume from setup "
+    "status. Leave credential entry and consent to the user.",
+)
+
 
 def _offer(ctx: Context, session: str, limit: int) -> tuple[tuple[WorkItem, ...], int]:
     """The next events this session has not seen; marks them delivered (A-9)."""
@@ -148,7 +156,7 @@ def effective_rules(ctx: Context) -> tuple[Rule, ...]:
 
 
 def guide(ctx: Context, request: GuideRequest) -> Result:
-    rules = effective_rules(ctx)
+    rules = (*effective_rules(ctx), _SETUP_GUIDE)
     if request.id is not None:
         found = next((r for r in rules if r.id == request.id), None)
         if found is None:

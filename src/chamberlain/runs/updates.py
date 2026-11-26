@@ -18,7 +18,7 @@ from chamberlain import __version__
 from chamberlain.app.context import Context
 from chamberlain.domain.timefmt import ts
 from chamberlain.runs.tuning import TAG_PREFIX, UPDATE_CHECK_EVERY, UPDATE_RETRY_AFTER
-from chamberlain.schema.errors import ChamberlainError
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 from chamberlain.store.schema import get_state, set_state
@@ -34,12 +34,13 @@ _INSTALLED = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?")
 _SHORT = {"a": 0, "b": 1, "rc": 2}
 Version = tuple[int, int, int, int, int]
 FINAL = 3
+_V1_TAG_PREFIX = "harness-update/v"
 
 
 def parse_tag(tag: str, prefix: str = TAG_PREFIX) -> Version | None:
     if not tag.startswith(prefix):
         return None
-    match = _TAG.match(tag[len(prefix) :])
+    match = _TAG.fullmatch(tag[len(prefix) :])
     if match is None:
         return None
     major, minor, patch, stage, number = match.groups()
@@ -86,6 +87,38 @@ def git_tag_lister(remote: str, *, cwd: Path | None = None, timeout: float = 8.0
         return names
 
     return lister
+
+
+def release_notes(tag: str, *, cwd: Path | None = None, timeout: float = 8.0) -> str | None:
+    """Return the annotation of an exact local release tag, if one is present."""
+    if parse_tag(tag) is None and parse_tag(tag, _V1_TAG_PREFIX) is None:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_INVALID, "Use a full Chamberlain release tag.", field="tag"
+        )
+    try:
+        result = subprocess.run(
+            [
+                "git",
+                "tag",
+                "--list",
+                "--format=%(if:equals=tag)%(objecttype)%(then)%(contents)%(end)",
+                "--",
+                tag,
+            ],
+            cwd=cwd,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout,
+            check=True,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ChamberlainError(
+            ErrorCode.SOURCE_UNAVAILABLE,
+            "Git could not read the local release notes.",
+            fix="Run the command from the Chamberlain Git checkout.",
+        ) from error
+    return result.stdout.strip() or None
 
 
 def _due(ctx: Context, now: datetime, force: bool) -> bool:

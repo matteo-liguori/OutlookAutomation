@@ -1,18 +1,51 @@
-"""Dispatch the three provider setup commands without taking over terminal input."""
+"""Dispatch setup choices, progress checks and the existing provider commands."""
 
+import argparse
 from contextlib import redirect_stdout
 from pathlib import Path
 from typing import TextIO
 
 from chamberlain.connections.build import BRIDGE_DIR_NAME
+from chamberlain.connections.onboarding import SetupProvider, setup_select, setup_status
 from chamberlain.connectors.caldav import setup as icloud_setup
 from chamberlain.connectors.google_calendar import setup as google_setup
 from chamberlain.connectors.thunderbird import setup as thunderbird_setup
+from chamberlain.schema.errors import ChamberlainError
 
 
-def provider_setup(provider: str, argv: list[str], data_root: Path, out: TextIO) -> int:
+def _onboarding(command: str, argv: list[str], data_root: Path, out: TextIO) -> int:
+    parser = argparse.ArgumentParser(prog=f"chamberlain setup {command}")
+    if command == "select":
+        parser.add_argument("providers", nargs="+", type=SetupProvider, choices=list(SetupProvider))
+        parser.add_argument("--google-account", metavar="EMAIL")
+        parser.add_argument("--apple-id", metavar="EMAIL")
+    with redirect_stdout(out):
+        args = parser.parse_args(argv)
+    try:
+        state = (
+            setup_select(
+                data_root,
+                args.providers,
+                google_account=args.google_account,
+                apple_id=args.apple_id,
+            )
+            if command == "select"
+            else setup_status(data_root)
+        )
+    except ChamberlainError as error:
+        print(error.message, file=out)
+        if error.fix:
+            print(error.fix, file=out)
+        return 2
+    out.write(state.model_dump_json(indent=2, exclude_none=True) + "\n")
+    return 0
+
+
+def provider_setup(provider: str | None, argv: list[str], data_root: Path, out: TextIO) -> int:
     """Pass existing provider flags through, using the harness root for their defaults."""
     try:
+        if provider is None or provider in ("select", "status"):
+            return _onboarding(provider or "status", argv, data_root, out)
         if provider == "thunderbird":
             with redirect_stdout(out):
                 return thunderbird_setup.main(
