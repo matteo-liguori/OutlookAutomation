@@ -27,7 +27,7 @@ COMPLEX = Caps(COMPLEX_POSITION_MAX, COMPLEX_CARD_MAX_CHARS)
 
 def status_of(db: sqlite3.Connection, card: str) -> str | None:
     """`pending`, `approved` or `declined`, or None when the card never asked."""
-    row = repo.get_complex(db, card)
+    row = repo.get(db, "complex_cards", card)
     return None if row is None else str(row["state"])
 
 

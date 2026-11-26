@@ -42,7 +42,7 @@ class ComplexCards:
         if str(row["state"]) != "open":
             raise ChamberlainError(ErrorCode.REQUEST_INVALID, "That card is closed.", field="card")
         now = self._clock.now()
-        existing = repo.get_complex(self._db, card)
+        existing = repo.get(self._db, "complex_cards", card)
         if existing is not None:
             state = str(existing["state"])
             if state in ("pending", "approved"):
@@ -115,13 +115,13 @@ class ComplexCards:
 
     def revoke(self, card: str) -> bool:
         """Back to the normal limits. Returns whether the card is now over them."""
-        row = repo.get_complex(self._db, card)
+        row = repo.get(self._db, "complex_cards", card)
         if row is None or str(row["state"]) != "approved":
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID, "That card does not have a larger limit."
             )
         with transaction(self._db):
-            repo.delete_complex(self._db, card)
+            repo.delete(self._db, "complex_cards", "card", card)
             over = self._flag_if_over(card)
             self._audit.append(
                 actor=OWNER_ACTOR,
@@ -133,7 +133,7 @@ class ComplexCards:
         return over
 
     def _pending(self, card: str) -> repo.Row:
-        row = repo.get_complex(self._db, card)
+        row = repo.get(self._db, "complex_cards", card)
         if row is None or str(row["state"]) != "pending":
             raise ChamberlainError(ErrorCode.REQUEST_INVALID, "There is no request to decide.")
         return row

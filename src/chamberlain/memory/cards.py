@@ -78,8 +78,8 @@ class CardService:
             state="open" if str(row["state"]) == "open" else "closed",
             version=int(row["version"]),
             over_cap=bool(row["over_cap"]),
-            review_at=None if row["review_at"] is None else parse(str(row["review_at"])),
-            outcome=None if row["outcome"] is None else str(row["outcome"]),
+            review_at=repo.opt(row, "review_at", parse),
+            outcome=repo.opt(row, "outcome"),
             actions=actions,
             context=repo.card_context_artifact(self._db, handle, ts(self._clock.now())),
             complex=_complex_state(status_of(self._db, handle)),
@@ -96,10 +96,10 @@ class CardService:
             card=str(row["card"]),
             title=str(row["title"]),
             state="open" if state == "open" else ("done" if state == "done" else "dropped"),
-            due_at=None if row["due_at"] is None else parse(str(row["due_at"])),
-            snooze_until=None if row["snooze_until"] is None else parse(str(row["snooze_until"])),
+            due_at=repo.opt(row, "due_at", parse),
+            snooze_until=repo.opt(row, "snooze_until", parse),
             important=bool(row["important"]),
-            outcome=None if row["outcome"] is None else str(row["outcome"]),
+            outcome=repo.opt(row, "outcome"),
             notes=notes,
         )
 
@@ -224,11 +224,11 @@ class CardService:
                     ts(now),
                     plus(now, days=ACTION_OUTCOME_DAYS),
                 )
-            repo.remove_evidence_refs_of(self._db, [handle, *actions])
+            repo.release_all_of(self._db, "evidence_refs", [handle, *actions])
             self._release_owned([*actions, handle])
-            repo.delete_complex(self._db, handle)
+            repo.delete(self._db, "complex_cards", "card", handle)
             repo.delete_unreferenced_evidence(self._db)
-            repo.delete_card_links(self._db, handle)
+            repo.delete(self._db, "card_links", "card", handle)
             repo.close_card(self._db, handle, outcome, ts(now), plus(now, days=CARD_OUTCOME_DAYS))
         return self.view(handle)
 
@@ -338,7 +338,7 @@ class CardService:
             repo.end_action(
                 self._db, action, "done", outcome, ts(now), plus(now, days=ACTION_OUTCOME_DAYS)
             )
-            repo.remove_evidence_refs_of(self._db, [action])
+            repo.release_all_of(self._db, "evidence_refs", [action])
             self._release_owned([action])
             repo.delete_unreferenced_evidence(self._db)
             repo.bump_card(self._db, card, ts(now))
@@ -347,7 +347,7 @@ class CardService:
     def _release_owned(self, actions: list[str]) -> None:
         """Notes go with their actions; artifacts they held are released (M-10)."""
         for action in actions:
-            repo.delete_notes_of(self._db, action)
+            repo.delete(self._db, "notes", "action", action)
         for artifact in repo.remove_holds_of(self._db, actions):
             repo.release_if_unheld(self._db, artifact)
 
@@ -390,7 +390,7 @@ class CardService:
                 fix=f"Shorten the note to {NOTE_MAX} characters.",
                 field="text",
             )
-        if repo.count_notes(self._db, action) >= NOTES_PER_ACTION_MAX:
+        if len(repo.notes_of(self._db, action)) >= NOTES_PER_ACTION_MAX:
             raise ChamberlainError(
                 ErrorCode.NOTE_OVER_CAP,
                 f"The action already has {NOTES_PER_ACTION_MAX} notes.",
@@ -404,4 +404,4 @@ class CardService:
 
     def forget_note(self, handle: str) -> bool:
         with transaction(self._db):
-            return repo.delete_note(self._db, handle) > 0
+            return repo.delete(self._db, "notes", "handle", handle) > 0

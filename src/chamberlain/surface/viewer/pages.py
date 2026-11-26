@@ -347,7 +347,7 @@ def cards(ctx: Context) -> dict[str, Any]:
     """Open cards as a grid: goal, position, the next actions and when it is next looked at."""
     now = _stored(ctx.clock.now())
     details = memory_repo.card_details(ctx.db, CARD_LIMIT)
-    by_card: dict[str, list[memory_repo.OpenAction]] = {}
+    by_card: dict[str, list[memory_repo.ActionLine]] = {}
     for action in memory_repo.open_actions_of(ctx.db, [c.handle for c in details]):
         by_card.setdefault(action.card, []).append(action)
     items: list[dict[str, Any]] = []

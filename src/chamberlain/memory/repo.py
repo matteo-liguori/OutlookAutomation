@@ -7,7 +7,7 @@ Callers wrap writes in `store.db.transaction`; timestamps arrive as D-7 strings.
 """
 
 import sqlite3
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 
 from chamberlain.limits import TOTAL_ARTIFACT_BYTES
@@ -29,6 +29,13 @@ LIVE_SESSION = "SELECT handle FROM sessions WHERE ended_at IS NULL AND last_seen
 
 LIVE_RUN = "SELECT handle FROM runs"
 LIVE_CARD = "SELECT handle FROM cards WHERE state = 'open'"
+_EVIDENCE_LIVE = {
+    "card": LIVE_CARD,
+    "action": LIVE_ACTION,
+    "grant": "SELECT handle FROM grants WHERE compacted_at IS NULL",
+    "operation": "SELECT handle FROM operations WHERE compacted_at IS NULL",
+}
+"""Evidence outlives a grant or operation until compaction, not until it ends (M-15)."""
 
 _LIVE_BY_KIND = {
     "action": LIVE_ACTION,
@@ -61,15 +68,118 @@ def owner_is_live(db: sqlite3.Connection, kind: str, handle: str, edges: Edges) 
 
 
 def owner_exists(db: sqlite3.Connection, kind: str, handle: str) -> bool:
-    table = {
-        "action": "actions",
-        "operation": "operations",
-        "grant": "grants",
-        "session": "sessions",
-        "run": "runs",
-        "card": "cards",
-    }[kind]
-    return db.execute(f"SELECT 1 FROM {table} WHERE handle = ?", (handle,)).fetchone() is not None
+    return get(db, _OWNER_TABLE[kind], handle) is not None
+
+
+def opt[T](row: Row, column: str, convert: Callable[[str], T] = str) -> T | None:
+    """`convert(str(row[column]))`, or None when the column is NULL."""
+    return None if row[column] is None else convert(str(row[column]))
+
+
+def _one(db: sqlite3.Connection, sql: str, params: Iterable[object] = ()) -> Row | None:
+    row: Row | None = db.execute(sql, tuple(params)).fetchone()
+    return row
+
+
+def _all(db: sqlite3.Connection, sql: str, params: Iterable[object] = ()) -> list[Row]:
+    rows: list[Row] = db.execute(sql, tuple(params)).fetchall()
+    return rows
+
+
+def _exec(db: sqlite3.Connection, sql: str, params: Iterable[object] = ()) -> int:
+    return db.execute(sql, tuple(params)).rowcount
+
+
+_OWNER_TABLE = {
+    "action": "actions",
+    "operation": "operations",
+    "grant": "grants",
+    "session": "sessions",
+    "run": "runs",
+    "card": "cards",
+}
+_KEY = {
+    **dict.fromkeys(
+        (*_OWNER_TABLE.values(), "notes", "evidence", "artifacts", "refs", "events"), "handle"
+    ),
+    "complex_cards": "card",
+    "cursors": "id",
+}
+"""The tables `get` may read, with the column that names a row. Never built from a caller."""
+
+
+def get(db: sqlite3.Connection, table: str, handle: str) -> Row | None:
+    """One row of a whitelisted table by its key column; an unlisted table is a `KeyError`."""
+    return _one(db, f"SELECT * FROM {table} WHERE {_KEY[table]} = ?", (handle,))
+
+
+def get_card(db: sqlite3.Connection, handle: str) -> Row | None:
+    return get(db, "cards", handle)
+
+
+def get_action(db: sqlite3.Connection, handle: str) -> Row | None:
+    return get(db, "actions", handle)
+
+
+def get_evidence(db: sqlite3.Connection, handle: str) -> Row | None:
+    return get(db, "evidence", handle)
+
+
+_SEARCH = {
+    "cards": (("title", "goal"), "", "state = 'open' DESC, updated_at DESC, handle"),
+    "artifacts": (
+        ("reason", "COALESCE(filename, '')"),
+        "state = 'live' AND ",
+        "created_at DESC, handle",
+    ),
+    "evidence": (("text",), "", "created_at DESC, handle"),
+    "notes": (("text",), "", "created_at DESC, handle"),
+    "grants": (("title",), "", "proposed_at DESC, handle"),
+    "operations": (("kind",), "", "created_at DESC, handle"),
+}
+"""Per searchable table: the columns the text matches, a fixed condition, and the order."""
+
+
+def search(db: sqlite3.Connection, table: str, text: str | None, limit: int) -> list[Row]:
+    """Rows of a whitelisted table whose listed columns contain `text` (LIKE, escaped)."""
+    columns, where, order = _SEARCH[table]
+    like = " OR ".join(f"{column} LIKE ? ESCAPE '\\'" for column in columns)
+    pattern = f"%{_like(text)}%" if text else "%"
+    sql = f"SELECT * FROM {table} WHERE {where}({like}) ORDER BY {order} LIMIT ?"
+    return _all(db, sql, (*[pattern] * len(columns), limit))
+
+
+_DELETABLE = {
+    ("complex_cards", "card"),
+    ("card_links", "card"),
+    ("notes", "handle"),
+    ("notes", "action"),
+    ("leases", "id"),
+    ("refs", "handle"),
+}
+_HOLD_ITEM = {"evidence_refs": "evidence", "artifact_owners": "artifact"}
+
+
+def delete(db: sqlite3.Connection, table: str, column: str, value: str) -> int:
+    """Delete the rows of a whitelisted (table, column) that equal `value`."""
+    if (table, column) not in _DELETABLE:
+        raise KeyError((table, column))
+    return _exec(db, f"DELETE FROM {table} WHERE {column} = ?", (value,))
+
+
+def release_hold(db: sqlite3.Connection, table: str, item: str, owner: str | None) -> int:
+    """Drop one owner's hold on an evidence or artifact row, or every hold when `owner` is None."""
+    sql = f"DELETE FROM {table} WHERE {_HOLD_ITEM[table]} = ?"
+    if owner is None:
+        return _exec(db, sql, (item,))
+    return _exec(db, sql + " AND owner = ?", (item, owner))
+
+
+def release_all_of(db: sqlite3.Connection, table: str, owners: Sequence[str]) -> int:
+    """Drop every hold these owners have in `evidence_refs` or `artifact_owners`."""
+    if table not in _HOLD_ITEM:
+        raise KeyError(table)
+    return sum(_exec(db, f"DELETE FROM {table} WHERE owner = ?", (owner,)) for owner in owners)
 
 
 # --- cards -----------------------------------------------------------------
@@ -92,11 +202,6 @@ def insert_card(
         "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (handle, title, goal, position, rules, int(over_cap), review_at, now, now),
     )
-
-
-def get_card(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM cards WHERE handle = ?", (handle,)).fetchone()
-    return row
 
 
 def update_card(
@@ -203,18 +308,13 @@ def card_context_artifact(db: sqlite3.Connection, card: str, now: str) -> str | 
 # --- larger limits for complex cards (M-36) -------------------------------------------
 
 
-def get_complex(db: sqlite3.Connection, card: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM complex_cards WHERE card = ?", (card,)).fetchone()
-    return row
-
-
 def complex_rows(db: sqlite3.Connection, state: str) -> list[Row]:
-    rows: list[Row] = db.execute(
+    return _all(
+        db,
         "SELECT x.*, c.title AS title FROM complex_cards x JOIN cards c ON c.handle = x.card "
         "WHERE x.state = ? AND c.state = 'open' ORDER BY x.requested_at, x.card",
         (state,),
-    ).fetchall()
-    return rows
+    )
 
 
 def set_complex(
@@ -236,14 +336,6 @@ def set_complex(
     )
 
 
-def delete_complex(db: sqlite3.Connection, card: str) -> None:
-    db.execute("DELETE FROM complex_cards WHERE card = ?", (card,))
-
-
-def delete_card_links(db: sqlite3.Connection, card: str) -> None:
-    db.execute("DELETE FROM card_links WHERE card = ?", (card,))
-
-
 def cards_for_ref(db: sqlite3.Connection, ref: str) -> list[str]:
     rows = db.execute("SELECT card FROM card_links WHERE ref = ? ORDER BY created_at", (ref,))
     return [str(row["card"]) for row in rows]
@@ -257,16 +349,6 @@ def link_card(
         "VALUES (?, ?, ?, ?)",
         (card, ref, internet_message_id, now),
     )
-
-
-def list_cards(db: sqlite3.Connection, text: str | None, limit: int) -> list[Row]:
-    pattern = f"%{_like(text)}%" if text else "%"
-    rows: list[Row] = db.execute(
-        "SELECT * FROM cards WHERE title LIKE ? ESCAPE '\\' OR goal LIKE ? ESCAPE '\\' "
-        "ORDER BY state = 'open' DESC, updated_at DESC, handle LIMIT ?",
-        (pattern, pattern, limit),
-    ).fetchall()
-    return rows
 
 
 def purge_closed_cards(db: sqlite3.Connection, now: str) -> int:
@@ -297,17 +379,12 @@ def insert_action(
     )
 
 
-def get_action(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM actions WHERE handle = ?", (handle,)).fetchone()
-    return row
-
-
 def open_actions(db: sqlite3.Connection, card: str) -> list[Row]:
-    rows: list[Row] = db.execute(
+    return _all(
+        db,
         "SELECT * FROM actions WHERE card = ? AND state = 'open' ORDER BY created_at, handle",
         (card,),
-    ).fetchall()
-    return rows
+    )
 
 
 def action_handles(db: sqlite3.Connection, card: str, open_only: bool) -> list[str]:
@@ -359,29 +436,8 @@ def insert_note(db: sqlite3.Connection, handle: str, action: str, text: str, now
     )
 
 
-def get_note(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM notes WHERE handle = ?", (handle,)).fetchone()
-    return row
-
-
 def notes_of(db: sqlite3.Connection, action: str) -> list[Row]:
-    rows: list[Row] = db.execute(
-        "SELECT * FROM notes WHERE action = ? ORDER BY created_at, handle", (action,)
-    ).fetchall()
-    return rows
-
-
-def count_notes(db: sqlite3.Connection, action: str) -> int:
-    sql = "SELECT count(*) FROM notes WHERE action = ?"
-    return scalar(db, sql, (action,))
-
-
-def delete_note(db: sqlite3.Connection, handle: str) -> int:
-    return db.execute("DELETE FROM notes WHERE handle = ?", (handle,)).rowcount
-
-
-def delete_notes_of(db: sqlite3.Connection, action: str) -> int:
-    return db.execute("DELETE FROM notes WHERE action = ?", (action,)).rowcount
+    return _all(db, "SELECT * FROM notes WHERE action = ? ORDER BY created_at, handle", (action,))
 
 
 def delete_idle_notes(db: sqlite3.Connection, idle_edge: str) -> int:
@@ -393,15 +449,6 @@ def delete_notes_of_ended_actions(db: sqlite3.Connection) -> int:
     return db.execute(
         "DELETE FROM notes WHERE action IN (SELECT handle FROM actions WHERE state != 'open')"
     ).rowcount
-
-
-def search_notes(db: sqlite3.Connection, text: str | None, limit: int) -> list[Row]:
-    rows: list[Row] = db.execute(
-        "SELECT * FROM notes WHERE text LIKE ? ESCAPE '\\' "
-        "ORDER BY created_at DESC, handle LIMIT ?",
-        (f"%{_like(text)}%" if text else "%", limit),
-    ).fetchall()
-    return rows
 
 
 def mail_suggestions(
@@ -447,11 +494,6 @@ def insert_evidence(
     )
 
 
-def get_evidence(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM evidence WHERE handle = ?", (handle,)).fetchone()
-    return row
-
-
 def add_evidence_ref(
     db: sqlite3.Connection, evidence: str, owner_kind: str, owner: str, now: str
 ) -> None:
@@ -466,21 +508,6 @@ def evidence_referrers(db: sqlite3.Connection, evidence: str) -> int:
     return scalar(db, "SELECT count(*) FROM evidence_refs WHERE evidence = ?", (evidence,))
 
 
-def remove_evidence_ref(db: sqlite3.Connection, evidence: str, owner: str | None) -> int:
-    if owner is None:
-        return db.execute("DELETE FROM evidence_refs WHERE evidence = ?", (evidence,)).rowcount
-    return db.execute(
-        "DELETE FROM evidence_refs WHERE evidence = ? AND owner = ?", (evidence, owner)
-    ).rowcount
-
-
-def remove_evidence_refs_of(db: sqlite3.Connection, owners: Sequence[str]) -> int:
-    count = 0
-    for owner in owners:
-        count += db.execute("DELETE FROM evidence_refs WHERE owner = ?", (owner,)).rowcount
-    return count
-
-
 def delete_unreferenced_evidence(db: sqlite3.Connection) -> int:
     return db.execute(
         "DELETE FROM evidence WHERE handle NOT IN (SELECT evidence FROM evidence_refs)"
@@ -489,24 +516,7 @@ def delete_unreferenced_evidence(db: sqlite3.Connection) -> int:
 
 def delete_dead_evidence_refs(db: sqlite3.Connection) -> int:
     """Referrers that are gone or compacted no longer hold evidence (M-15)."""
-    live = (
-        "(owner_kind = 'card' AND owner IN (SELECT handle FROM cards WHERE state = 'open')) "
-        "OR (owner_kind = 'action' AND owner IN (SELECT handle FROM actions WHERE state = 'open')) "
-        "OR (owner_kind = 'grant' AND owner IN "
-        "(SELECT handle FROM grants WHERE compacted_at IS NULL)) "
-        "OR (owner_kind = 'operation' AND owner IN "
-        "(SELECT handle FROM operations WHERE compacted_at IS NULL))"
-    )
-    return db.execute(f"DELETE FROM evidence_refs WHERE NOT ({live})").rowcount
-
-
-def search_evidence(db: sqlite3.Connection, text: str | None, limit: int) -> list[Row]:
-    rows: list[Row] = db.execute(
-        "SELECT * FROM evidence WHERE text LIKE ? ESCAPE '\\' "
-        "ORDER BY created_at DESC, handle LIMIT ?",
-        (f"%{_like(text)}%" if text else "%", limit),
-    ).fetchall()
-    return rows
+    return _exec(db, f"DELETE FROM evidence_refs WHERE NOT ({_live_owner('', _EVIDENCE_LIVE)})")
 
 
 # --- artifacts and owners ------------------------------------------------------
@@ -532,11 +542,6 @@ def insert_artifact(
     )
 
 
-def get_artifact(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM artifacts WHERE handle = ?", (handle,)).fetchone()
-    return row
-
-
 def add_artifact_owner(
     db: sqlite3.Connection, artifact: str, owner_kind: str, owner: str, now: str
 ) -> None:
@@ -548,33 +553,21 @@ def add_artifact_owner(
 
 
 def artifact_owners(db: sqlite3.Connection, artifact: str) -> list[Row]:
-    rows: list[Row] = db.execute(
-        "SELECT * FROM artifact_owners WHERE artifact = ? ORDER BY created_at, owner", (artifact,)
-    ).fetchall()
-    return rows
-
-
-def remove_artifact_owner(db: sqlite3.Connection, artifact: str, owner: str | None) -> int:
-    if owner is None:
-        return db.execute("DELETE FROM artifact_owners WHERE artifact = ?", (artifact,)).rowcount
-    return db.execute(
-        "DELETE FROM artifact_owners WHERE artifact = ? AND owner = ?", (artifact, owner)
-    ).rowcount
-
-
-def artifacts_held_by(db: sqlite3.Connection, owners: Sequence[str]) -> list[str]:
-    found: list[str] = []
-    for owner in owners:
-        rows = db.execute("SELECT artifact FROM artifact_owners WHERE owner = ?", (owner,))
-        found.extend(str(row["artifact"]) for row in rows)
-    return found
+    return _all(
+        db,
+        "SELECT * FROM artifact_owners WHERE artifact = ? ORDER BY created_at, owner",
+        (artifact,),
+    )
 
 
 def remove_holds_of(db: sqlite3.Connection, owners: Sequence[str]) -> list[str]:
     """Drop every hold these owners have; return the artifacts that lost one."""
-    touched = artifacts_held_by(db, owners)
-    for owner in owners:
-        db.execute("DELETE FROM artifact_owners WHERE owner = ?", (owner,))
+    touched = [
+        str(row["artifact"])
+        for owner in owners
+        for row in db.execute("SELECT artifact FROM artifact_owners WHERE owner = ?", (owner,))
+    ]
+    release_all_of(db, "artifact_owners", owners)
     return touched
 
 
@@ -591,35 +584,32 @@ def release_if_unheld(db: sqlite3.Connection, artifact: str) -> bool:
     )
 
 
+def _live_owner(prefix: str = "", live: dict[str, str] = _LIVE_BY_KIND) -> str:
+    """SQL true where the row's (owner_kind, owner) is a live owner, per `live` (kind to SELECT)."""
+    return " OR ".join(
+        f"({prefix}owner_kind = '{kind}' AND {prefix}owner IN ({sql}))"
+        for kind, sql in live.items()
+    )
+
+
+def _edge_params(edges: Edges) -> dict[str, str]:
+    return {"grace_edge": edges.grace_edge, "idle_edge": edges.idle_edge}
+
+
 def dead_holds(db: sqlite3.Connection, edges: Edges) -> list[Row]:
     """Holds whose owner is no longer live (M-4)."""
-    params = {"grace_edge": edges.grace_edge, "idle_edge": edges.idle_edge}
-    rows: list[Row] = db.execute(
-        "SELECT artifact, owner FROM artifact_owners WHERE NOT ("
-        f"(owner_kind = 'action' AND owner IN ({LIVE_ACTION})) OR "
-        f"(owner_kind = 'operation' AND owner IN ({LIVE_OPERATION})) OR "
-        f"(owner_kind = 'grant' AND owner IN ({LIVE_GRANT})) OR "
-        f"(owner_kind = 'session' AND owner IN ({LIVE_SESSION})) OR "
-        f"(owner_kind = 'run' AND owner IN ({LIVE_RUN})) OR "
-        f"(owner_kind = 'card' AND owner IN ({LIVE_CARD})))",
-        params,
-    ).fetchall()
+    sql = f"SELECT artifact, owner FROM artifact_owners WHERE NOT ({_live_owner()})"
+    rows: list[Row] = db.execute(sql, _edge_params(edges)).fetchall()
     return rows
 
 
 def count_artifacts_without_live_owner(db: sqlite3.Connection, edges: Edges) -> int:
     """Live artifacts that no live owner holds (the `artifacts_without_owner` metric)."""
-    params = {"grace_edge": edges.grace_edge, "idle_edge": edges.idle_edge}
     row = db.execute(
         "SELECT count(*) FROM artifacts a WHERE a.state = 'live' AND NOT EXISTS ("
-        "SELECT 1 FROM artifact_owners o WHERE o.artifact = a.handle AND ("
-        f"(o.owner_kind = 'action' AND o.owner IN ({LIVE_ACTION})) OR "
-        f"(o.owner_kind = 'operation' AND o.owner IN ({LIVE_OPERATION})) OR "
-        f"(o.owner_kind = 'grant' AND o.owner IN ({LIVE_GRANT})) OR "
-        f"(o.owner_kind = 'session' AND o.owner IN ({LIVE_SESSION})) OR "
-        f"(o.owner_kind = 'run' AND o.owner IN ({LIVE_RUN})) OR "
-        f"(o.owner_kind = 'card' AND o.owner IN ({LIVE_CARD}))))",
-        params,
+        "SELECT 1 FROM artifact_owners o WHERE o.artifact = a.handle "
+        f"AND ({_live_owner('o.')}))",
+        _edge_params(edges),
     ).fetchone()
     return int(row[0])
 
@@ -697,17 +687,6 @@ def purge_tombstones(db: sqlite3.Connection, edge: str) -> int:
     ).rowcount
 
 
-def search_artifacts(db: sqlite3.Connection, text: str | None, limit: int) -> list[Row]:
-    pattern = f"%{_like(text)}%" if text else "%"
-    rows: list[Row] = db.execute(
-        "SELECT * FROM artifacts WHERE state = 'live' AND "
-        "(reason LIKE ? ESCAPE '\\' OR COALESCE(filename, '') LIKE ? ESCAPE '\\') "
-        "ORDER BY created_at DESC, handle LIMIT ?",
-        (pattern, pattern, limit),
-    ).fetchall()
-    return rows
-
-
 def total_stored_bytes(db: sqlite3.Connection) -> int:
     """Bytes on disk: each hash counted once."""
     return scalar(
@@ -757,11 +736,6 @@ def largest_live(db: sqlite3.Connection, limit: int) -> list[tuple[str, int]]:
 
 
 # --- refs ------------------------------------------------------------------------
-
-
-def get_ref(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM refs WHERE handle = ?", (handle,)).fetchone()
-    return row
 
 
 def find_ref(db: sqlite3.Connection, source: str, kind: str, locator: str) -> Row | None:
@@ -831,10 +805,6 @@ def set_ref_locator(db: sqlite3.Connection, handle: str, locator: str, now: str)
     )
 
 
-def delete_ref(db: sqlite3.Connection, handle: str) -> None:
-    db.execute("DELETE FROM refs WHERE handle = ?", (handle,))
-
-
 def rewrite_ref_users(db: sqlite3.Connection, old: str, new: str) -> None:
     """Point every record that named handle `old` at handle `new` (used by repoint)."""
     db.execute("UPDATE OR IGNORE card_links SET ref = ? WHERE ref = ?", (new, old))
@@ -858,10 +828,6 @@ def delete_stale_refs(db: sqlite3.Connection, edge: str) -> int:
 # --- cursors and leases --------------------------------------------------------------
 
 
-def session_exists(db: sqlite3.Connection, session: str) -> bool:
-    return db.execute("SELECT 1 FROM sessions WHERE handle = ?", (session,)).fetchone() is not None
-
-
 def insert_cursor(
     db: sqlite3.Connection,
     *,
@@ -878,11 +844,6 @@ def insert_cursor(
         "expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
         (cursor_id, session, tool, query_sha256, payload_json, now, expires_at),
     )
-
-
-def get_cursor(db: sqlite3.Connection, cursor_id: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM cursors WHERE id = ?", (cursor_id,)).fetchone()
-    return row
 
 
 def delete_expired_cursors(db: sqlite3.Connection, now: str, idle_edge: str) -> int:
@@ -913,10 +874,6 @@ def expired_leases(db: sqlite3.Connection, now: str) -> list[Row]:
 def all_leases(db: sqlite3.Connection) -> list[Row]:
     rows: list[Row] = db.execute("SELECT * FROM leases").fetchall()
     return rows
-
-
-def delete_lease(db: sqlite3.Connection, lease_id: str) -> None:
-    db.execute("DELETE FROM leases WHERE id = ?", (lease_id,))
 
 
 # --- quarantine ---------------------------------------------------------------------------
@@ -963,45 +920,12 @@ def held_quarantine(db: sqlite3.Connection) -> list[Row]:
 # --- reading other tracks' tables, for views and metrics ----------------------------------
 
 
-def get_grant(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM grants WHERE handle = ?", (handle,)).fetchone()
-    return row
-
-
-def get_operation(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM operations WHERE handle = ?", (handle,)).fetchone()
-    return row
-
-
 def resend_handle(db: sqlite3.Connection, original: str) -> str | None:
     """The live resend of an uncertain send, if one was made (W-38)."""
     row: Row | None = db.execute(
         "SELECT handle FROM operations WHERE redo_of = ? AND state <> 'cancelled'", (original,)
     ).fetchone()
     return None if row is None else str(row["handle"])
-
-
-def get_event(db: sqlite3.Connection, handle: str) -> Row | None:
-    row: Row | None = db.execute("SELECT * FROM events WHERE handle = ?", (handle,)).fetchone()
-    return row
-
-
-def list_grants(db: sqlite3.Connection, text: str | None, limit: int) -> list[Row]:
-    rows: list[Row] = db.execute(
-        "SELECT * FROM grants WHERE title LIKE ? ESCAPE '\\' ORDER BY proposed_at DESC, handle "
-        "LIMIT ?",
-        (f"%{_like(text)}%" if text else "%", limit),
-    ).fetchall()
-    return rows
-
-
-def list_operations(db: sqlite3.Connection, text: str | None, limit: int) -> list[Row]:
-    rows: list[Row] = db.execute(
-        "SELECT * FROM operations WHERE kind LIKE ? ESCAPE '\\' ORDER BY created_at DESC, handle "
-        "LIMIT ?",
-        (f"%{_like(text)}%" if text else "%", limit),
-    ).fetchall()
-    return rows
 
 
 def scalar(db: sqlite3.Connection, sql: str, params: Iterable[object] = ()) -> int:
@@ -1064,6 +988,10 @@ class CardRow:
     over_cap: bool
     has_context: bool = False
     """The card still holds notes carried over from the old system (M-35)."""
+    open_actions: int = 0
+    goal: str = ""
+    position: str = ""
+    updated_at: str = ""
 
 
 @dataclass(frozen=True)
@@ -1094,25 +1022,33 @@ def due_actions(db: sqlite3.Connection, now: str) -> list[ActionRow]:
         "OR (a.snooze_until IS NOT NULL AND a.snooze_until <= ?))",
         (now, now),
     )
-    return [ActionRow(r["handle"], r["card"], r["due_at"], r["snooze_until"]) for r in rows]
+    return [ActionRow(*row) for row in rows]
+
+
+def _cards(rows: Iterable[Row]) -> list[CardRow]:
+    """Card rows, whose columns are named like `CardRow`'s fields, with the flags as booleans."""
+    cards: list[CardRow] = []
+    for row in rows:
+        values = dict(row)
+        for flag in ("over_cap", "has_context"):
+            if flag in values:
+                values[flag] = bool(values[flag])
+        cards.append(CardRow(**values))
+    return cards
 
 
 def cards_needing_review(db: sqlite3.Connection, now: str) -> list[CardRow]:
-    rows = db.execute(
-        "SELECT c.handle, c.title, c.review_at, c.over_cap, EXISTS ("
-        "SELECT 1 FROM imported_context i JOIN artifacts a ON a.handle = i.artifact "
-        "JOIN artifact_owners o ON o.artifact = a.handle AND o.owner_kind = 'card' "
-        "AND o.owner = c.handle WHERE i.card = c.handle AND a.state = 'live' "
-        "AND a.expires_at > ?) AS has_context FROM cards c WHERE c.state = 'open' "
-        "AND (c.over_cap = 1 OR (c.review_at IS NOT NULL AND c.review_at <= ?))",
-        (now, now),
-    )
-    return [
-        CardRow(
-            r["handle"], r["title"], r["review_at"], bool(r["over_cap"]), bool(r["has_context"])
+    return _cards(
+        db.execute(
+            "SELECT c.handle, c.title, c.review_at, c.over_cap, EXISTS ("
+            "SELECT 1 FROM imported_context i JOIN artifacts a ON a.handle = i.artifact "
+            "JOIN artifact_owners o ON o.artifact = a.handle AND o.owner_kind = 'card' "
+            "AND o.owner = c.handle WHERE i.card = c.handle AND a.state = 'live' "
+            "AND a.expires_at > ?) AS has_context FROM cards c WHERE c.state = 'open' "
+            "AND (c.over_cap = 1 OR (c.review_at IS NOT NULL AND c.review_at <= ?))",
+            (now, now),
         )
-        for r in rows
-    ]
+    )
 
 
 def complex_decisions(db: sqlite3.Connection, since: str) -> list[ComplexDecision]:
@@ -1123,14 +1059,13 @@ def complex_decisions(db: sqlite3.Connection, since: str) -> list[ComplexDecisio
         "AND x.state IN ('approved', 'declined') AND x.decided_at >= ? ORDER BY x.card",
         (since,),
     )
-    return [
-        ComplexDecision(r["card"], r["state"], r["decided_at"], r["blocked_until"]) for r in rows
-    ]
+    return [ComplexDecision(*row) for row in rows]
 
 
 def open_card_summaries(db: sqlite3.Connection) -> list[CardRow]:
-    rows = db.execute("SELECT handle, title, review_at, over_cap FROM cards WHERE state = 'open'")
-    return [CardRow(r["handle"], r["title"], r["review_at"], bool(r["over_cap"])) for r in rows]
+    return _cards(
+        db.execute("SELECT handle, title, review_at, over_cap FROM cards WHERE state = 'open'")
+    )
 
 
 def card_links(db: sqlite3.Connection) -> dict[str, str]:
@@ -1186,39 +1121,10 @@ def linked_message_refs(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
 
 
 @dataclass(frozen=True)
-class CardLine:
-    handle: str
-    title: str
-    review_at: str | None
-    over_cap: bool
-    open_actions: int
-
-
-@dataclass(frozen=True)
 class ActionLine:
     handle: str
     card: str
     card_title: str
-    title: str
-    due_at: str | None
-    snooze_until: str | None
-
-
-@dataclass(frozen=True)
-class CardDetail:
-    handle: str
-    title: str
-    goal: str
-    position: str
-    review_at: str | None
-    over_cap: bool
-    updated_at: str
-
-
-@dataclass(frozen=True)
-class OpenAction:
-    handle: str
-    card: str
     title: str
     due_at: str | None
     snooze_until: str | None
@@ -1235,17 +1141,15 @@ class ClosedAction:
     closed_at: str
 
 
-def open_cards(db: sqlite3.Connection, limit: int) -> list[CardLine]:
-    rows = db.execute(
-        "SELECT c.handle, c.title, c.review_at, c.over_cap, "
-        "(SELECT count(*) FROM actions a WHERE a.card = c.handle AND a.state = 'open') AS n "
-        "FROM cards c WHERE c.state = 'open' ORDER BY c.updated_at DESC, c.handle LIMIT ?",
-        (limit,),
+def open_cards(db: sqlite3.Connection, limit: int) -> list[CardRow]:
+    return _cards(
+        db.execute(
+            "SELECT c.handle, c.title, c.review_at, c.over_cap, (SELECT count(*) FROM actions a "
+            "WHERE a.card = c.handle AND a.state = 'open') AS open_actions "
+            "FROM cards c WHERE c.state = 'open' ORDER BY c.updated_at DESC, c.handle LIMIT ?",
+            (limit,),
+        )
     )
-    return [
-        CardLine(r["handle"], r["title"], r["review_at"], bool(r["over_cap"]), int(r["n"]))
-        for r in rows
-    ]
 
 
 def count_open_cards(db: sqlite3.Connection) -> int:
@@ -1254,7 +1158,7 @@ def count_open_cards(db: sqlite3.Connection) -> int:
 
 def upcoming_actions(db: sqlite3.Connection, until: str, limit: int) -> list[ActionLine]:
     """Open actions due by `until` (a stored timestamp), soonest first."""
-    return _action_lines(db, "a.due_at <= ?", (until, limit))
+    return _action_lines(db, "a.due_at <= ?", (until,), limit=limit)
 
 
 def over_budget_flag(db: sqlite3.Connection) -> str:
@@ -1262,62 +1166,48 @@ def over_budget_flag(db: sqlite3.Connection) -> str:
     return "0" if value is None else value
 
 
-def card_details(db: sqlite3.Connection, limit: int) -> list[CardDetail]:
-    rows = db.execute(
-        "SELECT handle, title, goal, position, review_at, over_cap, updated_at FROM cards "
-        "WHERE state = 'open' ORDER BY updated_at DESC, handle LIMIT ?",
-        (limit,),
-    )
-    return [
-        CardDetail(
-            r["handle"],
-            r["title"],
-            r["goal"],
-            r["position"],
-            r["review_at"],
-            bool(r["over_cap"]),
-            r["updated_at"],
+def card_details(db: sqlite3.Connection, limit: int) -> list[CardRow]:
+    return _cards(
+        db.execute(
+            "SELECT handle, title, goal, position, review_at, over_cap, updated_at FROM cards "
+            "WHERE state = 'open' ORDER BY updated_at DESC, handle LIMIT ?",
+            (limit,),
         )
-        for r in rows
-    ]
+    )
 
 
-def open_actions_of(db: sqlite3.Connection, cards: list[str]) -> list[OpenAction]:
+def open_actions_of(db: sqlite3.Connection, cards: list[str]) -> list[ActionLine]:
     """Open actions of the given cards, the soonest due first (those with no date last)."""
     if not cards:
         return []
     marks = ", ".join("?" for _ in cards)
-    rows = db.execute(
-        "SELECT handle, card, title, due_at, snooze_until FROM actions "
-        f"WHERE state = 'open' AND card IN ({marks}) "
-        "ORDER BY due_at IS NULL, due_at, handle",
-        cards,
+    return _action_lines(
+        db,
+        f"a.card IN ({marks})",
+        (*cards,),
+        "a.due_at IS NULL, a.due_at, a.handle",
     )
-    return [
-        OpenAction(r["handle"], r["card"], r["title"], r["due_at"], r["snooze_until"]) for r in rows
-    ]
 
 
 def dated_actions(db: sqlite3.Connection, start: str, end: str, limit: int) -> list[ActionLine]:
     """Open actions due in `[start, end)`, for the calendar's important dates."""
-    return _action_lines(db, "a.due_at >= ? AND a.due_at < ?", (start, end, limit))
+    return _action_lines(db, "a.due_at >= ? AND a.due_at < ?", (start, end), limit=limit)
 
 
 def _action_lines(
-    db: sqlite3.Connection, dates: str, params: tuple[str | int, ...]
+    db: sqlite3.Connection,
+    where: str,
+    params: tuple[str, ...],
+    order: str = "a.due_at, a.handle",
+    limit: int = -1,
 ) -> list[ActionLine]:
     rows = db.execute(
         "SELECT a.handle, a.card, c.title AS card_title, a.title, a.due_at, a.snooze_until "
-        "FROM actions a JOIN cards c ON c.handle = a.card "
-        f"WHERE a.state = 'open' AND {dates} ORDER BY a.due_at, a.handle LIMIT ?",
-        params,
+        f"FROM actions a JOIN cards c ON c.handle = a.card WHERE a.state = 'open' AND {where} "
+        f"ORDER BY {order} LIMIT ?",
+        (*params, limit),
     )
-    return [
-        ActionLine(
-            r["handle"], r["card"], r["card_title"], r["title"], r["due_at"], r["snooze_until"]
-        )
-        for r in rows
-    ]
+    return [ActionLine(*row) for row in rows]
 
 
 def closed_actions_between(
@@ -1330,15 +1220,4 @@ def closed_actions_between(
         "ORDER BY a.closed_at DESC, a.handle LIMIT ?",
         (start, end, limit),
     )
-    return [
-        ClosedAction(
-            r["handle"],
-            r["card"],
-            r["card_title"],
-            r["title"],
-            r["state"],
-            r["outcome"],
-            r["closed_at"],
-        )
-        for r in rows
-    ]
+    return [ClosedAction(*row) for row in rows]

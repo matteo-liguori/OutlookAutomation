@@ -151,7 +151,7 @@ def test_r4_repoint_merges_when_the_new_locator_already_has_a_handle(
     newer = refs.remember(ctx.db, ctx.clock, HandleKind.MESSAGE, "mail:test", "f-archive/<m@x>")
     repo.link_card(ctx.db, card.handle, newer, None, "2026-01-05T09:00:00Z")
     assert refs.repoint(ctx.db, ctx.clock, "f-inbox/<m@x>", "f-archive/<m@x>") == old
-    assert repo.get_ref(ctx.db, newer) is None
+    assert repo.get(ctx.db, "refs", newer) is None
     assert repo.cards_for_ref(ctx.db, old) == [card.handle]
     again = refs.remember(ctx.db, ctx.clock, HandleKind.MESSAGE, "mail:test", "f-archive/<m@x>")
     assert again == old
@@ -166,5 +166,5 @@ def test_m3_refs_expire_30_days_after_last_seen_unless_a_live_record_holds_them(
     repo.link_card(ctx.db, card.handle, held, None, "2026-01-05T09:00:00Z")
     clock.advance(hours=24 * 31)
     sweep(ctx, clock.now())
-    assert repo.get_ref(ctx.db, held) is not None
-    assert repo.get_ref(ctx.db, loose) is None
+    assert repo.get(ctx.db, "refs", held) is not None
+    assert repo.get(ctx.db, "refs", loose) is None

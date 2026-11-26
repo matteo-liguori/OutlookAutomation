@@ -120,7 +120,7 @@ class EvidenceService:
         if repo.get_evidence(self._db, evidence) is None:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "No such evidence.")
         with transaction(self._db):
-            repo.remove_evidence_ref(self._db, evidence, owner)
+            repo.release_hold(self._db, "evidence_refs", evidence, owner)
             remaining = repo.evidence_referrers(self._db, evidence)
             if remaining == 0:
                 repo.delete_unreferenced_evidence(self._db)
