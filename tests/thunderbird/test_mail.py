@@ -18,6 +18,7 @@ from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.capabilities import CapabilityName, HealthState
 from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import (
+    IntentKind,
     MailDraftDiscard,
     MailDraftSave,
     MailMarkRead,
@@ -25,7 +26,7 @@ from chamberlain.domain.intents import (
     MailSend,
     MailTrash,
 )
-from chamberlain.domain.mail import FolderRole, MailQuery
+from chamberlain.domain.mail import FolderRole, MailQuery, bare
 from chamberlain.domain.operations import (
     DispatchOutcome,
     DispatchResult,
@@ -137,7 +138,14 @@ def test_p4_a_search_that_hit_the_scan_limit_says_a_smaller_window_would_finish(
     stack: Stack, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     stopped = protocol.QueryResult(messages=(), more=False, complete=False, scanned=2000)
-    monkeypatch.setattr(stack.mail, "_query", lambda *args, **kwargs: stopped)
+    call = stack.mail.call
+    monkeypatch.setattr(
+        stack.mail,
+        "call",
+        lambda command, *args: (
+            stopped if command is protocol.Command.QUERY else call(command, *args)
+        ),
+    )
     page = stack.mail.search(SOURCE, MailQuery(text="x"))
     assert not page.complete
     assert any(gap.narrow for gap in page.gaps)
@@ -561,3 +569,37 @@ def test_reconcile_legacy_move_missing_baseline_is_unknown(stack: Stack) -> None
     result = stack.mail.reconcile(prepared, "legacy")
     assert result.status is ReconcileStatus.UNKNOWN
     assert "baseline" in result.detail
+
+
+def test_an_old_flat_mark_plan_recovers_its_original_unread_request(stack: Stack) -> None:
+    inbox, sent = FolderRole.INBOX, FolderRole.SENT
+    first_id, first = seed(stack, inbox, unread=False)
+    second_id, second = seed(stack, sent, unread=False)
+    refs = [
+        {"folder_id": stack.folder_id(role), "internet_message_id": bare(mid)}
+        for role, mid in ((inbox, first_id), (sent, second_id))
+    ]
+    prepared = Prepared.model_validate(
+        {
+            "source": SOURCE,
+            "intent_kind": IntentKind.MAIL_MARK_READ,
+            "data": {"refs": refs, "read": False},
+        }
+    )
+    duplicate = prepared.model_copy(
+        update={
+            "data": {"refs": [refs[0], {**refs[0], "internet_message_id": first_id}], "read": False}
+        }
+    )
+    assert stack.mail.reconcile(duplicate, "duplicate").status is ReconcileStatus.UNKNOWN
+    assert stack.control("counters")["update"] == 0
+
+    unchanged = stack.mail.reconcile(prepared, "legacy")
+    assert unchanged.status is ReconcileStatus.ABSENT
+    assert unchanged.proof
+    stack.control("inject", fault="lose_response")
+    assert stack.mail.dispatch(prepared, "legacy", {}).outcome is DispatchOutcome.UNKNOWN
+    assert stack.mail.reconcile(prepared, "legacy").status is ReconcileStatus.PRESENT
+    assert stack.is_unread(first)
+    assert stack.is_unread(second)
+    assert stack.control("counters")["update"] == 2

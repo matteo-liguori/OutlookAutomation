@@ -1,8 +1,8 @@
 """MailPort over the Thunderbird bridge. Prepared intents select one of three write shapes."""
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 
-from pydantic import JsonValue
+from pydantic import Field, StrictBool
 
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.client import BridgeFailure
@@ -29,10 +29,7 @@ from chamberlain.connectors.thunderbird.mail_writes import (
     PlanAttachment,
     by_id,
 )
-from chamberlain.connectors.thunderbird.protocol import (
-    Fingerprint,
-    MessageRef,
-)
+from chamberlain.connectors.thunderbird.protocol import Fingerprint, MessageRef
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.domain.intents import (
     IntentKind,
@@ -45,6 +42,7 @@ from chamberlain.domain.intents import (
     MailSend,
     MailTrash,
 )
+from chamberlain.domain.mail import bare
 from chamberlain.domain.operations import (
     DispatchOutcome,
     DispatchResult,
@@ -67,8 +65,28 @@ _SHAPES = {
 }
 
 
+def _change_groups(refs: Iterable[tuple[str, str]]) -> tuple[protocol.ChangeGroup, ...]:
+    located: dict[str, list[str]] = {}
+    for folder, mid in refs:
+        located.setdefault(folder, []).append(mid)
+    return tuple(
+        protocol.ChangeGroup(folder_id=folder, ids=tuple(ids)) for folder, ids in located.items()
+    )
+
+
+class _LegacyMarkPlan(Model):
+    refs: tuple[MessageRef, ...] = Field(min_length=1, max_length=200)
+    read: StrictBool
+
+
 def _shape(prepared: Prepared) -> ComposePlan | ChangePlan | DiscardPlan:
     try:
+        if prepared.intent_kind is _K.MAIL_MARK_READ and "refs" in prepared.data:
+            old = _LegacyMarkPlan.model_validate(prepared.data)
+            refs = [(ref.folder_id, bare(ref.internet_message_id)) for ref in old.refs]
+            if len(set(refs)) != len(refs):
+                raise ValueError("duplicate message in the stored mark-read request")
+            return ChangePlan(items=_change_groups(refs), set_read=old.read)
         return _SHAPES[prepared.intent_kind].model_validate(prepared.data)
     except (KeyError, ValueError):
         raise ChamberlainError(
@@ -86,85 +104,77 @@ class ThunderbirdMail(MailReads):
             draft = self._draft_ref(binding, refs, intent.draft, intent.expected_sha256)
             plan = DiscardPlan(draft=draft, expected_raw_sha256=intent.expected_sha256)
             return self._prepared(intent.source, intent.kind, None, plan)
-        located: dict[str, list[str]] = {}
-        for handle in intent.messages:
-            where = self._ref_of(binding, refs, handle)
-            located.setdefault(where.folder_id, []).append(where.message_id)
-        groups = tuple(
-            protocol.ChangeGroup(folder_id=folder, ids=tuple(ids))
-            for folder, ids in located.items()
-        )
+        locations = (self._ref_of(binding, refs, handle) for handle in intent.messages)
+        groups = _change_groups((where.folder_id, where.message_id) for where in locations)
         if isinstance(intent, MailMarkRead):
             change = ChangePlan(items=groups, set_read=intent.read)
         else:
-            if len(groups) != 1 or (intent.from_folder and intent.from_folder not in located):
-                raise ChamberlainError(
-                    ErrorCode.REMOTE_CHANGED, "The messages are not in that folder."
-                )
-            dest = binding.trash_folder_id if isinstance(intent, MailTrash) else intent.to_folder
-            if dest in located:
-                raise ChamberlainError(
-                    ErrorCode.REMOTE_CHANGED, "The messages are already in that folder."
-                )
-            if dest not in {folder.id for folder in self.folders(intent.source)}:
-                raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID, "The destination folder does not exist."
-                )
-            change = ChangePlan(
-                items=groups,
-                move_to=dest,
-                trash=isinstance(intent, MailTrash),
-                set_read=True if isinstance(intent, MailMove) and intent.mark_read else None,
-            )
-            # Reject wholly missing/ambiguous batches before authorisation or dispatch.
-            source, destination = change.facts(self, binding, refresh=False).scopes
-            if not source.complete or not destination.complete:
-                raise ChamberlainError(
-                    ErrorCode.SOURCE_UNAVAILABLE, "The folder scan was incomplete."
-                )
-            here, there = by_id(source), by_id(destination)
-            dates = [
-                fact.header.date_ms for scope in (source, destination) for fact in scope.copies
-            ]
-            margin = 2 * 86_400_000  # Match the date tolerance used during the add-on's move.
-            date_window = (
-                (min(dates) - margin, max(dates) + margin)
-                if len(groups[0].ids) > 1
-                and set(groups[0].ids) <= here.keys()
-                and all(margin <= date <= protocol.MAX_JS_DATE_MS - margin for date in dates)
-                else None
-            )
-            change = change.model_copy(
-                update={
-                    "date_window": date_window,
-                    "before": {
-                        mid: MoveBaseline(
-                            source=len(here.get(mid, ())),
-                            destination=len(there.get(mid, ())),
-                            read=here[mid][0].read if len(here.get(mid, ())) == 1 else None,
-                        )
-                        for mid in groups[0].ids
-                    },
-                }
-            )
-            if not any(
-                len(here.get(mid, ())) == 1 and (change.trash or mid not in there)
-                for mid in groups[0].ids
-            ):
-                if not here:
-                    raise ChamberlainError(
-                        ErrorCode.REQUEST_UNKNOWN_HANDLE, "None of the messages is in the folder."
-                    )
-                raise ChamberlainError(
-                    ErrorCode.REMOTE_AMBIGUOUS, "No message could be moved unambiguously."
-                )
+            change = self._prepare_move(intent, binding, groups)
         return self._prepared(intent.source, intent.kind, None, change)
+
+    def _prepare_move(
+        self,
+        intent: MailMove | MailTrash,
+        binding: ThunderbirdBinding,
+        groups: tuple[protocol.ChangeGroup, ...],
+    ) -> ChangePlan:
+        if len(groups) != 1 or intent.from_folder not in (None, "", groups[0].folder_id):
+            raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The messages are not in that folder.")
+        [group] = groups
+        trash = isinstance(intent, MailTrash)
+        dest = binding.trash_folder_id if trash else intent.to_folder
+        if dest == group.folder_id:
+            raise ChamberlainError(
+                ErrorCode.REMOTE_CHANGED, "The messages are already in that folder."
+            )
+        if not any(folder.id == dest for folder in self.folders(intent.source)):
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID, "The destination folder does not exist."
+            )
+        change = ChangePlan(
+            items=groups,
+            move_to=dest,
+            trash=trash,
+            set_read=True if isinstance(intent, MailMove) and intent.mark_read else None,
+        )
+        source, destination = change.facts(self, binding, refresh=False).scopes
+        if not source.complete or not destination.complete:
+            raise ChamberlainError(ErrorCode.SOURCE_UNAVAILABLE, "The folder scan was incomplete.")
+        here, there = by_id(source), by_id(destination)
+        if not here:
+            raise ChamberlainError(
+                ErrorCode.REQUEST_UNKNOWN_HANDLE, "None of the messages is in the folder."
+            )
+        before: dict[str, MoveBaseline] = {}
+        for mid in group.ids:
+            origin = here.get(mid, ())
+            before[mid] = MoveBaseline(
+                source=len(origin),
+                destination=len(there.get(mid, ())),
+                read=origin[0].read if len(origin) == 1 else None,
+            )
+        if not any(item.eligible(trash=trash) for item in before.values()):
+            raise ChamberlainError(
+                ErrorCode.REMOTE_AMBIGUOUS, "No message could be moved unambiguously."
+            )
+        dates = [copy.header.date_ms for scope in (source, destination) for copy in scope.copies]
+        margin = 2 * 86_400_000
+        window = None
+        if (
+            len(group.ids) > 1
+            and set(group.ids) <= here.keys()
+            and all(margin <= date <= protocol.MAX_JS_DATE_MS - margin for date in dates)
+        ):
+            window = (min(dates) - margin, max(dates) + margin)
+        return change.model_copy(update={"date_window": window, "before": before})
 
     @staticmethod
     def _prepared(source: str, kind: IntentKind, token: str | None, plan: Model) -> Prepared:
-        data: dict[str, JsonValue] = plan.model_dump(mode="json")
-        return Prepared.model_validate(
-            {"source": source, "intent_kind": kind, "reconcile_token": token, "data": data}
+        return Prepared(
+            source=source,
+            intent_kind=kind,
+            reconcile_token=token,
+            data=plan.model_dump(mode="json"),
         )
 
     def _ref_of(
@@ -187,14 +197,7 @@ class ThunderbirdMail(MailReads):
         where = self._ref_of(binding, refs, handle)
         if where.folder_id != binding.draft_folder_id:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "That message is not a draft.")
-        scope = self.copies(
-            binding,
-            [
-                protocol.CopyScope(
-                    folder_id=where.folder_id, ids=(where.message_id,), inspect_draft=True
-                )
-            ],
-        ).scopes[0]
+        scope = self.copies_of(binding, where.folder_id, where.message_id, draft=True)
         if (
             not scope.complete
             or len(scope.copies) != 1
@@ -273,19 +276,17 @@ class ThunderbirdMail(MailReads):
         binding = self.binding(prepared.source)
         try:
             return _shape(prepared).dispatch(self, binding, prepared, payloads)
-        except BridgeFailure as error:
-            if error.proven_not_applied:
-                return DispatchResult(
-                    outcome=DispatchOutcome.NOT_APPLIED,
-                    detail=f"{error.code.value}: {error.detail or error.message}"[:300],
-                )
-            return DispatchResult(
-                outcome=DispatchOutcome.UNKNOWN,
-                detail=f"{error.code.value}: {error.detail or error.message}"[:300],
-            )
         except ChamberlainError as error:
+            bridge = isinstance(error, BridgeFailure)
             return DispatchResult(
-                outcome=DispatchOutcome.UNKNOWN, detail=f"{error.code.value}: {error.detail}"[:300]
+                outcome=(
+                    DispatchOutcome.NOT_APPLIED
+                    if bridge and error.proven_not_applied
+                    else DispatchOutcome.UNKNOWN
+                ),
+                detail=f"{error.code.value}: {error.detail or (error.message if bridge else '')}"[
+                    :300
+                ],
             )
 
     def reconcile(self, prepared: Prepared, key: str) -> ReconcileResult:

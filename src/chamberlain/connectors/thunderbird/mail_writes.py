@@ -6,7 +6,6 @@ from typing import Final
 from pydantic import Field
 
 from chamberlain.connectors.thunderbird import protocol
-from chamberlain.connectors.thunderbird.client import typed
 from chamberlain.connectors.thunderbird.frames import CHUNK_BYTES
 from chamberlain.connectors.thunderbird.identity import (
     encode_locator,
@@ -26,9 +25,7 @@ from chamberlain.connectors.thunderbird.protocol import (
     MessageRef,
 )
 from chamberlain.domain.canonical import sha256_bytes
-from chamberlain.domain.intents import (
-    IntentKind,
-)
+from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.mail import bare, normalise_subject
 from chamberlain.domain.operations import (
     DispatchOutcome,
@@ -112,81 +109,55 @@ class ComposePlan(Model):
         if isinstance(checked, DispatchResult):
             return checked
         specs, files = checked
-        common: dict[str, object] = {
-            "account_id": binding.account_id,
-            "mailbox": binding.mailbox,
-            "to": self.to,
-            "cc": self.cc,
-            "bcc": self.bcc,
-            "subject": self.subject,
-            "body": self.body,
-            "high_importance": self.high_importance,
-            "sent_folder_id": self.sent_folder_id,
-            "draft_folder_id": self.draft_folder_id,
-            "token": self.token,
-            "attachments": tuple(specs),
-            "reply_to": self.reply_to,
-            "display_only": self.display_only,
-        }
-        mode = prepared.intent_kind.value.removeprefix("mail.")
-        reply = mail.client.call(
-            Command.COMPOSE,
-            protocol.ComposeArgs.model_validate(
-                {
-                    **common,
-                    "mode": mode,
-                    "draft": self.draft,
-                    "expected_raw_sha256": self.expected_raw_sha256,
-                }
-            ),
-            payloads=files,
-        )
-        result = typed(reply, protocol.ComposeResult)
-        if prepared.intent_kind is _K.MAIL_SEND:
-            return DispatchResult(
-                outcome=DispatchOutcome.APPLIED,
-                receipt=ProviderReceipt(
-                    verification=Verification(client_verified=True),
-                    warnings=(DIALOG_ANSWERED,) if result.dialogs else (),
+        args = protocol.ComposeArgs.model_validate(
+            {
+                **binding.account,
+                **self.model_dump(
+                    exclude={"attachments", "fingerprint", "since_ms", "inbox_folder_id"}
                 ),
-                detail="submitted to Thunderbird" + _dialog_note(result.dialogs),
-            )
-        if result.header is None:
-            return DispatchResult(
-                outcome=DispatchOutcome.UNKNOWN, detail="missing saved draft header"
-            )
-        # A handle needs the Message-ID: an empty one would name every such draft at once.
-        # The draft is saved either way; without one it simply gets no handle.
-        locator = (
-            encode_locator(
-                binding.account_id, result.header.folder_id, result.header.internet_message_id
-            )
-            if result.header.internet_message_id
-            else None
+                "mode": prepared.intent_kind.value.removeprefix("mail."),
+                "attachments": tuple(specs),
+            }
         )
-        note = ""
-        if result.old_copies_remaining:
-            note = "the replaced draft is still present"
+        result = mail.call(Command.COMPOSE, args, protocol.ComposeResult, payloads=files)
+        locator = raw = None
+        if prepared.intent_kind is _K.MAIL_SEND:
+            detail = "submitted to Thunderbird"
+        else:
+            header = result.header
+            if header is None:
+                return DispatchResult(
+                    outcome=DispatchOutcome.UNKNOWN, detail="missing saved draft header"
+                )
+            # An empty Message-ID cannot name one physical draft.
+            if header.internet_message_id:
+                locator = encode_locator(
+                    binding.account_id, header.folder_id, header.internet_message_id
+                )
+            raw = result.raw_sha256
+            detail = "the replaced draft is still present" if result.old_copies_remaining else ""
         return DispatchResult(
             outcome=DispatchOutcome.APPLIED,
             receipt=ProviderReceipt(
                 locator=locator,
-                remote_sha256=result.raw_sha256,
+                remote_sha256=raw,
                 verification=Verification(client_verified=True),
                 warnings=(DIALOG_ANSWERED,) if result.dialogs else (),
             ),
-            detail=note + _dialog_note(result.dialogs),
+            detail=detail + _dialog_note(result.dialogs),
         )
 
     def reconcile(
         self, mail: MailReads, binding: ThunderbirdBinding, prepared: Prepared
     ) -> ReconcileResult:
         kind = prepared.intent_kind
-        folders = {"drafts": self.draft_folder_id}
-        if kind is _K.MAIL_SEND:
+        sending = kind is _K.MAIL_SEND
+        folders: dict[str, str | None] = {"drafts": self.draft_folder_id}
+        if sending:
             folders["sent"] = self.sent_folder_id
             if self.inbox_folder_id:
                 folders["inbox"] = self.inbox_folder_id
+            folders["outbox"] = None
         scopes = [
             protocol.CopyScope(
                 folder_id=folder,
@@ -197,17 +168,6 @@ class ComposePlan(Model):
             )
             for place, folder in folders.items()
         ]
-        places = list(folders)
-        if kind is _K.MAIL_SEND:
-            places.append("outbox")
-            scopes.append(
-                protocol.CopyScope(
-                    folder_id=None,
-                    subject=self.subject,
-                    since_ms=self.since_ms,
-                    include_attachment_hashes=True,
-                )
-            )
         if self.draft is not None:
             scopes.append(
                 protocol.CopyScope(
@@ -217,34 +177,29 @@ class ComposePlan(Model):
                 )
             )
         result = mail.copies(binding, scopes, refresh=True)
-        exact = {
-            place: [copy for copy in scope.copies if _matches(copy, self.fingerprint, place)]
-            for place, scope in zip(places, result.scopes[: len(places)], strict=True)
-        }
-        for place in ("sent", "inbox") if kind is _K.MAIL_SEND else ("drafts",):
-            found = exact.get(place, [])
-            if len(found) > 1:
+        observed = dict(zip(folders, result.scopes[: len(folders)], strict=True))
+        for place in ("sent", "inbox", "drafts", "outbox") if sending else ("drafts",):
+            scope = observed.get(place)
+            if scope is None:
+                continue
+            found = [copy for copy in scope.copies if _matches(copy, self.fingerprint, place)]
+            if not found:
+                continue
+            if sending and place in ("drafts", "outbox"):
                 return ReconcileResult(
-                    status=ReconcileStatus.UNKNOWN, detail="several matching copies"
+                    status=ReconcileStatus.QUEUED, detail="waiting in Outbox or Drafts"
                 )
-            if found:
-                return self._present(
-                    binding, found[0].header, found[0].raw_sha256, result.refresh_verified
-                )
-        if kind is _K.MAIL_SEND and (exact["drafts"] or exact["outbox"]):
-            return ReconcileResult(
-                status=ReconcileStatus.QUEUED, detail="waiting in Outbox or Drafts"
+            if len(found) > 1:
+                return _unknown("several matching copies")
+            return self._present(
+                binding, found[0].header, found[0].raw_sha256, result.refresh_verified
             )
         if not all(scope.complete for scope in result.scopes):
-            return ReconcileResult(
-                status=ReconcileStatus.UNKNOWN, detail="a folder scan was incomplete"
-            )
+            return _unknown("a folder scan was incomplete")
         if self.draft is not None:
             old = result.scopes[-1].copies
             if len(old) != 1 or old[0].raw_sha256 != self.expected_raw_sha256:
-                return ReconcileResult(
-                    status=ReconcileStatus.UNKNOWN, detail="the old draft changed"
-                )
+                return _unknown("the old draft changed")
         return ReconcileResult(
             status=ReconcileStatus.ABSENT,
             proof=result.refresh_verified and mail.absence_provable(prepared.source, kind),
@@ -325,6 +280,9 @@ class MoveBaseline(Model):
     destination: int
     read: bool | None
 
+    def eligible(self, *, trash: bool) -> bool:
+        return self.source == 1 and (trash or self.destination == 0)
+
 
 class ChangePlan(Model):
     items: tuple[protocol.ChangeGroup, ...]
@@ -341,18 +299,14 @@ class ChangePlan(Model):
         prepared: Prepared,
         payloads: Mapping[str, bytes],
     ) -> DispatchResult:
-        reply = mail.client.call(
-            Command.CHANGE,
-            protocol.ChangeArgs(
-                account_id=binding.account_id,
-                mailbox=binding.mailbox,
-                items=self.items,
-                move_to=self.move_to,
-                trash=self.trash,
-                set_read=self.set_read,
-            ),
+        args = protocol.ChangeArgs(
+            **binding.account,
+            items=self.items,
+            move_to=self.move_to,
+            trash=self.trash,
+            set_read=self.set_read,
         )
-        result = typed(reply, protocol.ChangeResult)
+        result = mail.call(Command.CHANGE, args, protocol.ChangeResult)
         expected = {(group.folder_id, mid) for group in self.items for mid in group.ids}
         seen = {(item.ref.folder_id, bare(item.ref.internet_message_id)) for item in result.items}
         if seen != expected or len(seen) != len(result.items):
@@ -368,16 +322,12 @@ class ChangePlan(Model):
             return DispatchResult(
                 outcome=DispatchOutcome.UNKNOWN, detail="the requested change was not verified"
             )
-        warnings: list[str] = []
-        if result.merged_existing_copy:
-            warnings.append("merged_existing_copy")
-        if result.read_state_preserved is False:
-            warnings.append("read_state_not_preserved")
+        warnings = _change_warnings(result.merged_existing_copy, result.read_state_preserved)
         return DispatchResult(
             outcome=DispatchOutcome.APPLIED,
             receipt=ProviderReceipt(
                 verification=Verification(client_verified=True),
-                warnings=tuple(warnings),
+                warnings=warnings,
                 read_state_preserved=result.read_state_preserved,
                 items=tuple(
                     _item(
@@ -399,9 +349,7 @@ class ChangePlan(Model):
     ) -> ReconcileResult:
         result = self.facts(mail, binding, refresh=True)
         if not all(scope.complete for scope in result.scopes):
-            return ReconcileResult(
-                status=ReconcileStatus.UNKNOWN, detail="a folder scan was incomplete"
-            )
+            return _unknown("a folder scan was incomplete")
         destination = by_id(result.scopes[-1]) if self.move_to else {}
         proof = result.refresh_verified and mail.absence_provable(
             prepared.source, prepared.intent_kind
@@ -416,18 +364,14 @@ class ChangePlan(Model):
                 here, there = source.get(mid, []), destination.get(mid, [])
                 if self.move_to is None:
                     if len(here) != 1:
-                        return ReconcileResult(
-                            status=ReconcileStatus.UNKNOWN, detail="a message is missing or doubled"
-                        )
+                        return _unknown("a message is missing or doubled")
                     done = here[0].read == self.set_read
                     pending |= not done
                 else:
                     before = self.before.get(mid)
                     if before is None:
-                        return ReconcileResult(
-                            status=ReconcileStatus.UNKNOWN, detail="move baseline is missing"
-                        )
-                    eligible = before.source == 1 and (self.trash or before.destination == 0)
+                        return _unknown("move baseline is missing")
+                    eligible = before.eligible(trash=self.trash)
                     unchanged = len(here) == before.source and len(there) == before.destination
                     did_merge = (
                         self.trash and before.destination > 0 and len(there) == before.destination
@@ -438,16 +382,11 @@ class ChangePlan(Model):
                         and (len(there) == before.destination + 1 or did_merge)
                     )
                     if not done and not unchanged:
-                        return ReconcileResult(
-                            status=ReconcileStatus.UNKNOWN,
-                            detail="the change in copy counts does not prove the move",
-                        )
+                        return _unknown("the change in copy counts does not prove the move")
                     pending |= eligible and unchanged
                     merged |= done and did_merge
                     if done and self.set_read and any(not h.read for h in there):
-                        return ReconcileResult(
-                            status=ReconcileStatus.UNKNOWN, detail="filed flags differ"
-                        )
+                        return _unknown("filed flags differ")
                     if done and not self.set_read:
                         preserved &= before.read is not None and all(
                             copy.read == before.read for copy in there
@@ -465,23 +404,14 @@ class ChangePlan(Model):
         if not any(item.ok for item in items):
             return ReconcileResult(status=ReconcileStatus.ABSENT, proof=proof)
         if pending:
-            return ReconcileResult(
-                status=ReconcileStatus.UNKNOWN, detail="only some messages changed"
-            )
+            return _unknown("only some messages changed")
         return ReconcileResult(
             status=ReconcileStatus.PRESENT,
             receipt=ProviderReceipt(
                 verification=Verification(
                     client_verified=True, server_verified=result.refresh_verified
                 ),
-                warnings=tuple(
-                    code
-                    for condition, code in (
-                        (merged, "merged_existing_copy"),
-                        (not preserved, "read_state_not_preserved"),
-                    )
-                    if condition
-                ),
+                warnings=_change_warnings(merged, preserved),
                 read_state_preserved=preserved if self.move_to else None,
                 items=tuple(items),
             ),
@@ -517,16 +447,10 @@ class DiscardPlan(Model):
         prepared: Prepared,
         payloads: Mapping[str, bytes],
     ) -> DispatchResult:
-        reply = mail.client.call(
-            Command.DRAFT_DISCARD,
-            protocol.DraftDiscardArgs(
-                account_id=binding.account_id,
-                mailbox=binding.mailbox,
-                draft=self.draft,
-                expected_raw_sha256=self.expected_raw_sha256,
-            ),
+        args = protocol.DraftDiscardArgs(
+            **binding.account, draft=self.draft, expected_raw_sha256=self.expected_raw_sha256
         )
-        result = typed(reply, protocol.DiscardResult)
+        result = mail.call(Command.DRAFT_DISCARD, args, protocol.DiscardResult)
         return DispatchResult(
             outcome=DispatchOutcome.APPLIED,
             receipt=ProviderReceipt(verification=Verification(client_verified=True)),
@@ -536,25 +460,14 @@ class DiscardPlan(Model):
     def reconcile(
         self, mail: MailReads, binding: ThunderbirdBinding, prepared: Prepared
     ) -> ReconcileResult:
-        scope = mail.copies(
-            binding,
-            [
-                protocol.CopyScope(
-                    folder_id=self.draft.folder_id,
-                    ids=(self.draft.internet_message_id,),
-                    inspect_draft=True,
-                )
-            ],
-        ).scopes[0]
+        scope = mail.copies_of(
+            binding, self.draft.folder_id, self.draft.internet_message_id, draft=True
+        )
         if not scope.complete or len(scope.copies) != 1:
-            return ReconcileResult(
-                status=ReconcileStatus.UNKNOWN, detail="draft not uniquely identified"
-            )
+            return _unknown("draft not uniquely identified")
         copy = scope.copies[0]
         if copy.raw_sha256 != self.expected_raw_sha256 or copy.composers_open is None:
-            return ReconcileResult(
-                status=ReconcileStatus.UNKNOWN, detail="could not verify the draft"
-            )
+            return _unknown("could not verify the draft")
         if copy.composers_open == 0:
             return ReconcileResult(
                 status=ReconcileStatus.PRESENT,
@@ -564,6 +477,21 @@ class DiscardPlan(Model):
             status=ReconcileStatus.ABSENT,
             proof=mail.absence_provable(prepared.source, prepared.intent_kind),
         )
+
+
+def _unknown(detail: str) -> ReconcileResult:
+    return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail=detail)
+
+
+def _change_warnings(merged: bool, preserved: bool | None) -> tuple[str, ...]:
+    return tuple(
+        code
+        for condition, code in (
+            (merged, "merged_existing_copy"),
+            (preserved is False, "read_state_not_preserved"),
+        )
+        if condition
+    )
 
 
 def _item(

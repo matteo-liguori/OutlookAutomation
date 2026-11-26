@@ -23,7 +23,7 @@ function escapeHtml(text: string): string {
 
 // --- move, trash, mark read -----------------------------------------------------------------
 
-async function refreshMoveFolders(a: Bound, folderIds: string[], deadline: number): Promise<boolean> {
+async function refreshForChange(a: Bound, folderIds: string[], deadline: number): Promise<boolean> {
   const timeout = Math.min(8_000, deadline - Date.now());
   if (timeout < 500) return false;
   try {
@@ -40,24 +40,22 @@ async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string,
   check(group.folder_id !== destination, "changed", "The messages are already in that folder.");
   const source = await readIdGroup(a, group);
   check(source.complete, "ambiguous", "The folder could not be scanned completely.");
-  const located = group.ids.map((raw) => ({ raw, id: bare(raw), found: source.map.get(bare(raw)) ?? [] }));
+  const located = changeItems(group, source);
   check(new Set(located.map((m) => m.id)).size === located.length, "bad_request", "The batch repeats a message.");
-  const present = located.filter((m) => m.found.length === 1).map((m) => m.found[0]);
-  if (present.length === 0) {
-    if (located.some((m) => m.found.length > 1)) return fail("ambiguous", "The folder contains duplicate copies.");
+  if (!located.some((m) => m.header)) {
+    if (located.some((m) => m.item.code === "ambiguous")) return fail("ambiguous", "The folder contains duplicate copies.");
     return fail("not_found", "None of the messages is in that folder.");
   }
   const scanFolder = (folderId: string) => readIdGroup(a, { folder_id: folderId, ids: group.ids });
   // Filing leaves existing copies alone; Trash may merge into one without changing its flag.
   const before = await scanFolder(destination);
   check(before.complete, "ambiguous", "The destination could not be scanned completely.");
-  const items: ChangeItem[] = [];
+  const items = located.map((m) => m.item);
   const moving = new Map<string, TbHeader>();
-  for (const m of located) {
-    let code = m.found.length === 1 ? "" : m.found.length ? "ambiguous" : "not_found";
-    if (!code && !a.trash && before.map.has(m.id)) code = "ambiguous";
-    items.push({ ref: { folder_id: group.folder_id, internet_message_id: m.raw }, ok: !code, code, was_read: m.found.length === 1 ? m.found[0].read : null });
-    if (!code) moving.set(m.id, m.found[0]);
+  for (const { id, header, item } of located) {
+    if (!header) continue;
+    if (a.trash || !before.map.has(id)) moving.set(id, header);
+    else setChangeCode(item, "ambiguous");
   }
   const ids = [...moving.values()].map((h) => h.id);
   if (ids.length === 0) return fail("ambiguous", "Every message is already at the destination.");
@@ -104,13 +102,13 @@ async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string,
       // A provider refresh can finish before a move is visible. Refresh again while
       // arrival is unproven so the remainder of the window does not poll a stale cache.
       arrivalRefreshes++;
-      if (await refreshMoveFolders(a, [group.folder_id, destination], giveUpAt)) {
+      if (await refreshForChange(a, [group.folder_id, destination], giveUpAt)) {
         nextArrivalRefresh = Date.now() + TUNING.moveRefreshMs;
         continue;
       }
     }
     if (arrived) {
-      if (!needsUpdate) return { items, verified: true, read_state_preserved: preserved, merged_existing_copy: merged };
+      if (!needsUpdate) return changeResult(items, true, preserved, merged);
       let rescan = false;
       for (const [read, refs] of [[true, changedRead], [false, changedUnread]] as const) {
         if (!refs.length || updatedStates.has(read)) continue;
@@ -128,25 +126,23 @@ async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string,
       }
       if (rescan) {
         // The native call starts the IMAP flag update, then the folder scan checks its result.
-        await refreshMoveFolders(a, [destination], giveUpAt);
+        await refreshForChange(a, [destination], giveUpAt);
         continue;
       }
-      if (a.set_read == null) return { items, verified: true, read_state_preserved: false, merged_existing_copy: merged };
+      if (a.set_read == null) return changeResult(items, true, false, merged);
     }
     await sleep(TUNING.movePollMs * 4);
   }
   // Not seen in time: the harness's own check (reconcile) settles it.
-  return { items, verified: false, read_state_preserved: null, merged_existing_copy: false };
+  return changeResult(items, false);
 }
 
-/** Read exact IDs in one native scan. No unrelated header crosses the WebExtension boundary. */
-async function lookupCopies(a: Bound, folderId: string, ids: string[]): Promise<{ messages: TbHeader[]; complete: boolean }> {
-  const helper = messenger.chamberlainMail;
-  check(typeof helper?.lookupCopies === "function", "unsupported", "The exact copy helper is not installed.");
-  return helper.lookupCopies(a.account_id, a.mailbox, folderId, [...new Set(ids.map(bare))]);
+interface IdGroup {
+  map: Map<string, TbHeader[]>;
+  complete: boolean;
 }
 
-async function readIdGroup(a: Bound, group: ChangeGroup): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
+async function readIdGroup(a: Bound, group: ChangeGroup): Promise<IdGroup> {
   const scan = await lookupCopies(a, group.folder_id, group.ids);
   const map = new Map<string, TbHeader[]>();
   for (const header of scan.messages) {
@@ -156,6 +152,31 @@ async function readIdGroup(a: Bound, group: ChangeGroup): Promise<{ map: Map<str
     else map.set(id, [header]);
   }
   return { map, complete: scan.complete };
+}
+
+function changeItem(folder: string, raw: string, wasRead: boolean | null, code: string): ChangeItem {
+  return { ref: { folder_id: folder, internet_message_id: raw }, ok: !code, code, was_read: wasRead };
+}
+
+function changeItems(group: ChangeGroup, found: IdGroup) {
+  return group.ids.map((raw) => {
+    const id = bare(raw);
+    const copies = found.map.get(id) ?? [];
+    const code = !found.complete || copies.length > 1 ? "ambiguous" : copies.length ? "" : "not_found";
+    const header = code ? null : copies[0];
+    return { id, header, item: changeItem(group.folder_id, raw, header?.read ?? null, code) };
+  });
+}
+
+function setChangeCode(item: ChangeItem, code: string): void {
+  item.code = code;
+  item.ok = !code;
+}
+
+function changeResult(
+  items: ChangeItem[], verified: boolean, preserved: boolean | null = null, merged = false,
+): ChangeResult {
+  return { items, verified, read_state_preserved: preserved, merged_existing_copy: merged };
 }
 
 interface FlagGroup {
@@ -181,22 +202,15 @@ async function verifyFlagGroups(a: Bound, groups: FlagGroup[], read: boolean, ct
     const remaining: FlagGroup[] = [];
     for (const { group, items } of pending) {
       if (ctx.cancelled || Date.now() >= deadline) return;
-      let after;
-      try {
-        after = await readIdGroup(a, group);
-      } catch {
-        remaining.push({ group, items });
-        continue;
-      }
+      const after = await readIdGroup(a, group).catch(() => null);
       const unknown: ChangeItem[] = [];
       for (const item of items) {
-        const copies = after.map.get(bare(item.ref.internet_message_id)) ?? [];
-        if (!after.complete || copies.length !== 1 || copies[0].read !== read) {
+        const copies = after?.map.get(bare(item.ref.internet_message_id)) ?? [];
+        if (!after?.complete || copies.length !== 1 || copies[0].read !== read) {
           unknown.push(item);
           continue;
         }
-        item.ok = true;
-        item.code = "";
+        setChangeCode(item, "");
       }
       if (unknown.length) remaining.push({ group, items: unknown });
     }
@@ -206,7 +220,7 @@ async function verifyFlagGroups(a: Bound, groups: FlagGroup[], read: boolean, ct
       refreshed = true;
       const folders = pending.map(({ group }) => group.folder_id);
       for (let index = 0; index < folders.length && !ctx.cancelled; index += 8) {
-        await refreshMoveFolders(a, folders.slice(index, index + 8), deadline);
+        await refreshForChange(a, folders.slice(index, index + 8), deadline);
       }
     } else {
       await sleep(TUNING.movePollMs);
@@ -227,25 +241,18 @@ async function markGroups(a: ChangeArgs, read: boolean, ctx: Ctx): Promise<Chang
     } catch (error) {
       const failure = flagError(error);
       const code = failure && FLAG_PRECHECK_CODES.has(failure) ? failure : "not_verified";
-      items.push(...group.ids.map((id) => ({
-        ref: { folder_id: group.folder_id, internet_message_id: id },
-        ok: false, was_read: null, code,
-      })));
+      items.push(...group.ids.map((id) => changeItem(group.folder_id, id, null, code)));
       continue;
     }
     const changed: BulkReadRef[] = [];
     const wanted: ChangeItem[] = [];
-    for (const id of group.ids) {
-      const found = before.map.get(bare(id)) ?? [];
-      const code = !before.complete || found.length > 1 ? "ambiguous" : found.length === 0 ? "not_found" : "";
-      const ref = { folder_id: group.folder_id, internet_message_id: id };
-      const wasRead = code ? null : found[0].read;
-      const pendingFlag = wasRead !== null && wasRead !== read;
-      const item = { ref, ok: !code && !pendingFlag, was_read: wasRead, code: pendingFlag ? "not_verified" : code };
+    for (const { id, header, item } of changeItems(group, before)) {
       items.push(item);
-      if (!code) wanted.push(item);
-      if (pendingFlag) {
-        changed.push({ id: found[0].id, internetMessageId: bare(id) });
+      if (!header) continue;
+      wanted.push(item);
+      if (header.read !== read) {
+        setChangeCode(item, "not_verified");
+        changed.push({ id: header.id, internetMessageId: id });
       }
     }
     if (!changed.length) continue;
@@ -263,17 +270,11 @@ async function markGroups(a: ChangeArgs, read: boolean, ctx: Ctx): Promise<Chang
       }
       // An IMAP failure may arrive after changing a flag. Look again without writing.
     }
-    for (const item of wanted) {
-      item.ok = false;
-      item.code = "not_verified";
-    }
+    for (const item of wanted) setChangeCode(item, "not_verified");
     pending.push({ group, items: wanted });
   }
   await verifyFlagGroups(a, pending, read, ctx);
-  return {
-    items, verified: items.every((item) => item.code !== "not_verified"),
-    read_state_preserved: null, merged_existing_copy: false,
-  };
+  return changeResult(items, items.every((item) => item.code !== "not_verified"));
 }
 
 async function cmdChange(a: ChangeArgs, ctx: Ctx): Promise<ChangeResult> {
@@ -391,65 +392,64 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx): Promise<ComposeResult> {
       const opened = await helper.openDraft(a.account_id, a.mailbox, existing.id, existing.headerMessageId);
       tabId = opened.tab_id;
       check((await rawHash(existing.id)) === openingHash, "changed", "The draft changed while it was opened.");
-      if ((await messenger.messages.get(existing.id)).read !== existing.read) {
-        markMutation(ctx);
-        await messenger.messages.update(existing.id, { read: existing.read });
-      }
-      await messenger.compose.setComposeDetails(tabId, details);
-      for (const attachment of await messenger.compose.listAttachments(tabId)) await messenger.compose.removeAttachment(tabId, attachment.id);
     } else if (original) {
-      const tab = await messenger.compose.beginReply(original.id, "replyToSender", details);
-      tabId = tab.id;
-      const now = await messenger.messages.get(original.id);
-      if (now.read !== original.read) {
-        markMutation(ctx);
-        await messenger.messages.update(original.id, { read: original.read });
-      }
-      for (const attachment of await messenger.compose.listAttachments(tabId)) await messenger.compose.removeAttachment(tabId, attachment.id);
+      tabId = (await messenger.compose.beginReply(original.id, "replyToSender", details)).id;
     } else {
       tabId = (await messenger.compose.beginNew(details)).id;
     }
-    const open: number = tabId as number;
+    check(typeof tabId === "number", "not_verified", "The composer did not return a tab.");
+    const openedFrom = existing ?? original;
+    if (openedFrom) {
+      if ((await messenger.messages.get(openedFrom.id)).read !== openedFrom.read) {
+        markMutation(ctx);
+        await messenger.messages.update(openedFrom.id, { read: openedFrom.read });
+      }
+      if (existing) await messenger.compose.setComposeDetails(tabId, details);
+      for (const attachment of await messenger.compose.listAttachments(tabId)) await messenger.compose.removeAttachment(tabId, attachment.id);
+    }
     // Autosave off and the bound Sent folder re-applied on every composer, reopened drafts and replies included.
     // A send never saves a draft, so its Drafts setting does not matter ("" skips that check).
-    await helper.holdComposer(open, a.account_id, a.mailbox, a.mode === "send" ? "" : a.draft_folder_id, a.sent_folder_id);
-    for (const file of files) await messenger.compose.addAttachment(open, { file });
-    await verifyComposer(open, a, identity.id, files);
-    if (a.mode === "send") {
-      markMutation(ctx);
-      await messenger.compose.sendMessage(open, { mode: "sendNow" });
-      return { attachment_bytes_verified: true, dialogs: await answered(open), old_copies_remaining: 0 };
-    }
+    await helper.holdComposer(tabId, a.account_id, a.mailbox, a.mode === "send" ? "" : a.draft_folder_id, a.sent_folder_id);
+    for (const file of files) await messenger.compose.addAttachment(tabId, { file });
+    await verifyComposer(tabId, a, identity.id, files);
     markMutation(ctx);
-    const saved = await messenger.compose.saveMessage(open, { mode: "draft" });
-    const dialogs = await answered(open);
-    return { ...(await finishDraft(a, open, saved)), dialogs };
+    if (a.mode === "send") {
+      await messenger.compose.sendMessage(tabId, { mode: "sendNow" });
+      return { attachment_bytes_verified: true, dialogs: await answered(tabId), old_copies_remaining: 0 };
+    }
+    const saved = await messenger.compose.saveMessage(tabId, { mode: "draft" });
+    return await finishDraft(a, tabId, saved, await answered(tabId));
   } catch (error) {
     if (tabId !== null && !ctx.mutationIssued) await closeQuietly(tabId, a);
     throw error;
   }
 }
 
-async function finishDraft(a: ComposeArgs, tabId: number, saved: { messages?: TbHeader[] }): Promise<ComposeResult> {
-  const fail2 = (message: string): never => fail("not_verified", message, "possible");
-  if (saved?.messages?.length !== 1) return fail2("The draft save was not verified.");
+function unverifiedDraft(message: string): never {
+  return fail("not_verified", message, "possible");
+}
+
+async function finishDraft(a: ComposeArgs, tabId: number, saved: { messages?: TbHeader[] }, dialogs: string[]): Promise<ComposeResult> {
+  if (saved?.messages?.length !== 1) return unverifiedDraft("The draft save was not verified.");
   const returned = saved.messages[0];
-  if (returned.folder?.accountId !== a.account_id || returned.folder?.id !== a.draft_folder_id) fail2("The draft was saved in the wrong folder.");
+  if (returned.folder?.accountId !== a.account_id || returned.folder?.id !== a.draft_folder_id) unverifiedDraft("The draft was saved in the wrong folder.");
   const expectedBody = await bodyDigest(a.body);
+  const subject = normaliseSubject(a.subject);
+  const replyId = a.reply_to?.internet_message_id;
+  const attachments = sortedJson(a.attachments.map((spec) => spec.sha256).sort());
+  const recipients = (["to", "cc", "bcc"] as const).map(
+    (field) => [field, sortedJson(a[field].map((address) => address.toLowerCase()).sort())] as const,
+  );
   let found: TbHeader | undefined;
   for (let attempt = 0; attempt < TUNING.saveAttempts && !found; attempt++) {
     try {
       const h: TbHeader = await messenger.messages.get(returned.id);
       const copy = await inspectContent(h, true);
-      const replyId = a.reply_to?.internet_message_id;
-      const attachments = a.attachments.map((spec) => spec.sha256).sort();
       if (h.folder?.id === a.draft_folder_id && await isOwn(h, a.mailbox)
-          && normaliseSubject(copy.subject ?? "") === normaliseSubject(a.subject)
+          && normaliseSubject(copy.subject ?? "") === subject
           && copy.body_sha256 === expectedBody
-          && sortedJson(copy.to) === sortedJson(a.to.map((addr) => addr.toLowerCase()).sort())
-          && sortedJson(copy.cc) === sortedJson(a.cc.map((addr) => addr.toLowerCase()).sort())
-          && sortedJson(copy.bcc) === sortedJson(a.bcc.map((addr) => addr.toLowerCase()).sort())
-          && sortedJson(copy.attachment_sha256) === sortedJson(attachments)
+          && recipients.every(([field, want]) => sortedJson(copy[field]) === want)
+          && sortedJson(copy.attachment_sha256) === attachments
           && copy.high_importance === a.high_importance
           && (!replyId || copy.in_reply_to.includes(replyId))) found = h;
     } catch (error) {
@@ -457,21 +457,21 @@ async function finishDraft(a: ComposeArgs, tabId: number, saved: { messages?: Tb
     }
     if (!found && attempt < TUNING.saveAttempts - 1) await sleep(TUNING.savePollMs);
   }
-  if (!found) return fail2("The saved draft does not match what was requested.");
-  const ok = await indexedDraft(a, found, fail2);
-  const raw = await rawHash(ok.header.id);
+  if (!found) return unverifiedDraft("The saved draft does not match what was requested.");
+  const indexed = await indexedDraft(a, found);
+  const raw = await rawHash(indexed.id);
   let remaining = 0;
   if (a.draft) {
     for (let attempt = 0; attempt < TUNING.saveAttempts; attempt++) {
-      const old = await copiesIn(a, a.draft.folder_id, a.draft.internet_message_id);
-      if (!old.complete) return fail2("The prior draft could not be checked completely.");
+      const old = await readExactCopies(a, a.draft.folder_id, a.draft.internet_message_id);
+      if (!old.complete) return unverifiedDraft("The prior draft could not be checked completely.");
       remaining = old.messages.length;
       if (remaining === 0) break;
       await sleep(TUNING.savePollMs);
     }
   }
   if (!a.display_only) await closeQuietly(tabId, a);
-  return { header: header(ok.header), raw_sha256: raw, attachment_bytes_verified: true, old_copies_remaining: remaining, dialogs: [] };
+  return { header: header(indexed), raw_sha256: raw, attachment_bytes_verified: true, old_copies_remaining: remaining, dialogs };
 }
 
 /**
@@ -480,20 +480,24 @@ async function finishDraft(a: ComposeArgs, tabId: number, saved: { messages?: Tb
  * syncs. The draft's handle needs that Message-ID, so take it from the stored message and
  * wait until the folder finds the draft by it.
  */
-async function indexedDraft(a: ComposeArgs, saved: TbHeader, fail2: (message: string) => never): Promise<{ header: TbHeader }> {
-  let mid = bare(saved.headerMessageId ?? "");
+async function indexedDraft(a: ComposeArgs, saved: TbHeader): Promise<TbHeader> {
+  const stableId = bare(saved.headerMessageId ?? "");
+  let mid = stableId;
   if (!mid) {
     const full: TbPart = await messenger.messages.getFull(saved.id);
     mid = bare(String((full.headers ?? {})["message-id"]?.[0] ?? "").trim());
   }
-  if (!mid) fail2("The saved draft has no Message-ID.");
+  if (!mid) unverifiedDraft("The saved draft has no Message-ID.");
   for (let attempt = 0; attempt < TUNING.saveAttempts; attempt++) {
-    const copies = await copiesIn(a, a.draft_folder_id, mid);
-    if (copies.complete && copies.messages.length === 1) return { header: copies.messages[0] };
-    if (copies.messages.length > 1) fail2("More than one copy of the saved draft is in the draft folder.");
+    // The WebExtension query also refreshes the placeholder emitted by the save callback.
+    const copies = stableId
+      ? await readExactCopies(a, a.draft_folder_id, mid)
+      : await queryExact(a, a.draft_folder_id, mid);
+    if (copies.complete && copies.messages.length === 1) return copies.messages[0];
+    if (copies.messages.length > 1) unverifiedDraft("More than one copy of the saved draft is in the draft folder.");
     await sleep(TUNING.savePollMs);
   }
-  return fail2("The saved draft could not be found by its Message-ID.");
+  return unverifiedDraft("The saved draft could not be found by its Message-ID.");
 }
 
 async function cmdDraftDiscard(a: DraftDiscardArgs, ctx: Ctx): Promise<DiscardResult> {
@@ -527,11 +531,8 @@ async function inspectContent(h: TbHeader, includeHashes: boolean): Promise<Cont
   checkCopy(h, before);
   const full: TbPart = await messenger.messages.getFull(h.id);
   const headers = full.headers ?? {};
-  const subject = await messenger.messengerUtilities.decodeMimeHeader("subject", headers.subject ?? [before.subject]);
-  const body = await bodyDigest(await bodyText(full));
-  const to = await emailList(before.recipients ?? []);
-  const cc = await emailList(before.ccList ?? []);
-  const bcc = await emailList(before.bccList?.length ? before.bccList : (headers.bcc ?? []));
+  const envelope = await messageEnvelope(full, before);
+  const digest = await bodyDigest(await bodyText(full));
   const hashes: string[] = [];
   if (includeHashes) {
     for (const info of await messenger.messages.listAttachments(h.id)) {
@@ -543,12 +544,10 @@ async function inspectContent(h: TbHeader, includeHashes: boolean): Promise<Cont
   }
   checkCopy(before, await messenger.messages.get(h.id));
   return {
-    subject: clip(subject[0] ?? before.subject, MAX_BODY_CHARS),
-    body_sha256: body,
-    to, cc, bcc,
+    ...envelope,
+    body_sha256: digest,
     attachment_sha256: hashes.sort(),
     high_importance: ["high", "highest"].includes(before.priority ?? ""),
-    in_reply_to: (headers["in-reply-to"] ?? []).join(" ").trim(),
     token: (headers["x-chamberlain-write-token"] ?? []).join(" ").trim(),
   };
 }

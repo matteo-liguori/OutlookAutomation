@@ -226,19 +226,30 @@ async function cmdQuery(a: QueryArgs): Promise<QueryResult> {
   }
 }
 
-/** The messages of one folder with one Message-ID; stable identity, never a session integer. */
-async function copiesIn(r: Bound, folderId: string, internetId: string, allowOutbox = false): Promise<Scan> {
-  const folder = await folderOf(r, folderId, allowOutbox);
-  const foreign = folder.accountId !== r.account_id;
-  return scanQuery(r, { folderId, foreign, internetId: bare(internetId), maxScan: 5000, ownOnly: foreign });
+/** Read exact IDs in one native scan. No unrelated header crosses the WebExtension boundary. */
+async function lookupCopies(a: Bound, folderId: string, ids: string[]): Promise<{ messages: TbHeader[]; complete: boolean }> {
+  const helper = messenger.chamberlainMail;
+  check(typeof helper?.lookupCopies === "function", "unsupported", "The exact copy helper is not installed.");
+  return helper.lookupCopies(a.account_id, a.mailbox, folderId, [...new Set(ids.map(bare))]);
+}
+
+function queryExact(a: Bound, folderId: string, messageId: string): Promise<Scan> {
+  return scanQuery(a, { folderId, internetId: bare(messageId), maxScan: 5000 });
+}
+
+async function readExactCopies(a: Bound, folderId: string, messageId: string) {
+  const found = await lookupCopies(a, folderId, [messageId]);
+  // A targeted Thunderbird query can still finish when the native folder walk hits its bound.
+  return !found.complete && found.messages.length < 2 ? queryExact(a, folderId, messageId) : found;
 }
 
 async function locateOne(r: Bound, ref: MessageRef): Promise<TbHeader> {
   await accountOf(r);
-  const found = await copiesIn(r, ref.folder_id, ref.internet_message_id);
-  if (found.messages.length === 0) fail("not_found", "The message is not in that folder.");
+  await folderOf(r, ref.folder_id);
+  const found = await readExactCopies(r, ref.folder_id, ref.internet_message_id);
   if (found.messages.length > 1) fail("ambiguous", "More than one copy of that message is in the folder.");
   if (!found.complete) fail("ambiguous", "The folder could not be scanned completely.");
+  if (found.messages.length === 0) fail("not_found", "The message is not in that folder.");
   return found.messages[0];
 }
 
@@ -287,22 +298,30 @@ async function guardedFull(r: Bound, ref: MessageRef): Promise<{ full: TbPart; a
   return { full, after };
 }
 
+async function messageEnvelope(full: TbPart, h: TbHeader): Promise<Pick<ReadResult, "subject" | "to" | "cc" | "bcc" | "in_reply_to">> {
+  const headers = full.headers ?? {};
+  const decoded = await messenger.messengerUtilities.decodeMimeHeader("subject", headers.subject ?? [h.subject]);
+  return {
+    subject: clip(decoded[0] ?? h.subject, MAX_BODY_CHARS),
+    to: await emailList(h.recipients ?? []),
+    cc: await emailList(h.ccList ?? []),
+    bcc: await emailList(h.bccList?.length ? h.bccList : (headers.bcc ?? [])),
+    in_reply_to: (headers["in-reply-to"] ?? []).join(" ").trim(),
+  };
+}
+
 async function cmdRead(a: ReadArgs): Promise<ReadResult> {
   const { full, after } = await guardedFull(a, { folder_id: a.folder_id, internet_message_id: a.internet_message_id });
   const headers = full.headers ?? {};
-  const decoded = await messenger.messengerUtilities.decodeMimeHeader("subject", headers.subject ?? [after.subject]);
+  const envelope = await messageEnvelope(full, after);
   const attachments = await attachmentInfo(after.id);
   const digest = a.raw_hash ? await rawHash(after.id) : undefined;
   checkCopy(after, await messenger.messages.get(after.id));
   return {
     header: header(after, attachments.length > 0),
-    subject: clip(decoded[0] ?? after.subject, MAX_BODY_CHARS),
+    ...envelope,
     body: clip(await bodyText(full), MAX_BODY_CHARS),
-    to: await emailList(after.recipients ?? []),
-    cc: await emailList(after.ccList ?? []),
-    bcc: await emailList(after.bccList?.length ? after.bccList : (headers.bcc ?? [])),
     attachments,
-    in_reply_to: (headers["in-reply-to"] ?? []).join(" ").trim(),
     references: (headers.references ?? []).join(" ").trim(),
     authentication_results: (headers["authentication-results"] ?? []).slice(0, 8).map((v: string) => clip(v, 2000)),
     raw_sha256: digest,

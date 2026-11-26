@@ -84,33 +84,32 @@ class BridgeErrorCode(StrEnum):
 # --- handshake and framing messages ---------------------------------------------------------
 
 
-class AddonHello(Model):
+class _BridgeFrame(Model):
+    v: int
+    id: Id
+
+
+class AddonHello(_BridgeFrame):
     """First message from the add-on after it connects to the host."""
 
     t: Literal["addon_hello"] = "addon_hello"
-    v: int
-    id: Id
     addon_version: Annotated[str, Field(max_length=40)]
     browser_version: Annotated[str, Field(max_length=40)] = ""
     calendar_available: bool
 
 
-class ClientHello(Model):
+class ClientHello(_BridgeFrame):
     """First message from a local client; carries the session token."""
 
     t: Literal["client_hello"] = "client_hello"
-    v: int
-    id: Id
     token: Annotated[str, Field(max_length=200)]
     client_version: Annotated[str, Field(max_length=40)] = ""
 
 
-class Welcome(Model):
+class Welcome(_BridgeFrame):
     """The host's answer to an authenticated, compatible client."""
 
     t: Literal["welcome"] = "welcome"
-    v: int
-    id: Id
     host_version: Annotated[str, Field(max_length=40)]
     addon_version: Annotated[str, Field(max_length=40)]
     calendar_available: bool
@@ -124,30 +123,24 @@ class RefusalCode(StrEnum):
     DUPLICATE_ID = "duplicate_id"
 
 
-class Refusal(Model):
+class Refusal(_BridgeFrame):
     """The host (or add-on) refuses to operate; nothing was executed."""
 
     t: Literal["refusal"] = "refusal"
-    v: int
-    id: Id
     code: RefusalCode
     message: Annotated[str, Field(max_length=500)] = ""
 
 
-class RequestFrame(Model):
+class RequestFrame(_BridgeFrame):
     t: Literal["request"] = "request"
-    v: int
-    id: Id
     cmd: str
     args: dict[str, JsonValue] = Field(default_factory=dict)
 
 
-class ChunkFrame(Model):
+class ChunkFrame(_BridgeFrame):
     """One piece of an attachment, inside the request or response with this ID."""
 
     t: Literal["chunk"] = "chunk"
-    v: int
-    id: Id
     name: Annotated[str, Field(min_length=1, max_length=64)]
     """Which attachment (the spec's `key`, or the downloaded part name)."""
     index: Annotated[int, Field(ge=0)]
@@ -164,10 +157,8 @@ class BridgeError(Model):
     """`none` only when the add-on proves no mutating call was issued."""
 
 
-class ResponseFrame(Model):
+class ResponseFrame(_BridgeFrame):
     t: Literal["response"] = "response"
-    v: int
-    id: Id
     cmd: str
     ok: bool
     result: dict[str, JsonValue] | None = None
@@ -182,18 +173,14 @@ class ResponseFrame(Model):
         return self
 
 
-Frame = Annotated[
-    AddonHello | ClientHello | Welcome | Refusal | RequestFrame | ChunkFrame | ResponseFrame,
-    Field(discriminator="t"),
-]
-FRAME_ADAPTER: TypeAdapter[
+_FrameMessage = (
     AddonHello | ClientHello | Welcome | Refusal | RequestFrame | ChunkFrame | ResponseFrame
-] = TypeAdapter(Frame)
+)
+Frame = Annotated[_FrameMessage, Field(discriminator="t")]
+FRAME_ADAPTER: TypeAdapter[_FrameMessage] = TypeAdapter(Frame)
 
 
-def parse_frame(
-    raw: bytes,
-) -> AddonHello | ClientHello | Welcome | Refusal | RequestFrame | ChunkFrame | ResponseFrame:
+def parse_frame(raw: bytes) -> _FrameMessage:
     """Parse one frame body; any fault is a `source.unavailable` (never another exception)."""
     try:
         return FRAME_ADAPTER.validate_json(raw)
@@ -244,6 +231,12 @@ class Header(Model):
     special_use: tuple[str, ...] = ()
     has_attachments: bool = False
     priority: str = ""
+
+
+class _Recipients(Model):
+    to: tuple[str, ...] = ()
+    cc: tuple[str, ...] = ()
+    bcc: tuple[str, ...] = ()
 
 
 class QueryCursor(Model):
@@ -324,13 +317,10 @@ class ReadArgs(AccountArgs):
     raw_hash: bool = False
 
 
-class ReadResult(Model):
+class ReadResult(_Recipients):
     header: Header
     subject: Text
     body: Text
-    to: tuple[str, ...] = ()
-    cc: tuple[str, ...] = ()
-    bcc: tuple[str, ...] = ()
     attachments: tuple[AttachmentInfo, ...] = ()
     in_reply_to: str = ""
     references: str = ""
@@ -406,11 +396,8 @@ class ContactReadResult(Model):
 # --- writes ----------------------------------------------------------------------------------
 
 
-class ComposeArgs(AccountArgs):
+class ComposeArgs(AccountArgs, _Recipients):
     mode: Literal["send", "draft_save", "draft_update"]
-    to: tuple[str, ...] = ()
-    cc: tuple[str, ...] = ()
-    bcc: tuple[str, ...] = ()
     subject: Annotated[str, Field(max_length=500, pattern=r"^[^\r\n]*$")]
     body: Text
     high_importance: bool = False
@@ -510,13 +497,10 @@ class DiscardResult(Model):
 # --- copy observations (read-only) -----------------------------------------------------------
 
 
-class Fingerprint(Model):
+class Fingerprint(_Recipients):
     """What a sent or saved copy must look like (no Message-ID needed, R1)."""
 
     sender: str
-    to: tuple[str, ...] = ()
-    cc: tuple[str, ...] = ()
-    bcc: tuple[str, ...] = ()
     subject: Annotated[str, Field(max_length=500)]
     body_sha256: Hex64
     """SHA-256 of the body after `normalise_body` (CRLF to LF, trimmed)."""
@@ -567,13 +551,10 @@ class CopiesArgs(AccountArgs):
     refresh: bool = False
 
 
-class CopyFact(Model):
+class CopyFact(_Recipients):
     header: Header
     subject: str | None = None
     body_sha256: Hex64 | None = None
-    to: tuple[str, ...] = ()
-    cc: tuple[str, ...] = ()
-    bcc: tuple[str, ...] = ()
     attachment_sha256: tuple[Hex64, ...] = ()
     high_importance: bool | None = None
     in_reply_to: str = ""
@@ -664,43 +645,26 @@ class CalendarWriteResult(Model):
     """The read-back; None after a delete."""
 
 
-ARGS_MODELS: dict[Command, type[Model]] = {
-    Command.STATUS: StatusArgs,
-    Command.FOLDERS: AccountArgs,
-    Command.QUERY: QueryArgs,
-    Command.READ: ReadArgs,
-    Command.ATTACHMENT: AttachmentArgs,
-    Command.REFRESH: RefreshArgs,
-    Command.CONTACTS: ContactsArgs,
-    Command.CONTACT_READ: ContactReadArgs,
-    Command.COMPOSE: ComposeArgs,
-    Command.CHANGE: ChangeArgs,
-    Command.DRAFT_DISCARD: DraftDiscardArgs,
-    Command.COPIES: CopiesArgs,
-    Command.CALENDAR_LIST: StatusArgs,
-    Command.CALENDAR_QUERY: CalendarQueryArgs,
-    Command.CALENDAR_READ: CalendarReadArgs,
-    Command.CALENDAR_WRITE: CalendarWriteArgs,
+_COMMAND_MODELS: dict[Command, tuple[type[Model], type[Model]]] = {
+    Command.STATUS: (StatusArgs, StatusResult),
+    Command.FOLDERS: (AccountArgs, FoldersResult),
+    Command.QUERY: (QueryArgs, QueryResult),
+    Command.READ: (ReadArgs, ReadResult),
+    Command.ATTACHMENT: (AttachmentArgs, AttachmentResult),
+    Command.REFRESH: (RefreshArgs, RefreshResult),
+    Command.CONTACTS: (ContactsArgs, ContactsResult),
+    Command.CONTACT_READ: (ContactReadArgs, ContactReadResult),
+    Command.COMPOSE: (ComposeArgs, ComposeResult),
+    Command.CHANGE: (ChangeArgs, ChangeResult),
+    Command.DRAFT_DISCARD: (DraftDiscardArgs, DiscardResult),
+    Command.COPIES: (CopiesArgs, CopiesResult),
+    Command.CALENDAR_LIST: (StatusArgs, CalendarListResult),
+    Command.CALENDAR_QUERY: (CalendarQueryArgs, CalendarQueryResult),
+    Command.CALENDAR_READ: (CalendarReadArgs, CalendarReadResult),
+    Command.CALENDAR_WRITE: (CalendarWriteArgs, CalendarWriteResult),
 }
-
-RESULT_MODELS: dict[Command, type[Model]] = {
-    Command.STATUS: StatusResult,
-    Command.FOLDERS: FoldersResult,
-    Command.QUERY: QueryResult,
-    Command.READ: ReadResult,
-    Command.ATTACHMENT: AttachmentResult,
-    Command.REFRESH: RefreshResult,
-    Command.CONTACTS: ContactsResult,
-    Command.CONTACT_READ: ContactReadResult,
-    Command.COMPOSE: ComposeResult,
-    Command.CHANGE: ChangeResult,
-    Command.DRAFT_DISCARD: DiscardResult,
-    Command.COPIES: CopiesResult,
-    Command.CALENDAR_LIST: CalendarListResult,
-    Command.CALENDAR_QUERY: CalendarQueryResult,
-    Command.CALENDAR_READ: CalendarReadResult,
-    Command.CALENDAR_WRITE: CalendarWriteResult,
-}
+ARGS_MODELS = {command: pair[0] for command, pair in _COMMAND_MODELS.items()}
+RESULT_MODELS = {command: pair[1] for command, pair in _COMMAND_MODELS.items()}
 
 
 def parse_args(cmd: str, args: dict[str, JsonValue]) -> Model:
