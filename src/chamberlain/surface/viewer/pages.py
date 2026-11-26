@@ -24,6 +24,7 @@ from chamberlain.runs import repo as runs_repo
 from chamberlain.runs import report_repo as local_repo
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.surface.viewer.report_api import due_appointments
+from chamberlain.surface.viewer.views import pick
 from chamberlain.writes import repo as writes_repo
 
 WINDOW_MAX_DAYS = 45
@@ -43,7 +44,6 @@ CATEGORIES: tuple[tuple[str, str], ...] = (
 """The words an event can be given (`memory.labels.CATEGORIES`) and what the legend calls them."""
 LOCAL_SOURCE = "local"
 LOCAL_NAME = "Local (kept only in this viewer)"
-MARK_WINDOW_DAYS = 120
 TIMELINE_DAYS_MAX = 31
 TIMELINE_LIMIT = 400
 CARD_LIMIT = 60
@@ -82,6 +82,39 @@ def _link(location: str) -> str:
     return location if location.startswith(("https://", "http://")) else ""
 
 
+def _row(
+    source: str,
+    tone: int,
+    title: str,
+    location: str,
+    all_day: bool,
+    days: tuple[str, str],
+    times: tuple[str, str],
+    start: str,
+    *,
+    display_title: str = "",
+    category: str = "",
+    **extra: Any,
+) -> dict[str, Any]:
+    """One calendar row of the page, whether it came from a source or from the local store."""
+    return {
+        "source": source,
+        "tone": tone,
+        "title": title,
+        "display_title": display_title,
+        "category": category,
+        "location": location,
+        "url": _link(location),
+        "all_day": all_day,
+        "first_day": days[0],
+        "last_day": days[1],
+        "start_time": times[0],
+        "end_time": times[1],
+        "start": start,
+        **extra,
+    }
+
+
 def _event_row(
     event: CalendarEvent, source: str, tone: int, tz: ZoneInfo, labels: dict[str, tuple[str, str]]
 ) -> dict[str, Any]:
@@ -97,23 +130,20 @@ def _event_row(
         last = (finish - timedelta(seconds=1)).date() if finish > begin else begin.date()
         times = (begin.strftime("%H:%M"), finish.strftime("%H:%M"))
     category, short = labels.get(event_identity(fields), ("", ""))
-    return {
-        "source": source,
-        "tone": tone,
-        "title": fields.title[:200],
-        "display_title": short,
-        "category": category,
-        "location": fields.location[:200],
-        "url": _link(fields.location[:200]),
-        "all_day": fields.all_day,
-        "first_day": first.isoformat(),
-        "last_day": last.isoformat(),
-        "start_time": times[0],
-        "end_time": times[1],
-        "start": _stored(fields.start),
-        "repeats": event.series_locator is not None,
-        "local": False,
-    }
+    return _row(
+        source,
+        tone,
+        fields.title[:200],
+        fields.location[:200],
+        fields.all_day,
+        (first.isoformat(), last.isoformat()),
+        times,
+        _stored(fields.start),
+        display_title=short,
+        category=category,
+        repeats=event.series_locator is not None,
+        local=False,
+    )
 
 
 def _local_row(row: local_repo.LocalEventRow, tz: ZoneInfo) -> dict[str, Any]:
@@ -124,23 +154,18 @@ def _local_row(row: local_repo.LocalEventRow, tz: ZoneInfo) -> dict[str, Any]:
         if row.all_day
         else (start.astimezone(tz).strftime("%H:%M"), end.astimezone(tz).strftime("%H:%M"))
     )
-    return {
-        "source": LOCAL_SOURCE,
-        "tone": 0,
-        "id": row.id,
-        "title": row.title,
-        "display_title": "",
-        "category": "",
-        "location": row.location,
-        "url": _link(row.location),
-        "all_day": row.all_day,
-        "first_day": row.start_day,
-        "last_day": row.end_day,
-        "start_time": times[0],
-        "end_time": times[1],
-        "start": row.start_at,
-        "local": True,
-    }
+    return _row(
+        LOCAL_SOURCE,
+        0,
+        row.title,
+        row.location,
+        row.all_day,
+        (row.start_day, row.end_day),
+        times,
+        row.start_at,
+        id=row.id,
+        local=True,
+    )
 
 
 def _when(row: dict[str, Any]) -> tuple[datetime, datetime]:
@@ -246,13 +271,8 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
     important_handles = {a.action for a in everything}
     marks = [
         {
-            "action": a.action,
+            **pick(a, "action", "start", "title", "card", "card_title", "due"),
             "day": _stored_to_local(a.start, tz).date().isoformat(),
-            "start": a.start,
-            "title": a.title,
-            "card": a.card,
-            "card_title": a.card_title,
-            "due": a.due,
         }
         for a in wanted
     ]
@@ -310,11 +330,9 @@ def reports_of_day(ctx: Context, day: str) -> dict[str, Any]:
         "day": day,
         "runs": [
             {
-                "handle": r.handle,
-                "schedule": r.schedule,
+                **pick(r, "handle", "schedule", "started_at"),
                 "kind": kinds.get(r.schedule, ""),
                 "state": r.state.value,
-                "started_at": r.started_at,
                 "report": compose.read_composed(ctx, r),
             }
             for r in runs
@@ -356,8 +374,7 @@ def cards(ctx: Context) -> dict[str, Any]:
                 "updated_at": card.updated_at,
                 "open_actions": len(actions),
                 "actions": [
-                    {"title": a.title, "due_at": a.due_at, "snooze_until": a.snooze_until}
-                    for a in actions[:PREVIEW_ACTIONS]
+                    pick(a, "title", "due_at", "snooze_until") for a in actions[:PREVIEW_ACTIONS]
                 ],
             }
         )

@@ -11,15 +11,15 @@ from pathlib import Path
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
+def checkout_root() -> Path | None:
+    """The nearest Git work tree around this package, when it runs from a source checkout."""
+    return next((p for p in Path(__file__).resolve().parents if (p / ".git").exists()), None)
+
+
 def code_folders() -> tuple[Path, ...]:
     """The folder holding the package, and the nearest Git work tree around it (if any)."""
-    package = Path(__file__).resolve().parent
-    folders = [package.parent]
-    for parent in (package, *package.parents):
-        if (parent / ".git").exists():
-            folders.append(parent)
-            break
-    return tuple(folders)
+    root = checkout_root()
+    return (Path(__file__).resolve().parent.parent, *((root,) if root else ()))
 
 
 def _inside(path: Path, folder: Path) -> bool:

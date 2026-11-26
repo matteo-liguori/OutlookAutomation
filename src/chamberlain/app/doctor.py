@@ -19,22 +19,28 @@ from chamberlain.store.migrate import discover, pending
 from chamberlain.store.schema import TABLE_CLASSES
 
 
+def _check(check_id: str, ok: bool, summary: str, fix: str) -> CheckResult:
+    return CheckResult(
+        id=check_id, status="ok" if ok else "fail", summary=summary, fix=None if ok else fix
+    )
+
+
 def schema_checks(ctx: Context) -> list[CheckResult]:
     """Migrations are applied and every table has a data class (S-6, S-9)."""
     waiting = pending(ctx.db, discover())
     unclassified = sorted(table_names(ctx.db) - set(TABLE_CLASSES))
     return [
-        CheckResult(
-            id="schema.migrations",
-            status="ok" if not waiting else "fail",
-            summary=f"{len(waiting)} migrations waiting to be applied.",
-            fix=None if not waiting else "Restart Chamberlain so the store is upgraded.",
+        _check(
+            "schema.migrations",
+            not waiting,
+            f"{len(waiting)} migrations waiting to be applied.",
+            "Restart Chamberlain so the store is upgraded.",
         ),
-        CheckResult(
-            id="schema.table_classes",
-            status="ok" if not unclassified else "fail",
-            summary=f"{len(unclassified)} tables have no lifetime class.",
-            fix=None if not unclassified else "Report this: a table has no lifetime rule.",
+        _check(
+            "schema.table_classes",
+            not unclassified,
+            f"{len(unclassified)} tables have no lifetime class.",
+            "Report this: a table has no lifetime rule.",
         ),
     ]
 
@@ -46,24 +52,25 @@ def access_checks(ctx: Context) -> list[CheckResult]:
         with os.scandir(root) as entries:
             next(entries, None)
     except ChamberlainError:
-        result = CheckResult(
-            id="access.data_root",
-            status="fail",
-            summary="The data folder is inside the code checkout.",
-            fix="Choose a private data folder outside the code checkout.",
+        result = _check(
+            "access.data_root",
+            False,
+            "The data folder is inside the code checkout.",
+            "Choose a private data folder outside the code checkout.",
         )
     except OSError:
-        result = CheckResult(
-            id="access.data_root",
-            status="fail",
-            summary="The process could not list the data folder.",
-            fix="Check that the configured data folder exists and can be read.",
+        result = _check(
+            "access.data_root",
+            False,
+            "The process could not list the data folder.",
+            "Check that the configured data folder exists and can be read.",
         )
     else:
-        result = CheckResult(
-            id="access.data_root",
-            status="ok",
-            summary="The data folder is outside the code checkout and can be listed.",
+        result = _check(
+            "access.data_root",
+            True,
+            "The data folder is outside the code checkout and can be listed.",
+            "",
         )
     return [result]
 

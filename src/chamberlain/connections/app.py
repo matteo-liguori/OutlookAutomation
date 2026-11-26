@@ -13,10 +13,11 @@ from chamberlain.connections.load import load_connections
 from chamberlain.connections.model import Connections
 from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.calendar_support.secrets import SecretStore
+from chamberlain.dataroot import checkout_root
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.review.homes import agent_homes
 from chamberlain.review.rounds import RoundRule
-from chamberlain.review.scan import ReviewSettings, checkout_root
+from chamberlain.review.scan import ReviewSettings
 from chamberlain.runs.models import PassKind
 from chamberlain.runs.schedule import ScheduleSpec, apply_schedules
 from chamberlain.runs.updates import TagLister, git_tag_lister

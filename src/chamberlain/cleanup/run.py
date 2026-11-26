@@ -54,14 +54,14 @@ LAST_RUN_KEY: Final = "cleanup.last_run_at"
 class CleanupReport:
     planned: dict[str, int] = field(default_factory=lambda: dict[str, int]())
     """Dry run: what each rule would move."""
-    moved_by: dict[str, int] = field(default_factory=lambda: dict[str, int]())
-    """Real run: what moved, per "rule (mailbox)"."""
+    moved_by: dict[tuple[str, str], int] = field(
+        default_factory=lambda: dict[tuple[str, str], int]()
+    )
+    """Real run: what moved, per (rule, mailbox)."""
     failed: list[str] = field(default_factory=lambda: list[str]())
     """One reason code per message not moved; never mail text (the lines reach the agent)."""
     waiting: list[str] = field(default_factory=lambda: list[str]())
     """Mailboxes whose grant is missing or waiting for the owner."""
-    per_mailbox: dict[str, int] = field(default_factory=lambda: dict[str, int]())
-    """Real run: what moved, per mailbox."""
 
     @property
     def moved(self) -> int:
@@ -77,9 +77,14 @@ class CleanupReport:
         """The report lines: only what happened or needs the owner, nothing when idle."""
         out: list[str] = []
         if self.moved:
-            parts = "; ".join(f"{where} {n}" for where, n in self.moved_by.items())
+            parts = "; ".join(
+                f"{rule} ({source}) {n}" for (rule, source), n in self.moved_by.items()
+            )
             out.append(f"Clean-up moved {self.moved} emails to Trash: {parts}.")
-        many = [m for m, n in self.per_mailbox.items() if n > LOOK_AT_TRASH_OVER]
+        per_mailbox = Counter[str]()
+        for (_, source), n in self.moved_by.items():
+            per_mailbox[source] += n
+        many = [m for m, n in per_mailbox.items() if n > LOOK_AT_TRASH_OVER]
         if many:
             out.append(
                 f"That is more than {LOOK_AT_TRASH_OVER} from {', '.join(many)}: glance at "
@@ -214,9 +219,8 @@ def run_cleanup(ctx: Context, config: CleanupConfig, *, dry_run: bool) -> Cleanu
                 if moved is None:
                     break  # Do not submit further chunks after the write was not started.
                 if moved:
-                    where = f"{rule.name} ({source})"
+                    where = (rule.name, source)
                     report.moved_by[where] = report.moved_by.get(where, 0) + moved
-                    report.per_mailbox[source] = report.per_mailbox.get(source, 0) + moved
     report.failed += [
         f"kept all of {source}: its folders could not be read in full" for source in sorted(unsure)
     ]
@@ -284,12 +288,3 @@ def daily_cleanup(ctx: Context, config: CleanupConfig) -> CleanupReport | None:
         ",".join(report.waiting) or "none",
     )
     return report
-
-
-__all__ = [
-    "CARD_TITLE",
-    "CleanupReport",
-    "daily_cleanup",
-    "propose_grants",
-    "run_cleanup",
-]

@@ -85,126 +85,115 @@ class ErrorSpec(NamedTuple):
 _C = ErrorCategory
 _E = ErrorCode
 
+_RETRYABLE = frozenset({_E.SOURCE_UNAVAILABLE, _E.SOURCE_BUSY, _E.SOURCE_STALE})
+
+
+def _group(category: ErrorCategory, fixes: dict[ErrorCode, str]) -> dict[ErrorCode, ErrorSpec]:
+    return {code: ErrorSpec(category, code in _RETRYABLE, fix) for code, fix in fixes.items()}
+
+
 ERROR_TABLE: dict[ErrorCode, ErrorSpec] = {
-    _E.REQUEST_INVALID: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Correct the named field; see the example."
+    **_group(
+        _C.INVALID_REQUEST,
+        {
+            _E.REQUEST_INVALID: "Correct the named field; see the example.",
+            _E.REQUEST_UNKNOWN_TOOL: "Use one of the twelve listed tools.",
+            _E.REQUEST_UNKNOWN_HANDLE: "Use a handle from a recent reply; find it again if needed.",
+            _E.REQUEST_WRONG_KIND: "Pass a handle of the kind this field expects.",
+            _E.REQUEST_BAD_CURSOR: "Repeat the original call without a cursor.",
+            _E.REQUEST_TOO_LARGE: "Send less in one call; store large content with keep.",
+            _E.CARD_OVER_CAP: "Shorten the named field to its limit; keep current facts only.",
+            _E.EVIDENCE_OVER_CAP: "State the fact briefly; store long content as an artifact.",
+            _E.NOTE_OVER_CAP: "Shorten the note, or replace an older note on this action.",
+            _E.ARTIFACT_NO_OWNER: "Name an open action, operation or session as the owner.",
+            _E.ARTIFACT_OWNER_ENDED: "That owner has finished; name a live owner.",
+            _E.ARTIFACT_HASH_MISMATCH: "The stored content changed; fetch or keep it again.",
+            _E.STORAGE_OVER_BUDGET: "Forget the largest items you no longer need, then retry.",
+        },
     ),
-    _E.REQUEST_UNKNOWN_TOOL: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Use one of the twelve listed tools."
+    **_group(
+        _C.NOT_CONFIGURED,
+        {
+            _E.SOURCE_NOT_CONFIGURED: "Tell the user this source is not set up.",
+            _E.SESSION_REQUIRED: "Call start first.",
+            _E.SESSION_STALE: "Stop. This scheduled run belongs to an earlier day.",
+            _E.CONFIG_INVALID: "Tell the user the configuration needs correcting; run doctor.",
+        },
     ),
-    _E.REQUEST_UNKNOWN_HANDLE: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Use a handle from a recent reply; find it again if needed."
+    **_group(
+        _C.UNSUPPORTED,
+        {
+            _E.CAPABILITY_UNSUPPORTED: (
+                "No enabled source can do this. Tell the user; do not improvise."
+            ),
+            _E.TOOL_NOT_IMPLEMENTED: "This tool is not built yet. Tell the user.",
+        },
     ),
-    _E.REQUEST_WRONG_KIND: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Pass a handle of the kind this field expects."
+    **_group(
+        _C.NOT_AUTHORISED,
+        {
+            _E.GRANT_REQUIRED: "Propose the write and obtain the user's permission.",
+            _E.GRANT_HUMAN_CONFIRMATION_REQUIRED: (
+                "Ask the user to confirm this in the Chamberlain viewer."
+            ),
+            _E.GRANT_NOT_ACTIVE: "That permission is not active. Propose again if still wanted.",
+            _E.GRANT_SCOPE_MISMATCH: "The permission does not cover this. Propose it separately.",
+            _E.GRANT_CONTENT_MISMATCH: (
+                "The content differs from what was approved. Propose the new one."
+            ),
+            _E.GRANT_LIMIT_REACHED: "A limit was reached. Tell the user; do not work around it.",
+            _E.RECIPIENT_UNKNOWN: "A recipient is new. The user must confirm in the viewer.",
+        },
     ),
-    _E.REQUEST_BAD_CURSOR: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Repeat the original call without a cursor."
+    **_group(
+        _C.CONFLICT,
+        {
+            _E.CARD_VERSION_CONFLICT: (
+                "Open the card again and reapply your change to the current version."
+            ),
+            _E.OPERATION_ALREADY_SETTLED: "This operation is finished. Open it to see the outcome.",
+            _E.OPERATION_INTENT_CHANGED: (
+                "The request differs from the stored one. Propose a new operation."
+            ),
+            _E.REMOTE_CHANGED: "The item changed at the source. Read it again, then decide.",
+            _E.REMOTE_AMBIGUOUS: (
+                "More than one item matches. Find the exact one and use its handle."
+            ),
+            _E.ARTIFACT_EXPIRED: "That stored item has expired. Fetch it again if still needed.",
+            _E.CURSOR_EXPIRED: "Repeat the original call without a cursor.",
+        },
     ),
-    _E.REQUEST_TOO_LARGE: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Send less in one call; store large content with keep."
+    **_group(
+        _C.UNAVAILABLE,
+        {
+            _E.SOURCE_UNAVAILABLE: (
+                "Nothing was changed. Try again later; tell the user if it persists."
+            ),
+            _E.SOURCE_SIGN_IN_NEEDED: (
+                "Nothing was changed. Ask the user to sign in to this source."
+            ),
+            _E.SOURCE_BUSY: "Nothing was changed. Try again shortly.",
+            _E.SOURCE_STALE: "The source is not up to date. Say coverage is incomplete.",
+        },
     ),
-    _E.CARD_OVER_CAP: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Shorten the named field to its limit; keep current facts only."
+    **_group(
+        _C.UNCERTAIN,
+        {
+            _E.OPERATION_UNCERTAIN: "This may have happened. Do not repeat it. Call reconcile.",
+            _E.OPERATION_NEEDS_RECONCILE: (
+                "An earlier attempt is unsettled. Call reconcile; never resend."
+            ),
+        },
     ),
-    _E.EVIDENCE_OVER_CAP: ErrorSpec(
-        _C.INVALID_REQUEST, False, "State the fact briefly; store long content as an artifact."
-    ),
-    _E.NOTE_OVER_CAP: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Shorten the note, or replace an older note on this action."
-    ),
-    _E.ARTIFACT_NO_OWNER: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Name an open action, operation or session as the owner."
-    ),
-    _E.ARTIFACT_OWNER_ENDED: ErrorSpec(
-        _C.INVALID_REQUEST, False, "That owner has finished; name a live owner."
-    ),
-    _E.ARTIFACT_HASH_MISMATCH: ErrorSpec(
-        _C.INVALID_REQUEST, False, "The stored content changed; fetch or keep it again."
-    ),
-    _E.STORAGE_OVER_BUDGET: ErrorSpec(
-        _C.INVALID_REQUEST, False, "Forget the largest items you no longer need, then retry."
-    ),
-    _E.SOURCE_NOT_CONFIGURED: ErrorSpec(
-        _C.NOT_CONFIGURED, False, "Tell the user this source is not set up."
-    ),
-    _E.SESSION_REQUIRED: ErrorSpec(_C.NOT_CONFIGURED, False, "Call start first."),
-    _E.SESSION_STALE: ErrorSpec(
-        _C.NOT_CONFIGURED, False, "Stop. This scheduled run belongs to an earlier day."
-    ),
-    _E.CONFIG_INVALID: ErrorSpec(
-        _C.NOT_CONFIGURED, False, "Tell the user the configuration needs correcting; run doctor."
-    ),
-    _E.CAPABILITY_UNSUPPORTED: ErrorSpec(
-        _C.UNSUPPORTED, False, "No enabled source can do this. Tell the user; do not improvise."
-    ),
-    _E.TOOL_NOT_IMPLEMENTED: ErrorSpec(
-        _C.UNSUPPORTED, False, "This tool is not built yet. Tell the user."
-    ),
-    _E.GRANT_REQUIRED: ErrorSpec(
-        _C.NOT_AUTHORISED, False, "Propose the write and obtain the user's permission."
-    ),
-    _E.GRANT_HUMAN_CONFIRMATION_REQUIRED: ErrorSpec(
-        _C.NOT_AUTHORISED, False, "Ask the user to confirm this in the Chamberlain viewer."
-    ),
-    _E.GRANT_NOT_ACTIVE: ErrorSpec(
-        _C.NOT_AUTHORISED, False, "That permission is not active. Propose again if still wanted."
-    ),
-    _E.GRANT_SCOPE_MISMATCH: ErrorSpec(
-        _C.NOT_AUTHORISED, False, "The permission does not cover this. Propose it separately."
-    ),
-    _E.GRANT_CONTENT_MISMATCH: ErrorSpec(
-        _C.NOT_AUTHORISED, False, "The content differs from what was approved. Propose the new one."
-    ),
-    _E.GRANT_LIMIT_REACHED: ErrorSpec(
-        _C.NOT_AUTHORISED, False, "A limit was reached. Tell the user; do not work around it."
-    ),
-    _E.RECIPIENT_UNKNOWN: ErrorSpec(
-        _C.NOT_AUTHORISED, False, "A recipient is new. The user must confirm in the viewer."
-    ),
-    _E.CARD_VERSION_CONFLICT: ErrorSpec(
-        _C.CONFLICT, False, "Open the card again and reapply your change to the current version."
-    ),
-    _E.OPERATION_ALREADY_SETTLED: ErrorSpec(
-        _C.CONFLICT, False, "This operation is finished. Open it to see the outcome."
-    ),
-    _E.OPERATION_INTENT_CHANGED: ErrorSpec(
-        _C.CONFLICT, False, "The request differs from the stored one. Propose a new operation."
-    ),
-    _E.REMOTE_CHANGED: ErrorSpec(
-        _C.CONFLICT, False, "The item changed at the source. Read it again, then decide."
-    ),
-    _E.REMOTE_AMBIGUOUS: ErrorSpec(
-        _C.CONFLICT, False, "More than one item matches. Find the exact one and use its handle."
-    ),
-    _E.ARTIFACT_EXPIRED: ErrorSpec(
-        _C.CONFLICT, False, "That stored item has expired. Fetch it again if still needed."
-    ),
-    _E.CURSOR_EXPIRED: ErrorSpec(_C.CONFLICT, False, "Repeat the original call without a cursor."),
-    _E.SOURCE_UNAVAILABLE: ErrorSpec(
-        _C.UNAVAILABLE, True, "Nothing was changed. Try again later; tell the user if it persists."
-    ),
-    _E.SOURCE_SIGN_IN_NEEDED: ErrorSpec(
-        _C.UNAVAILABLE, False, "Nothing was changed. Ask the user to sign in to this source."
-    ),
-    _E.SOURCE_BUSY: ErrorSpec(_C.UNAVAILABLE, True, "Nothing was changed. Try again shortly."),
-    _E.SOURCE_STALE: ErrorSpec(
-        _C.UNAVAILABLE, True, "The source is not up to date. Say coverage is incomplete."
-    ),
-    _E.OPERATION_UNCERTAIN: ErrorSpec(
-        _C.UNCERTAIN, False, "This may have happened. Do not repeat it. Call reconcile."
-    ),
-    _E.OPERATION_NEEDS_RECONCILE: ErrorSpec(
-        _C.UNCERTAIN, False, "An earlier attempt is unsettled. Call reconcile; never resend."
-    ),
-    _E.INTERNAL_UNEXPECTED: ErrorSpec(
-        _C.INTERNAL, False, "A harness fault. Tell the user and run doctor."
-    ),
-    _E.REPLY_TOO_LARGE: ErrorSpec(
-        _C.INTERNAL, False, "A harness fault. Ask for less at once and tell the user."
-    ),
-    _E.STORE_MIGRATION_FAILED: ErrorSpec(
-        _C.INTERNAL, False, "The database could not be upgraded. Tell the user; nothing was lost."
+    **_group(
+        _C.INTERNAL,
+        {
+            _E.INTERNAL_UNEXPECTED: "A harness fault. Tell the user and run doctor.",
+            _E.REPLY_TOO_LARGE: "A harness fault. Ask for less at once and tell the user.",
+            _E.STORE_MIGRATION_FAILED: (
+                "The database could not be upgraded. Tell the user; nothing was lost."
+            ),
+        },
     ),
 }
 

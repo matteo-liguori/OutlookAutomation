@@ -39,6 +39,11 @@ def _stored(moment: datetime) -> str:
     return ts(moment)
 
 
+def pick(row: object, *names: str) -> dict[str, Any]:
+    """The named attributes of a row, as a JSON-ready dict."""
+    return {name: getattr(row, name) for name in names}
+
+
 def overview(ctx: Context) -> dict[str, Any]:
     """Counts the person looks at first, and what needs them."""
     db = ctx.db
@@ -76,24 +81,11 @@ def work(ctx: Context) -> dict[str, Any]:
     until = _stored(ctx.clock.now() + DUE_WINDOW)
     return {
         "cards": [
-            {
-                "handle": c.handle,
-                "title": c.title,
-                "review_at": c.review_at,
-                "over_cap": c.over_cap,
-                "open_actions": c.open_actions,
-            }
+            pick(c, "handle", "title", "review_at", "over_cap", "open_actions")
             for c in memory_repo.open_cards(ctx.db, LIST_LIMIT)
         ],
         "actions": [
-            {
-                "handle": a.handle,
-                "card": a.card,
-                "card_title": a.card_title,
-                "title": a.title,
-                "due_at": a.due_at,
-                "snooze_until": a.snooze_until,
-            }
+            pick(a, "handle", "card", "card_title", "title", "due_at", "snooze_until")
             for a in memory_repo.upcoming_actions(ctx.db, until, LIST_LIMIT)
         ],
     }
@@ -174,17 +166,7 @@ def activity(ctx: Context, zone: str, day: str | None) -> dict[str, Any]:
     return {
         "day": shown,
         "tool_calls": dict(sorted(calls.items())),
-        "events": [
-            {
-                "seq": r.seq,
-                "at": r.at,
-                "actor": r.actor,
-                "kind": r.kind,
-                "subject": r.subject,
-                "summary": r.summary,
-            }
-            for r in rows
-        ],
+        "events": [pick(r, "seq", "at", "actor", "kind", "subject", "summary") for r in rows],
     }
 
 
@@ -193,24 +175,17 @@ def runs(ctx: Context) -> dict[str, Any]:
     return {
         "schedules": [
             {
-                "name": s.name,
+                **pick(s, "name", "at_local", "zone", "enabled"),
                 "kind": s.kind.value,
-                "at_local": s.at_local,
                 "weekdays": sorted(s.weekdays),
-                "zone": s.zone,
-                "enabled": s.enabled,
             }
             for s in runs_repo.schedules(ctx.db)
         ],
         "runs": [
             {
-                "handle": r.handle,
-                "schedule": r.schedule,
+                **pick(r, "handle", "schedule", "day", "started_at", "finished_at"),
                 "kind": kinds.get(r.schedule, ""),
-                "day": r.day,
                 "state": r.state.value,
-                "started_at": r.started_at,
-                "finished_at": r.finished_at,
                 "reports": len(runs_repo.report_handles(ctx.db, r.handle)),
             }
             for r in runs_repo.recent_runs(ctx.db, 30)
@@ -227,10 +202,7 @@ def run_reports(ctx: Context, handle: str) -> dict[str, Any]:
         "schedule": run.schedule,
         "day": run.day,
         "state": run.state.value,
-        "reports": [
-            {"handle": r.handle, "filename": r.filename, "text": r.text}
-            for r in read_reports(ctx, handle)
-        ],
+        "reports": [pick(r, "handle", "filename", "text") for r in read_reports(ctx, handle)],
     }
 
 
@@ -253,7 +225,7 @@ def notes(ctx: Context) -> dict[str, Any]:
     since = _stored(ctx.clock.now() - NOTE_KEEP)
     return {
         "notes": [
-            {"id": n.id, "text": n.text, "state": n.state, "created_at": n.created_at}
+            pick(n, "id", "text", "state", "created_at")
             for n in runs_repo.notes_since(ctx.db, since)
         ]
     }

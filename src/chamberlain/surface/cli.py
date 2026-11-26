@@ -26,15 +26,17 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
 """
 
 import argparse
+import functools
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
 
 from chamberlain import __version__
 from chamberlain.app.wiring import run_tick
+from chamberlain.cleanup.rules import only_source
 from chamberlain.cleanup.run import propose_grants, run_cleanup
 from chamberlain.connections import (
     build_runtime,
@@ -60,7 +62,7 @@ from chamberlain.schema.registry import BY_NAME, STANDING_PROMPT, TOOLS, get_too
 from chamberlain.schema.tools import DoctorCheck
 from chamberlain.surface.config_updates import config_migrate, updates
 from chamberlain.surface.migration import migration_command, migration_parser
-from chamberlain.surface.runner import DATA_ENV, configured_caller
+from chamberlain.surface.runner import DATA_ENV, configured_caller, data_root
 from chamberlain.surface.viewer.server import launch
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
@@ -72,6 +74,9 @@ EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_INVALID = 2
 EXIT_UNCERTAIN = 3
+
+_Run = Callable[[Path, argparse.Namespace, TextIO], int]
+_Command = Callable[[argparse.Namespace, TextIO], int]
 
 
 def exit_code(reply: Reply[Model]) -> int:
@@ -216,6 +221,40 @@ def _print(out: TextIO, value: Any) -> None:
     out.write(json.dumps(value, indent=2, ensure_ascii=False) + "\n")
 
 
+def _fail(out: TextIO, error: ChamberlainError) -> int:
+    _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
+    return EXIT_FAILED
+
+
+def _plain_fail(out: TextIO, error: ChamberlainError) -> int:
+    out.write(f"{error.message} {error.fix}".rstrip() + "\n")
+    return EXIT_FAILED
+
+
+def _rooted(*, plain: bool = False, missing: int = EXIT_FAILED) -> Callable[[_Run], _Command]:
+    """Resolve the data root once; no root exits `missing` (T-14), a raised error is JSON."""
+
+    def wrap(run: _Run) -> _Command:
+        @functools.wraps(run)
+        def command(args: argparse.Namespace, out: TextIO) -> int:
+            try:
+                root = data_root(args.data)
+            except ChamberlainError as error:
+                if plain:
+                    out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
+                else:
+                    _fail(out, error)
+                return missing
+            try:
+                return run(root, args, out)
+            except ChamberlainError as error:
+                return _fail(out, error)
+
+        return command
+
+    return wrap
+
+
 def _call_tool(args: argparse.Namespace, out: TextIO) -> int:
     try:
         raw: Any = json.loads(args.request)
@@ -239,38 +278,17 @@ def _call_tool(args: argparse.Namespace, out: TextIO) -> int:
     session = args.session or os.environ.get(SESSION_ENV)
     if session and "session" not in request:
         request["session"] = session
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        reply = error_reply(
-            ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "No data root is set.",
-                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
-            )
-        )
-    else:
-        reply = configured_caller(Path(data))(args.command, request)
+    try:
+        reply = configured_caller(data_root(args.data))(args.command, request)
+    except ChamberlainError as error:
+        reply = error_reply(error)
     _print(out, reply.model_dump(mode="json", exclude_none=True))
     return exit_code(reply)
 
 
-def _tick(args: argparse.Namespace, out: TextIO) -> int:
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        reply = error_reply(
-            ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "No data root is set.",
-                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
-            )
-        )
-        _print(out, reply.model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
-    try:
-        app = open_app(Path(data))
-    except ChamberlainError as error:
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
+@_rooted()
+def _tick(root: Path, args: argparse.Namespace, out: TextIO) -> int:
+    app = open_app(root)
     try:
         ran, wake = run_tick(app)
         due = due_passes(app.context)
@@ -293,71 +311,45 @@ class _NoSecrets:
         return False
 
 
-def _config(args: argparse.Namespace, out: TextIO) -> int:
-    data = args.data or os.environ.get(DATA_ENV)
-    try:
-        if not data:
-            raise ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "No data root is set.",
-                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
-            )
-        data_root = Path(data)
-        if args.action == "migrate":
-            return config_migrate(data_root, apply=args.apply, out=out)
-        if args.action == "add-test-calendar":
-            backup = add_test_calendar(data_root, args.source)
-            result = {"ok": True, "source": args.source, "changed": backup is not None}
-            if backup is not None:
-                result["backup"] = str(backup)
-            _print(out, result)
-            return EXIT_OK
-        connections = load_connections(data_root)
-        if args.action == "show":
-            _print(out, render_redacted(connections))
-            return EXIT_OK
-        runtime = build_runtime(connections, data_root, SystemClock(), secrets=_NoSecrets())
-        _print(
-            out,
-            {
-                "ok": True,
-                "sources": {
-                    source_id: {"kind": source.kind, "enabled": source.enabled}
-                    for source_id, source in sorted(connections.sources.items())
-                },
-                "connectors": runtime.sources.source_ids(),
-            },
-        )
+@_rooted()
+def _config(root: Path, args: argparse.Namespace, out: TextIO) -> int:
+    if args.action == "migrate":
+        return config_migrate(root, apply=args.apply, out=out)
+    if args.action == "add-test-calendar":
+        backup = add_test_calendar(root, args.source)
+        result = {"ok": True, "source": args.source, "changed": backup is not None}
+        if backup is not None:
+            result["backup"] = str(backup)
+        _print(out, result)
         return EXIT_OK
-    except ChamberlainError as error:
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
-
-
-def _import(args: argparse.Namespace, out: TextIO) -> int:
-    data = args.data or os.environ.get(DATA_ENV)
-    try:
-        if not data:
-            raise ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "No data root is set.",
-                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
-            )
-        report = run_import(Path(args.old_root), Path(data), caldav_check=icloud_verify)
-    except ChamberlainError as error:
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
-    _print(out, report.summary())
+    connections = load_connections(root)
+    if args.action == "show":
+        _print(out, render_redacted(connections))
+        return EXIT_OK
+    runtime = build_runtime(connections, root, SystemClock(), secrets=_NoSecrets())
+    _print(
+        out,
+        {
+            "ok": True,
+            "sources": {
+                source_id: {"kind": source.kind, "enabled": source.enabled}
+                for source_id, source in sorted(connections.sources.items())
+            },
+            "connectors": runtime.sources.source_ids(),
+        },
+    )
     return EXIT_OK
 
 
-def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
+@_rooted()
+def _import(root: Path, args: argparse.Namespace, out: TextIO) -> int:
+    _print(out, run_import(Path(args.old_root), root, caldav_check=icloud_verify).summary())
+    return EXIT_OK
+
+
+@_rooted(plain=True)
+def _cleanup(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     """`plan` counts, `grant` proposes the owner's grant, `run` moves to Trash (docs/cleanup.md)."""
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
-        return EXIT_FAILED
-    root = Path(data)
     app = None
     try:
         connections = load_connections(root)
@@ -367,12 +359,7 @@ def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
             if not args.source.startswith("mail:") or source is None or not source.enabled:
                 out.write("Choose a configured, enabled mailbox.\n")
                 return EXIT_FAILED
-            rules = tuple(
-                rule.model_copy(update={"sources": (args.source,)})
-                for rule in config.rules
-                if "*" in rule.sources or args.source in rule.sources
-            )
-            config = config.model_copy(update={"rules": rules})
+            config = only_source(config, args.source)
         if not config.rules:
             if args.source:
                 out.write(f"No cleanup rules apply to {args.source}.\n")
@@ -387,8 +374,7 @@ def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
             return EXIT_OK
         report = run_cleanup(app.context, config, dry_run=args.action == "plan")
     except ChamberlainError as error:
-        out.write(f"{error.message} {error.fix}".rstrip() + "\n")
-        return EXIT_FAILED
+        return _plain_fail(out, error)
     finally:
         if app is not None:
             app.close()
@@ -396,68 +382,52 @@ def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_FAILED if report.failed else EXIT_OK
 
 
-def _export(args: argparse.Namespace, out: TextIO) -> int:
+@_rooted(plain=True)
+def _export(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     """An owner utility: one conversation as a zip under exports/ (read-only on the mail)."""
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
-        return EXIT_FAILED
-    raw = list(args.ids)
-    if args.file is not None:
-        raw += args.file.read_text(encoding="utf-8").splitlines()
-    ids = parse_ids(raw)
-    app = open_app(Path(data))
+    app = None
     try:
+        raw = list(args.ids)
+        if args.file is not None:
+            raw += args.file.read_text(encoding="utf-8").splitlines()
+        ids = parse_ids(raw)
+        app = open_app(root)
         result = export_thread(
             app.context, ids, title=args.title, keep_quotes=args.keep_quotes, zone=None
         )
-    except ChamberlainError as error:
-        out.write(f"{error.message} {error.fix}".rstrip() + "\n")
+    except OSError as error:
+        out.write(f"Cannot read {args.file}: {error.strerror or type(error).__name__}.\n")
         return EXIT_FAILED
+    except ChamberlainError as error:
+        return _plain_fail(out, error)
     finally:
-        app.close()
+        if app is not None:
+            app.close()
     out.write("\n".join(result.lines()) + "\n")
     return EXIT_OK
 
 
-def _addon(args: argparse.Namespace, out: TextIO) -> int:
+@_rooted(plain=True)
+def _addon(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     """Build the add-on and put it in place of the installed file in every Thunderbird profile."""
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
-        return EXIT_FAILED
     try:
         report = update_addon(
-            Path(data) / "bridge",
-            home=thunderbird_home(),
-            desktop=SystemDesktop(),
-            restart=args.restart,
+            root / "bridge", home=thunderbird_home(), desktop=SystemDesktop(), restart=args.restart
         )
     except ChamberlainError as error:
-        out.write(f"{error.message} {error.fix}".rstrip() + "\n")
-        return EXIT_FAILED
+        return _plain_fail(out, error)
     out.write("\n".join(report.lines()) + "\n")
     return EXIT_OK
 
 
-def _recipients(args: argparse.Namespace, out: TextIO) -> int:
+@_rooted()
+def _recipients(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     """Read each mail source's Sent folder and record its recipients as known (G-15)."""
-    data = args.data or os.environ.get(DATA_ENV)
-    try:
-        if not data:
-            raise ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "No data root is set.",
-                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
-            )
-        if not 1 <= args.months <= 120:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID, "--months is between 1 and 120.", field="months"
-            )
-        app = open_app(Path(data))
-    except ChamberlainError as error:
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
+    if not 1 <= args.months <= 120:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_INVALID, "--months is between 1 and 120.", field="months"
+        )
+    app = open_app(root)
     try:
         reports = seed_all(
             app.context.db,
@@ -471,18 +441,8 @@ def _recipients(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK if reports and all(r.complete for r in reports) else EXIT_FAILED
 
 
-def _live_test(args: argparse.Namespace, out: TextIO) -> int:
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        reply = error_reply(
-            ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "No data root is set.",
-                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
-            )
-        )
-        _print(out, reply.model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
+@_rooted()
+def _live_test(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     options = RunOptions(
         only=tuple(args.only),
         skip=tuple(args.skip),
@@ -493,37 +453,23 @@ def _live_test(args: argparse.Namespace, out: TextIO) -> int:
         workers=max(1, args.workers),
     )
     return live_test_main(
-        args.action, Path(data), options, out, as_json=args.as_json, run_id=args.report_run
+        args.action, root, options, out, as_json=args.as_json, run_id=args.report_run
     )
 
 
-def _viewer(args: argparse.Namespace, out: TextIO) -> int:
+@_rooted()
+def _viewer(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     """Serve the viewer. The token goes to the browser only, never to this output (G-18)."""
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        reply = error_reply(
-            ChamberlainError(
-                ErrorCode.CONFIG_INVALID,
-                "No data root is set.",
-                fix=f"Set {DATA_ENV} or pass --data before the tool name.",
-            )
-        )
-        _print(out, reply.model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
-    try:
-        print_url = args.print_url or (
-            os.environ.get(CLAUDE_CODE_ENV) == "1" and not args.browser and not args.no_open
-        )
-        viewer = launch(
-            Path(data),
-            port=args.port,
-            open_browser=not (args.no_open or print_url),
-            print_url=print_url,
-            out=out,
-        )
-    except ChamberlainError as error:
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
+    print_url = args.print_url or (
+        os.environ.get(CLAUDE_CODE_ENV) == "1" and not args.browser and not args.no_open
+    )
+    viewer = launch(
+        root,
+        port=args.port,
+        open_browser=not (args.no_open or print_url),
+        print_url=print_url,
+        out=out,
+    )
     try:
         viewer.serve_forever()
     except KeyboardInterrupt:
@@ -533,62 +479,33 @@ def _viewer(args: argparse.Namespace, out: TextIO) -> int:
     return EXIT_OK
 
 
-def _refused_data_root(args: argparse.Namespace, out: TextIO) -> int | None:
-    """Stop before anything is written when the data root is inside the code checkout."""
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        return None
-    try:
-        refuse_inside_checkout(data)
-    except ChamberlainError as error:
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
-    return None
-
-
-def _status(args: argparse.Namespace, out: TextIO) -> int:
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        out.write(f"Set {DATA_ENV} or pass --data before the command.\n")
-        return EXIT_INVALID
-    try:
-        root = Path(data)
-        config = load_connections(root)
-        ports = build_runtime(config, root, SystemClock()).sources
-        bindings = {**ports.mail, **ports.calendar, **ports.contacts}
-        sources: dict[str, Any] = {}
-        for name, source in sorted(config.sources.items()):
-            row: dict[str, Any] = {
-                "enabled": source.enabled,
-                "kind": source.kind,
-                "capabilities": [],
-            }
-            if source.enabled and name in bindings:
-                try:
-                    row["capabilities"] = (
-                        bindings[name].capabilities(name).model_dump(mode="json")["capabilities"]
-                    )
-                except ChamberlainError as error:
-                    row["error"] = error.code.value
-            sources[name] = row
-        _print(out, {"sources": sources})
-    except ChamberlainError as error:
-        _print(out, error_reply(error).model_dump(mode="json", exclude_none=True))
-        return EXIT_FAILED
+@_rooted(plain=True, missing=EXIT_INVALID)
+def _status(root: Path, args: argparse.Namespace, out: TextIO) -> int:
+    config = load_connections(root)
+    ports = build_runtime(config, root, SystemClock()).sources
+    bindings = {**ports.mail, **ports.calendar, **ports.contacts}
+    sources: dict[str, Any] = {}
+    for name, source in sorted(config.sources.items()):
+        row: dict[str, Any] = {
+            "enabled": source.enabled,
+            "kind": source.kind,
+            "capabilities": [],
+        }
+        if source.enabled and name in bindings:
+            try:
+                row["capabilities"] = (
+                    bindings[name].capabilities(name).model_dump(mode="json")["capabilities"]
+                )
+            except ChamberlainError as error:
+                row["error"] = error.code.value
+        sources[name] = row
+    _print(out, {"sources": sources})
     return EXIT_OK
 
 
-def _setup(args: argparse.Namespace, out: TextIO) -> int:
-    data = args.data or os.environ.get(DATA_ENV)
-    if not data:
-        _print(
-            out,
-            error_reply(
-                ChamberlainError(ErrorCode.CONFIG_INVALID, "Set CHAMBERLAIN_DATA or pass --data.")
-            ).model_dump(mode="json", exclude_none=True),
-        )
-        return EXIT_INVALID
-    return provider_setup(args.provider, args.options, Path(data), out)
+@_rooted(missing=EXIT_INVALID)
+def _setup(root: Path, args: argparse.Namespace, out: TextIO) -> int:
+    return provider_setup(args.provider, args.options, root, out)
 
 
 _COMMANDS = {
@@ -630,9 +547,12 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
     if args.command == "prompt":
         stream.write(STANDING_PROMPT + "\n")
         return EXIT_OK
-    refused = _refused_data_root(args, stream)
-    if refused is not None:
-        return refused
+    data = args.data or os.environ.get(DATA_ENV)
+    if data:
+        try:
+            refuse_inside_checkout(data)
+        except ChamberlainError as error:
+            return _fail(stream, error)
     command = _COMMANDS.get(args.command, _call_tool)
     return command(args, stream)
 

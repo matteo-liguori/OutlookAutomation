@@ -26,8 +26,6 @@ class ToolSpec:
     description: str
     request: type[t.ToolRequest]
     response: type[Model]
-    owner: str
-    """The module that implements the handler."""
     needs_session: bool = True
 
     def input_schema(self) -> dict[str, Any]:
@@ -45,7 +43,6 @@ TOOLS: tuple[ToolSpec, ...] = (
         "Open or resume a session. Returns your sources and the first work items.",
         t.StartRequest,
         t.StartResponse,
-        "attention",
         needs_session=False,
     ),
     ToolSpec(
@@ -53,14 +50,12 @@ TOOLS: tuple[ToolSpec, ...] = (
         "Return the next work items and mark finished ones handled.",
         t.NextRequest,
         t.NextResponse,
-        "attention",
     ),
     ToolSpec(
         _N.GUIDE,
         "Return one guidance rule by ID, or the index of rules.",
         t.GuideRequest,
         t.GuideResponse,
-        "attention",
         needs_session=False,
     ),
     ToolSpec(
@@ -68,63 +63,54 @@ TOOLS: tuple[ToolSpec, ...] = (
         "Search cards, mail, calendar, contacts or stored items. Returns handles, one line each.",
         t.FindRequest,
         t.FindResponse,
-        "memory",
     ),
     ToolSpec(
         _N.OPEN,
         "Read one handle: its record, a bounded page of its text, or a temporary file path.",
         t.OpenRequest,
         t.OpenResponse,
-        "memory",
     ),
     ToolSpec(
         _N.KEEP,
         "Store a note, a piece of evidence or an artifact under an owner.",
         t.KeepRequest,
         t.KeepResponse,
-        "memory",
     ),
     ToolSpec(
         _N.FORGET,
         "Release a stored item early, revoke a grant, or cancel a proposal.",
         t.ForgetRequest,
         t.ForgetResponse,
-        "memory",
     ),
     ToolSpec(
         _N.CARD,
         "Create, update or close a card and its actions.",
         t.CardRequest,
         t.CardResponse,
-        "memory",
     ),
     ToolSpec(
         _N.PROPOSE,
         "Describe a write and learn which permission it needs. Changes nothing outside.",
         t.ProposeRequest,
         t.ProposeResponse,
-        "writes",
     ),
     ToolSpec(
         _N.DO,
         "Carry out an authorised operation, once. Outside action: act, then call with report.",
         t.DoRequest,
         t.DoResponse,
-        "writes",
     ),
     ToolSpec(
         _N.RECONCILE,
         "Settle an uncertain operation by reading what happened. Never resends.",
         t.ReconcileRequest,
         t.ReconcileResponse,
-        "writes",
     ),
     ToolSpec(
         _N.DOCTOR,
         "Run health checks and report storage figures.",
         t.DoctorRequest,
         t.DoctorResponse,
-        "app",
         needs_session=False,
     ),
 )

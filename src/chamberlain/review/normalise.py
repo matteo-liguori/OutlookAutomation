@@ -21,131 +21,24 @@ _SHELL_FLAG = re.compile(r"^-[a-z]*c[a-z]*$")
 _SUFFIXES = (".exe", ".cmd", ".bat", ".ps1", ".sh", ".com")
 _SEPARATORS = re.compile(r"[\\/]")
 
-KNOWN = frozenset(
-    [
-        "python",
-        "python3",
-        "py",
-        "pythonw",
-        "pip",
-        "pip3",
-        "uv",
-        "pytest",
-        "ruff",
-        "pyright",
-        "mypy",
-        "tsc",
-        "node",
-        "npm",
-        "npx",
-        "pnpm",
-        "yarn",
-        "git",
-        "gh",
-        "cargo",
-        "rustc",
-        "go",
-        "make",
-        "cmake",
-        "docker",
-        "kubectl",
-        "curl",
-        "wget",
-        "ssh",
-        "scp",
-        "rg",
-        "grep",
-        "sed",
-        "awk",
-        "find",
-        "ls",
-        "cat",
-        "head",
-        "tail",
-        "sort",
-        "uniq",
-        "wc",
-        "cp",
-        "mv",
-        "rm",
-        "mkdir",
-        "touch",
-        "echo",
-        "tar",
-        "unzip",
-        "zip",
-        "sqlite3",
-        "jq",
-        "dotnet",
-        "java",
-        "javac",
-        "mvn",
-        "gradle",
-        "code",
-        "thunderbird",
-        "taskkill",
-        "tasklist",
-        "where",
-        "which",
-        "type",
-        "dir",
-        "cmd",
-        "powershell",
-        "pwsh",
-        "bash",
-        "sh",
-        "zsh",
-        "chamberlain",
-        "diff",
-        "stat",
-        "du",
-        "pwd",
-        "cd",
-        "sleep",
-        "xargs",
-        "tee",
-        "tr",
-        "cut",
-        "less",
-        "more",
-        "open",
-        "start",
-        "explorer",
-        "reg",
-        "ping",
-        "winget",
-        "choco",
-        "scoop",
-        "brew",
-        "poetry",
-        "conda",
-    ]
+
+def _words(text: str) -> frozenset[str]:
+    return frozenset(text.split())
+
+
+KNOWN = _words(
+    "python python3 py pythonw pip pip3 uv pytest ruff pyright mypy tsc node npm npx pnpm "
+    "yarn git gh cargo rustc go make cmake docker kubectl curl wget ssh scp rg grep sed "
+    "awk find ls cat head tail sort uniq wc cp mv rm mkdir touch echo tar unzip zip "
+    "sqlite3 jq dotnet java javac mvn gradle code thunderbird taskkill tasklist where "
+    "which type dir cmd powershell pwsh bash sh zsh chamberlain diff stat du pwd cd sleep "
+    "xargs tee tr cut less more open start explorer reg ping winget choco scoop brew "
+    "poetry conda "
 )
 """Programs worth naming even when they were started by a path."""
-WITH_SUBCOMMAND = frozenset(
-    [
-        "git",
-        "gh",
-        "npm",
-        "npx",
-        "pnpm",
-        "yarn",
-        "pip",
-        "pip3",
-        "uv",
-        "cargo",
-        "docker",
-        "kubectl",
-        "dotnet",
-        "brew",
-        "winget",
-        "choco",
-        "scoop",
-        "make",
-        "go",
-        "poetry",
-        "conda",
-    ]
+WITH_SUBCOMMAND = _words(
+    "git gh npm npx pnpm yarn pip pip3 uv cargo docker kubectl dotnet brew winget choco "
+    "scoop make go poetry conda "
 )
 SKIPPED_WITH_VALUE = {"git": frozenset({"-c", "-C"})}
 NOISE = frozenset({"cd", "pushd", "popd", "set-location", "sl", "true", "exit", "export", "set"})
