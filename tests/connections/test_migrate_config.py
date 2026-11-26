@@ -4,7 +4,6 @@ from contextlib import closing
 from pathlib import Path
 
 import pytest
-from tests.store.legacy import legacy_migrations
 
 from chamberlain.connections import migrate_config as config_module
 from chamberlain.connections.load import profile_path
@@ -14,7 +13,6 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import DB_NAME, connect
 from chamberlain.store.migrate import (
     BASELINE_VERSION,
-    BRIDGE_VERSION,
     applied_versions,
     discover,
     migrate,
@@ -33,7 +31,7 @@ def _write_profile(root: Path, contents: bytes) -> Path:
     return profile
 
 
-def _legacy(data_root: Path, clock: ManualClock) -> Path:
+def _older_store(data_root: Path, clock: ManualClock) -> Path:
     data_root.mkdir(exist_ok=True)
     path = data_root / DB_NAME
     with closing(connect(path)) as installed:
@@ -41,7 +39,7 @@ def _legacy(data_root: Path, clock: ManualClock) -> Path:
             installed,
             clock,
             backup_dir=None,
-            migrations=[m for m in legacy_migrations() if m.version < BRIDGE_VERSION],
+            migrations=[m for m in discover() if m.version <= BASELINE_VERSION],
         )
         AuditChain(installed, clock).append(
             actor="system:test", kind="sweep", subject=None, summary="Kept through upgrade."
@@ -52,14 +50,14 @@ def _legacy(data_root: Path, clock: ManualClock) -> Path:
 def test_config_migrate_proves_preview_and_retains_db_and_exact_yaml_backup(
     data_root: Path, clock: ManualClock
 ) -> None:
-    database = _legacy(data_root, clock)
+    database = _older_store(data_root, clock)
     profile = _write_profile(data_root, PROFILE)
     original = database.read_bytes()
     preview = migrate_config(data_root, clock=clock)
     assert preview.profile == profile
-    assert preview.store_version == 250
+    assert preview.store_version == BASELINE_VERSION
     current = discover()[-1].version
-    assert preview.pending == (BRIDGE_VERSION, BASELINE_VERSION, 280)
+    assert preview.pending == (280,)
     assert preview.applied == ()
     assert preview.backup is None
     assert database.read_bytes() == original
@@ -69,8 +67,8 @@ def test_config_migrate_proves_preview_and_retains_db_and_exact_yaml_backup(
     assert result.applied == preview.pending
     assert result.backup is not None
     assert (result.backup / profile.name).read_bytes() == PROFILE
-    archived = result.backup / f"pre-migration-{BASELINE_VERSION:04d}.sqlite3"
-    for path, version in ((archived, 250), (database, current)):
+    archived = result.backup / "pre-migration-0280.sqlite3"
+    for path, version in ((archived, BASELINE_VERSION), (database, current)):
         with closing(connect(path)) as store:
             assert max(applied_versions(store)) == version
             audit = verify(store)
@@ -91,7 +89,7 @@ def test_config_migrate_proves_preview_and_retains_db_and_exact_yaml_backup(
 def test_config_migrate_reads_committed_wal_instead_of_stale_main_db(
     data_root: Path, clock: ManualClock
 ) -> None:
-    database = _legacy(data_root, clock)
+    database = _older_store(data_root, clock)
     with closing(connect(database)) as active:
         active.execute("PRAGMA wal_autocheckpoint = 0")
         active.execute(
@@ -117,7 +115,7 @@ def test_config_migrate_with_no_store_creates_nothing(data_root: Path) -> None:
 def test_config_migrate_does_not_recreate_a_store_removed_after_preview(
     data_root: Path, clock: ManualClock, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    original = _legacy(data_root, clock)
+    original = _older_store(data_root, clock)
     preview = config_module._preview_store
 
     def relocate_after_preview(path: Path, using_clock: ManualClock) -> tuple[int, tuple[int, ...]]:

@@ -25,7 +25,6 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.migrate import stamp
 from chamberlain.writes import repo as write_repo
 from chamberlain.writes import repo as writes_repo
-from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.models import OperationRow
 from chamberlain.writes.render import describe_intent
 
@@ -96,32 +95,22 @@ def _iso(moment: datetime | None) -> str | None:
 
 
 def uncertain(ctx: Context) -> dict[str, Any]:
-    """Operations that may or may not have happened: what each was, when, and how to check.
-
-    An operation imported from an old journal has no stored text (it can never be sent); it shows
-    the title, time and calendar or recipients its journal gave, and the time the old journal says
-    it was tried (or, when that is unknown, only the time it was imported, labelled as such).
-    """
+    """Operations that may or may not have happened: what each was, when, and how to check."""
     found: list[dict[str, Any]] = []
     states = (OperationState.UNCERTAIN, OperationState.RECONCILING)
     for op in write_repo.operations_in_states(ctx.db, states):
-        imported = op.intent_json is None
-        rendered: str | None = None
-        if not imported:
-            rendered = describe_intent(op.intent(), limit=None, refs=op.refs())[0]
-        summary = parse_summary(op.summary_json)
+        calendar = op.kind.value.startswith("calendar.")
         found.append(
             {
                 "handle": op.handle,
                 "kind": op.kind.value,
                 "state": op.state.value,
                 "source": op.source_id,
-                "imported": imported,
-                "attempted_at": _iso(op.attempted_at if imported else op.dispatched_at),
-                "imported_at": _iso(op.created_at) if imported else None,
-                "summary": None if summary is None else summary.model_dump(exclude_none=True),
-                "advice": advice_for(op.kind),
-                "rendered": rendered,
+                "attempted_at": _iso(op.dispatched_at),
+                "advice": "Check the calendar for this event."
+                if calendar
+                else "Check the Sent folder for this message.",
+                "rendered": describe_intent(op.intent(), limit=None, refs=op.refs())[0],
                 **_resend_facts(ctx, op),
             }
         )

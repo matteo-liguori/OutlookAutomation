@@ -91,7 +91,7 @@ obtained.
 
 - **W-6** The legal transitions are exactly the arrows above
   (`domain.operations.TRANSITIONS`), plus `uncertain -> confirmed` for happened
-  evidence or a match for an imported write (W-13, W-13a), `uncertain -> abandoned`
+  evidence (W-13, W-13a), `uncertain -> abandoned`
   taken only by the tick (W-13a) and
   `uncertain -> superseded` taken only when a resend is authorised (W-38). Any other
   transition is a defect and raises before touching the store.
@@ -134,13 +134,11 @@ obtained.
   asks the owner in chat when unsure. The owner is never asked to review an uncertain write. The
   viewer may list unsettled writes read-only; it has no owner settle action.
 - **W-13a** (owner ruling: the owner is not asked what the harness or agent can settle.)
-  An operation imported from an old journal keeps `summary_json` (title, time, calendar or
-  recipients; never a body) and `attempted_at`, beside a NULL intent: display and matching only,
-  never dispatchable. `reconcile` reads the live source and settles `confirmed` on a match
-  (calendar create or update, mail send; never deletes or moves). The agent may settle
+  An operation imported from an old journal is settled at import (`confirmed`, `failed_clean`
+  or `abandoned`) with a NULL intent, so it is never dispatchable or uncertain. The agent may settle
   `confirmed` with `happened` plus its own session evidence, never "did not happen": only a
   connector's proof of absence frees the grant on that path. An `uncertain` operation with
-  no possible resend (no intent, no grant, or a grant spent, expired or revoked) is closed
+  no possible resend (no grant, or a grant spent, expired or revoked) is closed
   `abandoned` by the tick after 14 days unsettled, except a mail send whose text the harness
   holds (W-40); the state is terminal, frees nothing and
   claims nothing. Attention no longer tells the agent about such an operation (W-39).

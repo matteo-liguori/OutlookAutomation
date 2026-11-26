@@ -33,12 +33,10 @@ from chamberlain.importer.old import Json, OldApproval, OldInstallation, OldJour
 from chamberlain.importer.profile_map import MappedProfile
 from chamberlain.importer.records import Imported, add_evidence, text_of
 from chamberlain.importer.report import ImportReport
-from chamberlain.importer.summary import attempted_at, summarise
 from chamberlain.limits import EVIDENCE_MAX, EVIDENCE_PER_OPEN_CARD_TARGET
 from chamberlain.memory import repo as memory
 from chamberlain.writes import repo as writes
 from chamberlain.writes.audit import AuditChain
-from chamberlain.writes.imported import OperationSummary
 from chamberlain.writes.models import StoredReceipt
 
 ACTOR = "system:import"
@@ -269,33 +267,8 @@ def import_journals(ctx: Context, grants: dict[str, str]) -> None:
         handle = derive("op", journal.key)
         if writes.get_operation(ctx.db, handle) is not None:
             ctx.report.count("operations", new=False)
-            _add_summary(ctx, journal, operation, approval, handle)
             continue
         _insert_operation(ctx, journal, operation, approval, handle, grants)
-        _add_summary(ctx, journal, operation, approval, handle)
-
-
-def _add_summary(
-    ctx: Context, journal: OldJournal, operation: str, approval: str, handle: str
-) -> None:
-    """Keep what the old journal says the write was, for display and matching only.
-
-    It is stored beside the operation, never as an intent: the operation still cannot be sent.
-    A second run adds nothing to an operation that already has it.
-    """
-    kind = _KINDS.get(operation, IntentKind.MAIL_SEND)
-    request = _mapping(journal.state.get("request"))
-    calendar = kind.value.startswith("calendar.")
-    source = _source_for(ctx, request.get("calendar_id") if calendar else None, calendar=calendar)
-    summary = summarise(request, source if calendar else None)
-    when = attempted_at(
-        journal, next((a for a in ctx.old.approvals if a.id == approval), None), ctx.zone
-    )
-    if summary is None and when is None:
-        return
-    text = (summary or OperationSummary()).model_dump_json(exclude_none=True)
-    if writes.set_operation_summary(ctx.db, handle, text, when):
-        ctx.report.count("operation_summaries", new=True)
 
 
 def _operation_state(journal: OldJournal) -> OperationState:

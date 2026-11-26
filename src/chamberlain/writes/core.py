@@ -74,8 +74,6 @@ from chamberlain.writes.authorise import (
 )
 from chamberlain.writes.control import release_holds
 from chamberlain.writes.grants import GrantService
-from chamberlain.writes.imported import advice_for, parse_summary
-from chamberlain.writes.imported_match import found_live
 from chamberlain.writes.models import (
     GrantRow,
     OperationRow,
@@ -1077,8 +1075,6 @@ class Engine:
             return self._settle_happened(
                 before, happened_evidence, "The agent recorded evidence that it happened."
             )
-        if before.intent_json is None:
-            return self._reconcile_imported(before)
         if before.rechecked_at is not None:
             after, _ = resend.look_for_send(
                 self, before, actor=self.actor(), record=True, allow_absent=True
@@ -1086,21 +1082,6 @@ class Engine:
             return after, after.state is not before.state
         after = self._reconcile(before, window=(1, 0), allow_absent=True)
         return after, after.state is not before.state
-
-    def _reconcile_imported(self, op: OperationRow) -> tuple[OperationRow, bool]:
-        """An old journal's operation: found on the live source settles it, nothing else does.
-
-        It has no intent, so nothing here can send it. Not found is not proof of absence.
-        """
-        summary = parse_summary(op.summary_json)
-        if summary is not None and found_live(self.ctx, op, summary):
-            return self._settle_happened(op, None, "Reconcile found the item on the live source.")
-        raise ChamberlainError(
-            ErrorCode.OPERATION_UNCERTAIN,
-            "This write came from the old harness and could not be found on the live source. "
-            f"It will never be retried. {advice_for(op.kind)} If you can see it, call reconcile "
-            "again with happened and your evidence; otherwise leave it: the old harness owns it.",
-        )
 
     def _settle_happened(
         self, op: OperationRow, evidence: str | None, summary: str

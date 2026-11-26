@@ -481,37 +481,15 @@ def test_g15_g_old_schedule_and_update_settings_become_and_3_related_checks(
     assert connections.updates.enabled is True
     assert connections.updates.remote == "upstream"
 
-    # w_an_imported_operation_keeps_a_summary_but_never_an_intent
+    # w_an_imported_operation_never_has_an_intent
     mail = operations(data_root)["import:thunderbird:send:oa-inflight"]
-    assert json.loads(mail["summary_json"]) == {
-        "title": "Inflight subject",
-        "to": ["a@example.test"],
-        "cc": ["b@example.test"],
-    }
     assert "Never kept" not in str(dict(mail))  # the body is not stored anywhere on the row
     calendar = operations(data_root)["import:thunderbird:calendar-create:c-1"]
-    assert json.loads(calendar["summary_json"]) == {
-        "title": "Dentist",
-        "start": "2026-03-01T10:00:00Z",
-        "calendar": "calendar:work",
-        "to": [],
-        "cc": [],
-    }
     for op in (mail, calendar):
         assert op["intent_json"] is None
         assert op["prepared_json"] is None
 
-    # w_running_the_import_again_adds_summaries_to_operations_that_lack_them
-    key = "import:thunderbird:send:oa-inflight"
-    db = connect(data_root / "chamberlain.sqlite3")
-    try:
-        db.execute("UPDATE operations SET summary_json = NULL, attempted_at = NULL")
-        db.commit()
-    finally:
-        db.close()
-    again = run_import(old_root, data_root, clock=clock, secrets=secrets)
-    assert again.counts.get("operation_summaries", 0) >= 2
-    assert operations(data_root)[key]["summary_json"] is not None
+    # w_running_the_import_again_changes_nothing
     before = dump_store(data_root)
     third = run_import(old_root, data_root, clock=clock, secrets=secrets)
     assert not third.counts

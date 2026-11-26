@@ -215,21 +215,10 @@
   }
 
   function uncertainCard(op) {
-    var s = op.summary || {};
-    var title = s.title || KIND_NAMES[op.kind] || op.kind;
+    var title = KIND_NAMES[op.kind] || op.kind;
     var card = el("section", { class: "card" }, el("h3", { text: title }));
-    card.appendChild(el("div", { class: "muted", text: (KIND_NAMES[op.kind] || op.kind) + " on " + op.source + " (" + op.state + ")" }));
-    var facts = el("ul", { class: "facts" });
-    if (s.start) facts.appendChild(el("li", { text: "When: " + (s.start.length === 10 ? s.start : when(s.start)) }));
-    if (s.calendar) facts.appendChild(el("li", { text: "Calendar: " + s.calendar }));
-    if (s.to && s.to.length) facts.appendChild(el("li", { text: "To: " + s.to.join(", ") }));
-    if (s.cc && s.cc.length) facts.appendChild(el("li", { text: "Cc: " + s.cc.join(", ") }));
-    if (facts.firstChild) card.appendChild(facts);
-    if (op.attempted_at) {
-      card.appendChild(el("p", { text: "Tried at " + when(op.attempted_at) + (op.imported ? " (from the old journal)." : ".") }));
-    } else if (op.imported) {
-      card.appendChild(el("p", { class: "muted", text: "The old journal does not say when it was tried. It was imported at " + when(op.imported_at) + "." }));
-    }
+    card.appendChild(el("div", { class: "muted", text: title + " on " + op.source + " (" + op.state + ")" }));
+    if (op.attempted_at) card.appendChild(el("p", { text: "Tried at " + when(op.attempted_at) + "." }));
     if (op.rendered) card.appendChild(el("pre", { text: op.rendered }));
     card.appendChild(el("p", { class: "advice", text: op.advice }));
     resendLines(op).forEach(function (line) { card.appendChild(line); });

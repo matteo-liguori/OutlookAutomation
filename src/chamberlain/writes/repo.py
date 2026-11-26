@@ -333,20 +333,6 @@ def insert_operation(
     )
 
 
-def set_operation_summary(
-    db: sqlite3.Connection, handle: str, summary_json: str, attempted_at: str | None
-) -> bool:
-    """Give an imported operation its display summary once. False when it already has one."""
-    return (
-        db.execute(
-            "UPDATE operations SET summary_json = ?, attempted_at = ? "
-            "WHERE handle = ? AND summary_json IS NULL AND intent_json IS NULL",
-            (summary_json, attempted_at, handle),
-        ).rowcount
-        == 1
-    )
-
-
 def get_operation(db: sqlite3.Connection, handle: str) -> OperationRow | None:
     row = db.execute("SELECT * FROM operations WHERE handle = ?", (handle,)).fetchone()
     return None if row is None else _operation(row)
@@ -485,14 +471,13 @@ def stale_uncertain(db: sqlite3.Connection, before: str) -> list[OperationRow]:
     """Uncertain since `before` with no way left to send them again (owner ruling).
 
     A mail send whose text the harness holds is never listed: it stays visible until the
-    agent or the owner settles it (W-40). Imported sends (no text) are still closed.
+    agent or the owner settles it (W-40).
     """
     rows = db.execute(
         "SELECT o.* FROM operations o LEFT JOIN grants g ON g.handle = o.grant "
         "WHERE o.state = 'uncertain' AND o.updated_at <= ? "
-        "AND NOT (o.kind = 'mail.send' AND o.intent_json IS NOT NULL) "
-        "AND (o.intent_json IS NULL "
-        "OR o.grant IS NULL OR g.state IN ('spent', 'expired', 'revoked', 'lapsed', 'declined')) "
+        "AND o.kind <> 'mail.send' "
+        "AND (o.grant IS NULL OR g.state IN ('spent', 'expired', 'revoked', 'lapsed', 'declined')) "
         "ORDER BY o.created_at, o.handle",
         (before,),
     ).fetchall()
