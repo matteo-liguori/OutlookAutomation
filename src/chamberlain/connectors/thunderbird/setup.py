@@ -1,22 +1,25 @@
 """Build the add-on package and write the native host manifest into a directory.
 
 Contract: docs/contracts/12-bridge-v2.md section 10. Nothing is registered
-system-wide here: no registry key, no Thunderbird profile, no install. The
-caller names the bridge directory (`<data root>/bridge/`, R9) and the manifest
-directory; installing the package and pointing Thunderbird at the manifest
-are separate, owner-approved steps. An existing manifest from another
-installation is never overwritten without naming its launcher.
+system-wide unless `--register --apply` is given (the Windows registry value or the
+Mac manifest folder; without `--apply` it only shows the plan). No Thunderbird profile
+is touched and nothing is installed. The caller names the bridge directory
+(`<data root>/bridge/`, R9) and the manifest directory (default: the bridge directory);
+installing the package is a separate, owner-approved step. An existing manifest from
+another installation is never overwritten without naming its launcher.
 """
 
 import argparse
+import importlib
 import json
 import shlex
 import shutil
 import subprocess
 import sys
 import zipfile
+from collections.abc import Callable
 from pathlib import Path
-from typing import Final
+from typing import Any, Final, Protocol
 
 from chamberlain.connectors.thunderbird.native_host import private_directory
 from chamberlain.connectors.thunderbird.typegen import render
@@ -28,6 +31,92 @@ EXTENSION_ID: Final = "chamberlain-bridge@chamberlain.local"
 ADDON_DIR: Final = Path(__file__).parent / "addon"
 _FIXED_TIME: Final = (2026, 1, 1, 0, 0, 0)
 _SHELL_CHARS: Final = '"%\r\n\x00^&|<>!'
+
+
+REGISTRY_KEY: Final = "Software\\Mozilla\\NativeMessagingHosts\\" + HOST_NAME
+"""Under HKEY_CURRENT_USER; its default value is the manifest path."""
+
+
+class RegistryWriter(Protocol):
+    """The one registry value the registration owns (`winreg` in production)."""
+
+    def read(self, key: str) -> str | None: ...
+    def write(self, key: str, value: str) -> None: ...
+
+
+class WinregWriter:
+    """HKEY_CURRENT_USER through `winreg`; only ever the key it is given."""
+
+    def __init__(self) -> None:
+        self._winreg: Any = importlib.import_module("winreg")
+
+    def read(self, key: str) -> str | None:
+        reg = self._winreg
+        try:
+            with reg.OpenKey(reg.HKEY_CURRENT_USER, key) as handle:
+                return str(reg.QueryValueEx(handle, "")[0])
+        except OSError:
+            return None
+
+    def write(self, key: str, value: str) -> None:
+        reg = self._winreg
+        with reg.CreateKey(reg.HKEY_CURRENT_USER, key) as handle:
+            reg.SetValueEx(handle, "", 0, reg.REG_SZ, value)
+
+
+def mac_manifest_dir() -> Path:
+    return Path.home() / "Library" / "Mozilla" / "NativeMessagingHosts"
+
+
+def register_host(
+    manifest: Path,
+    *,
+    apply: bool,
+    system: str | None = None,
+    registry: RegistryWriter | None = None,
+    mac_dir: Path | None = None,
+) -> list[str]:
+    """Point Thunderbird at the manifest. Without `apply`, only say what would be done.
+
+    Windows: the registry value HKCU\\<REGISTRY_KEY> = the manifest path. Mac: the manifest
+    is copied into `~/Library/Mozilla/NativeMessagingHosts/` (a different existing file is
+    kept as `.bak`). Other systems get the manual step. Running it again changes nothing.
+    """
+    platform_name = system or sys.platform
+    if platform_name == "win32":
+        writer = registry or WinregWriter()
+        current = writer.read(REGISTRY_KEY)
+        where = f"HKCU\\{REGISTRY_KEY} = {manifest}"
+        if current == str(manifest):
+            return [f"Already registered: {where}"]
+        lines = [f"{'Registered' if apply else 'Would register'}: {where}"]
+        if current is not None:
+            lines.append(f"  (it pointed at {current})")
+        if not apply:
+            return [*lines, "Add --apply to do it."]
+        writer.write(REGISTRY_KEY, str(manifest))
+        if writer.read(REGISTRY_KEY) != str(manifest):
+            raise ChamberlainError(
+                ErrorCode.CONFIG_INVALID, "The registry value did not take; nothing is registered."
+            )
+        return lines
+    if platform_name == "darwin":
+        target = (mac_dir or mac_manifest_dir()) / manifest.name
+        if target.is_file() and target.read_bytes() == manifest.read_bytes():
+            return [f"Already registered: {target}"]
+        lines = [f"{'Copied' if apply else 'Would copy'}: {manifest} to {target}"]
+        if not apply:
+            return [*lines, "Add --apply to do it."]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            shutil.copy2(target, target.with_name(target.name + ".bak"))
+            lines.append(f"  (the old file is kept as {target.name}.bak)")
+        shutil.copy2(manifest, target)
+        return lines
+    return [
+        f"Register {manifest} as the native messaging host {HOST_NAME} "
+        "(on Linux, copy it to ~/.thunderbird/native-messaging-hosts/)."
+    ]
 
 
 def addon_version() -> str:
@@ -179,19 +268,40 @@ def prepare(
     }
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(
+    argv: list[str] | None = None,
+    *,
+    register: Callable[..., list[str]] = register_host,
+) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--bridge-dir", type=Path, required=True)
-    parser.add_argument("--manifest-dir", type=Path, required=True)
+    parser.add_argument(
+        "--manifest-dir", type=Path, help="where the manifest goes (default: the bridge directory)"
+    )
     parser.add_argument("--replace-host-path", type=Path)
+    parser.add_argument(
+        "--register",
+        action="store_true",
+        help="also point Thunderbird at the manifest (Windows registry, Mac manifest folder); "
+        "shows the plan unless --apply is given",
+    )
+    parser.add_argument("--apply", action="store_true", help="with --register: do it")
     args = parser.parse_args(argv)
     try:
         refuse_inside_checkout(args.bridge_dir)
         done = prepare(
             args.bridge_dir.resolve(),
-            args.manifest_dir.resolve(),
+            (args.manifest_dir or args.bridge_dir).resolve(),
             replace_host_path=args.replace_host_path,
         )
+        if args.register:
+            done["registration"] = "\n".join(
+                register(Path(done["native_manifest"]), apply=args.apply)
+            )
+            done["next"] = (
+                "Install the package once in Thunderbird (Add-ons Manager, Install Add-on "
+                "From File), then restart Thunderbird."
+            )
     except ChamberlainError as error:
         sys.stderr.write(f"{error.message} {error.fix}\n")
         return 2

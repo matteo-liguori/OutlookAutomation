@@ -56,6 +56,8 @@ def _create_due(ctx: Context, now: datetime) -> None:
         due = due_instant(schedule.at_local, day, zone)
         if now < due or repo.run_for_day(ctx.db, schedule.name, day) is not None:
             continue
+        if schedule.created_at and due < parse(schedule.created_at):
+            continue  # its time today passed before the schedule existed: not a missed pass
         late = now - due > MAX_LATE
         repo.insert_run(
             ctx.db,

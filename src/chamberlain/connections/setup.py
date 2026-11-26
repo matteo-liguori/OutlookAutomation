@@ -5,6 +5,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from typing import TextIO
 
+from chamberlain.connections import agent_setup
 from chamberlain.connections.build import BRIDGE_DIR_NAME
 from chamberlain.connections.onboarding import SetupProvider, setup_select, setup_status
 from chamberlain.connectors.caldav import setup as icloud_setup
@@ -41,11 +42,33 @@ def _onboarding(command: str, argv: list[str], data_root: Path, out: TextIO) -> 
     return 0
 
 
+def _agent(argv: list[str], data_root: Path, out: TextIO) -> int:
+    parser = argparse.ArgumentParser(prog="chamberlain setup agent")
+    parser.add_argument("app", choices=["codex", "claude"])
+    parser.add_argument("--apply", action="store_true", help="write the file (default: show it)")
+    parser.add_argument("--project", type=Path, help="claude: the folder for its .mcp.json")
+    parser.add_argument("--config", type=Path, help="codex: the config.toml (default ~/.codex)")
+    with redirect_stdout(out):
+        args = parser.parse_args(argv)
+    try:
+        if args.app == "codex":
+            lines = agent_setup.setup_codex(data_root, apply=args.apply, config=args.config)
+        else:
+            lines = agent_setup.setup_claude(data_root, apply=args.apply, project=args.project)
+    except ChamberlainError as error:
+        print(f"{error.message} {error.fix}".rstrip(), file=out)
+        return 2
+    print("\n".join(lines), file=out)
+    return 0
+
+
 def provider_setup(provider: str | None, argv: list[str], data_root: Path, out: TextIO) -> int:
     """Pass existing provider flags through, using the harness root for their defaults."""
     try:
         if provider is None or provider in ("select", "status"):
             return _onboarding(provider or "status", argv, data_root, out)
+        if provider == "agent":
+            return _agent(argv, data_root, out)
         if provider == "thunderbird":
             with redirect_stdout(out):
                 return thunderbird_setup.main(
@@ -56,7 +79,10 @@ def provider_setup(provider: str | None, argv: list[str], data_root: Path, out: 
         elif provider == "icloud":
             setup = icloud_setup.main
         else:
-            print(f"Unknown provider: {provider}. Choose thunderbird, google or icloud.", file=out)
+            print(
+                f"Unknown provider: {provider}. Choose agent, thunderbird, google or icloud.",
+                file=out,
+            )
             return 2
         # Regular messages go to the caller, while input and getpass use the actual terminal.
         return setup(["--data", str(data_root), *argv], say=lambda text: print(text, file=out))

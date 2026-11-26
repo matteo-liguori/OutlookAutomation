@@ -27,6 +27,9 @@ class ScheduleRow:
     enabled: bool
     presync_minutes: int = 5
     """Minutes before its time that the tick syncs mail folders for this pass (0: not at all)."""
+    created_at: str = ""
+    """When the schedule was first recorded. A pass whose time on that day came before this is
+    never recorded for that day: a mid-day switch must not invent missed passes."""
 
 
 @dataclass(frozen=True)

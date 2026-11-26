@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from chamberlain.connectors.thunderbird.setup import EXTENSION_ID
-from chamberlain.connectors.thunderbird.update import profiles, update_addon
+from chamberlain.connectors.thunderbird.update import close_and_wait, profiles, update_addon
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
@@ -108,4 +108,17 @@ def test_a_thunderbird_that_will_not_close_is_never_overwritten(tmp_path: Path) 
             sleep=lambda _: None,
         )
     assert target.read_bytes() == b"old add-on"
-    assert desktop.calls == ["close"]
+    assert desktop.calls == ["close"] * 7, "asked again every ten seconds of the minute"
+
+
+def test_close_and_wait_asks_again_when_the_first_close_is_ignored() -> None:
+    class Stubborn(FakeDesktop):
+        def close(self) -> None:
+            self.calls.append("close")
+            if self.calls.count("close") == 2:
+                self.is_running = False
+
+    desktop = Stubborn(running=True)
+    assert close_and_wait(desktop, sleep=lambda _: None)
+    assert desktop.calls == ["close", "close"]
+    assert close_and_wait(FakeDesktop(running=False), sleep=lambda _: None)

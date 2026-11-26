@@ -14,9 +14,11 @@ from chamberlain.store.schema import get_state
 
 
 def _schedule(row: sqlite3.Row) -> ScheduleRow:
-    name, kind, at_local, weekdays, zone, enabled, presync = row
+    name, kind, at_local, weekdays, zone, enabled, presync, created_at = row
     days = frozenset(int(day) for day in weekdays.split(","))
-    return ScheduleRow(name, PassKind(kind), at_local, days, zone, bool(enabled), presync)
+    return ScheduleRow(
+        name, PassKind(kind), at_local, days, zone, bool(enabled), presync, created_at
+    )
 
 
 _RUN_COLUMNS = "handle, schedule, day, state, due_at, started_at, finished_at, session"
@@ -58,7 +60,7 @@ def delete_schedule(db: sqlite3.Connection, name: str) -> int:
 
 def schedules(db: sqlite3.Connection) -> list[ScheduleRow]:
     rows = db.execute(
-        "SELECT name, kind, at_local, weekdays, zone, enabled, presync_minutes "
+        "SELECT name, kind, at_local, weekdays, zone, enabled, presync_minutes, created_at "
         "FROM schedules ORDER BY name"
     )
     return [_schedule(row) for row in rows]

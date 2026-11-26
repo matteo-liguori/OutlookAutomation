@@ -43,10 +43,41 @@ This page is for the person setting up Chamberlain on their own computer. The co
    **Runs and reports**. The layout is `config/report-template.yaml` (see the README, "The
    report").
 
-## The wake adapter
+## Installing the tick and the agent automations
 
-The adapter is the one agent-specific piece. It only has to start your agent once for the due run in the list and
-tell it the run's `day`. The shape, for any agent command, is:
+```text
+chamberlain schedule install [--every-minutes 5]          show the plan
+chamberlain schedule install --apply [--every-minutes 5]  register it, then check it is there
+chamberlain schedule uninstall [--apply]                  remove it
+chamberlain schedule prompts                              the agent-app automation text
+```
+
+`install` without `--apply` changes nothing. With it:
+
+- Windows: a hidden Task Scheduler task "Chamberlain tick" runs
+  `pythonw.exe -m chamberlain.surface.cli --data <data root> tick --quiet` every N minutes, only
+  while you are logged on, and skips a run while the last is still going. A task of that name is
+  saved under `<data root>/backups/` and replaced.
+- macOS: a LaunchAgent `~/Library/LaunchAgents/uk.chamberlain.tick.plist`, loaded with
+  `launchctl`. An existing file is saved first.
+
+`tick --quiet` prints nothing: under `pythonw` there is no console, and printing fails. Its exit
+status is unchanged (10 when events wait and no session is active, else 0).
+
+The tick records runs, syncs folders and raises reminders. It does not start your agent. Create
+one automation per pass in your agent app, with the text from `chamberlain schedule prompts`:
+for each enabled schedule it prints the name, the time, the working folder (this checkout) and
+the prompt. The prompt tells the agent to call `start` with purpose "scheduled" and
+`scheduled_day` set to today's date in the profile's time zone, follow `next`, and keep the report
+when `report.due` arrives.
+
+A schedule applied for the first time records no run for a pass whose time today has already
+gone, so switching mid-day does not produce earlier passes as due and then missed.
+
+### Another agent, or doing it by hand
+
+Any agent that can run a command can be woken from the tick. `chamberlain tick` (without
+`--quiet`) prints JSON on stdout and exits with status 10 when work is waiting:
 
 ```text
 chamberlain tick                  -> JSON on stdout, exit status 10 when work is waiting
@@ -55,79 +86,11 @@ for each entry in "due":
                            scheduled_day <day>, then follow next."
 ```
 
-### Windows: Task Scheduler
-
-`C:\Users\you\chamberlain-wake.ps1` (set your agent command on the marked line):
-
-```powershell
-$env:CHAMBERLAIN_DATA = "C:\Users\you\ChamberlainData"
-$json = & chamberlain tick
-$wake = $LASTEXITCODE
-if ($wake -eq 10) {
-    foreach ($pass in ($json | ConvertFrom-Json).due) {
-        $task = "Do the $($pass.kind) pass. Call start with purpose scheduled and " +
-                "scheduled_day $($pass.day), then follow next."
-        & your-agent-command $task      # <- your agent's non-interactive command
-    }
-}
-```
-
-Register it to run every five minutes while you are signed in:
-
-```text
-schtasks /Create /TN "Chamberlain tick" /SC MINUTE /MO 5 ^
-  /TR "powershell -NoProfile -ExecutionPolicy Bypass -File C:\Users\you\chamberlain-wake.ps1"
-```
-
-Remove it with `schtasks /Delete /TN "Chamberlain tick" /F`. Use "Run only when user is logged
-on" so the task can reach your credential store.
-
-### macOS: launchd
-
-`~/Library/LaunchAgents/uk.chamberlain.tick.plist`:
-
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key><string>uk.chamberlain.tick</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/sh</string>
-    <string>/Users/you/chamberlain-wake.sh</string>
-  </array>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>CHAMBERLAIN_DATA</key><string>/Users/you/ChamberlainData</string>
-  </dict>
-  <key>StartInterval</key><integer>300</integer>
-  <key>RunAtLoad</key><true/>
-  <key>StandardErrorPath</key><string>/Users/you/ChamberlainData/logs/tick.err</string>
-</dict>
-</plist>
-```
-
-`/Users/you/chamberlain-wake.sh`:
-
-```sh
-#!/bin/sh
-out=$(/Users/you/chamberlain/.venv/bin/chamberlain tick)
-status=$?
-if [ "$status" -eq 10 ]; then
-  echo "$out" | /usr/bin/python3 -c '
-import json, sys
-for p in json.load(sys.stdin)["due"]:
-    print(p["kind"], p["day"])
-' | while read -r kind day; do
-    your-agent-command "Do the $kind pass. Call start with purpose scheduled and scheduled_day $day, then follow next."
-  done
-fi
-```
-
-Load it with `launchctl load ~/Library/LaunchAgents/uk.chamberlain.tick.plist` and unload it with
-`launchctl unload`. If the Mac was asleep at the pass time, the tick that runs after it wakes
-records the pass (or `missed` after six hours); nothing runs on a stale day.
+The manual equivalents of `install`: on Windows,
+`schtasks /Create /TN "Chamberlain tick" /SC MINUTE /MO 5 /TR "<pythonw> -m chamberlain.surface.cli --data <root> tick --quiet"`
+(set "Run only when user is logged on" and "Do not start a new instance"); on macOS a plist with
+`StartInterval` 300 running the same command. If the Mac was asleep at the pass time, the tick
+after it wakes records the pass (or `missed` after six hours); nothing runs on a stale day.
 
 ## The viewer
 
