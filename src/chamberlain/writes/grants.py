@@ -10,7 +10,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta
 
 from chamberlain.domain.canonical import canonical_json, content_hash
-from chamberlain.domain.grant_rules import anniversary, format_ts, next_review, suspend_at
+from chamberlain.domain.grant_rules import anniversary, next_review, suspend_at
 from chamberlain.domain.grants import (
     GRANT_TRANSITIONS,
     ConfirmedVia,
@@ -21,6 +21,7 @@ from chamberlain.domain.grants import (
 )
 from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.domain.operations import OperationState
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import (
     GRANT_COMPACT_DAYS,
     ONE_OFF_GRANT_DAYS,
@@ -196,9 +197,9 @@ class GrantService:
                     GrantState.PROPOSED,
                     state=GrantState.ACTIVE.value,
                     confirmed_via=via.value,
-                    granted_at=format_ts(now),
-                    expires_at=format_ts(expires),
-                    review_at=None if review is None else format_ts(review),
+                    granted_at=ts(now),
+                    expires_at=ts(expires),
+                    review_at=None if review is None else ts(review),
                 )
                 if not moved:
                     raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "That proposal changed.")
@@ -267,8 +268,8 @@ class GrantService:
                 handle,
                 grant.state,
                 state=GrantState.ACTIVE.value,
-                review_at=format_ts(following),
-                last_reviewed_at=format_ts(now),
+                review_at=ts(following),
+                last_reviewed_at=ts(now),
             )
             if not moved:
                 raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "That grant changed.")
@@ -335,7 +336,7 @@ class GrantService:
                 self._db, (GrantState.PROPOSED, GrantState.ACTIVE, GrantState.SUSPENDED)
             ):
                 changed += self._sweep_one(grant, now)
-            before = format_ts(now - timedelta(days=GRANT_COMPACT_DAYS))
+            before = ts(now - timedelta(days=GRANT_COMPACT_DAYS))
             for handle in repo.compactable_grants(self._db, before):
                 grant = self.get(handle)
                 repo.compact_grant(self._db, handle, stamp(self._clock), grant.title)

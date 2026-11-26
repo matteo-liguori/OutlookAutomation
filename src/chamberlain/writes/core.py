@@ -15,11 +15,7 @@ from chamberlain.app.context import Context
 from chamberlain.domain.actors import agent_actor
 from chamberlain.domain.canonical import sha256_bytes, sha256_text
 from chamberlain.domain.capabilities import CapabilityName
-from chamberlain.domain.grant_rules import (
-    format_ts,
-    intent_hash,
-    scope_mismatch,
-)
+from chamberlain.domain.grant_rules import intent_hash, scope_mismatch
 from chamberlain.domain.grants import (
     ConfirmedVia,
     GrantKind,
@@ -50,6 +46,7 @@ from chamberlain.domain.operations import (
     recheck_text,
 )
 from chamberlain.domain.senders import parse_instruction_ref
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import (
     ABSENCE_MARGIN_SECONDS,
     CONNECTOR_DEADLINE_SECONDS,
@@ -179,7 +176,7 @@ class Engine:
         leased = (OperationState.DISPATCHED, OperationState.RECONCILING)
         if to in leased:
             columns["lease_owner"] = self.worker
-            columns["lease_expires_at"] = format_ts(
+            columns["lease_expires_at"] = ts(
                 self.ctx.clock.now() + timedelta(seconds=LEASE_SECONDS)
             )
         elif op.state in leased:
@@ -573,14 +570,14 @@ class Engine:
             folders = frozenset(
                 port.folder_of(intent.source, located.refs[h]) for h in intent.messages
             )
-        uses = repo.grant_usage(self.db, names, format_ts(now - timedelta(hours=24)), skip)
+        uses = repo.grant_usage(self.db, names, ts(now - timedelta(hours=24)), skip)
         return replace(
             self._recipients(intent, located),
             mail_folders=folders,
             live_uses=uses.reserved_or_spent,
             recent_uses=uses.recent,
             source_sends_last_hour=repo.sends_since(
-                self.db, intent.source, format_ts(now - timedelta(hours=1)), handle
+                self.db, intent.source, ts(now - timedelta(hours=1)), handle
             ),
         )
 
@@ -849,7 +846,7 @@ class Engine:
             op,
             OperationState.DISPATCHED,
             "Journalled before the one mutation call.",
-            dispatched_at=format_ts(now),
+            dispatched_at=ts(now),
             worker=self.worker,
         )
         try:

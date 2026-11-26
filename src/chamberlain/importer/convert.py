@@ -9,7 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, TypeGuard
 from zoneinfo import ZoneInfo
 
-from chamberlain.domain.timefmt import ts
+from chamberlain.domain.timefmt import parse, ts
 
 NAMESPACE = "chamberlain-import-v1"
 ELLIPSIS = "…"
@@ -45,8 +45,7 @@ def norm_ts(value: Any, zone: ZoneInfo) -> str | None:
 
 
 def add_days(stamp: str, days: float) -> str:
-    moment = datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=UTC)
-    return ts(moment + timedelta(days=days))
+    return ts(parse(stamp) + timedelta(days=days))
 
 
 def shorten(text: str, limit: int) -> str:

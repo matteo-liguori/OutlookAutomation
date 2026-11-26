@@ -6,7 +6,7 @@ be read is reported as such; it never fails the page and its days are never show
 Colours are per calendar (a stable tone number), never a guess about what an event is.
 """
 
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -15,7 +15,7 @@ from chamberlain.connections import repo as connections_repo
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
 from chamberlain.domain.operations import OUTSIDE_STATE_WORDS
 from chamberlain.domain.same_event import same_event
-from chamberlain.domain.timefmt import ts
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.limits import CARD_POSITION_MAX
 from chamberlain.memory import repo as memory_repo
 from chamberlain.memory.labels import event_identity
@@ -48,11 +48,6 @@ TIMELINE_DAYS_MAX = 31
 TIMELINE_LIMIT = 400
 CARD_LIMIT = 60
 PREVIEW_ACTIONS = 3
-_UTC = ZoneInfo("UTC")
-
-
-def _stored(moment: datetime) -> str:
-    return ts(moment)
 
 
 def _parse_day(text: str | None, field: str) -> date | None:
@@ -71,7 +66,7 @@ def _local_midnight(day: date, tz: ZoneInfo) -> datetime:
 
 
 def _stored_to_local(stamp: str, tz: ZoneInfo) -> datetime:
-    return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_UTC).astimezone(tz)
+    return parse(stamp).astimezone(tz)
 
 
 # --- calendar -----------------------------------------------------------------------------------
@@ -120,8 +115,8 @@ def _event_row(
 ) -> dict[str, Any]:
     fields = event.fields
     if fields.all_day:
-        first = fields.start.astimezone(_UTC).date()
-        last = max(first, fields.end.astimezone(_UTC).date() - timedelta(days=1))
+        first = fields.start.astimezone(UTC).date()
+        last = max(first, fields.end.astimezone(UTC).date() - timedelta(days=1))
         times = ("", "")
     else:
         begin = fields.start.astimezone(tz)
@@ -138,7 +133,7 @@ def _event_row(
         fields.all_day,
         (first.isoformat(), last.isoformat()),
         times,
-        _stored(fields.start),
+        ts(fields.start),
         display_title=short,
         category=category,
         repeats=event.series_locator is not None,
@@ -147,8 +142,8 @@ def _event_row(
 
 
 def _local_row(row: local_repo.LocalEventRow, tz: ZoneInfo) -> dict[str, Any]:
-    start = datetime.strptime(row.start_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_UTC)
-    end = datetime.strptime(row.end_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=_UTC)
+    start = parse(row.start_at)
+    end = parse(row.end_at)
     times = (
         ("", "")
         if row.all_day
@@ -267,7 +262,7 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
             }
         )
     everything = appointments.upcoming(ctx)
-    wanted = [a for a in everything if _stored(window.start) <= a.start < _stored(window.end)]
+    wanted = [a for a in everything if ts(window.start) <= a.start < ts(window.end)]
     important_handles = {a.action for a in everything}
     marks = [
         {
@@ -283,9 +278,11 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
             "title": a.title,
             "card": a.card,
             "card_title": a.card_title,
-            "due": a.due_at <= _stored(ctx.clock.now()),
+            "due": a.due_at <= ts(ctx.clock.now()),
         }
-        for a in memory_repo.dated_actions(ctx.db, _stored(window.start), _stored(window.end), 200)
+        for a in memory_repo.action_lines(
+            ctx.db, "a.due_at >= ? AND a.due_at < ?", (ts(window.start), ts(window.end)), limit=200
+        )
         if a.due_at is not None and a.handle not in important_handles
     ]
     return {
@@ -345,10 +342,21 @@ def reports_of_day(ctx: Context, day: str) -> dict[str, Any]:
 
 def cards(ctx: Context) -> dict[str, Any]:
     """Open cards as a grid: goal, position, the next actions and when it is next looked at."""
-    now = _stored(ctx.clock.now())
-    details = memory_repo.card_details(ctx.db, CARD_LIMIT)
+    now = ts(ctx.clock.now())
+    details = memory_repo.card_rows(
+        ctx.db.execute(
+            "SELECT handle, title, goal, position, review_at, over_cap, updated_at FROM cards "
+            "WHERE state = 'open' ORDER BY updated_at DESC, handle LIMIT ?",
+            (CARD_LIMIT,),
+        )
+    )
     by_card: dict[str, list[memory_repo.ActionLine]] = {}
-    for action in memory_repo.open_actions_of(ctx.db, [c.handle for c in details]):
+    for action in memory_repo.action_lines(
+        ctx.db,
+        f"a.card IN ({', '.join('?' for _ in details)})",
+        tuple(c.handle for c in details),
+        "a.due_at IS NULL, a.due_at, a.handle",
+    ):
         by_card.setdefault(action.card, []).append(action)
     items: list[dict[str, Any]] = []
     for card in details:
@@ -393,18 +401,23 @@ def timeline(ctx: Context, zone: str, until: str | None, days: int) -> dict[str,
             ErrorCode.REQUEST_INVALID, f"Ask for 1 to {TIMELINE_DAYS_MAX} days.", field="days"
         )
     first = last - timedelta(days=days - 1)
-    start = _stored(_local_midnight(first, tz))
-    end = _stored(_local_midnight(last + timedelta(days=1), tz))
+    start = ts(_local_midnight(first, tz))
+    end = ts(_local_midnight(last + timedelta(days=1), tz))
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for action in memory_repo.closed_actions_between(ctx.db, start, end, TIMELINE_LIMIT):
-        day = _stored_to_local(action.closed_at, tz).date().isoformat()
+    for action in ctx.db.execute(
+        "SELECT a.title, a.state, a.outcome, a.closed_at, c.title AS card_title FROM actions a "
+        "JOIN cards c ON c.handle = a.card WHERE a.state IN ('done', 'dropped') "
+        "AND a.closed_at >= ? AND a.closed_at < ? ORDER BY a.closed_at DESC, a.handle LIMIT ?",
+        (start, end, TIMELINE_LIMIT),
+    ):
+        day = _stored_to_local(action["closed_at"], tz).date().isoformat()
         grouped.setdefault(day, []).append(
             {
-                "at": action.closed_at,
+                "at": action["closed_at"],
                 "kind": "action",
-                "title": action.title,
-                "detail": (action.outcome or action.state),
-                "card": action.card_title,
+                "title": action["title"],
+                "detail": (action["outcome"] or action["state"]),
+                "card": action["card_title"],
             }
         )
     for row in writes_repo.audit_between(ctx.db, start, end, TIMELINE_LIMIT):

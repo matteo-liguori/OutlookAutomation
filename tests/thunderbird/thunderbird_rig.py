@@ -173,7 +173,7 @@ class Stack:
             sleep=lambda seconds: None,
         )
         self.contacts = ThunderbirdContacts(
-            self.client, {"contacts:test": ContactsBinding(("book1",))}, self.clock
+            self.client, {"contacts:test": ContactsBinding(address_book_ids=("book1",))}, self.clock
         )
         self.calendar = self.calendar_for(CALENDAR_ID)
         self._wait_for_addon()

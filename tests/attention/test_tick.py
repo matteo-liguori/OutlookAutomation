@@ -19,7 +19,7 @@ from chamberlain.attention.models import (
 from chamberlain.connectors.fake import FakeProvider, Fault
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind
-from chamberlain.memory.repo import ActionRow, CardRow
+from chamberlain.memory.repo import ActionLine, CardRow
 from chamberlain.ports.clock import ManualClock
 from chamberlain.writes.repo import GrantAlert as GrantRow
 from chamberlain.writes.repo import OperationAlert as OperationRow
@@ -60,8 +60,13 @@ def test_a5_a2_a4_a1_g8_every_detector_is_pure_and_raises_exactly_its_and_1_rela
     data = DetectorInput(
         now=clock.now(),
         actions=(
-            ActionRow(
-                "act_0000000000000001", "card_0000000000000001", "2026-01-01T00:00:00Z", soon
+            ActionLine(
+                "act_0000000000000001",
+                "card_0000000000000001",
+                "t",
+                "t",
+                "2026-01-01T00:00:00Z",
+                soon,
             ),
         ),
     )
@@ -72,7 +77,9 @@ def test_a5_a2_a4_a1_g8_every_detector_is_pure_and_raises_exactly_its_and_1_rela
     past = "2026-01-01T00:00:00Z"
     data = DetectorInput(
         now=clock.now(),
-        actions=(ActionRow("act_0000000000000001", "card_0000000000000001", None, past),),
+        actions=(
+            ActionLine("act_0000000000000001", "card_0000000000000001", "t", "t", None, past),
+        ),
     )
     assert len(list(DETECTORS[EventKind.REMINDER_DUE](data))) == 1
     assert list(DETECTORS[EventKind.ACTION_DUE](data)) == []

@@ -47,6 +47,11 @@ class SourceRouter:
     def contacts_port(self, source: str) -> ContactsPort:
         return _route(self.contacts, source)
 
+    def port(self, source: str) -> MailPort | CalendarPort | ContactsPort:
+        """The port that owns `source`, by its id's role: `mail:`, `calendar:`, else contacts."""
+        pick = {"mail": self.mail_port, "calendar": self.calendar_port}
+        return pick.get(source.partition(":")[0], self.contacts_port)(source)
+
     def source_ids(self) -> list[str]:
         return sorted({*self.mail, *self.calendar, *self.contacts})
 

@@ -31,10 +31,6 @@ FRESH_FOR = timedelta(minutes=10)
 LEASE_FOR = timedelta(minutes=10)
 
 
-def _stamp(value: datetime) -> str:
-    return ts(value)
-
-
 def _recent(value: str | None, now: datetime) -> bool:
     if not value:
         return False
@@ -148,7 +144,7 @@ def _check_locked(
                         "fresh_as_of": datetime.fromisoformat(row["verified_at"]),
                     }
                 )
-            if row and row["lease_until"] and row["lease_until"] > _stamp(now):
+            if row and row["lease_until"] and row["lease_until"] > ts(now):
                 return health
             pending = bool(row and row["token"])
             token = (
@@ -162,7 +158,7 @@ def _check_locked(
                 "VALUES (?, ?, ?, ?, ?, NULL) ON CONFLICT(source_id) DO UPDATE SET "
                 "token=excluded.token, lease_owner=excluded.lease_owner, "
                 "lease_until=excluded.lease_until, verified_at=NULL",
-                (source, binding, token, owner, _stamp(now + LEASE_FOR)),
+                (source, binding, token, owner, ts(now + LEASE_FOR)),
             )
         try:
             success = probe(source, token, cleanup_only=pending)
@@ -171,7 +167,7 @@ def _check_locked(
             success = False
         if not success:
             return health
-        finished = _stamp(clock.now())
+        finished = ts(clock.now())
         with transaction(db):
             updated = db.execute(
                 "UPDATE owl_freshness SET token=NULL, lease_owner=NULL, "

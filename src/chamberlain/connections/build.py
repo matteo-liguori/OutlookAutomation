@@ -19,21 +19,19 @@ from chamberlain.connections.model import (
 )
 from chamberlain.connections.owl_freshness import OwlFreshnessStore
 from chamberlain.connectors.caldav.calendar import CalDavCalendar
-from chamberlain.connectors.caldav.config import CalDavBinding, CalDavConfig
+from chamberlain.connectors.caldav.config import CalDavConfig
 from chamberlain.connectors.caldav.credentials import password_source
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
 from chamberlain.connectors.google_calendar.auth import AccessTokens
 from chamberlain.connectors.google_calendar.calendar import GoogleCalendar
-from chamberlain.connectors.google_calendar.config import GoogleBinding, GoogleCalendarConfig
+from chamberlain.connectors.google_calendar.config import GoogleCalendarConfig
 from chamberlain.connectors.thunderbird.calendar import (
-    OwlBinding,
     OwlCalendarConfig,
     ThunderbirdCalendar,
 )
 from chamberlain.connectors.thunderbird.client import BridgeClient, RuntimeConnector
-from chamberlain.connectors.thunderbird.contacts import ContactsBinding, ThunderbirdContacts
+from chamberlain.connectors.thunderbird.contacts import ThunderbirdContacts
 from chamberlain.connectors.thunderbird.mail import ThunderbirdMail
-from chamberlain.connectors.thunderbird.mail_reads import ThunderbirdBinding
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import Clock
@@ -58,17 +56,6 @@ def bridge_directory(connections: Connections, data_root: Path) -> Path:
     return Path(connections.bridge_dir) if connections.bridge_dir else data_root / BRIDGE_DIR_NAME
 
 
-def _mail_binding(source: ThunderbirdMailSource) -> ThunderbirdBinding:
-    return ThunderbirdBinding(
-        account_id=source.account_id,
-        mailbox=source.mailbox,
-        inbox_folder_id=source.inbox_folder_id,
-        sent_folder_id=source.sent_folder_id,
-        draft_folder_id=source.draft_folder_id,
-        trash_folder_id=source.trash_folder_id,
-    )
-
-
 def build_router(
     connections: Connections,
     data_root: Path,
@@ -90,28 +77,15 @@ def build_router(
     client = BridgeClient(RuntimeConnector(bridge_directory(connections, data_root)))
     if mail_sources or contacts_sources:
         if mail_sources:
-            mail_port = ThunderbirdMail(
-                client, {sid: _mail_binding(s) for sid, s in mail_sources.items()}, clock
-            )
+            mail_port = ThunderbirdMail(client, mail_sources, clock)
             mail = dict.fromkeys(mail_sources, mail_port)
         if contacts_sources:
-            contacts_port = ThunderbirdContacts(
-                client,
-                {
-                    sid: ContactsBinding(address_book_ids=s.address_book_ids)
-                    for sid, s in contacts_sources.items()
-                },
-                clock,
-            )
+            contacts_port = ThunderbirdContacts(client, contacts_sources, clock)
             contacts = dict.fromkeys(contacts_sources, contacts_port)
 
     if owl_sources:
         owl = ThunderbirdCalendar(
-            OwlCalendarConfig(
-                bindings={
-                    sid: OwlBinding(calendar_id=s.calendar_id) for sid, s in owl_sources.items()
-                }
-            ),
+            OwlCalendarConfig(bindings={**owl_sources}),
             client,
             clock,
             freshness_store=OwlFreshnessStore(data_root / DB_NAME, clock),
@@ -123,29 +97,14 @@ def build_router(
         store = default_store(data_root)
     if google_sources and store is not None:
         google = GoogleCalendar(
-            GoogleCalendarConfig(
-                bindings={
-                    sid: GoogleBinding(account=s.account, calendar_id=s.calendar_id)
-                    for sid, s in google_sources.items()
-                }
-            ),
+            GoogleCalendarConfig(bindings={**google_sources}),
             AccessTokens(store, clock),
             clock,
         )
         calendar.update(dict.fromkeys(google_sources, google))
     if caldav_sources and store is not None:
         dav = CalDavCalendar(
-            CalDavConfig(
-                bindings={
-                    sid: CalDavBinding(
-                        url=s.url,
-                        username=s.username,
-                        credential=s.credential,
-                        address=s.address,
-                    )
-                    for sid, s in caldav_sources.items()
-                }
-            ),
+            CalDavConfig(bindings={**caldav_sources}),
             password_source(store),
             clock,
         )

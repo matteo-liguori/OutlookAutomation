@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import timedelta
 
 from chamberlain.domain.canonical import sha256_text
-from chamberlain.domain.grant_rules import format_ts
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import AUDIT_DAYS
 from chamberlain.ports.clock import Clock
 from chamberlain.store.db import transaction
@@ -144,7 +144,7 @@ def verify(db: sqlite3.Connection) -> ChainReport:
 def prune(db: sqlite3.Connection, clock: Clock, audit: AuditChain) -> int:
     """Remove whole months older than the audit window, leaving a checkpoint (G-22)."""
     horizon = clock.now() - timedelta(days=AUDIT_DAYS)
-    cutoff = format_ts(horizon.replace(day=1, hour=0, minute=0, second=0))
+    cutoff = ts(horizon.replace(day=1, hour=0, minute=0, second=0))
     with transaction(db):
         old = repo.audit_rows_before(db, cutoff)
         last_row = repo.audit_last(db)

@@ -23,11 +23,11 @@ from urllib.parse import parse_qs
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
-from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.grants import ConfirmedVia, GrantKind, GrantState, Requirement
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import OUTSIDE_STATE_WORDS, outside_details
 from chamberlain.domain.permissions import click_reason, recipients_of
+from chamberlain.domain.timefmt import parse
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.writes import repo
 from chamberlain.writes.grants import GrantService
@@ -340,7 +340,7 @@ def confirm_grant(
     requested = data.get("expires_at")
     if isinstance(requested, str):
         try:
-            expires = parse_ts(requested)
+            expires = parse(requested)
         except ValueError:
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID, "Bad expiry.", field="expires_at"

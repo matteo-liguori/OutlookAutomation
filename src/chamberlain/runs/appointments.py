@@ -17,8 +17,8 @@ import re
 from dataclasses import dataclass
 
 from chamberlain.app.context import Context
+from chamberlain.memory import repo as memory_repo
 from chamberlain.memory.cards import CardService
-from chamberlain.runs import report_repo as repo
 from chamberlain.runs.tuning import VIEWER_ACTOR
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
@@ -46,17 +46,21 @@ def upcoming(ctx: Context) -> list[Appointment]:
     """Important appointments that have not started, soonest first."""
     now = stamp(ctx.clock)
     found: list[Appointment] = []
-    for row in repo.appointment_rows(ctx.db, now):
+    for row in memory_repo.action_lines(
+        ctx.db,
+        "c.state = 'open' AND a.due_at > ? AND a.important = 1",
+        (now,),
+    ):
         marker = _MARKER.match(row.title)
         title = marker.group("rest") if marker is not None else row.title
         waiting = row.snooze_until is None or row.snooze_until <= now
         found.append(
             Appointment(
-                row.action,
+                row.handle,
                 row.card,
                 row.card_title,
                 " ".join(title.split()),
-                row.start,
+                str(row.due_at),
                 row.snooze_until,
                 waiting,
             )

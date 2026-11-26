@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from chamberlain.app.context import Context
-from chamberlain.domain.grant_rules import format_ts
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import AUDIT_DAYS, OPERATION_COMPACT_DAYS, UNCERTAIN_ABANDON_DAYS
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
@@ -32,7 +32,7 @@ class MaintenanceReport:
 
 def compact_operations(ctx: Context, now: datetime | None = None) -> int:
     """Replace settled operations older than 30 days with a one-line receipt (W-25)."""
-    cutoff = format_ts((now or ctx.clock.now()) - timedelta(days=OPERATION_COMPACT_DAYS))
+    cutoff = ts((now or ctx.clock.now()) - timedelta(days=OPERATION_COMPACT_DAYS))
     count = 0
     with transaction(ctx.db):
         for op in repo.compactable_operations(ctx.db, cutoff):
@@ -49,7 +49,7 @@ def abandon_stale(engine: Engine) -> int:
     """Close unsettled operations nobody can resend after 14 days. Frees nothing.
 
     A mail send the harness holds the text of is never closed this way (W-40)."""
-    cutoff = format_ts(engine.ctx.clock.now() - timedelta(days=UNCERTAIN_ABANDON_DAYS))
+    cutoff = ts(engine.ctx.clock.now() - timedelta(days=UNCERTAIN_ABANDON_DAYS))
     closed = 0
     for op in repo.stale_uncertain(engine.db, cutoff):
         closed += 1 if resend.abandon(engine, op) is not None else 0
@@ -65,7 +65,7 @@ def maintain(ctx: Context, policy: WritePolicy | None = None) -> MaintenanceRepo
     changed = engine.grants.sweep()
     compacted = compact_operations(ctx)
     abandoned = abandon_stale(engine)
-    before = format_ts(ctx.clock.now() - timedelta(days=AUDIT_DAYS))
+    before = ts(ctx.clock.now() - timedelta(days=AUDIT_DAYS))
     with transaction(ctx.db):
         removed = repo.delete_compacted_operations(ctx.db, before)
         removed += repo.delete_compacted_grants(ctx.db, before)

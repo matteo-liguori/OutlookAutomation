@@ -6,7 +6,9 @@ global directory, and it reports an incomplete scan as a gap (P-4).
 """
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from typing import Literal, Self
+
+from pydantic import Field, model_validator
 
 from chamberlain.connectors.calendar_support.paging import bad_cursor, decode_token, encode_token
 from chamberlain.connectors.thunderbird import protocol
@@ -27,12 +29,19 @@ from chamberlain.domain.capabilities import (
 from chamberlain.domain.contacts import Contact, ContactQuery
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.page import Gap, Page
+from chamberlain.schema.base import Model
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
-@dataclass(frozen=True)
-class ContactsBinding:
-    address_book_ids: tuple[str, ...]
+class ContactsBinding(Model):
+    kind: Literal["thunderbird_contacts"] = "thunderbird_contacts"
+    address_book_ids: tuple[str, ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def _unique(self) -> Self:
+        if len(set(self.address_book_ids)) != len(self.address_book_ids):
+            raise ValueError("address_book_ids must be unique")
+        return self
 
 
 def _contact(source: str, found: protocol.ContactInfo) -> Contact:

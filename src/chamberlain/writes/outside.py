@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Final
 
-from chamberlain.domain.grant_rules import format_ts, intent_hash
+from chamberlain.domain.grant_rules import intent_hash
 from chamberlain.domain.intents import OutsideAction
 from chamberlain.domain.operations import TERMINAL_STATES, OperationState
+from chamberlain.domain.timefmt import ts
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.writes import core, repo
 from chamberlain.writes.models import OperationRow
@@ -81,7 +82,7 @@ def do_outside(engine: core.Engine, op: OperationRow, report: str | None) -> Ope
 
 def close_unreported_outside(engine: core.Engine) -> int:
     """An outside action allowed a day ago and never reported is closed, use kept (W-46)."""
-    cutoff = format_ts(engine.ctx.clock.now() - timedelta(hours=OUTSIDE_REPORT_HOURS))
+    cutoff = ts(engine.ctx.clock.now() - timedelta(hours=OUTSIDE_REPORT_HOURS))
     closed = 0
     for op in repo.stale_outside(engine.db, cutoff):
         moved = engine.transition(
@@ -89,7 +90,7 @@ def close_unreported_outside(engine: core.Engine) -> int:
             OperationState.ABANDONED,
             actor="system:tick",
             summary="Allowed but never reported by the assistant; closed.",
-            dispatched_at=format_ts(op.updated_at or engine.ctx.clock.now()),
+            dispatched_at=ts(op.updated_at or engine.ctx.clock.now()),
         )
         closed += 1 if moved is not None else 0
     return closed

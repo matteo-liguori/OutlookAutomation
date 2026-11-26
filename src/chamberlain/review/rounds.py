@@ -8,9 +8,10 @@ Attention raises the item from the open round; the event key is `harness.review:
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from chamberlain.app.context import Context
+from chamberlain.domain.timefmt import parse
 from chamberlain.review import repo
 from chamberlain.review.tuning import BRIEF_ROWS, ROUND_LAPSE
 from chamberlain.store.db import transaction
@@ -37,10 +38,6 @@ def event_key(round_id: int) -> str:
     return f"harness.review:-:{round_id}"
 
 
-def _parse(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
-
-
 def refresh(ctx: Context, rule: RoundRule) -> None:
     """Close rounds that ended, then open one when it is time."""
     now = ctx.clock.now()
@@ -49,7 +46,7 @@ def refresh(ctx: Context, rule: RoundRule) -> None:
         for round_ in repo.open_rounds(ctx.db):
             if repo.event_state(ctx.db, event_key(round_.id)) == "handled":
                 repo.close_round(ctx.db, round_.id, "done", stamped)
-            elif now - _parse(round_.opened_at) > ROUND_LAPSE:
+            elif now - parse(round_.opened_at) > ROUND_LAPSE:
                 repo.close_round(ctx.db, round_.id, "lapsed", stamped)
         if repo.open_rounds(ctx.db):
             return
@@ -58,7 +55,7 @@ def refresh(ctx: Context, rule: RoundRule) -> None:
         if baseline is None:
             return
         fresh = repo.count_patterns_added_after(ctx.db, latest.opened_at if latest else None)
-        if rule.due(fresh, now - _parse(baseline)):
+        if rule.due(fresh, now - parse(baseline)):
             repo.insert_round(ctx.db, stamped, fresh)
 
 

@@ -8,7 +8,6 @@ the store (every terminal operation has a receipt).
 
 import sqlite3
 
-from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.operations import (
     TERMINAL_STATES,
     OperationState,
@@ -17,6 +16,7 @@ from chamberlain.domain.operations import (
     Verification,
     check_transition,
 )
+from chamberlain.domain.timefmt import parse
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
@@ -85,7 +85,7 @@ def build_receipt(
         source=op.source_id,
         state=state,
         intent_sha256=op.intent_sha256,
-        settled_at=parse_ts(now),
+        settled_at=parse(now),
         verification=provider.verification if provider else Verification(),
         items_ok=sum(1 for item in items if item.ok),
         items_failed=sum(1 for item in items if not item.ok),

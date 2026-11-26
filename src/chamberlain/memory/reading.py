@@ -6,19 +6,12 @@ Contract: docs/contracts/02-tools.md (`open`, T-6, T-9) and 06-memory.md
 """
 
 from chamberlain.app.context import Context, Result
+from chamberlain.attention import repo as attention_repo
 from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.domain.canonical import sha256_bytes
-from chamberlain.domain.events import EventKind, EventState
-from chamberlain.domain.grants import GrantKind, GrantState, Requirement
+from chamberlain.domain.events import EventKind
 from chamberlain.domain.handles import HandleKind, handle_kind
-from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.mail import FolderRole, Message
-from chamberlain.domain.operations import (
-    MAY_HAVE_HAPPENED_STATES,
-    OperationState,
-    Verification,
-    recheck_text,
-)
 from chamberlain.domain.recurrence import describe
 from chamberlain.domain.timefmt import parse, ts
 from chamberlain.limits import ATTACHMENT_TEXT_MAX_BYTES
@@ -42,9 +35,10 @@ from chamberlain.schema.tools import (
     OpenPart,
     OpenRequest,
     OpenResponse,
-    OperationView,
     Range,
 )
+from chamberlain.writes import repo as writes_repo
+from chamberlain.writes.core import Engine
 
 _ATTACHMENTS_SHOWN = 10
 _TEXT_TYPES = ("text/", "application/json", "application/xml")
@@ -183,66 +177,47 @@ def _attachment_page(
 
 
 def _grant(ctx: Context, handle: str) -> OpenResponse:
-    row = repo.get(ctx.db, "grants", handle)
+    row = writes_repo.get_grant(ctx.db, handle)
     if row is None:
         raise _unknown()
     view = GrantView(
         handle=handle,
-        grant_kind=GrantKind(str(row["kind"])),
-        state=GrantState(str(row["state"])),
-        title=str(row["title"])[:80],
-        summary=str(row["summary"])[:300],
-        source=str(row["source_id"]),
-        requirement=Requirement(str(row["requirement"])),
-        content_sha256=str(row["content_sha256"]),
-        card=repo.opt(row, "card"),
-        granted_at=repo.opt(row, "granted_at", parse),
-        expires_at=repo.opt(row, "expires_at", parse),
-        review_at=repo.opt(row, "review_at", parse),
+        grant_kind=row.kind,
+        state=row.state,
+        title=row.title[:80],
+        summary=row.summary[:300],
+        source=row.source_id,
+        requirement=row.requirement,
+        content_sha256=row.content_sha256,
+        card=row.card,
+        granted_at=row.granted_at,
+        expires_at=row.expires_at,
+        review_at=row.review_at,
     )
     return OpenResponse(handle=handle, view=view)
 
 
 def _operation(ctx: Context, handle: str) -> OpenResponse:
-    row = repo.get(ctx.db, "operations", handle)
+    row = writes_repo.get_operation(ctx.db, handle)
     if row is None:
         raise _unknown()
-    state = OperationState(str(row["state"]))
-    view = OperationView(
-        handle=handle,
-        intent_kind=IntentKind(str(row["kind"])),
-        source=str(row["source_id"]),
-        state=state,
-        grant=repo.opt(row, "grant"),
-        verification=Verification(
-            client_verified=bool(row["client_verified"]),
-            server_verified=bool(row["server_verified"]),
-        ),
-        may_have_happened=state in MAY_HAVE_HAPPENED_STATES,
-        error_code=repo.opt(row, "error_code", ErrorCode),
-        settled_at=repo.opt(row, "settled_at", parse),
-        recheck=recheck_text(row["recheck_result"], row["recheck_json"]),
-        redo_of=repo.opt(row, "redo_of"),
-        redone_by=repo.resend_handle(ctx.db, handle),
-    )
-    return OpenResponse(handle=handle, view=view)
+    return OpenResponse(handle=handle, view=Engine(ctx).view(row))
 
 
 def _event(ctx: Context, request: OpenRequest) -> OpenResponse:
     handle = request.handle
-    row = repo.get(ctx.db, "events", handle)
+    row = attention_repo.get_event(ctx.db, handle)
     if row is None:
         raise _unknown()
-    subject = repo.opt(row, "subject")
     view = EventView(
         handle=handle,
-        event_kind=EventKind(str(row["kind"])),
-        subject=subject,
-        summary=str(row["summary"])[:160],
-        state=EventState(str(row["state"])),
-        detected_at=parse(str(row["detected_at"])),
+        event_kind=row.kind,
+        subject=row.subject,
+        summary=row.summary[:160],
+        state=row.state,
+        detected_at=parse(row.detected_at),
     )
-    if row["kind"] == EventKind.HARNESS_REVIEW.value and request.part is OpenPart.BODY:
+    if row.kind is EventKind.HARNESS_REVIEW and request.part is OpenPart.BODY:
         content, window = _page(brief(ctx), request, ContentKind.STORED_TEXT)
         return OpenResponse(handle=handle, view=view, content=content, range=window)
     return OpenResponse(handle=handle, view=view)

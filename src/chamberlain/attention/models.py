@@ -12,7 +12,7 @@ from chamberlain.domain.events import EventKind, EventState
 from chamberlain.domain.grants import Requirement
 from chamberlain.domain.intents import IntentKind
 from chamberlain.limits import SUMMARY_MAX
-from chamberlain.memory.repo import ActionRow, BudgetRow, CardRow, ComplexDecision
+from chamberlain.memory.repo import ActionLine, CardRow
 from chamberlain.review.repo import RoundRow
 from chamberlain.runs.models import NoteRow
 from chamberlain.runs.repo import DueRun
@@ -179,6 +179,25 @@ class CalendarSlot:
 
 
 @dataclass(frozen=True)
+class ComplexDecision:
+    """The owner's recent answer to a request for a larger card limit."""
+
+    card: str
+    state: str
+    decided_at: str
+    blocked_until: str | None
+
+
+@dataclass(frozen=True)
+class BudgetRow:
+    """`scope` is a card handle or None for the global total."""
+
+    scope: str | None
+    bytes_used: int
+    limit: int
+
+
+@dataclass(frozen=True)
 class DetectorInput:
     """Everything detectors may look at (A-5). Built once per tick."""
 
@@ -189,7 +208,7 @@ class DetectorInput:
     mail_held: tuple[tuple[str, Held], ...] = ()
     """Each source with its held span."""
     sync_gaps: tuple[SyncGap, ...] = ()
-    actions: tuple[ActionRow, ...] = ()
+    actions: tuple[ActionLine, ...] = ()
     cards: tuple[CardRow, ...] = ()
     open_cards: tuple[CardRow, ...] = ()
     complex_decisions: tuple[ComplexDecision, ...] = ()

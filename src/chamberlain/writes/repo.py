@@ -13,7 +13,6 @@ from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import Any, cast
 
-from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind, MailSend
 from chamberlain.domain.operations import (
@@ -23,6 +22,7 @@ from chamberlain.domain.operations import (
     outside_details,
 )
 from chamberlain.domain.senders import AuthorisedSenders
+from chamberlain.domain.timefmt import parse
 from chamberlain.store.schema import AUTHORISED_SENDERS_KEY, get_state
 from chamberlain.writes.models import GrantRow, OperationRow
 
@@ -39,7 +39,7 @@ def _row_values(row: sqlite3.Row, columns: tuple[str, ...]) -> dict[str, Any]:
     values = {column: row[column] for column in columns}
     for key, value in values.items():
         if key.endswith("_at") and value is not None:
-            values[key] = parse_ts(value)
+            values[key] = parse(value)
     return values
 
 

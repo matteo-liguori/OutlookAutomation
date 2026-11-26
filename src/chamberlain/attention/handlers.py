@@ -59,15 +59,14 @@ def _offer(ctx: Context, session: str, limit: int) -> tuple[tuple[WorkItem, ...]
 
 
 def _capabilities(ctx: Context, source: str) -> tuple[SourceKind, list[str]]:
-    kind = source.split(":", 1)[0]
+    role = source.split(":", 1)[0]
+    kind: SourceKind = (
+        "mail" if role == "mail" else "calendar" if role == "calendar" else "contacts"
+    )
     try:
-        if kind == "mail":
-            return "mail", ctx.sources.mail_port(source).capabilities(source).names()
-        if kind == "calendar":
-            return "calendar", ctx.sources.calendar_port(source).capabilities(source).names()
-        return "contacts", ctx.sources.contacts_port(source).capabilities(source).names()
+        return kind, ctx.sources.port(source).capabilities(source).names()
     except Exception:
-        return ("mail" if kind == "mail" else "calendar" if kind == "calendar" else "contacts"), []
+        return kind, []
 
 
 def _sources(ctx: Context) -> tuple[SourceStatus, ...]:

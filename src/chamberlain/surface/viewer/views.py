@@ -5,6 +5,7 @@ Contract: docs/contracts/06-memory.md (read-only views), 10-targets.md (storage 
 read-only history.
 """
 
+import sqlite3
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
@@ -31,11 +32,6 @@ from chamberlain.writes.render import describe_intent
 LIST_LIMIT = 50
 ACTIVITY_LIMIT = 200
 DUE_WINDOW = timedelta(days=7)
-_UTC = ZoneInfo("UTC")
-
-
-def _stored(moment: datetime) -> str:
-    return ts(moment)
 
 
 def pick(row: object, *names: str) -> dict[str, Any]:
@@ -65,7 +61,9 @@ def overview(ctx: Context) -> dict[str, Any]:
         },
         "counts": {
             "active_grants": sum(1 for g in grants if g.state is GrantState.ACTIVE),
-            "open_cards": memory_repo.count_open_cards(db),
+            "open_cards": db.execute("SELECT count(*) FROM cards WHERE state = 'open'").fetchone()[
+                0
+            ],
             "live_events": attention_repo.count_live_events(db),
         },
         "known_recipients": {
@@ -75,23 +73,34 @@ def overview(ctx: Context) -> dict[str, Any]:
     }
 
 
+def _open_cards(db: sqlite3.Connection) -> list[memory_repo.CardRow]:
+    return memory_repo.card_rows(
+        db.execute(
+            "SELECT c.handle, c.title, c.review_at, c.over_cap, (SELECT count(*) FROM actions a "
+            "WHERE a.card = c.handle AND a.state = 'open') AS open_actions "
+            "FROM cards c WHERE c.state = 'open' ORDER BY c.updated_at DESC, c.handle LIMIT ?",
+            (LIST_LIMIT,),
+        )
+    )
+
+
 def work(ctx: Context) -> dict[str, Any]:
     """Open cards and the actions due within a week."""
-    until = _stored(ctx.clock.now() + DUE_WINDOW)
+    until = ts(ctx.clock.now() + DUE_WINDOW)
     return {
         "cards": [
             pick(c, "handle", "title", "review_at", "over_cap", "open_actions")
-            for c in memory_repo.open_cards(ctx.db, LIST_LIMIT)
+            for c in _open_cards(ctx.db)
         ],
         "actions": [
             pick(a, "handle", "card", "card_title", "title", "due_at", "snooze_until")
-            for a in memory_repo.upcoming_actions(ctx.db, until, LIST_LIMIT)
+            for a in memory_repo.action_lines(ctx.db, "a.due_at <= ?", (until,), limit=LIST_LIMIT)
         ],
     }
 
 
 def _iso(moment: datetime | None) -> str | None:
-    return None if moment is None else _stored(moment)
+    return None if moment is None else ts(moment)
 
 
 def uncertain(ctx: Context) -> dict[str, Any]:
@@ -142,7 +151,7 @@ def _day_window(ctx: Context, zone: str, day: str | None) -> tuple[str, str, str
                 ErrorCode.REQUEST_INVALID, "The day is YYYY-MM-DD.", field="day"
             ) from None
     start = datetime(local.year, local.month, local.day, tzinfo=tz)
-    return local.isoformat(), _stored(start), _stored(start + timedelta(days=1))
+    return local.isoformat(), ts(start), ts(start + timedelta(days=1))
 
 
 def activity(ctx: Context, zone: str, day: str | None) -> dict[str, Any]:
@@ -211,7 +220,7 @@ def storage(ctx: Context) -> dict[str, Any]:
 
 
 def notes(ctx: Context) -> dict[str, Any]:
-    since = _stored(ctx.clock.now() - NOTE_KEEP)
+    since = ts(ctx.clock.now() - NOTE_KEEP)
     return {
         "notes": [
             pick(n, "id", "text", "state", "created_at")
