@@ -222,7 +222,6 @@ def status_handler(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
     if isinstance(frame, RequestFrame):
         result = protocol.StatusResult(
             addon_version="2.0.0",
-            browser_version="159.0",
             write_busy=False,
             calendar_available=addon.calendar_available,
         )
@@ -443,7 +442,6 @@ def test_p8_a_download_is_assembled_from_chunks_and_verified(tmp_path: Path) -> 
             size=len(data),
             sha256=sha256_bytes(data),
             chunks=len(pieces),
-            read_state_preserved=True,
         )
         addon.ok(frame, result, chunks=len(pieces))
 
@@ -480,7 +478,6 @@ def test_p8_a_chunk_that_does_not_match_its_hash_yields_nothing(tmp_path: Path) 
             size=3,
             sha256="0" * 64,
             chunks=1,
-            read_state_preserved=True,
         )
         addon.ok(frame, result, chunks=1)
 
@@ -508,7 +505,6 @@ def test_p8_a_response_that_lost_a_chunk_is_unavailable(tmp_path: Path) -> None:
                 size=3,
                 sha256="0" * 64,
                 chunks=2,
-                read_state_preserved=True,
             )
             addon.ok(frame, result, chunks=2)
 

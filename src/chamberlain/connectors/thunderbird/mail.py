@@ -12,16 +12,14 @@ from chamberlain.connectors.thunderbird.identity import (
     decode_locator,
     normalise_body,
 )
-from chamberlain.connectors.thunderbird.mail_reads import MailLimits as MailLimits
-from chamberlain.connectors.thunderbird.mail_reads import MailReads, milliseconds
-from chamberlain.connectors.thunderbird.mail_reads import ThunderbirdBinding as ThunderbirdBinding
-from chamberlain.connectors.thunderbird.mail_writes import (
-    ALLOW_DUPLICATE_REF as ALLOW_DUPLICATE_REF,
+from chamberlain.connectors.thunderbird.mail_reads import (
+    MailReads,
+    ThunderbirdBinding,
+    milliseconds,
 )
 from chamberlain.connectors.thunderbird.mail_writes import (
-    DISPLAY_ONLY_REF as DISPLAY_ONLY_REF,
-)
-from chamberlain.connectors.thunderbird.mail_writes import (
+    ALLOW_DUPLICATE_REF,
+    DISPLAY_ONLY_REF,
     ChangePlan,
     ComposePlan,
     DiscardPlan,
@@ -94,6 +92,24 @@ def _shape(prepared: Prepared) -> ComposePlan | ChangePlan | DiscardPlan:
         ) from None
 
 
+def _prepared(intent: MailIntent, token: str | None, plan: Model) -> Prepared:
+    return Prepared(
+        source=intent.source,
+        intent_kind=intent.kind,
+        reconcile_token=token,
+        data=plan.model_dump(mode="json"),
+    )
+
+
+def _ref_of(binding: ThunderbirdBinding, refs: Mapping[str, str], handle: str) -> MessageLocator:
+    locator = refs.get(handle)
+    if locator is None:
+        raise ChamberlainError(
+            ErrorCode.REQUEST_UNKNOWN_HANDLE, "A handle in the request has no locator."
+        )
+    return decode_locator(locator, account_id=binding.account_id)
+
+
 class ThunderbirdMail(MailReads):
     def prepare(self, intent: MailIntent, refs: Mapping[str, str]) -> Prepared:
         """Read-only (P-9): resolve, check preconditions, hold everything dispatch needs."""
@@ -103,14 +119,14 @@ class ThunderbirdMail(MailReads):
         if isinstance(intent, MailDraftDiscard):
             draft = self._draft_ref(binding, refs, intent.draft, intent.expected_sha256)
             plan = DiscardPlan(draft=draft, expected_raw_sha256=intent.expected_sha256)
-            return self._prepared(intent.source, intent.kind, None, plan)
-        locations = (self._ref_of(binding, refs, handle) for handle in intent.messages)
+            return _prepared(intent, None, plan)
+        locations = (_ref_of(binding, refs, handle) for handle in intent.messages)
         groups = _change_groups((where.folder_id, where.message_id) for where in locations)
         if isinstance(intent, MailMarkRead):
             change = ChangePlan(items=groups, set_read=intent.read)
         else:
             change = self._prepare_move(intent, binding, groups)
-        return self._prepared(intent.source, intent.kind, None, change)
+        return _prepared(intent, None, change)
 
     def _prepare_move(
         self,
@@ -168,25 +184,6 @@ class ThunderbirdMail(MailReads):
             window = (min(dates) - margin, max(dates) + margin)
         return change.model_copy(update={"date_window": window, "before": before})
 
-    @staticmethod
-    def _prepared(source: str, kind: IntentKind, token: str | None, plan: Model) -> Prepared:
-        return Prepared(
-            source=source,
-            intent_kind=kind,
-            reconcile_token=token,
-            data=plan.model_dump(mode="json"),
-        )
-
-    def _ref_of(
-        self, binding: ThunderbirdBinding, refs: Mapping[str, str], handle: str
-    ) -> MessageLocator:
-        locator = refs.get(handle)
-        if locator is None:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_UNKNOWN_HANDLE, "A handle in the request has no locator."
-            )
-        return decode_locator(locator, account_id=binding.account_id)
-
     def _draft_ref(
         self,
         binding: ThunderbirdBinding,
@@ -194,7 +191,7 @@ class ThunderbirdMail(MailReads):
         handle: str,
         expected_sha256: str,
     ) -> MessageRef:
-        where = self._ref_of(binding, refs, handle)
+        where = _ref_of(binding, refs, handle)
         if where.folder_id != binding.draft_folder_id:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "That message is not a draft.")
         scope = self.copies_of(binding, where.folder_id, where.message_id, draft=True)
@@ -221,7 +218,7 @@ class ThunderbirdMail(MailReads):
             raise ChamberlainError(ErrorCode.REQUEST_TOO_LARGE, "Too many recipients.")
         reply_to = None
         if intent.reply_to is not None:
-            where = self._ref_of(binding, refs, intent.reply_to)
+            where = _ref_of(binding, refs, intent.reply_to)
             self.resolve_one(binding, where)
             reply_to = MessageRef(folder_id=where.folder_id, internet_message_id=where.message_id)
         draft = None
@@ -267,7 +264,7 @@ class ThunderbirdMail(MailReads):
         )
         if isinstance(intent, MailSend) and refs.get(ALLOW_DUPLICATE_REF) != "1":
             plan.check_duplicates(self, binding)
-        return self._prepared(intent.source, intent.kind, intent.message_id, plan)
+        return _prepared(intent, intent.message_id, plan)
 
     def dispatch(
         self, prepared: Prepared, key: str, payloads: Mapping[str, bytes]

@@ -35,7 +35,6 @@ class FakeCalendarBridge(BridgeClient):
         """`(event id, recurrence id, icalendar)` for series: the query answers with these."""
         self.requests: list[tuple[str, bool]] = []
         self.offline = False
-        self.fresh_as_of: str | None = None
         self.deadline = 45.0
         self._armed: list[Fault] = []
         self._late: list[tuple[Any, Callable[[], None]]] = []
@@ -92,7 +91,6 @@ class FakeCalendarBridge(BridgeClient):
             return {
                 "write_busy": bool(self._late),
                 "addon_version": "test",
-                "browser_version": "test",
                 "calendar_available": True,
             }
         if cmd == "calendar_list":
@@ -103,8 +101,6 @@ class FakeCalendarBridge(BridgeClient):
                 "disabled": False,
                 "read_only": False,
             }
-            if self.fresh_as_of:
-                entry["fresh_as_of"] = self.fresh_as_of
             return {"calendars": [entry]}
         if cmd == "calendar_query":
             return self._query(args)

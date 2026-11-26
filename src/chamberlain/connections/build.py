@@ -32,7 +32,8 @@ from chamberlain.connectors.thunderbird.calendar import (
 )
 from chamberlain.connectors.thunderbird.client import BridgeClient, RuntimeConnector
 from chamberlain.connectors.thunderbird.contacts import ContactsBinding, ThunderbirdContacts
-from chamberlain.connectors.thunderbird.mail import ThunderbirdBinding, ThunderbirdMail
+from chamberlain.connectors.thunderbird.mail import ThunderbirdMail
+from chamberlain.connectors.thunderbird.mail_reads import ThunderbirdBinding
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import Clock

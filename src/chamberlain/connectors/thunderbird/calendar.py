@@ -108,11 +108,7 @@ class ThunderbirdCalendar(CalendarWritePort):
         try:
             usable = self._compatible(self._bridge.hello())
         except BridgeFailure as failure:
-            raise calendar_unavailable(
-                str(failure),
-                message="Thunderbird did not answer for the calendar.",
-                fix="Install the current Chamberlain Thunderbird add-on and restart Thunderbird.",
-            ) from None
+            raise _read_unavailable(failure) from None
         if not usable:
             return CapabilitySet(source=source, capabilities=())
         return calendar_capabilities(source)
@@ -120,31 +116,24 @@ class ThunderbirdCalendar(CalendarWritePort):
     def health(self, source: str) -> SourceHealth:
         binding = self._binding(source)
         now = self._clock.now()
+        down = SourceHealth(source=source, state=HealthState.UNAVAILABLE, checked_at=now)
         try:
             if not self._compatible(self._bridge.hello()):
-                return SourceHealth(source=source, state=HealthState.UNAVAILABLE, checked_at=now)
+                return down
             listing = self._call(
                 wire.CalendarListResult, wire.Command.CALENDAR_LIST, wire.StatusArgs()
             )
         except BridgeFailure:
-            return SourceHealth(source=source, state=HealthState.UNAVAILABLE, checked_at=now)
+            return down
         mine = next((c for c in listing.calendars if c.id == binding.calendar_id), None)
         if mine is None or mine.disabled:
-            return SourceHealth(source=source, state=HealthState.UNAVAILABLE, checked_at=now)
-        fresh = mine.fresh_as_of
+            return down
+        # The add-on cannot say when a client cache last synchronised, so only the Owl probe
+        # can vouch for freshness (P-5).
+        stale = SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
         if self._freshness_store is not None and mine.type == "owl" and mine.read_only is False:
-            stale = SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
             return self._freshness_store(source, binding.calendar_id, stale, self.probe)
-        if not isinstance(fresh, str):
-            # A client cache that cannot say when it last synchronised cannot be vouched for (P-5).
-            return SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
-        try:
-            fresh_as_of = datetime.fromisoformat(fresh)
-        except ValueError:
-            return SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
-        return SourceHealth(
-            source=source, state=HealthState.OK, checked_at=now, fresh_as_of=fresh_as_of
-        )
+        return stale
 
     # --- reading --------------------------------------------------------------
 

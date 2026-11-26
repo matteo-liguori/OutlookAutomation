@@ -263,7 +263,6 @@ export function createWorld() {
   };
 
   const messenger = {
-    runtime: { getBrowserInfo: async () => ({ version: "159.0" }) },
     accounts: {
       list: async () => accounts.map((a) => ({ ...clone(a) })),
       get: async (id) => {

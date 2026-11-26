@@ -30,8 +30,6 @@ class Readable(Protocol):
 class Writable(Protocol):
     def write(self, data: bytes | memoryview, /) -> int | None: ...
 
-    def flush(self) -> None: ...
-
 
 def _unavailable(message: str, detail: str) -> ChamberlainError:
     return ChamberlainError(ErrorCode.SOURCE_UNAVAILABLE, message, detail=detail)
@@ -90,6 +88,5 @@ def write_frame(stream: Writable, body: bytes, limit: int) -> None:
             if not written:
                 raise OSError("frame write made no progress")
             pending = pending[written:]
-        stream.flush()
     except (OSError, ValueError) as error:
         raise _unavailable("The Thunderbird bridge connection failed.", str(error)) from None

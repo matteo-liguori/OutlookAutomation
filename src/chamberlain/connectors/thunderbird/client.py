@@ -8,7 +8,6 @@ request may have reached the add-on. Nothing here retries.
 """
 
 import base64
-import contextlib
 import json
 import secrets
 import socket
@@ -21,7 +20,7 @@ from typing import Final, Protocol, cast
 from pydantic import JsonValue
 
 from chamberlain.connectors.thunderbird import frames, protocol
-from chamberlain.connectors.thunderbird.native_host import RUNTIME_FILE, Deadlines
+from chamberlain.connectors.thunderbird.native_host import RUNTIME_FILE, Deadlines, SocketConnection
 from chamberlain.connectors.thunderbird.protocol import (
     PROTOCOL_VERSION,
     BridgeErrorCode,
@@ -37,7 +36,6 @@ from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.schema.base import Model
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
-CLIENT_VERSION: Final = "2.0.0"
 UPDATE_FIX: Final = (
     "Install the current Chamberlain add-on in Thunderbird, restart Thunderbird, "
     "and keep it running."
@@ -86,44 +84,28 @@ class BridgeFailure(ChamberlainError):
         return not self.sent or (self.bridge_code is not None and self.mutation == "none")
 
 
-class Connection(Protocol):
-    def read(self, size: int, /) -> bytes: ...
+def _down(
+    message: str,
+    *,
+    sent: bool = False,
+    mutation: str = "none",
+    fix: str | None = None,
+    detail: str = "",
+) -> BridgeFailure:
+    return BridgeFailure(
+        ErrorCode.SOURCE_UNAVAILABLE, message, sent=sent, mutation=mutation, fix=fix, detail=detail
+    )
 
-    def write(self, data: bytes | memoryview, /) -> int | None: ...
 
-    def flush(self) -> None: ...
-
-    def settimeout(self, seconds: float) -> None: ...
-
-    def close(self) -> None: ...
+def _refused(answer: Refusal, detail: str = "") -> BridgeFailure:
+    message = f"The Thunderbird bridge refused: {answer.code.value}."
+    return _down(message, fix=UPDATE_FIX, detail=detail)
 
 
 class Connector(Protocol):
-    def open(self, timeout: float) -> Connection: ...
+    def open(self, timeout: float) -> SocketConnection: ...
 
     def token(self) -> str: ...
-
-
-class SocketConnection:
-    def __init__(self, connection: socket.socket) -> None:
-        self._connection = connection
-
-    def read(self, size: int, /) -> bytes:
-        return self._connection.recv(size)
-
-    def write(self, data: bytes | memoryview, /) -> int:
-        self._connection.sendall(data)
-        return len(data)
-
-    def flush(self) -> None:
-        return None
-
-    def settimeout(self, seconds: float) -> None:
-        self._connection.settimeout(seconds)
-
-    def close(self) -> None:
-        with contextlib.suppress(OSError):
-            self._connection.close()
 
 
 class RuntimeConnector:
@@ -136,35 +118,27 @@ class RuntimeConnector:
         try:
             state: object = json.loads(self._runtime.read_text(encoding="utf-8"))
         except (OSError, ValueError):
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
+            raise _down(
                 "The Thunderbird bridge is not running.",
-                sent=False,
                 fix="Start Thunderbird with the Chamberlain add-on installed.",
             ) from None
         if not isinstance(state, dict):
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE, "The bridge state is unreadable.", sent=False
-            )
+            raise _down("The bridge state is unreadable.")
         return cast(dict[str, JsonValue], state)
 
     def token(self) -> str:
         return str(self._state().get("token", ""))
 
-    def open(self, timeout: float) -> Connection:
+    def open(self, timeout: float) -> SocketConnection:
         state = self._state()
         port = state.get("port")
         if not isinstance(port, int):
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE, "The bridge state is unreadable.", sent=False
-            )
+            raise _down("The bridge state is unreadable.")
         try:
             connection = socket.create_connection(("127.0.0.1", port), timeout=timeout)
         except OSError as error:
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
+            raise _down(
                 "The Thunderbird bridge did not answer.",
-                sent=False,
                 fix="Start Thunderbird and keep it running.",
                 detail=str(error),
             ) from None
@@ -236,13 +210,10 @@ class BridgeClient:
         finally:
             connection.close()
 
-    def _handshake(self, connection: Connection) -> Welcome:
+    def _handshake(self, connection: SocketConnection) -> Welcome:
         try:
             hello = ClientHello(
-                v=PROTOCOL_VERSION,
-                id=self._new_id(),
-                token=self._connector.token(),
-                client_version=CLIENT_VERSION,
+                v=PROTOCOL_VERSION, id=self._new_id(), token=self._connector.token()
             )
             connection.settimeout(10)
             frames.write_frame(connection, protocol.dump_frame(hello), frames.LOCAL_LIMIT)
@@ -250,42 +221,20 @@ class BridgeClient:
         except BridgeFailure:
             raise
         except ChamberlainError as error:
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
-                "The Thunderbird bridge handshake failed.",
-                sent=False,
-                detail=error.detail,
-            ) from None
+            raise _down("The Thunderbird bridge handshake failed.", detail=error.detail) from None
         if raw is None:
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE, "The bridge closed the connection.", sent=False
-            )
+            raise _down("The bridge closed the connection.")
         try:
             answer = protocol.parse_frame(raw)
         except ChamberlainError:
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
-                "The bridge answered unexpectedly.",
-                sent=False,
-                fix=UPDATE_FIX,
-            ) from None
+            raise _down("The bridge answered unexpectedly.", fix=UPDATE_FIX) from None
         if isinstance(answer, Refusal):
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
-                f"The Thunderbird bridge refused: {answer.code.value}.",
-                sent=False,
-                fix=UPDATE_FIX,
-                detail=answer.message,
-            )
+            raise _refused(answer, answer.message)
         if not isinstance(answer, Welcome):
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE, "The bridge answered unexpectedly.", sent=False
-            )
+            raise _down("The bridge answered unexpectedly.")
         if answer.v != PROTOCOL_VERSION:
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
+            raise _down(
                 "The Thunderbird add-on is out of date.",
-                sent=False,
                 fix=UPDATE_FIX,
                 detail=f"version {answer.v}",
             )
@@ -311,11 +260,7 @@ class BridgeClient:
         try:
             welcome = self._handshake(connection)
             if calendar and not welcome.calendar_available:
-                raise BridgeFailure(
-                    ErrorCode.SOURCE_UNAVAILABLE,
-                    "The Thunderbird calendar helper is unavailable.",
-                    sent=False,
-                )
+                raise _down("The Thunderbird calendar helper is unavailable.")
             started = self._monotonic()
             request_id = self._new_id()
             request = RequestFrame(
@@ -345,7 +290,7 @@ class BridgeClient:
 
     def _exchange(
         self,
-        connection: Connection,
+        connection: SocketConnection,
         cmd: Command,
         request_id: str,
         outgoing: list[bytes],
@@ -356,9 +301,7 @@ class BridgeClient:
         mutation = "possible" if write else "none"
 
         def lost(message: str, detail: str = "") -> BridgeFailure:
-            return BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE, message, sent=True, mutation=mutation, detail=detail
-            )
+            return _down(message, sent=True, mutation=mutation, detail=detail)
 
         try:
             connection.settimeout(limit)
@@ -388,12 +331,7 @@ class BridgeClient:
                 chunks.setdefault(frame.name, []).append(frame)
                 continue
             if isinstance(frame, Refusal):
-                raise BridgeFailure(
-                    ErrorCode.SOURCE_UNAVAILABLE,
-                    f"The Thunderbird bridge refused: {frame.code.value}.",
-                    sent=False,
-                    fix=UPDATE_FIX,
-                )
+                raise _refused(frame)
             if isinstance(frame, ResponseFrame) and frame.id == request_id:
                 return self._finish(frame, cmd, chunks, mutation)
             raise lost("The Thunderbird bridge sent an unexpected message.")
@@ -408,9 +346,7 @@ class BridgeClient:
         if not frame.ok:
             error = frame.error
             if error is None:
-                raise BridgeFailure(
-                    ErrorCode.SOURCE_UNAVAILABLE, "Malformed error.", sent=True, mutation=mutation
-                )
+                raise _down("Malformed error.", sent=True, mutation=mutation)
             raise BridgeFailure(
                 _CODE_MAP[error.code],
                 _safe(error.code),
@@ -422,20 +358,12 @@ class BridgeClient:
         try:
             result = protocol.parse_result(cmd, frame.result or {})
         except ChamberlainError as error:
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
-                error.message,
-                sent=True,
-                mutation=mutation,
-                fix=UPDATE_FIX,
-                detail=error.detail,
+            raise _down(
+                error.message, sent=True, mutation=mutation, fix=UPDATE_FIX, detail=error.detail
             ) from None
         if sum(len(v) for v in chunks.values()) != frame.chunks:
-            raise BridgeFailure(
-                ErrorCode.SOURCE_UNAVAILABLE,
-                "The Thunderbird bridge lost part of a transfer.",
-                sent=True,
-                mutation=mutation,
+            raise _down(
+                "The Thunderbird bridge lost part of a transfer.", sent=True, mutation=mutation
             )
         return Reply(result=result, chunks=chunks)
 

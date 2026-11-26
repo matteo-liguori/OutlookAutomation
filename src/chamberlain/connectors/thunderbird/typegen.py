@@ -102,7 +102,6 @@ def _object(node: dict[str, JsonValue]) -> str:
 
 
 def render() -> str:
-
     defs = definitions()
     deadlines = Deadlines()
     out = [
@@ -118,18 +117,11 @@ def render() -> str:
             out.append(f"interface {name} {_object(node)}\n")
         else:
             out.append(f"type {name} = {_ts(node)};\n")
-    commands = {command.value: model for command, model in protocol.ARGS_MODELS.items()}
-    results = {command.value: model for command, model in protocol.RESULT_MODELS.items()}
-    out.append(
-        "interface CommandArgs {\n"
-        + "\n".join(f"  {cmd}: {model.__name__};" for cmd, model in commands.items())
-        + "\n}\n"
-    )
-    out.append(
-        "interface CommandResults {\n"
-        + "\n".join(f"  {cmd}: {model.__name__};" for cmd, model in results.items())
-        + "\n}\n"
-    )
+    for name, column in (("CommandArgs", 0), ("CommandResults", 1)):
+        rows = "\n".join(
+            f"  {c.value}: {m[column].__name__};" for c, m in protocol.COMMAND_MODELS.items()
+        )
+        out.append(f"interface {name} {{\n{rows}\n}}\n")
     out.append(f"const PROTOCOL_VERSION = {protocol.PROTOCOL_VERSION};")
     out.append(f"const CHUNK_BYTES = {frames.CHUNK_BYTES};")
     out.append(f"const TO_ADDON_LIMIT = {frames.TO_ADDON_LIMIT};")
