@@ -161,15 +161,24 @@ def session_has_ended(db: sqlite3.Connection, handle: str, idle_edge: str) -> bo
 # --- reports (artifacts held by a run; a read of memory's tables) --------------------------------
 
 
-def report_handles(db: sqlite3.Connection, run: str) -> list[str]:
+def _reports(db: sqlite3.Connection, run: str) -> list[sqlite3.Row]:
     """The run's live stored items that are reports (not the outline the harness keeps)."""
-    rows = db.execute(
-        "SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
-        "WHERE o.owner_kind = 'run' AND o.owner = ? AND a.state = 'live' "
-        "AND a.filename IS NOT ? ORDER BY a.created_at, a.handle",
+    return db.execute(
+        "SELECT a.handle, a.created_at FROM artifacts a JOIN artifact_owners o "
+        "ON o.artifact = a.handle WHERE o.owner_kind = 'run' AND o.owner = ? "
+        "AND a.state = 'live' AND a.filename IS NOT ? ORDER BY a.created_at, a.handle",
         (run, REPORT_OUTLINE_FILENAME),
-    )
-    return [str(row["handle"]) for row in rows]
+    ).fetchall()
+
+
+def report_handles(db: sqlite3.Connection, run: str) -> list[str]:
+    return [str(row["handle"]) for row in _reports(db, run)]
+
+
+def report_kept_at(db: sqlite3.Connection, run: str) -> str | None:
+    """When the run's first report was kept."""
+    rows = _reports(db, run)
+    return str(rows[0]["created_at"]) if rows else None
 
 
 def outline_handle(db: sqlite3.Connection, run: str) -> str | None:

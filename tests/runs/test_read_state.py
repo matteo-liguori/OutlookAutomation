@@ -10,11 +10,13 @@ from runs_rig import MAIL, Rig
 
 from chamberlain.app.wiring import run_tick
 from chamberlain.domain.grants import GrantState
+from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.operations import DispatchResult, Prepared
 from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs.models import PassKind
 from chamberlain.runs.schedule import ScheduleSpec, set_schedule
+from chamberlain.store.migrate import stamp
 from chamberlain.store.schema import READ_STATE_KEY, set_state
 from chamberlain.writes import read_state, repo
 from chamberlain.writes.confirm import confirm_grant
@@ -76,6 +78,17 @@ def test_reported_mail_is_marked_read_only_with_the_option_and_the_owners_grant(
 
         monkeypatch.setattr(rig.fake.mail, "dispatch", dispatch)
     rig.clock.advance(minutes=1)
+    # Shown to the same pass after its report was kept, before the tick that settles it.
+    (session,) = db.execute("SELECT session FROM runs WHERE handle = ?", (run.handle,)).fetchone()
+    seen_late = rig.ctx.services.refs.remember(HandleKind.MESSAGE, MAIL, late)
+    db.execute(
+        "INSERT INTO mail_seen (source_id, locator, handle, received_at, first_seen_at, triaged, "
+        "delivered_session) VALUES (?, ?, ?, ?, ?, 1, ?) ON CONFLICT (source_id, locator) DO "
+        "UPDATE SET first_seen_at = excluded.first_seen_at, triaged = 1, "
+        "delivered_session = excluded.delivered_session",
+        (MAIL, late, seen_late, stamp(rig.clock), stamp(rig.clock), session),
+    )
+    db.commit()
     run_tick(rig.app)
     present = handled[:1] if case == "covered, partial result" else handled
 

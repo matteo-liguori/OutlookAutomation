@@ -16,6 +16,7 @@ from chamberlain.domain.grants import GrantState
 from chamberlain.domain.intents import MailMarkRead
 from chamberlain.domain.operations import OperationState
 from chamberlain.limits import MARK_READ_MAX
+from chamberlain.runs import repo as runs_repo
 from chamberlain.runs.models import RunRow
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
@@ -31,11 +32,13 @@ def mark_reported(ctx: Context, run: RunRow) -> None:
     if run.session is None or not read_state.options(ctx.db).reporting_marks_read:
         return
     now = stamp(ctx.clock)
+    # Mail first seen after the report was kept is not in it, though this runs on a later tick.
+    kept = runs_repo.report_kept_at(ctx.db, run.handle) or now
     rows = ctx.db.execute(
         "SELECT s.seq AS seq, s.source_id AS source, s.handle AS handle FROM mail_seen s "
         "WHERE s.delivered_session = ? AND s.first_seen_at <= ? AND s.sent = 0 "
         "AND s.triaged = 1 AND s.read_marked_at IS NULL ORDER BY s.seq",
-        (run.session, now),
+        (run.session, kept),
     ).fetchall()
     by_source: dict[str, list[tuple[int, str]]] = defaultdict(list)
     for row in rows:
