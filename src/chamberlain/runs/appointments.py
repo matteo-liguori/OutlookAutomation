@@ -19,11 +19,11 @@ from dataclasses import dataclass
 from chamberlain.app.context import Context
 from chamberlain.memory.cards import CardService
 from chamberlain.runs import report_repo as repo
+from chamberlain.runs.tuning import VIEWER_ACTOR
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 
-ACTOR = "human:viewer"
 OUTCOME = "Acknowledged by the owner in the viewer."
 _DASHES = "\N{EN DASH}\N{EM DASH}"
 _MARKER = re.compile(rf"^\s*important\s*[:\-{_DASHES}]\s*(?P<rest>.+)$", re.IGNORECASE | re.DOTALL)
@@ -75,7 +75,7 @@ def acknowledge(ctx: Context, action: str) -> None:
     with transaction(ctx.db):
         CardService(ctx.db, ctx.clock).finish_action(action, None, OUTCOME)
         ctx.services.audit.append(
-            actor=ACTOR,
+            actor=VIEWER_ACTOR,
             kind="appointment.acknowledged",
             subject=action,
             summary="The owner acknowledged an important appointment reminder.",

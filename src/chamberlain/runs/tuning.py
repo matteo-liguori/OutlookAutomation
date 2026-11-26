@@ -19,3 +19,5 @@ WEEKDAYS_ALL: Final = "1,2,3,4,5,6,7"
 SYNC_PRESYNC_MINUTES: Final = 5
 """Default lead of the mail folder sync before a scheduled pass (07-attention.md A-26)."""
 PRESYNC_MAX_MINUTES: Final = 120
+VIEWER_ACTOR: Final = "human:viewer"
+"""The audit actor of every change the person makes in the viewer."""

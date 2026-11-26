@@ -6,13 +6,15 @@ Only `sessions`, `events`, `guidance_deliveries`, `source_health`, `mail_waterma
 """
 
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import astuple, dataclass
 
 from chamberlain.attention.models import (
     EventAttrs,
     EventDraft,
     EventRow,
+    Held,
     MailBatch,
+    MailGap,
     SessionRow,
 )
 from chamberlain.domain.capabilities import HealthState
@@ -26,32 +28,22 @@ _EVENT_COLUMNS = (
 
 
 def _event(row: sqlite3.Row) -> EventRow:
+    """`_EVENT_COLUMNS` in the order of `EventRow`'s fields."""
+    handle, kind, subject, key, priority, summary, attrs, state, *times = row
     return EventRow(
-        handle=row["handle"],
-        kind=EventKind(row["kind"]),
-        subject=row["subject"],
-        dedupe_key=row["dedupe_key"],
-        priority=row["priority"],
-        summary=row["summary"],
-        attrs=EventAttrs.model_validate_json(row["attrs_json"]),
-        state=EventState(row["state"]),
-        detected_at=row["detected_at"],
-        delivered_at=row["delivered_at"],
-        delivered_to=row["delivered_to"],
-        closed_at=row["closed_at"],
-        quiet_until=row["quiet_until"],
+        handle,
+        EventKind(kind),
+        subject,
+        key,
+        priority,
+        summary,
+        EventAttrs.model_validate_json(attrs),
+        EventState(state),
+        *times,
     )
 
 
-def _session(row: sqlite3.Row) -> SessionRow:
-    return SessionRow(
-        handle=row["handle"],
-        agent=row["agent"],
-        purpose=row["purpose"],
-        started_at=row["started_at"],
-        last_seen_at=row["last_seen_at"],
-        ended_at=row["ended_at"],
-    )
+_SESSION_COLUMNS = "handle, agent, purpose, started_at, last_seen_at, ended_at"
 
 
 # --- sessions ---------------------------------------------------------------
@@ -66,8 +58,10 @@ def insert_session(db: sqlite3.Connection, handle: str, agent: str, purpose: str
 
 
 def get_session(db: sqlite3.Connection, handle: str) -> SessionRow | None:
-    row = db.execute("SELECT * FROM sessions WHERE handle = ?", (handle,)).fetchone()
-    return None if row is None else _session(row)
+    row = db.execute(
+        f"SELECT {_SESSION_COLUMNS} FROM sessions WHERE handle = ?", (handle,)
+    ).fetchone()
+    return None if row is None else SessionRow(*row)
 
 
 def touch_session(db: sqlite3.Connection, handle: str, now: str) -> None:
@@ -79,10 +73,11 @@ def touch_session(db: sqlite3.Connection, handle: str, now: str) -> None:
 
 def active_sessions(db: sqlite3.Connection, agent: str, purpose: str) -> list[SessionRow]:
     rows = db.execute(
-        "SELECT * FROM sessions WHERE agent = ? AND purpose = ? AND ended_at IS NULL",
+        f"SELECT {_SESSION_COLUMNS} FROM sessions "
+        "WHERE agent = ? AND purpose = ? AND ended_at IS NULL",
         (agent, purpose),
     )
-    return [_session(r) for r in rows]
+    return [SessionRow(*r) for r in rows]
 
 
 def idle_sessions(db: sqlite3.Connection, before: str) -> list[str]:
@@ -306,17 +301,6 @@ def last_tick(db: sqlite3.Connection) -> str | None:
 
 
 @dataclass(frozen=True)
-class Held:
-    """An older span that was not read, and where the owner's answer stands (A-23)."""
-
-    start: str
-    end: str
-    state: str
-    estimate: int | None
-    width: int | None
-
-
-@dataclass(frozen=True)
 class Watermark:
     covered_through: str
     watching_since: str
@@ -338,23 +322,13 @@ def watermark(db: sqlite3.Connection, source: str) -> Watermark | None:
     ).fetchone()
     if row is None:
         return None
-    held = None
-    if row["held_from"] is not None:
-        held = Held(
-            row["held_from"],
-            row["held_to"],
-            row["held_state"],
-            row["held_estimate"],
-            row["held_width"],
-        )
-    return Watermark(
-        row["covered_through"],
-        row["watching_since"],
-        row["scan_started_at"],
-        row["scan_from"],
-        row["scan_width"],
-        held,
+    *scan, held_from, held_to, held_state, held_estimate, held_width = row
+    held = (
+        None
+        if held_from is None
+        else Held(held_from, held_to, held_state, held_estimate, held_width)
     )
+    return Watermark(scan[0], scan[1], scan[2], scan[3], scan[4], held)
 
 
 def begin_watching(db: sqlite3.Connection, source: str, through: str, now: str) -> None:
@@ -378,15 +352,7 @@ def save_scan(
     db.execute(
         "UPDATE mail_watermarks SET covered_through = ?, scan_started_at = ?, scan_from = ?, "
         "scan_width = ?, gap_from = ?, gap_to = ? WHERE source_id = ?",
-        (
-            through,
-            started,
-            frontier,
-            width,
-            None if gap is None else gap[0],
-            None if gap is None else gap[1],
-            source,
-        ),
+        (through, started, frontier, width, *(gap or (None, None)), source),
     )
 
 
@@ -394,14 +360,7 @@ def save_held(db: sqlite3.Connection, source: str, held: Held | None) -> None:
     db.execute(
         "UPDATE mail_watermarks SET held_from = ?, held_to = ?, held_state = ?, "
         "held_estimate = ?, held_width = ? WHERE source_id = ?",
-        (
-            None if held is None else held.start,
-            None if held is None else held.end,
-            None if held is None else held.state,
-            None if held is None else held.estimate,
-            None if held is None else held.width,
-            source,
-        ),
+        (*(astuple(held) if held else (None,) * 5), source),
     )
 
 
@@ -468,21 +427,14 @@ def prune_seen(db: sqlite3.Connection, source: str, before: str, sent_before: st
 
 def mail_batches(db: sqlite3.Connection) -> list[MailBatch]:
     rows = db.execute(
-        "SELECT s.source_id AS source_id, s.sent AS sent, COUNT(*) AS n, MIN(s.seq) AS first_seq, "
-        "MIN(s.received_at) AS oldest, SUM(c.handle IS NOT NULL) AS suggested "
+        "SELECT s.source_id, COUNT(*), MIN(s.seq), MIN(s.received_at), "
+        "COALESCE(SUM(c.handle IS NOT NULL), 0), s.sent "
         "FROM mail_seen s LEFT JOIN cards c ON c.handle = s.suggested_card AND c.state = 'open' "
         "WHERE s.triaged = 0 GROUP BY s.source_id, s.sent ORDER BY s.source_id, s.sent"
     )
     return [
-        MailBatch(
-            r["source_id"],
-            r["n"],
-            r["first_seq"],
-            r["oldest"],
-            r["suggested"] or 0,
-            bool(r["sent"]),
-        )
-        for r in rows
+        MailBatch(source, n, seq, oldest, suggested, bool(sent))
+        for source, n, seq, oldest, suggested, sent in rows
     ]
 
 
@@ -513,11 +465,11 @@ def triage_delivered(db: sqlite3.Connection, source: str, event: str, *, sent: b
     )
 
 
-def mail_gaps(db: sqlite3.Connection) -> list[tuple[str, str, str]]:
+def mail_gaps(db: sqlite3.Connection) -> list[MailGap]:
     rows = db.execute(
         "SELECT source_id, gap_from, gap_to FROM mail_watermarks WHERE gap_from IS NOT NULL"
     )
-    return [(r["source_id"], r["gap_from"], r["gap_to"]) for r in rows]
+    return [MailGap(*r) for r in rows]
 
 
 def mail_held(db: sqlite3.Connection) -> list[tuple[str, Held]]:
@@ -525,15 +477,7 @@ def mail_held(db: sqlite3.Connection) -> list[tuple[str, Held]]:
         "SELECT source_id, held_from, held_to, held_state, held_estimate, held_width "
         "FROM mail_watermarks WHERE held_from IS NOT NULL ORDER BY source_id"
     )
-    return [
-        (
-            r["source_id"],
-            Held(
-                r["held_from"], r["held_to"], r["held_state"], r["held_estimate"], r["held_width"]
-            ),
-        )
-        for r in rows
-    ]
+    return [(r[0], Held(*r[1:])) for r in rows]
 
 
 # --- mail folder sync (0150) ---------------------------------------------------------------
@@ -562,18 +506,7 @@ def sync_folder_rows(db: sqlite3.Connection, source: str) -> list[SyncFolder]:
         "FROM mail_sync_folders WHERE source_id = ? ORDER BY folder_id",
         (source,),
     )
-    return [
-        SyncFolder(
-            r["folder_id"],
-            r["name"],
-            r["role"],
-            r["synced_at"],
-            r["attempted_at"],
-            r["failure"],
-            r["catchup_from"],
-        )
-        for r in rows
-    ]
+    return [SyncFolder(*r) for r in rows]
 
 
 def save_sync_folder(db: sqlite3.Connection, source: str, row: SyncFolder) -> None:
@@ -584,16 +517,7 @@ def save_sync_folder(db: sqlite3.Connection, source: str, row: SyncFolder) -> No
         "role = excluded.role, synced_at = excluded.synced_at, "
         "attempted_at = excluded.attempted_at, failure = excluded.failure, "
         "catchup_from = excluded.catchup_from",
-        (
-            source,
-            row.folder_id,
-            row.name,
-            row.role,
-            row.synced_at,
-            row.attempted_at,
-            row.failure,
-            row.catchup_from,
-        ),
+        (source, *astuple(row)),
     )
 
 
@@ -640,21 +564,7 @@ def sync_failures(db: sqlite3.Connection) -> list[tuple[str, SyncFolder]]:
         "SELECT source_id, folder_id, name, role, synced_at, attempted_at, failure, "
         "catchup_from FROM mail_sync_folders WHERE failure <> '' ORDER BY source_id, folder_id"
     )
-    return [
-        (
-            r["source_id"],
-            SyncFolder(
-                r["folder_id"],
-                r["name"],
-                r["role"],
-                r["synced_at"],
-                r["attempted_at"],
-                r["failure"],
-                r["catchup_from"],
-            ),
-        )
-        for r in rows
-    ]
+    return [(r[0], SyncFolder(*r[1:])) for r in rows]
 
 
 def count_live_events(db: sqlite3.Connection) -> int:

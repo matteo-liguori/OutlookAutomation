@@ -14,32 +14,17 @@ from chamberlain.store.schema import get_state
 
 
 def _schedule(row: sqlite3.Row) -> ScheduleRow:
-    return ScheduleRow(
-        name=row["name"],
-        kind=PassKind(row["kind"]),
-        at_local=row["at_local"],
-        weekdays=frozenset(int(day) for day in str(row["weekdays"]).split(",")),
-        zone=row["zone"],
-        enabled=bool(row["enabled"]),
-        presync_minutes=int(row["presync_minutes"]),
-    )
+    name, kind, at_local, weekdays, zone, enabled, presync = row
+    days = frozenset(int(day) for day in weekdays.split(","))
+    return ScheduleRow(name, PassKind(kind), at_local, days, zone, bool(enabled), presync)
+
+
+_RUN_COLUMNS = "handle, schedule, day, state, due_at, started_at, finished_at, session"
 
 
 def _run(row: sqlite3.Row) -> RunRow:
-    return RunRow(
-        handle=row["handle"],
-        schedule=row["schedule"],
-        day=row["day"],
-        state=RunState(row["state"]),
-        due_at=row["due_at"],
-        started_at=row["started_at"],
-        finished_at=row["finished_at"],
-        session=row["session"],
-    )
-
-
-def _note(row: sqlite3.Row) -> NoteRow:
-    return NoteRow(id=row["id"], text=row["text"], state=row["state"], created_at=row["created_at"])
+    handle, schedule, day, state, *rest = row
+    return RunRow(handle, schedule, day, RunState(state), *rest)
 
 
 # --- schedules -----------------------------------------------------------------------------
@@ -72,7 +57,11 @@ def delete_schedule(db: sqlite3.Connection, name: str) -> int:
 
 
 def schedules(db: sqlite3.Connection) -> list[ScheduleRow]:
-    return [_schedule(row) for row in db.execute("SELECT * FROM schedules ORDER BY name")]
+    rows = db.execute(
+        "SELECT name, kind, at_local, weekdays, zone, enabled, presync_minutes "
+        "FROM schedules ORDER BY name"
+    )
+    return [_schedule(row) for row in rows]
 
 
 # --- runs ----------------------------------------------------------------------------------
@@ -99,24 +88,28 @@ def insert_run(
 
 def run_for_day(db: sqlite3.Connection, schedule: str, day: str) -> RunRow | None:
     row = db.execute(
-        "SELECT * FROM runs WHERE schedule = ? AND day = ?", (schedule, day)
+        f"SELECT {_RUN_COLUMNS} FROM runs WHERE schedule = ? AND day = ?", (schedule, day)
     ).fetchone()
     return None if row is None else _run(row)
 
 
 def get_run(db: sqlite3.Connection, handle: str) -> RunRow | None:
-    row = db.execute("SELECT * FROM runs WHERE handle = ?", (handle,)).fetchone()
+    row = db.execute(f"SELECT {_RUN_COLUMNS} FROM runs WHERE handle = ?", (handle,)).fetchone()
     return None if row is None else _run(row)
 
 
 def runs_in_states(db: sqlite3.Connection, states: tuple[str, ...]) -> list[RunRow]:
     marks = ", ".join("?" for _ in states)
-    rows = db.execute(f"SELECT * FROM runs WHERE state IN ({marks}) ORDER BY due_at", states)
+    rows = db.execute(
+        f"SELECT {_RUN_COLUMNS} FROM runs WHERE state IN ({marks}) ORDER BY due_at, handle", states
+    )
     return [_run(row) for row in rows]
 
 
 def recent_runs(db: sqlite3.Connection, limit: int) -> list[RunRow]:
-    rows = db.execute("SELECT * FROM runs ORDER BY due_at DESC, handle LIMIT ?", (limit,))
+    rows = db.execute(
+        f"SELECT {_RUN_COLUMNS} FROM runs ORDER BY due_at DESC, handle LIMIT ?", (limit,)
+    )
     return [_run(row) for row in rows]
 
 
@@ -202,8 +195,11 @@ def set_note_state(db: sqlite3.Connection, note: int, state: str) -> int:
 
 
 def notes_since(db: sqlite3.Connection, since: str) -> list[NoteRow]:
-    rows = db.execute("SELECT * FROM user_notes WHERE created_at >= ? ORDER BY id DESC", (since,))
-    return [_note(row) for row in rows]
+    rows = db.execute(
+        "SELECT id, text, state, created_at FROM user_notes WHERE created_at >= ? ORDER BY id DESC",
+        (since,),
+    )
+    return [NoteRow(*r) for r in rows]
 
 
 def delete_notes_before(db: sqlite3.Connection, before: str) -> int:
@@ -224,74 +220,30 @@ class DueRun:
     has_report: bool = False
 
 
-@dataclass(frozen=True)
-class OpenNote:
-    """A note the person left in the viewer (the `user_notes` table, runs track)."""
-
-    id: int
-    text: str
-
-
-@dataclass(frozen=True)
-class PresyncSchedule:
-    """A scheduled pass the tick may sync ahead of (the `schedules` table, runs track)."""
-
-    at_local: str
-    weekdays: frozenset[int]
-    zone: str
-    minutes: int
-
-
-def presync_schedules(db: sqlite3.Connection) -> list[PresyncSchedule]:
-    rows = db.execute(
-        "SELECT at_local, weekdays, zone, presync_minutes FROM schedules "
-        "WHERE enabled = 1 AND presync_minutes > 0"
-    )
-    return [
-        PresyncSchedule(
-            r["at_local"],
-            frozenset(int(d) for d in r["weekdays"].split(",") if d),
-            r["zone"],
-            r["presync_minutes"],
-        )
-        for r in rows
-    ]
-
-
 def due_runs(db: sqlite3.Connection) -> list[DueRun]:
-    """Passes that are due or running; the runs track writes `runs` and `schedules`."""
-    rows = db.execute(
-        "SELECT r.handle, r.schedule, s.kind, r.day, r.state, "
-        "(SELECT a.handle FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
-        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename = :outline "
-        " ORDER BY a.created_at DESC LIMIT 1) AS outline, "
-        "EXISTS (SELECT 1 FROM artifacts a JOIN artifact_owners o ON o.artifact = a.handle "
-        " WHERE o.owner = r.handle AND a.state = 'live' AND a.filename IS NOT :outline) "
-        " AS has_report "
-        "FROM runs r JOIN schedules s ON s.name = r.schedule "
-        "WHERE r.state IN ('due', 'running') ORDER BY r.due_at, r.handle",
-        {"outline": REPORT_OUTLINE_FILENAME},
-    )
+    """Passes that are due or running, oldest first."""
+    kinds = {s.name: s.kind.value for s in schedules(db)}
     return [
         DueRun(
-            r["handle"],
-            r["schedule"],
-            r["kind"],
-            r["day"],
-            outline=r["outline"],
-            state=r["state"],
-            has_report=bool(r["has_report"]),
+            r.handle,
+            r.schedule,
+            kinds[r.schedule],
+            r.day,
+            outline_handle(db, r.handle),
+            r.state.value,
+            bool(report_handles(db, r.handle)),
         )
-        for r in rows
+        for r in runs_in_states(db, (RunState.DUE.value, RunState.RUNNING.value))
     ]
 
 
-def open_notes(db: sqlite3.Connection, since: str) -> list[OpenNote]:
+def open_notes(db: sqlite3.Connection, since: str) -> list[NoteRow]:
     rows = db.execute(
-        "SELECT id, text FROM user_notes WHERE state = 'open' AND created_at >= ? ORDER BY id",
+        "SELECT id, text, state, created_at FROM user_notes "
+        "WHERE state = 'open' AND created_at >= ? ORDER BY id",
         (since,),
     )
-    return [OpenNote(int(r["id"]), r["text"]) for r in rows]
+    return [NoteRow(*r) for r in rows]
 
 
 def update_tag(db: sqlite3.Connection) -> str | None:

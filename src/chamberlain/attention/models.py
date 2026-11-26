@@ -6,13 +6,16 @@ Contract: docs/contracts/07-attention.md (Events, Detectors, A-5).
 from dataclasses import dataclass, field
 from datetime import datetime
 
+from chamberlain.attention.tuning import PRIORITY
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind, EventState
 from chamberlain.domain.grants import Requirement
 from chamberlain.domain.intents import IntentKind
 from chamberlain.limits import SUMMARY_MAX
 from chamberlain.memory.repo import ActionRow, BudgetRow, CardRow, ComplexDecision
-from chamberlain.runs.repo import DueRun, OpenNote
+from chamberlain.review.repo import RoundRow
+from chamberlain.runs.models import NoteRow
+from chamberlain.runs.repo import DueRun
 from chamberlain.schema.base import CardHandle, Model, SourceId
 from chamberlain.writes.repo import GrantAlert, OperationAlert, SendRow
 
@@ -52,6 +55,27 @@ class EventDraft:
     def dedupe_key(self) -> str:
         key = f"{self.kind.value}:{self.subject or '-'}"
         return key if self.discriminator is None else f"{key}:{self.discriminator}"
+
+
+def draft(
+    kind: EventKind,
+    subject: str | None,
+    summary: str,
+    attrs: EventAttrs | None = None,
+    *,
+    bump: int = 0,
+    priority: int | None = None,
+    discriminator: str | None = None,
+) -> EventDraft:
+    """A detector's report at the kind's priority (plus `bump`, or `priority` when given)."""
+    return EventDraft(
+        kind,
+        subject,
+        summary,
+        PRIORITY[kind] + bump if priority is None else priority,
+        attrs or EventAttrs(),
+        discriminator,
+    )
 
 
 @dataclass(frozen=True)
@@ -106,15 +130,15 @@ class MailGap:
 
 
 @dataclass(frozen=True)
-class HeldMail:
-    """Mail of `source` dated between `start` and `end` (UTC) was not read: it is more than a
-    day back. `state` says where the owner's answer stands (A-23)."""
+class Held:
+    """An older span that was not read (more than a day back), and where the owner's answer
+    stands (A-23)."""
 
-    source: str
     start: str
     end: str
     state: str
     estimate: int | None
+    width: int | None
 
 
 @dataclass(frozen=True)
@@ -155,14 +179,6 @@ class CalendarSlot:
 
 
 @dataclass(frozen=True)
-class OpenReview:
-    """A review round waiting for the agent (the `review_rounds` table, review track)."""
-
-    id: int
-    new_patterns: int
-
-
-@dataclass(frozen=True)
 class DetectorInput:
     """Everything detectors may look at (A-5). Built once per tick."""
 
@@ -170,7 +186,8 @@ class DetectorInput:
     sources: tuple[SourceSnapshot, ...] = ()
     mail: tuple[MailBatch, ...] = ()
     mail_gaps: tuple[MailGap, ...] = ()
-    mail_held: tuple[HeldMail, ...] = ()
+    mail_held: tuple[tuple[str, Held], ...] = ()
+    """Each source with its held span."""
     sync_gaps: tuple[SyncGap, ...] = ()
     actions: tuple[ActionRow, ...] = ()
     cards: tuple[CardRow, ...] = ()
@@ -189,10 +206,10 @@ class DetectorInput:
     """`found_at` of the latest held quarantine batch, if any."""
     orphan_count: int = 0
     runs_due: tuple[DueRun, ...] = ()
-    notes: tuple[OpenNote, ...] = ()
+    notes: tuple[NoteRow, ...] = ()
     calendar_slots: tuple[CalendarSlot, ...] = ()
     """The owner's timed events from now on that are neither cancelled nor declined (A-26)."""
     update_tag: str | None = None
     """The newer release tag the update checker recorded, if any."""
-    reviews: tuple[OpenReview, ...] = ()
+    reviews: tuple[RoundRow, ...] = ()
     """Open review rounds: how the agent has been working outside the harness (review track)."""

@@ -5,7 +5,6 @@ Contract: docs/contracts/07-attention.md (A-6, A-7). A tick never raises.
 
 import logging
 from collections.abc import Iterable
-from datetime import datetime
 
 from chamberlain.app.context import Context, TickStep
 from chamberlain.attention import inbox, repo, sessions, sync
@@ -13,10 +12,11 @@ from chamberlain.attention.collect import collect
 from chamberlain.attention.detectors import DETECTORS
 from chamberlain.attention.models import EventDraft
 from chamberlain.domain.events import EventKind
-from chamberlain.domain.timefmt import ts
+from chamberlain.domain.timefmt import parse
 from chamberlain.limits import TICK_MIN_INTERVAL_SECONDS
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
+from chamberlain.store.migrate import stamp
 from chamberlain.store.schema import set_state
 
 log = logging.getLogger("chamberlain.attention")
@@ -36,7 +36,7 @@ def _due(ctx: Context) -> bool:
     last = repo.last_tick(ctx.db)
     if last is None:
         return True
-    elapsed = ctx.clock.now() - datetime.fromisoformat(last)
+    elapsed = ctx.clock.now() - parse(last)
     return elapsed.total_seconds() >= TICK_MIN_INTERVAL_SECONDS
 
 
@@ -48,7 +48,7 @@ def _claim(ctx: Context) -> bool:
     with transaction(ctx.db):
         if not _due(ctx):
             return False
-        set_state(ctx.db, ctx.clock, "attention.last_tick_at", _stamp(ctx))
+        set_state(ctx.db, ctx.clock, "attention.last_tick_at", stamp(ctx.clock))
     return True
 
 
@@ -90,16 +90,12 @@ def tick(ctx: Context, *, force: bool = False) -> bool:
             else frozenset(),
         )
         with transaction(ctx.db):
-            set_state(ctx.db, ctx.clock, "attention.last_tick_at", _stamp(ctx))
+            set_state(ctx.db, ctx.clock, "attention.last_tick_at", stamp(ctx.clock))
         _run_steps(ctx, ctx.tick_steps.extra)
         return True
     except Exception:
         log_failure(log, "tick failed")
         return False
-
-
-def _stamp(ctx: Context) -> str:
-    return ts(ctx.clock.now())
 
 
 def wake_status(ctx: Context) -> int:

@@ -43,12 +43,6 @@ log = logging.getLogger("chamberlain.attention")
 _MIN_SLICE = timedelta(seconds=1)
 
 
-@dataclass(frozen=True)
-class Scanned:
-    complete: bool
-    """True when the whole range was covered and the watermark moved."""
-
-
 @dataclass
 class _Walk:
     """How far one oldest-first walk got."""
@@ -145,7 +139,8 @@ def _estimate(
     return round(len(keys) * (hi - lo).total_seconds() / covered)
 
 
-def scan(ctx: Context, source: str, health: HealthState | None, suggester: Suggester) -> Scanned:
+def scan(ctx: Context, source: str, health: HealthState | None, suggester: Suggester) -> bool:
+    """True when the whole range was covered and the watermark moved."""
     now = ctx.clock.now().replace(microsecond=0)
     state = repo.watermark(ctx.db, source)
     first = state is None
@@ -154,7 +149,7 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
             repo.begin_watching(ctx.db, source, ts(now - MAIL_BOOTSTRAP + MAIL_OVERLAP), ts(now))
         state = repo.watermark(ctx.db, source)
         if state is None:
-            return Scanned(False)
+            return False
     through = parse(state.covered_through)
     fresh = state.scan_started_at is None
     started = now if fresh else parse(state.scan_started_at or ts(now))
@@ -163,7 +158,7 @@ def scan(ctx: Context, source: str, health: HealthState | None, suggester: Sugge
     if health in (HealthState.UNAVAILABLE, HealthState.SIGN_IN_NEEDED):
         begin = max(through, resume or through)
         _record(ctx, source, state, (ts(begin), ts(max(now, begin))))
-        return Scanned(False)
+        return False
 
     sync.ensure_fresh(ctx, source)
     window = _window(now, through, started, resume, state.held, first=first, fresh=fresh)
@@ -282,22 +277,13 @@ def _read(
         catch_ups, unread_from = _catch_up(ctx, port, source, started, take)
         if unread_from is not None:
             stuck_hold = _stuck_hold(
-                held
-                if hold_from is None
-                else repo.Held(ts(hold_from), ts(through), "", None, None),
+                port,
+                source,
+                skipped,
+                _held_after(held, hold_from, through, estimate, None),
                 unread_from,
                 started - MAIL_STANDARD,
             )
-            if stuck_hold is not None:
-                stuck_hold = repo.Held(
-                    stuck_hold.start,
-                    stuck_hold.end,
-                    "asking",
-                    _estimate(
-                        port, source, skipped, parse(stuck_hold.start), parse(stuck_hold.end)
-                    ),
-                    None,
-                )
     except Exception:
         log_failure(log, "mail scan failed for %s", source)
         walked.clean = False
@@ -394,7 +380,7 @@ def _plan_messages(
     return rows, learned
 
 
-def _commit(ctx: Context, source: str, window: _Window, plan: _Plan) -> Scanned:
+def _commit(ctx: Context, source: str, window: _Window, plan: _Plan) -> bool:
     with transaction(ctx.db):
         handles = remember_many(
             ctx.db,
@@ -435,11 +421,16 @@ def _commit(ctx: Context, source: str, window: _Window, plan: _Plan) -> Scanned:
             if plan.held is not None:
                 boundary = min(boundary, plan.held.start)
             repo.prune_seen(ctx.db, source, boundary, ts(window.now - MAIL_SENT_KEEP))
-    return Scanned(plan.complete)
+    return plan.complete
 
 
 def _stuck_hold(
-    current: repo.Held | None, unread_from: datetime, cut: datetime
+    port: MailPort,
+    source: str,
+    skipped: frozenset[str],
+    current: repo.Held | None,
+    unread_from: datetime,
+    cut: datetime,
 ) -> repo.Held | None:
     """The older-mail span to ask about for mail a stuck folder kept back more than a day (A-27).
 
@@ -448,10 +439,14 @@ def _stuck_hold(
     """
     if current is not None and parse(current.start) <= unread_from:
         return None
-    start, end = unread_from, cut
-    if current is not None:
-        end = max(cut, parse(current.end))
-    return repo.Held(ts(start), ts(end), "asking", None, None)
+    end = cut if current is None else max(cut, parse(current.end))
+    return repo.Held(
+        ts(unread_from),
+        ts(end),
+        "asking",
+        _estimate(port, source, skipped, unread_from, end),
+        None,
+    )
 
 
 def _catch_up(

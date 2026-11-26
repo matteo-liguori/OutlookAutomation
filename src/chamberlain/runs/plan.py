@@ -19,12 +19,13 @@ from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
 from chamberlain.domain.handles import HandleKind, new_handle
-from chamberlain.domain.timefmt import ts
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.limits import SESSION_IDLE_HOURS
 from chamberlain.runs import compose, repo
-from chamberlain.runs.models import RunRow, RunState, ScheduleRow
+from chamberlain.runs.models import RunRow, RunState
 from chamberlain.runs.read_state import mark_reported
 from chamberlain.runs.reports import store_report
+from chamberlain.runs.schedule import due_instant
 from chamberlain.runs.tuning import MAX_LATE
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
@@ -38,20 +39,9 @@ INCOMPLETE_REPORT = (
 )
 
 
-def _utc(moment: datetime) -> str:
-    return ts(moment)
-
-
 def local_day(ctx: Context, zone: str) -> str:
     """Today's date in `zone`."""
     return ctx.clock.now().astimezone(ZoneInfo(zone)).date().isoformat()
-
-
-def _due_instant(schedule: ScheduleRow, day: str, zone: ZoneInfo) -> datetime:
-    hour, minute = (int(part) for part in schedule.at_local.split(":"))
-    year, month, date = (int(part) for part in day.split("-"))
-    local = datetime(year, month, date, hour, minute, tzinfo=zone)
-    return local.astimezone(ZoneInfo("UTC"))
 
 
 def _create_due(ctx: Context, now: datetime) -> None:
@@ -63,7 +53,7 @@ def _create_due(ctx: Context, now: datetime) -> None:
         if local.isoweekday() not in schedule.weekdays:
             continue
         day = local.date().isoformat()
-        due = _due_instant(schedule, day, zone)
+        due = due_instant(schedule.at_local, day, zone)
         if now < due or repo.run_for_day(ctx.db, schedule.name, day) is not None:
             continue
         late = now - due > MAX_LATE
@@ -73,7 +63,7 @@ def _create_due(ctx: Context, now: datetime) -> None:
             schedule=schedule.name,
             day=day,
             state=(RunState.MISSED if late else RunState.DUE).value,
-            due_at=_utc(due),
+            due_at=ts(due),
             finished_at=stamp(ctx.clock) if late else None,
         )
 
@@ -91,9 +81,7 @@ def _close_old_days(ctx: Context) -> None:
 
 def _day_end(day: str, zone: ZoneInfo) -> str:
     """The instant the local day `day` ends, as a stored timestamp."""
-    year, month, date = (int(part) for part in day.split("-"))
-    midnight = datetime(year, month, date, tzinfo=zone) + timedelta(days=1)
-    return _utc(midnight.astimezone(ZoneInfo("UTC")))
+    return ts(datetime.fromisoformat(day).replace(tzinfo=zone) + timedelta(days=1))
 
 
 def _attach_sessions(ctx: Context) -> None:
@@ -122,11 +110,7 @@ def _miss_late(ctx: Context, now: datetime) -> None:
     pass that was not started within six hours is not run late, as docs/scheduling.md says.
     """
     for run in repo.runs_in_states(ctx.db, (RunState.DUE.value,)):
-        if (
-            now
-            - datetime.strptime(run.due_at, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
-            > MAX_LATE
-        ):
+        if now - parse(run.due_at) > MAX_LATE:
             repo.set_run_state(
                 ctx.db, run.handle, RunState.MISSED.value, finished_at=stamp(ctx.clock)
             )
@@ -137,7 +121,7 @@ def _settle_running(ctx: Context, now: datetime) -> tuple[list[RunRow], list[Run
 
     Returns `(finished, ended)`: the runs that just got a report, and those that ended without.
     """
-    idle_edge = _utc(now - timedelta(hours=SESSION_IDLE_HOURS))
+    idle_edge = ts(now - timedelta(hours=SESSION_IDLE_HOURS))
     finished: list[RunRow] = []
     ended: list[RunRow] = []
     for run in repo.runs_in_states(ctx.db, (RunState.DUE.value, RunState.RUNNING.value)):

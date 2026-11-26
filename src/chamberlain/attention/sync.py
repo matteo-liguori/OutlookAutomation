@@ -13,13 +13,14 @@ and in the pass report until a later try gets it through.
 import json
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from chamberlain.app.context import Context
 from chamberlain.attention import repo
 from chamberlain.attention.tuning import MAIL_SKIPPED_ROLES, SYNC_FRESH, SYNC_LIMIT
 from chamberlain.domain.mail import Folder
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.ports.sync import (
     NOT_REACHED,
     NOT_SELECTABLE,
@@ -28,21 +29,12 @@ from chamberlain.ports.sync import (
     SyncReport,
 )
 from chamberlain.runs import repo as runs_repo
+from chamberlain.runs.schedule import due_instant
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 from chamberlain.store.schema import MAIL_SYNC_KEY, get_state
 
 log = logging.getLogger("chamberlain.attention")
-
-_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
-
-
-def _fmt(when: datetime) -> str:
-    return when.strftime(_FORMAT)
-
-
-def _parse(text: str) -> datetime:
-    return datetime.strptime(text, _FORMAT).replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True)
@@ -84,7 +76,7 @@ class Synced:
 def _due(row: repo.SyncFolder | None, now: datetime, max_age: timedelta) -> bool:
     if row is None or row.synced_at is None or row.failure:
         return True
-    return now - _parse(row.synced_at) > max_age
+    return now - parse(row.synced_at) > max_age
 
 
 def _fresh_enough(ctx: Context, source: str, max_age: timedelta) -> bool:
@@ -92,7 +84,7 @@ def _fresh_enough(ctx: Context, source: str, max_age: timedelta) -> bool:
     state = repo.sync_state(ctx.db, source)
     if state is None or state[0] is None:
         return False
-    if ctx.clock.now() - _parse(state[0]) > max_age:
+    if ctx.clock.now() - parse(state[0]) > max_age:
         return False
     return not any(r.failure for r in repo.sync_folder_rows(ctx.db, source))
 
@@ -153,7 +145,7 @@ def sync_source(ctx: Context, source: str, *, max_age: timedelta | None = None) 
         for folder in folders:
             row = known.get(folder.id)
             outcome = answers.get(folder.id)
-            updated = _after(folder, row, outcome, _fmt(now))
+            updated = _after(folder, row, outcome, ts(now))
             if updated.failure:
                 failed.append(folder.id)
             repo.save_sync_folder(ctx.db, source, updated)
@@ -163,7 +155,7 @@ def sync_source(ctx: Context, source: str, *, max_age: timedelta | None = None) 
         complete = previous[0] if previous else None
         if rows and all(r.synced_at and not r.failure for r in rows):
             complete = min(r.synced_at for r in rows if r.synced_at)
-        repo.save_sync_state(ctx.db, source, complete, _fmt(now))
+        repo.save_sync_state(ctx.db, source, complete, ts(now))
     return Synced(bool(asked), tuple(failed))
 
 
@@ -176,14 +168,14 @@ def _after(
     catchup = None if row is None else row.catchup_from
     attempted = now if row is None else row.attempted_at
     if outcome is not None:
-        attempted = _fmt(outcome.at)
+        attempted = ts(outcome.at)
         if outcome.synced or outcome.code == NOT_SELECTABLE:
-            synced_at, failure = _fmt(outcome.at), ""
+            synced_at, failure = ts(outcome.at), ""
         else:
             failure = outcome.code or "failed"
             if catchup is None:
                 # From its last good sync; a folder that never synced from this first try.
-                catchup = synced_at or _fmt(outcome.at)
+                catchup = synced_at or ts(outcome.at)
     return repo.SyncFolder(
         folder.id, folder.name, folder.role.value, synced_at, attempted, failure, catchup
     )
@@ -207,7 +199,9 @@ def ensure_all_fresh(ctx: Context) -> None:
 def _lead(ctx: Context, now: datetime) -> timedelta | None:
     """How far ahead of its time a scheduled pass is, when one is due within its lead."""
     longest: timedelta | None = None
-    for item in runs_repo.presync_schedules(ctx.db):
+    for item in runs_repo.schedules(ctx.db):
+        if not item.enabled or item.presync_minutes <= 0:
+            continue
         try:
             zone = ZoneInfo(item.zone)
         except (ZoneInfoNotFoundError, ValueError, OSError):
@@ -215,9 +209,8 @@ def _lead(ctx: Context, now: datetime) -> timedelta | None:
         local = now.astimezone(zone)
         if local.isoweekday() not in item.weekdays:
             continue
-        hour, minute = (int(part) for part in item.at_local.split(":"))
-        due = local.replace(hour=hour, minute=minute, second=0, microsecond=0)
-        lead = timedelta(minutes=item.minutes)
+        due = due_instant(item.at_local, local.date().isoformat(), zone)
+        lead = timedelta(minutes=item.presync_minutes)
         if due - lead <= local < due and (longest is None or lead > longest):
             longest = lead
     return longest
