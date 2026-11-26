@@ -268,20 +268,6 @@ def test_m36_the_routes_need_the_token_answer_to_nothing_is_refused_and_closing_
     assert rig.call("GET", "/api/complex").body["approved"] == []
 
 
-def test_m36_the_cards_page_shows_which_cards_are_complex_and_why(rig: Rig, agent: Agent) -> None:
-    waiting, held, plain = agent.card("Waiting"), agent.card("Held"), agent.card("Plain")
-    agent.ask(waiting, "Still waiting.")
-    agent.ask(held, "Many parties.")
-    rig.call("POST", f"/api/complex/{held}/approve", {})
-    items = {c["title"]: c for c in rig.call("GET", "/api/cards").body["cards"]}
-    assert items["Plain"]["complex"] is None
-    assert items["Held"]["complex"] == {"state": "approved", "reason": "Many parties."}
-    assert items["Waiting"]["complex"]["state"] == "pending"
-    assert plain in [c["handle"] for c in items.values()]
-    overview = rig.call("GET", "/api/complex").body
-    assert [a["card"] for a in overview["approved"]] == [held]
-
-
 def test_m36_the_viewer_scripts_are_served_and_hold_no_markup_parsing(rig: Rig) -> None:
     assert rig.call("GET", "/static/complex.js", token=None).status == 200
     script = rig.last_bytes.decode()

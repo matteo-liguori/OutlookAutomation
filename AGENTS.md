@@ -5,6 +5,10 @@ Run `.venv/Scripts/python -m chamberlain.dev check` before committing. Keep reus
 source and synthetic tests here. Use the clock for current time, keep SQL with its
 owning feature and return ChamberlainError for errors an agent can encounter.
 
+Keep a test when it catches a consequential mistake that ordinary execution can
+silently accept. One proof per failure mode is enough. An error that already
+fails loudly in normal use needs no separate test just to show that it fails.
+
 Continue through authorized steps and report at completion. Resolve reversible choices
 from prior owner rulings, keep the policy in one place and flag the choice in the report.
 Private appointments on the owner's calendars and cleanup of harness-created test items

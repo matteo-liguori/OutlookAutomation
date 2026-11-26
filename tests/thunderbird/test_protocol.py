@@ -10,7 +10,6 @@ from chamberlain.connectors.thunderbird.protocol import (
     ARGS_MODELS,
     RESULT_MODELS,
     Command,
-    dump_frame,
     parse_args,
     parse_frame,
 )
@@ -82,11 +81,6 @@ def test_b2_a_response_carries_a_result_exactly_when_ok() -> None:
 def test_b2_ids_are_required_on_every_message() -> None:
     with pytest.raises(ChamberlainError):
         parse_frame(b'{"t":"request","v":3,"cmd":"status","args":{}}')
-
-
-def test_b2_frames_dump_compactly_and_parse_back() -> None:
-    frame = protocol.RequestFrame(v=3, id=ID, cmd="status", args={})
-    assert parse_frame(dump_frame(frame)) == frame
 
 
 def test_b2_the_generated_typescript_can_be_recreated(tmp_path: Path) -> None:

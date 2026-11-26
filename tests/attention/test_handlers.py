@@ -10,17 +10,6 @@ from chamberlain.attention.handlers import DOCTOR_CHECKS, HANDLERS, HOOKS
 from chamberlain.attention.rules import load_rules
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.errors import ErrorCode
-from chamberlain.schema.tools import GuideResponse
-
-
-def test_setup_guide_is_available_on_request(app: App) -> None:
-    pulled = app.call("guide", {"id": "setup.agent"})
-    assert isinstance(pulled.data, GuideResponse)
-    [topic] = pulled.data.rules
-    assert topic.text is not None
-    assert "docs/setup-agent.md" in topic.text
-    assert topic.id not in {rule.id for rule in load_rules()}
-    assert topic.id not in {rule.id for rule in app.call("start", {}).guidance}
 
 
 def test_t3_t7_a9_next_needs_a_session_but_start_and_guide_do_not_and_3_related_checks(

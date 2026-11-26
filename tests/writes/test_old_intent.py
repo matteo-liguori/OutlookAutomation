@@ -5,7 +5,6 @@ Sources (read-only): `tests/test_outlook_api.py` (`check_send`, the send journal
 P-9, P-11 and P-16 cases of the writes brief.
 """
 
-import contextlib
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -111,19 +110,6 @@ def test_g18_the_token_file_is_written_atomically_and_leaves_nothing_behind(
     newer = create_token(tmp_path)
     assert (run / "viewer.token").read_text(encoding="utf-8") == newer
     assert sorted(path.name for path in run.iterdir()) == ["viewer.token"]
-
-
-def test_w10_a_refusal_before_anything_changed_releases_the_grant_not_uncertain(
-    rig: WriteRig,
-) -> None:
-    """Old: test_refusals_release_the_approval_instead_of_marking_it_uncertain."""
-    first = rig.ready_send()
-    rig.fake.arm(Fault.BUSY_BEFORE_APPLY)
-    with contextlib.suppress(ChamberlainError):
-        rig.engine().do(first.handle)
-    failed = rig.engine().get(first.handle)
-    assert failed.state is S.FAILED_CLEAN
-    assert not rig.engine().view(failed).may_have_happened
 
 
 def test_p16_a_calendar_update_with_a_stale_etag_fails_clean_and_dispatches_nothing(

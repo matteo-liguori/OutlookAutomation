@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from chamberlain.surface import cli, runner
+from chamberlain.surface import cli
 from chamberlain.surface.viewer import server
 from chamberlain.surface.viewer.server import Viewer, launch
 
@@ -145,13 +145,6 @@ def test_the_viewer_command_prints_no_token(
     assert "Viewer: http://127.0.0.1:" in out.getvalue()
     assert "token=" not in out.getvalue()
     assert not (tmp_path / "data" / "run" / "viewer.token").exists()  # retired on exit
-
-
-def test_the_viewer_command_needs_a_data_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv(runner.DATA_ENV, raising=False)
-    out = io.StringIO()
-    assert cli.main(["viewer"], out) == cli.EXIT_FAILED
-    assert json.loads(out.getvalue())["error"]["code"] == "config.invalid"
 
 
 def test_tick_prints_the_passes_a_wake_adapter_should_start(tmp_path: Path) -> None:

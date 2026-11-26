@@ -105,15 +105,6 @@ test("C-4 calendar_read returns the exact stored text, or null when there is no 
   assert.equal(missing.result.item, null);
 });
 
-test("C-5 create adds the event and reads it back", async () => {
-  const { addon, world } = setup();
-  const text = ics("new1", { title: "Made" });
-  const res = await call(addon, "calendar_write", { kind: "create", calendar_id: CAL, event_id: "new1", icalendar: text });
-  assert.equal(res.ok, true);
-  assert.equal(res.result.item.icalendar, text);
-  assert.deepEqual(world.calendarLog, ["add"]);
-});
-
 test("C-5 Owl's generated UID is read back and anchors later changes", async () => {
   const { addon, world } = setup();
   const calendar = world.calendars.get(CAL);

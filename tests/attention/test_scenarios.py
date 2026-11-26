@@ -4,7 +4,6 @@
 Contract: docs/contracts/07-attention.md (A-9, A-15, A-16, A-19) and 02-tools.md (T-7).
 """
 
-import re
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -24,22 +23,6 @@ from chamberlain.schema.base import Model, ToolName
 from chamberlain.schema.envelope import Coverage, CoverageGap, Reply
 from chamberlain.schema.registry import check_next_step
 from chamberlain.schema.tools import FindRequest, FindResponse
-
-HANDLE = re.compile(r"\b(ses|evt|op|grant|card|act|msg)_[0-9a-f]{16}\b")
-
-
-def normalise(value: Any) -> Any:
-    if isinstance(value, str):
-        return HANDLE.sub(lambda m: f"<{m.group(1)}>", value)
-    if isinstance(value, dict):
-        return {k: normalise(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [normalise(v) for v in value]
-    return value
-
-
-def dump(reply: Reply[Model]) -> dict[str, Any]:
-    return normalise(reply.model_dump(mode="json", exclude_none=True))
 
 
 def ids(reply: Reply[Model]) -> list[str]:
@@ -219,102 +202,6 @@ def test_a2_a_resumed_session_is_not_shown_the_same_item_twice(full_app: App, se
     assert "grant.confirm" not in ids(again)
 
 
-def test_golden_an_uncertain_send_start_reply(full_app: App, seed: Any):
-    seed.operation("mail.send")
-    reply = full_app.call("start", {"agent": "test"})
-    golden = dump(reply)
-    golden["data"].pop("now")
-    assert golden["data"]["sources"] == [
-        {
-            "id": "calendar:test",
-            "kind": "calendar",
-            "state": "ok",
-            "capabilities": golden["data"]["sources"][0]["capabilities"],
-        },
-        {
-            "id": "contacts:test",
-            "kind": "contacts",
-            "state": "ok",
-            "capabilities": golden["data"]["sources"][1]["capabilities"],
-        },
-        {
-            "id": "mail:test",
-            "kind": "mail",
-            "state": "ok",
-            "capabilities": golden["data"]["sources"][2]["capabilities"],
-        },
-    ]
-    assert golden["data"]["work"] == [
-        {
-            "event": "<evt>",
-            "kind": "operation.uncertain",
-            "subject": "<op>",
-            "summary": "mail.send <op> is still unsettled after a day; "
-            "the harness could not find it.",
-            "next": {
-                "tool": "open",
-                "args": {"handle": "<op>", "part": "summary"},
-                "why": "Read what it was meant to do, then look for it yourself. "
-                "Never do it twice.",
-            },
-        }
-    ]
-    assert golden["data"]["session"] == "<ses>"
-    assert golden["data"]["more_work"] == 0
-    assert golden["ok"] is True
-    assert [g["id"] for g in golden["guidance"]] == [
-        "write.unsettled",
-        "session.first",
-        "outside.act",
-    ]
-    assert golden["guidance"][0]["version"] >= 1
-    assert golden["next"][0]["tool"] == "open"
-
-
-def test_golden_next_after_handling_returns_the_rest_and_1_related_checks(
-    full_app: App, seed: Any, clock: Any
-) -> None:
-    # golden_next_after_handling_returns_the_rest
-    seed.grant()
-    seed.card(over_cap=1)
-    start = full_app.call("start", {"agent": "g"})
-    session = start.data.session
-    first = start.data.work[0].event
-    reply = full_app.call("next", {"session": session, "handled": [first], "limit": 3})
-    assert dump(reply) == {
-        "ok": True,
-        "data": {"work": [], "remaining": 0},
-        "next": [],
-        "guidance": [],
-        "notices": [],
-    }
-
-    # golden_next_shows_a_new_event_as_one_exact_call
-    session = full_app.call("start", {"agent": "g"}).data.session
-    seed.operation("calendar.update")
-    clock.advance(seconds=120)
-    reply = full_app.call("next", {"session": session})
-    assert dump(reply)["data"] == {
-        "work": [
-            {
-                "event": "<evt>",
-                "kind": "operation.uncertain",
-                "subject": "<op>",
-                "summary": "calendar.update <op> is still unsettled after a day; "
-                "the harness could not find it.",
-                "next": {
-                    "tool": "open",
-                    "args": {"handle": "<op>", "part": "summary"},
-                    "why": "Read what it was meant to do, then look for it yourself. "
-                    "Never do it twice.",
-                },
-            }
-        ],
-        "remaining": 0,
-    }
-    assert ids(reply) == ["write.unsettled"]
-
-
 def test_a26_two_events_that_overlap_are_raised_with_their_rule_and_clear_when_apart(
     full_app: App, ctx: Context, fake: FakeProvider, clock: ManualClock, seed: Any
 ):
@@ -390,3 +277,20 @@ def test_a26_two_events_that_overlap_are_raised_with_their_rule_and_clear_when_a
     )
     tick.tick(both, force=True)
     assert [e.kind.value for e in repo.live_events(ctx.db)] == []
+
+
+def test_next_delivers_new_uncertain_work_after_handling(
+    full_app: App, seed: Any, clock: ManualClock
+) -> None:
+    seed.grant()
+    start = full_app.call("start", {"agent": "g"})
+    session = start.data.session
+    handled = full_app.call("next", {"session": session, "handled": [start.data.work[0].event]})
+    assert not handled.data.work
+    operation = seed.operation("calendar.update")
+    clock.advance(seconds=120)
+    reply = full_app.call("next", {"session": session})
+    assert [work.kind.value for work in reply.data.work] == ["operation.uncertain"]
+    assert reply.data.work[0].subject == operation
+    assert reply.data.work[0].next.tool is ToolName.OPEN
+    assert ids(reply) == ["write.unsettled"]

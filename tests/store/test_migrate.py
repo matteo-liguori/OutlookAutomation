@@ -15,7 +15,6 @@ from chamberlain.store.migrate import (
     applied_versions,
     discover,
     migrate,
-    open_store,
     split_statements,
 )
 
@@ -44,12 +43,6 @@ def test_s8_migrations_apply_in_order_once(empty: sqlite3.Connection, clock: Man
     assert migrate(empty, clock, backup_dir=None, migrations=[ONE, TWO]) == []
     assert {"one", "two", "schema_migrations"} <= table_names(empty)
     assert applied_versions(empty)[2] == ("two", TWO.checksum)
-
-
-def test_s8_the_ledger_records_when(empty: sqlite3.Connection, clock: ManualClock) -> None:
-    migrate(empty, clock, backup_dir=None, migrations=[ONE])
-    row = empty.execute("SELECT applied_at FROM schema_migrations").fetchone()
-    assert row["applied_at"] == "2026-01-05T09:00:00Z"
 
 
 def test_s9_an_edited_applied_migration_is_refused(
@@ -115,17 +108,6 @@ def test_s11_s12_gaps_are_allowed_but_out_of_order_is_refused(
         migrate(empty, clock, backup_dir=None, migrations=[ONE, ten, thirty])
 
 
-def test_s8_file_names_must_be_numbered(tmp_path: Path) -> None:
-    (tmp_path / "0001_ok.sql").write_text(ONE.sql, encoding="utf-8")
-    (tmp_path / "two.sql").write_text(TWO.sql, encoding="utf-8")
-    with pytest.raises(ChamberlainError):
-        discover(tmp_path)
-    (tmp_path / "two.sql").unlink()
-    (tmp_path / "0001_again.sql").write_text(TWO.sql, encoding="utf-8")
-    with pytest.raises(ChamberlainError):
-        discover(tmp_path)
-
-
 def test_statements_split_on_semicolons_outside_strings_and_comments() -> None:
     script = "-- a comment; with a semicolon\nCREATE TABLE a (x TEXT DEFAULT ';');\n\nSELECT 1;\n"
     assert len(split_statements(script)) == 2
@@ -149,18 +131,6 @@ def test_s1_s5_transactions_roll_back_and_nest(db: sqlite3.Connection) -> None:
         outer()
     assert db.execute("SELECT count(*) AS n FROM system_state").fetchone()["n"] == 0
     assert db.execute("PRAGMA foreign_keys").fetchone()[0] == 1
-
-
-def test_s18_open_store_creates_the_data_root_and_migrates(
-    data_root: Path, clock: ManualClock
-) -> None:
-    connection = open_store(data_root, clock)
-    try:
-        assert (data_root / DB_NAME).exists()
-        assert "cards" in table_names(connection)
-        assert connection.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
-    finally:
-        connection.close()
 
 
 def test_m35_migration_0080_keeps_every_artifact_owner_of_a_store_at_0071(

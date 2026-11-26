@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from chamberlain.connectors.fake.world import StoredEvent
 from chamberlain.domain.calendar import EventFields, EventStatus, Response
 from chamberlain.domain.grants import StandingScope
 from chamberlain.domain.handles import HandleKind
@@ -72,6 +73,16 @@ def handle_on(rig: WriteRig, source: str, uid: str) -> str:
     return rig.refs.remember(HandleKind.CALENDAR_EVENT, source, copy.id)
 
 
+@pytest.fixture
+def invitation(owned: WriteRig) -> tuple[str, StoredEvent, StoredEvent]:
+    uid = send_invitation(owned, OWNER_B)
+    mine = owned.fake.calendar.copy_for(CALENDAR, uid)
+    theirs = owned.fake.calendar.copy_for(CALENDAR_B, uid)
+    assert mine is not None
+    assert theirs is not None
+    return uid, mine, theirs
+
+
 def test_g12b_an_invitation_to_the_owners_own_address_needs_only_agent_evidence(
     owned: WriteRig,
 ) -> None:
@@ -99,12 +110,9 @@ def test_g12b_authorised_senders_owner_addresses_count_as_the_owners(rig: WriteR
 
 def test_w33_the_invitation_reaches_the_invitees_calendar_and_the_answer_comes_back(
     owned: WriteRig,
+    invitation: tuple[str, StoredEvent, StoredEvent],
 ) -> None:
-    uid = send_invitation(owned, OWNER_B)
-    mine = owned.fake.calendar.copy_for(CALENDAR, uid)
-    theirs = owned.fake.calendar.copy_for(CALENDAR_B, uid)
-    assert mine is not None
-    assert theirs is not None
+    uid, mine, theirs = invitation
     assert mine.fields.attendees == (OWNER_B,)
     assert theirs.organiser == OWNER
     assert theirs.my_response is Response.NEEDS_ACTION
@@ -136,12 +144,9 @@ def test_w33_the_invitation_reaches_the_invitees_calendar_and_the_answer_comes_b
 
 def test_w33_changing_the_time_resets_answers_and_cancelling_removes_the_copy(
     owned: WriteRig,
+    invitation: tuple[str, StoredEvent, StoredEvent],
 ) -> None:
-    uid = send_invitation(owned, OWNER_B)
-    mine = owned.fake.calendar.copy_for(CALENDAR, uid)
-    theirs = owned.fake.calendar.copy_for(CALENDAR_B, uid)
-    assert mine is not None
-    assert theirs is not None
+    uid, mine, theirs = invitation
     theirs.my_response = Response.ACCEPTED
     mine.participants[OWNER_B] = Response.ACCEPTED
 
@@ -182,12 +187,10 @@ def test_w33_preview_reports_attendees_when_addresses_are_unavailable() -> None:
     assert "Cancellation sent to: attendee addresses unavailable" in preview
 
 
-def test_w33_removing_an_attendee_cancels_that_persons_copy(owned: WriteRig) -> None:
-    uid = send_invitation(owned, OWNER_B)
-    mine = owned.fake.calendar.copy_for(CALENDAR, uid)
-    theirs = owned.fake.calendar.copy_for(CALENDAR_B, uid)
-    assert mine is not None
-    assert theirs is not None
+def test_w33_removing_an_attendee_cancels_that_persons_copy(
+    owned: WriteRig, invitation: tuple[str, StoredEvent, StoredEvent]
+) -> None:
+    uid, mine, theirs = invitation
     update = CalendarUpdate(
         source=CALENDAR,
         event_ref=handle_on(owned, CALENDAR, uid),

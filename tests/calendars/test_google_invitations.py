@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 from cal_fake_google import FakeGoogleApi
+from cal_helpers import prepare_answer
 from test_google_contract import build
 
 from chamberlain.connectors.fake.world import Fault
@@ -14,7 +15,6 @@ from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
-    CalendarRespond,
     CalendarUpdate,
 )
 from chamberlain.domain.operations import DispatchOutcome, Prepared, ReconcileStatus
@@ -224,16 +224,7 @@ def test_w33_a_received_invitation_reads_with_its_organiser_and_my_answer(world:
 def test_w33_answering_patches_only_my_entry_and_tells_the_organiser(world: World) -> None:
     port, api, _ = world
     locator = seed_received(api)
-    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
-    etag = port.read(SOURCE, locator).etag
-    answer = CalendarRespond(
-        source=SOURCE,
-        event_ref=handle,
-        expected_etag=etag,
-        response="declined",
-        organiser="boss@example.test",
-    )
-    prepared = port.prepare(answer, {handle: locator})
+    prepared = prepare_answer(port, SOURCE, locator, "boss@example.test", "declined")
     assert port.dispatch(prepared, "k-answer").outcome is DispatchOutcome.APPLIED
     method, _, params = mutations(api)[-1]
     assert (method, params) == ("PATCH", {"sendUpdates": "all"})
@@ -259,54 +250,30 @@ def test_w33_an_invitation_that_lists_only_me_as_guest_can_be_answered(world: Wo
             "attendees": [{"email": api.owner, "self": True, "responseStatus": "needsAction"}],
         }
     )
-    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
-    etag = port.read(SOURCE, locator).etag
-    answer = CalendarRespond(
-        source=SOURCE,
-        event_ref=handle,
-        expected_etag=etag,
-        response="accepted",
-        organiser="boss@example.test",
-    )
-    prepared = port.prepare(answer, {handle: locator})
+    prepared = prepare_answer(port, SOURCE, locator, "boss@example.test", "accepted")
     assert port.dispatch(prepared, "k-only-me").outcome is DispatchOutcome.APPLIED
     assert port.read(SOURCE, locator).my_response is Response.ACCEPTED
 
 
-def test_w8_an_answer_whose_reply_was_lost_settles_from_the_read_back(world: World) -> None:
+@pytest.mark.parametrize(
+    ("fault", "expected"),
+    [
+        (Fault.LOSE_RESPONSE_AFTER_APPLY, ReconcileStatus.PRESENT),
+        (Fault.LOSE_BEFORE_APPLY, ReconcileStatus.ABSENT),
+    ],
+    ids=("reply-lost", "not-applied"),
+)
+def test_w8_uncertain_answer_reconciles_by_observation(
+    world: World, fault: Fault, expected: ReconcileStatus
+) -> None:
     port, api, _ = world
-    locator = seed_received(api)
-    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
-    answer = CalendarRespond(
-        source=SOURCE,
-        event_ref=handle,
-        expected_etag=port.read(SOURCE, locator).etag,
-        response="accepted",
-        organiser="boss@example.test",
-    )
-    prepared = port.prepare(answer, {handle: locator})
-    api.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
-    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
-    assert port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
-
-
-def test_w8_an_answer_that_never_landed_is_proven_absent(world: World) -> None:
-    port, api, _ = world
-    locator = seed_received(api)
-    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
-    answer = CalendarRespond(
-        source=SOURCE,
-        event_ref=handle,
-        expected_etag=port.read(SOURCE, locator).etag,
-        response="accepted",
-        organiser="boss@example.test",
-    )
-    prepared = port.prepare(answer, {handle: locator})
-    api.arm(Fault.LOSE_BEFORE_APPLY)
+    prepared = prepare_answer(port, SOURCE, seed_received(api), "boss@example.test", "accepted")
+    api.arm(fault)
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
     settled = port.reconcile(prepared, "k")
-    assert settled.status is ReconcileStatus.ABSENT
-    assert settled.proof
+    assert settled.status is expected
+    if expected is ReconcileStatus.ABSENT:
+        assert settled.proof
 
 
 def test_w35_the_invitee_copy_is_refused_for_change_and_cancel(world: World) -> None:

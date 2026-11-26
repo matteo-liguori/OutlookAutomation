@@ -5,7 +5,6 @@ from typing import Any
 
 import pytest
 from cal_bridge import FakeCalendarBridge
-from cal_owl_rig import OwlRig
 
 from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.calendar_support.port import payload
@@ -21,11 +20,8 @@ from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import CalendarCreate, CalendarDelete, CalendarUpdate
 from chamberlain.domain.operations import DispatchOutcome, ReconcileStatus
-from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from support.calendar_contract import CalendarPortContract
-from support.rigs import CalendarRig
 
 SOURCE = "calendar:test"
 START = datetime(2027, 3, 1, 10, 0, tzinfo=UTC)
@@ -42,14 +38,6 @@ def fields(title: str = "Event", **extra: Any) -> EventFields:
     return EventFields.model_validate(
         {"title": title, "start": START, "end": START + timedelta(minutes=30)} | extra
     )
-
-
-class TestOwlContract(CalendarPortContract):
-    @pytest.fixture
-    def rig(self) -> CalendarRig:
-        port, bridge, clock = build()
-        assert isinstance(port, CalendarPort)
-        return OwlRig(port, bridge, clock)
 
 
 def test_p5_p16_the_capability_set_is_narrow_and_honest_and_3_related_checks() -> None:

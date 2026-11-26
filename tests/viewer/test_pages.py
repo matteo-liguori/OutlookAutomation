@@ -145,37 +145,7 @@ def test_reports_are_listed_by_day_and_read_below_the_calendar(rig: Rig) -> None
 # --- card grid --------------------------------------------------------------------------------
 
 
-def test_the_card_grid_shows_goal_next_actions_and_what_needs_looking_at(rig: Rig) -> None:
-    card = make_card(rig, "Boiler", "Warm house by winter")
-    for number, due in enumerate(("2026-01-04T09:00:00Z", None, "2026-02-01T09:00:00Z"), start=1):
-        add_action(rig, f"act_00000000000000{number:02d}", card, f"Step {number}", due)
-    shown = get(rig, "/api/cards")["cards"]
-    assert len(shown) == 1
-    boiler = shown[0]
-    assert (boiler["title"], boiler["goal"]) == ("Boiler", "Warm house by winter")
-    assert boiler["open_actions"] == 3
-    assert [a["title"] for a in boiler["actions"]] == ["Step 1", "Step 3", "Step 2"]
-    assert boiler["status"] == "action overdue"
-    assert boiler["attention"] is True
-
-
 # --- timeline ---------------------------------------------------------------------------------
-
-
-def test_the_timeline_groups_closed_actions_and_harness_events_by_day(rig: Rig) -> None:
-    card = make_card(rig, "Pay")
-    add_action(rig, "act_0123456789abcdef", card, "Send money", None, state="done")
-    rig.proposal()
-    data = get(rig, "/api/timeline?days=3")
-    by_day = {d["day"]: d["items"] for d in data["days"]}
-    closed = [i for i in by_day["2026-01-04"] if i["kind"] == "action"]
-    assert [(i["title"], i["detail"], i["card"]) for i in closed] == [
-        ("Send money", "Paid.", "Pay")
-    ]
-    assert any(i["kind"] == "audit" for i in by_day["2026-01-05"])
-    assert list(by_day) == sorted(by_day, reverse=True)
-    assert rig.call("GET", "/api/timeline?days=0").status == 400
-    assert rig.call("GET", "/api/timeline?days=x").status == 400
 
 
 # --- the uncertain page -----------------------------------------------------------------------

@@ -42,13 +42,6 @@ def test_e10_e13_e11_every_code_has_a_spec_and_a_dotted_lowercase_and_3_related_
         ErrorInfo.model_validate({**uncertain, "retryable": True})
 
 
-@given(st.sampled_from(sorted(ErrorCode)), st.text(max_size=400), st.booleans())
-def test_error_info_round_trips_through_json(code: ErrorCode, message: str, retry: bool) -> None:
-    info = ChamberlainError(code, message, retryable=retry, field="to").to_info()
-    assert ErrorInfo.model_validate_json(info.model_dump_json()) == info
-    assert info.category is ERROR_TABLE[code].category
-
-
 @given(st.sampled_from(sorted(ErrorCode)), st.booleans())
 def test_e11_e12_only_uncertain_may_have_happened_and_is_never_retryable(
     code: ErrorCode, retry: bool

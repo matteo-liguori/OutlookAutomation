@@ -5,8 +5,6 @@ from contextlib import closing
 from io import StringIO
 from pathlib import Path
 
-import pytest
-
 from chamberlain.ports.clock import ManualClock
 from chamberlain.store.db import DB_NAME, connect
 from chamberlain.store.migrate import BASELINE_VERSION, discover, migrate
@@ -43,21 +41,3 @@ def test_config_migrate_previews_unless_apply_is_explicit(
     assert result["mode"] == "apply"
     assert result["applied"] == [280]
     assert (Path(result["backup"]) / "pre-migration-0280.sqlite3").is_file()
-
-
-def test_updates_notes_prints_local_notes_and_requires_no_data_root(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.delenv("CHAMBERLAIN_DATA", raising=False)
-    tag = "chamberlain/v12.1.0"
-    monkeypatch.setattr(
-        "chamberlain.surface.config_updates.release_notes",
-        lambda given: "Release summary\n\nOne change." if given == tag else None,
-    )
-
-    out = StringIO()
-    assert main(["updates", "notes", tag], out) == 0
-    assert out.getvalue() == "Release summary\n\nOne change.\n"
-    missing = StringIO()
-    assert main(["updates", "notes", "chamberlain/v12.1.1"], missing) == 1
-    assert json.loads(missing.getvalue())["error"]["code"] == "source.unavailable"

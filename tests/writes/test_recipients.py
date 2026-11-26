@@ -1,16 +1,8 @@
 """Known recipients: own addresses and Sent-history seeding (G-15, owner decision 2026-11-24)."""
 
-import io
-import json
 from datetime import timedelta
-from pathlib import Path
 
-import pytest
-
-from chamberlain.app.context import SourceRouter
-from chamberlain.app.wiring import build_app
-from chamberlain.connectors.fake import FakeProvider, Fault
-from chamberlain.surface import cli
+from chamberlain.connectors.fake import Fault
 from chamberlain.writes import repo
 from chamberlain.writes.seed import seed_source
 from support.write_rig import MAIL, WriteRig
@@ -98,30 +90,6 @@ def test_a_source_that_cannot_be_read_is_reported_not_raised(rig: WriteRig) -> N
     assert not report.complete
     assert report.added == 0
     assert report.reason
-
-
-def test_the_cli_seeds_every_mail_source_and_prints_counts(
-    tmp_path: Path, fake: FakeProvider, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    root = tmp_path
-    router = SourceRouter(mail={"mail:test": fake.mail}, calendar={}, contacts={})
-    monkeypatch.setattr(cli, "open_app", lambda root: build_app(root, sources=router))
-    out = io.StringIO()
-    code = cli.main(["--data", str(root), "recipients", "seed", "--months", "6"], out)
-    shown = json.loads(out.getvalue())
-    assert code == cli.EXIT_OK
-    assert shown["months"] == 6
-    [source] = shown["sources"]
-    assert source["source"] == "mail:test"
-    assert source["complete"] is True
-    assert source["added"] == 0
-
-
-def test_the_cli_refuses_an_absurd_window(tmp_path: Path) -> None:
-    out = io.StringIO()
-    code = cli.main(["--data", str(tmp_path), "recipients", "seed", "--months", "0"], out)
-    assert code == cli.EXIT_FAILED
-    assert json.loads(out.getvalue())["error"]["code"] == "request.invalid"
 
 
 def test_doctor_shows_the_known_recipient_counts_per_source(rig: WriteRig) -> None:

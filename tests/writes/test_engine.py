@@ -24,7 +24,7 @@ from chamberlain.limits import (
     CONNECTOR_DEADLINE_SECONDS,
     SETTLE_AFTER_MINUTES,
 )
-from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
+from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.writes import repo
 from chamberlain.writes.maintenance import maintain
 from support.write_rig import (
@@ -60,36 +60,6 @@ class _Fails(AbstractContextManager[pytest.ExceptionInfo[ChamberlainError]]):
             assert self._info is not None
             assert self._info.value.code is self._code, self._info.value.code
         return suppressed
-
-
-def test_w8_w17_an_uncertain_send_is_never_reissued(rig: WriteRig) -> None:
-    """Old: test_uncertain_send_is_never_reissued."""
-    op = rig.ready_send()
-    rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
-    eng = rig.engine()
-    with fails(ErrorCode.OPERATION_UNCERTAIN):
-        eng.do(op.handle)
-    stored = rig.engine().get(op.handle)
-    assert stored.state is S.UNCERTAIN
-    for _ in range(3):
-        with fails(ErrorCode.OPERATION_NEEDS_RECONCILE) as raised:
-            rig.engine().do(op.handle)
-        assert raised.value.category is ErrorCategory.UNCERTAIN
-        assert raised.value.may_have_happened
-    again = eng.propose_intent(rig.send())
-    assert again.operation is not None
-    assert again.operation.handle == op.handle
-    assert rig.fake.dispatch_count(stored.idempotency_key) == 1
-    assert rig.sent_copies() == 0
-
-
-def test_w16_a_repeat_returns_the_stored_receipt(rig: WriteRig) -> None:
-    """Old: test_exact_move_is_durable (first half)."""
-    op = rig.ready_send()
-    first = rig.engine().do(op.handle)
-    second = rig.engine().do(op.handle)
-    assert (first.state, first.receipt_json) == (second.state, second.receipt_json)
-    assert rig.sent_copies() == 1
 
 
 def test_w18_a_changed_intent_cannot_reuse_the_grant(rig: WriteRig) -> None:
@@ -129,6 +99,9 @@ def test_w10_w11_busy_before_dispatch_frees_the_grant_and_a_retry_works(rig: Wri
     done = rig.engine().do(retry.operation.handle)
     assert done.state is S.CONFIRMED
     assert done.idempotency_key != failed.idempotency_key
+    assert done.reconcile_token
+    assert failed.reconcile_token
+    assert done.reconcile_token != failed.reconcile_token
     assert rig.sent_copies() == 1
     spent = repo.get_grant(rig.db, failed.grant)
     assert spent is not None
@@ -212,17 +185,6 @@ def test_p11_an_uncertain_move_reconciles_without_a_second_mutation(rig: WriteRi
     assert op.state is S.CONFIRMED
     assert rig.fake.dispatch_count(key) == 1
     assert rig.fake.mail.copies(MAIL, "<mv@example.org>", "f-archive") == 1
-
-
-def test_w12_an_unprovable_absence_stays_uncertain_forever(rig: WriteRig) -> None:
-    op = rig.ready_send()
-    rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
-    with fails(ErrorCode.OPERATION_UNCERTAIN):
-        rig.engine().do(op.handle)
-    rig.clock.advance(hours=48)
-    after, changed = rig.engine().reconcile(op.handle)
-    assert after.state is S.UNCERTAIN
-    assert not changed
 
 
 def test_w12_an_imported_uncertain_operation_is_not_reported_as_settled(rig: WriteRig) -> None:

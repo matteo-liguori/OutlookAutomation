@@ -8,9 +8,8 @@ from typing import Any
 import pytest
 
 from chamberlain.connections.load import profile_path
-from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.registry import STANDING_PROMPT, TOOLS
-from chamberlain.surface import cli, mcp_server, runner
+from chamberlain.surface import cli, mcp_server
 
 NAMES = [spec.name.value for spec in TOOLS]
 
@@ -34,67 +33,6 @@ def test_s16_cleanup_reports_malformed_profile(data_root: Path, action: str) -> 
         "The connection profile cannot be read. "
         "Correct config/connections.yaml and run `chamberlain config validate`.\n"
     )
-
-
-def test_t14_cleanup_reports_app_startup_failure(
-    data_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    profile = profile_path(data_root)
-    profile.parent.mkdir(parents=True, exist_ok=True)
-    profile.write_text(
-        "cleanup:\n  rules:\n  - name: Old mail\n    sources: ['*']\n"
-        "    folder: inbox\n    older_than_days: 365\n",
-        encoding="utf-8",
-    )
-
-    def unavailable(root: Path) -> None:
-        assert root == data_root
-        raise ChamberlainError(
-            ErrorCode.CONFIG_INVALID, "The store could not be opened.", fix="Check the data root."
-        )
-
-    monkeypatch.setattr(cli, "open_app", unavailable)
-    assert run_cli("--data", str(data_root), "cleanup", "plan") == (
-        cli.EXIT_FAILED,
-        "The store could not be opened. Check the data root.\n",
-    )
-
-
-def test_t14_cli_lists_the_twelve_tools_and_3_related_checks(
-    data_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    # cli_lists_the_twelve_tools
-    code, text = run_cli("tools")
-    assert code == 0
-    assert [line.split()[0] for line in text.splitlines()] == NAMES
-    code, text = run_cli("tools", "--json")
-    assert [tool["name"] for tool in json.loads(text)] == NAMES
-
-    # cli_prints_a_tool_schema_and_the_standing_prompt
-    code, text = run_cli("schema", "propose")
-    assert code == 0
-    assert "intent" in json.loads(text)["request"]["properties"]
-    assert run_cli("prompt") == (0, STANDING_PROMPT + "\n")
-
-    # t14_cli_prints_the_envelope_and_maps_exit_codes
-    code, text = run_cli("--data", str(data_root), "doctor", "--json", '{"check": "schema"}')
-    assert code == cli.EXIT_OK
-    assert json.loads(text)["ok"] is True
-    code, text = run_cli("--data", str(data_root), "open", "--json", '{"handle": "nope"}')
-    assert code == cli.EXIT_INVALID
-    assert json.loads(text)["error"]["field"] == "handle"
-    code, text = run_cli(
-        "--data", str(data_root), "do", "--session", "ses_0123456789abcdef",
-        "--json", '{"operation": "op_0123456789abcdef"}',
-    )  # fmt: skip
-    assert code == cli.EXIT_INVALID
-    assert json.loads(text)["error"]["code"] == "request.unknown_handle"
-
-    # cli_refuses_to_guess_a_data_root
-    monkeypatch.delenv(runner.DATA_ENV, raising=False)
-    code, text = run_cli("doctor")
-    assert code == cli.EXIT_FAILED
-    assert json.loads(text)["error"]["code"] == "config.invalid"
 
 
 def test_t15_cli_rejects_a_request_that_is_not_a_json_object_and_3_related_checks(

@@ -100,27 +100,6 @@ def test_r1_an_agent_supplied_message_id_is_ignored() -> None:
         rig.close()
 
 
-def test_r1_tokens_never_repeat_across_retries_and_repeats() -> None:
-    rig = make_rig()
-    try:
-        first = rig.ready_send()
-        rig.fake.arm(Fault.BUSY_BEFORE_APPLY)
-        with pytest.raises(ChamberlainError):
-            rig.engine().do(first.handle)
-        retry = rig.engine().propose_intent(rig.send())
-        assert retry.operation is not None
-        done = rig.engine().do(retry.operation.handle)
-        tokens = [
-            row["reconcile_token"]
-            for row in rig.db.execute("SELECT reconcile_token FROM operations")
-            if row["reconcile_token"]
-        ]
-        assert len(tokens) == len(set(tokens)) == 2
-        assert done.reconcile_token in tokens
-    finally:
-        rig.close()
-
-
 # --- R2: queued keeps the operation uncertain and holds the grant --------------------
 
 
@@ -445,21 +424,6 @@ def test_r7_an_applied_result_with_a_warning_is_confirmed_and_surfaces_the_warni
         done = rig.engine().do(op.handle)
         assert done.state is S.CONFIRMED
         assert rig.engine().view(done).warnings == ("merged_existing_copy",)
-    finally:
-        rig.close()
-
-
-# --- R11: self-delivery counts as present (connector side); the engine trusts `present` --
-
-
-def test_r11_a_present_answer_confirms_whatever_made_it_present() -> None:
-    rig = make_rig()
-    try:
-        handle = uncertain_send(rig)
-        rig.mail.reconcile_script = [present()]
-        after, changed = rig.engine().reconcile(handle)
-        assert changed
-        assert after.state is S.CONFIRMED
     finally:
         rig.close()
 

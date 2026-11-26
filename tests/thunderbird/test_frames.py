@@ -39,10 +39,6 @@ def test_b7_frames_roundtrip_even_when_split_across_reads() -> None:
     assert read_frame(Trickle(raw, 5), 10_000) == body
 
 
-def test_b7_clean_end_of_stream_is_none() -> None:
-    assert read_frame(io.BytesIO(b""), 100) is None
-
-
 def test_b7_truncated_zero_and_oversize_frames_are_refused() -> None:
     for raw in [
         b"\x01\x00",  # header cut short

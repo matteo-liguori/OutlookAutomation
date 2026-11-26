@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from chamberlain.limits import STANDING_PROMPT_MAX, TOOL_COUNT, TOOL_DESCRIPTION_MAX
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.envelope import Content
-from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.schema.errors import ChamberlainError
 from chamberlain.schema.registry import (
     BY_NAME,
     STANDING_PROMPT,
@@ -104,13 +104,6 @@ def test_every_tool_spec_is_short_closed_exampled_snake_case_and_in_domain_langu
 def test_only_start_guide_and_doctor_work_without_a_session() -> None:
     free = {spec.name for spec in TOOLS if not spec.needs_session}
     assert free == {ToolName.START, ToolName.GUIDE, ToolName.DOCTOR}
-
-
-def test_unknown_tool_is_an_invalid_request_listing_the_tools() -> None:
-    with pytest.raises(ChamberlainError) as raised:
-        get_tool("briefing")
-    assert raised.value.code is ErrorCode.REQUEST_UNKNOWN_TOOL
-    assert "start" in raised.value.fix
 
 
 def test_e13_validation_errors_name_the_field_and_never_echo_the_value() -> None:

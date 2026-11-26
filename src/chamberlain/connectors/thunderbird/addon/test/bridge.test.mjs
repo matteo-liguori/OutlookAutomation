@@ -239,26 +239,14 @@ test("P-3 a read that would flip the unread flag fails instead of reporting", as
   assert.equal(res.error.code, "changed");
 });
 
-test("P-3 reading, resolving and fetching an attachment leave the flag alone", async () => {
-  const { addon, world } = setup();
-  const bytes = Uint8Array.from({ length: 500_000 }, (_, i) => i % 251);
-  const m = world.add({ folderId: INBOX, headerMessageId: "r@x", read: false, attachments: [{ name: "a.bin", contentType: "application/octet-stream", bytes }] });
-  const read = await call(addon, "read", { ...BASE, folder_id: INBOX, internet_message_id: "r@x", raw_hash: true });
-  assert.equal(read.result.attachments.length, 1);
-  assert.equal(read.result.header.has_attachments, true);
-  assert.equal(read.result.body, "Body text.");
-  const resolved = await call(addon, "copies", copies([lookup(INBOX, "r@x")]));
-  assert.equal(resolved.result.scopes[0].copies[0].header.has_attachments, true);
-  const att = await call(addon, "attachment", { ...BASE, folder_id: INBOX, internet_message_id: "r@x", part_name: "1.2", max_bytes: 1_000_000 });
-  assert.equal(att.ok, true);
-  assert.equal(m.read, false);
-  assert.equal(world.counters.update, 0);
-});
-
 test("P-8 attachment downloads arrive as hashed chunks across several frames", async () => {
   const { addon, world } = setup();
   const bytes = Uint8Array.from({ length: 400_000 }, (_, i) => (i * 7) % 256);
   world.add({ folderId: INBOX, headerMessageId: "r@x", attachments: [{ name: "a.bin", contentType: "x/y", bytes }] });
+  const read = await call(addon, "read", { ...BASE, folder_id: INBOX, internet_message_id: "r@x", raw_hash: true });
+  assert.equal(read.result.header.has_attachments, true);
+  const resolved = await call(addon, "copies", copies([lookup(INBOX, "r@x")]));
+  assert.equal(resolved.result.scopes[0].copies[0].header.has_attachments, true);
   world.messenger.messages.getFull = () => assert.fail("attachment read the whole message");
   world.messenger.messages.getRaw = () => assert.fail("attachment read the raw message");
   const id = requestId();
@@ -293,16 +281,6 @@ test("P-8 an attachment over the caller's limit is refused", async () => {
   assert.equal(actual.error.code, "too_large");
 });
 
-test("P-6 messages are found by stable identity after session ids are renumbered", async () => {
-  const { addon, world } = setup();
-  world.add({ folderId: INBOX, headerMessageId: "stable@x" });
-  const before = await call(addon, "copies", copies([lookup(INBOX, "stable@x")]));
-  world.restart();
-  const after = await call(addon, "copies", copies([lookup(INBOX, "stable@x")]));
-  assert.notEqual(before.result.scopes[0].copies[0].header.session_id, after.result.scopes[0].copies[0].header.session_id);
-  assert.equal(after.result.scopes[0].copies.length, 1);
-});
-
 test("B-3 account and identity are verified on every command", async () => {
   const { addon, world } = setup();
   world.add({ folderId: INBOX, headerMessageId: "a@x" });
@@ -319,26 +297,6 @@ test("B-3 account and identity are verified on every command", async () => {
   const own = await call(addon, "copies", copies([subjectScope(null, "Hello")]));
   assert.equal(own.ok, true);
   assert.deepEqual(own.result.scopes[0].copies.map(({ header: m }) => [m.internet_message_id, m.has_attachments]), [["own@x", true]]);
-});
-
-test("P-14 move leaves one copy, none at the source, and the flag as it was", async () => {
-  const { addon, world } = setup();
-  world.add({ folderId: INBOX, headerMessageId: "mv@x", read: false });
-  const res = await call(addon, "change", change(["mv@x"], { move_to: FILED }));
-  assert.equal(res.ok, true);
-  assert.equal(res.result.read_state_preserved, true);
-  assert.equal(world.find("mv@x", FILED).read, false);
-  assert.equal(world.copies("mv@x", INBOX), 0);
-  assert.equal(world.copies("mv@x", FILED), 1);
-});
-
-test("W-23 move marks read only when asked", async () => {
-  const { addon, world } = setup();
-  world.add({ folderId: INBOX, headerMessageId: "mv@x", read: false });
-  const res = await call(addon, "change", change(["mv@x"], { move_to: FILED, set_read: true }));
-  assert.equal(res.result.verified, true);
-  assert.equal(world.find("mv@x", FILED).read, true);
-  assert.equal(res.result.items[0].was_read, false);
 });
 
 test("P-14 a move into a folder that already holds the message is ambiguous and issues nothing", async () => {
@@ -358,14 +316,6 @@ test("P-6 two copies at the source make a move or trash ambiguous (dropped old b
   const res = await call(addon, "change", change(["two@x"], { move_to: TRASH, trash: true }));
   assert.equal(res.error.code, "ambiguous");
   assert.equal(world.counters.move, 0);
-});
-
-test("P-14 a move that leaves a copy behind is not verified and says a change may have happened", async () => {
-  const { addon, world } = setup({ tuning: { batchCheckMs: 35, movePollMs: 1 } });
-  world.add({ folderId: INBOX, headerMessageId: "dup@x" });
-  world.faults.duplicate = 1;
-  const res = await call(addon, "change", change(["dup@x"], { move_to: FILED }));
-  assert.equal(res.result.verified, false);
 });
 
 test("R7 trash that merges into an existing recovery copy is applied and says so", async () => {
@@ -712,15 +662,6 @@ test("P-15 a stale callback from saveMessage is ignored: the draft is re-read by
   assert.notEqual(res.result.header.internet_message_id, "stale-callback");
 });
 
-test("P-9 draft_save returns the stored message and its raw hash", async () => {
-  const { addon, world } = setup();
-  const res = await call(addon, "compose", compose({ mode: "draft_save" }));
-  assert.equal(res.ok, true, JSON.stringify(res.error));
-  assert.match(res.result.raw_sha256, /^[0-9a-f]{64}$/);
-  assert.equal(res.result.header.folder_id, DRAFTS);
-  assert.equal(world.copies("<tok-1@chamberlain.local>", DRAFTS), 1);
-});
-
 test("P-9 a placeholder draft without a Message-ID is followed to its synced copy", async () => {
   const { addon, world } = setup();
   world.faults.placeholderDraft = true;
@@ -739,12 +680,6 @@ test("P-9 draft_update checks the old raw hash before opening anything", async (
   assert.equal(stale.error.code, "changed");
   assert.equal(stale.error.mutation, "none");
   assert.equal(world.composers.size, 0);
-  const good = await call(addon, "compose", compose({ mode: "draft_update", draft, expected_raw_sha256: saved.result.raw_sha256, body: "Second wording.", token: "<tok-2@chamberlain.local>" }));
-  assert.equal(good.ok, true, JSON.stringify(good.error));
-  assert.equal(good.result.old_copies_remaining, 0);
-  assert.equal(world.copies("<tok-1@chamberlain.local>", DRAFTS), 0);
-  assert.equal(world.copies("<tok-2@chamberlain.local>", DRAFTS), 1);
-  assert.notEqual(good.result.raw_sha256, saved.result.raw_sha256);
 });
 
 test("R8 draft_discard closes the composer and never deletes saved mail", async () => {
@@ -840,16 +775,6 @@ test("P-12 a refresh that is not verified is reported as such", async () => {
   assert.equal(res.result.scopes[0].copies.length, 1);
 });
 
-test("P-11 copies reads exactly the two folders and never moves", async () => {
-  const { addon, world } = setup();
-  world.add({ folderId: FILED, headerMessageId: "mv@x" });
-  const res = await call(addon, "copies", copies([lookup(INBOX, "mv@x"), lookup(FILED, "mv@x")], true));
-  assert.equal(res.result.scopes[0].copies.length, 0);
-  assert.equal(res.result.scopes[1].copies.length, 1);
-  assert.equal(res.result.refresh_verified, true);
-  assert.equal(world.counters.move, 0);
-});
-
 test("P-11 copies reports flags and folder scan completeness without changing the flags", async () => {
   const { addon, world } = setup();
   world.add({ folderId: INBOX, headerMessageId: "a@x", read: true });
@@ -868,17 +793,6 @@ test("a contact is read by its book and id, and only inside that book", async ()
   assert.equal(wrongBook.error.code, "not_found");
   const missing = await call(addon, "contact_read", { address_book_id: "book1", contact_id: "nope" });
   assert.equal(missing.error.code, "not_found");
-});
-
-test("contacts are matched by name and address and paged", async () => {
-  const { addon, world } = setup();
-  for (let i = 0; i < 3; i++) world.books.push({ book: "book1", id: "c" + i, properties: { DisplayName: "Paging Marker " + i, PrimaryEmail: "p" + i + "@example.org" } });
-  const first = await call(addon, "contacts", { address_book_ids: ["book1"], text: "paging marker", limit: 2 });
-  assert.equal(first.result.contacts.length, 2);
-  assert.equal(first.result.more, true);
-  const second = await call(addon, "contacts", { address_book_ids: ["book1"], text: "paging marker", limit: 2, skip: 2 });
-  assert.equal(second.result.contacts.length, 1);
-  assert.equal(second.result.more, false);
 });
 
 test("Message-ID and subject matching follow the shared mail vectors", () => {

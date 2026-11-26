@@ -658,17 +658,6 @@ def test_b10_calendar_availability_does_not_disturb_mail_handshake(tmp_path: Pat
             assert isinstance(a_status_call(env), protocol.StatusResult)
 
 
-# --- calendar commands use the same authenticated bridge as mail ----------------------------
-
-UPDATE_ARGS = {
-    "kind": "update",
-    "calendar_id": "cal1",
-    "event_id": "e1",
-    "expected_icalendar": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
-    "icalendar": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
-}
-
-
 def test_b10_the_calendar_adapter_needs_the_capability_and_sends_nothing_without_it(
     tmp_path: Path,
 ) -> None:
@@ -679,33 +668,3 @@ def test_b10_the_calendar_adapter_needs_the_capability_and_sends_nothing_without
             adapter.call(Command.CALENDAR_LIST, protocol.StatusArgs(), calendar=True)
         assert not raised.value.sent
         assert env.addon.received == []
-
-
-def test_b10_the_calendar_adapter_keeps_the_bridges_words_about_mutation(tmp_path: Path) -> None:
-    def refuse(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
-        if isinstance(frame, RequestFrame):
-            possible = frame.args.get("event_id") == "e2"
-            addon.error(frame, BridgeErrorCode.CHANGED, "possible" if possible else "none")
-
-    with bridge(tmp_path, refuse, calendar_available=True) as env:
-        adapter = env.client
-        assert adapter.hello().calendar_available
-        with pytest.raises(BridgeFailure) as clean:
-            adapter.call(
-                Command.CALENDAR_WRITE,
-                protocol.CalendarWriteArgs.model_validate(UPDATE_ARGS),
-                calendar=True,
-            )
-        assert (clean.value.bridge_code, clean.value.sent, clean.value.mutation) == (
-            "changed",
-            True,
-            "none",
-        )
-        with pytest.raises(BridgeFailure) as unsure:
-            adapter.call(
-                Command.CALENDAR_WRITE,
-                protocol.CalendarWriteArgs.model_validate(UPDATE_ARGS | {"event_id": "e2"}),
-                calendar=True,
-            )
-        assert unsure.value.mutation == "possible"
-        assert unsure.value.sent

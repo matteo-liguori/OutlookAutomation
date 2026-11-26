@@ -30,37 +30,6 @@ def fingerprint(root: Path) -> dict[str, str]:
     }
 
 
-def test_snapshot_resume_verify_and_selected_switch(
-    old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock, tmp_path: Path
-) -> None:
-    before = fingerprint(old_root)
-    assert detect_migration(old_root)["detected"] is True
-    assert migration_status(old_root, data_root).stage == "not_started"
-    assert not data_root.exists()
-    result = prepare_migration(old_root, data_root, clock=clock, secrets=secrets)
-    assert result.stage == "imported"
-    assert fingerprint(old_root) == before
-    assert set(fingerprint(result.backup)) <= set(before)
-    assert prepare_migration(old_root, data_root, clock=clock, secrets=secrets).stage == "imported"
-    verified = verify_migration(old_root, data_root)
-    assert verified.verification is not None
-    assert verified.verification.passed
-    assert verified.verification.matched_cards > 0
-    saved = migration_status(old_root, data_root)
-    assert saved.stage == "verified"
-    assert saved.verification == verified.verification
-    target = data_root / "import" / "sandbox" / "scheduler.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    original = {"active": "v1", "schedules": [{"time": "08:00"}], "other": 42}
-    target.write_text(json.dumps(original), encoding="utf-8")
-    digest = hashlib.sha256(target.read_bytes()).hexdigest()
-    switched = switch_migration(old_root, data_root, switch=SwitchTarget(target, digest))
-    assert switched.stage == "switched"
-    assert migration_status(old_root, data_root).verification == switched.verification
-    assert json.loads(target.read_text()) == {**original, "active": "v2"}
-    assert fingerprint(old_root) == before
-
-
 def test_detect_drift_and_reject_changed_target(
     old_root: Path, data_root: Path, secrets: MemorySecrets, clock: ManualClock, tmp_path: Path
 ) -> None:
@@ -253,11 +222,27 @@ def test_sandbox_switch_resumes_after_manifest_write(
 ) -> None:
     from chamberlain.importer import migrate
 
-    prepare_migration(old_root, data_root, clock=clock, secrets=secrets)
-    verify_migration(old_root, data_root)
+    before = fingerprint(old_root)
+    assert detect_migration(old_root)["detected"] is True
+    assert migration_status(old_root, data_root).stage == "not_started"
+    assert not data_root.exists()
+    result = prepare_migration(old_root, data_root, clock=clock, secrets=secrets)
+    assert result.stage == "imported"
+    backup = fingerprint(result.backup)
+    assert backup == {name: before[name] for name in backup}
+    assert fingerprint(old_root) == before
+    assert prepare_migration(old_root, data_root, clock=clock, secrets=secrets).stage == "imported"
+    verified = verify_migration(old_root, data_root)
+    assert verified.verification is not None
+    assert verified.verification.passed
+    assert verified.verification.matched_cards > 0
+    saved = migration_status(old_root, data_root)
+    assert saved.stage == "verified"
+    assert saved.verification == verified.verification
     path = data_root / "import" / "sandbox" / "scheduler.json"
     path.parent.mkdir(parents=True)
-    path.write_text(json.dumps({"active": "v1", "schedules": [{"time": "08:00"}]}))
+    original_manifest = {"active": "v1", "schedules": [{"time": "08:00"}], "other": 42}
+    path.write_text(json.dumps(original_manifest), encoding="utf-8")
     target = SwitchTarget(path, hashlib.sha256(path.read_bytes()).hexdigest())
     original = migrate._atomic_json
 
@@ -276,9 +261,12 @@ def test_sandbox_switch_resumes_after_manifest_write(
     assert json.loads(path.read_text())["active"] == "v2"
     assert migration_status(old_root, data_root).stage == "switching"
     monkeypatch.setattr(migrate, "_atomic_json", original)
+    switched = switch_migration(old_root, data_root, switch=target)
+    assert switched.stage == "switched"
+    assert migration_status(old_root, data_root).verification == switched.verification
     assert switch_migration(old_root, data_root, switch=target).stage == "switched"
-    assert switch_migration(old_root, data_root, switch=target).stage == "switched"
-    assert json.loads(path.read_text())["schedules"] == [{"time": "08:00"}]
+    assert json.loads(path.read_text()) == {**original_manifest, "active": "v2"}
+    assert fingerprint(old_root) == before
 
 
 def test_migration_does_not_consult_external_legacy_credential_location(

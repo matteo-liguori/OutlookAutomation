@@ -38,6 +38,13 @@ def seen(ctx: Context) -> set[str]:
     return {r["message_key"] for r in rows}
 
 
+def start_with_stale(app: App) -> tuple[str, Any]:
+    start = app.call("start", {})
+    return str(start.data.session), next(
+        w for w in start.data.work if w.kind.value == "source.stale"
+    )
+
+
 @pytest.fixture
 def after_a_long_absence(
     ctx: Context, seed: Any, fake: FakeProvider, clock: ManualClock
@@ -79,9 +86,7 @@ def test_a_the_last_day_is_read_at_once_and_the_older_and_1_related_checks(
     # a_yes_reads_the_older_mail_over_the_next_ticks_and_ends_the_question
     ctx, clock = after_a_long_absence
     go(ctx, clock)
-    start = app.call("start", {})
-    session = str(start.data.session)
-    item = next(w for w in start.data.work if w.kind.value == "source.stale")
+    session, item = start_with_stale(app)
     answered = app.call(
         "next", {"session": session, "handled": [item.event], "older_mail": [item.event]}
     )
@@ -104,9 +109,7 @@ def test_a_no_leaves_the_older_mail_unread_and_visible_and_a_later_yes_still_wor
 ) -> None:
     ctx, clock = after_a_long_absence
     go(ctx, clock)
-    start = app.call("start", {})
-    session = str(start.data.session)
-    item = next(w for w in start.data.work if w.kind.value == "source.stale")
+    session, item = start_with_stale(app)
     app.call("next", {"session": session, "handled": [item.event]})
     go(ctx, clock, 6)
     assert seen(ctx) == {"new0@x", "new1@x"}, "a no reads nothing more"
@@ -149,9 +152,7 @@ def test_a_a_reply_the_owner_sent_from_the_phone_in_the_held_span_still_reaches_
         date=clock.now() - timedelta(days=3, hours=1),
     )
     go(ctx, clock)
-    start = app.call("start", {})
-    session = str(start.data.session)
-    item = next(w for w in start.data.work if w.kind.value == "source.stale")
+    session, item = start_with_stale(app)
     app.call("next", {"session": session, "handled": [item.event], "older_mail": [item.event]})
     go(ctx, clock, 4)
     lines = [

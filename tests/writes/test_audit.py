@@ -63,36 +63,32 @@ def test_g21_editing_any_field_of_any_row_is_detected_at_that_row(
     assert report.first_bad_seq == 3
 
 
-def test_g21_editing_a_hash_breaks_the_next_link(rig: WriteRig) -> None:
+@pytest.mark.parametrize(
+    ("statement", "parameters", "first_bad", "problem"),
+    [
+        ("UPDATE audit_log SET hash = ? WHERE seq = 3", ("a" * 64,), 3, None),
+        ("DELETE FROM audit_log WHERE seq = 3", (), 3, None),
+        ("DELETE FROM audit_log WHERE seq >= 5", (), None, "rows are missing at the end"),
+        ("DELETE FROM audit_log WHERE seq <= 2", (), None, None),
+    ],
+    ids=("changed-hash", "missing-middle", "missing-tail", "missing-head"),
+)
+def test_g21_audit_chain_detects_tampering(
+    rig: WriteRig,
+    statement: str,
+    parameters: tuple[str, ...],
+    first_bad: int | None,
+    problem: str | None,
+) -> None:
     fill(rig, 6)
     lift_guards(rig)
-    rig.db.execute("UPDATE audit_log SET hash = ? WHERE seq = 3", ("a" * 64,))
-    assert verify(rig.db).first_bad_seq == 3
-
-
-def test_g21_deleting_a_row_in_the_middle_is_detected(rig: WriteRig) -> None:
-    fill(rig, 6)
-    lift_guards(rig)
-    rig.db.execute("DELETE FROM audit_log WHERE seq = 3")
+    rig.db.execute(statement, parameters)
     report = verify(rig.db)
     assert not report.ok
-    assert report.first_bad_seq == 3
-
-
-def test_g21_deleting_rows_from_the_end_is_detected(rig: WriteRig) -> None:
-    fill(rig, 6)
-    lift_guards(rig)
-    rig.db.execute("DELETE FROM audit_log WHERE seq >= 5")
-    report = verify(rig.db)
-    assert not report.ok
-    assert report.problem == "rows are missing at the end"
-
-
-def test_g21_deleting_the_first_rows_is_detected(rig: WriteRig) -> None:
-    fill(rig, 6)
-    lift_guards(rig)
-    rig.db.execute("DELETE FROM audit_log WHERE seq <= 2")
-    assert not verify(rig.db).ok
+    if first_bad is not None:
+        assert report.first_bad_seq == first_bad
+    if problem is not None:
+        assert report.problem == problem
 
 
 def test_g22_pruning_whole_months_leaves_a_checkpoint_and_a_verifying_chain(

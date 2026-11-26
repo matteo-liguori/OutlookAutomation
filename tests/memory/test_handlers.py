@@ -56,84 +56,6 @@ def card_of(reply: Reply[Model]) -> Any:
     return reply.data.card
 
 
-def test_t12_card_create_add_action_update_and_close_golden_and_1_related_checks(
-    app: App, ctx: Context
-) -> None:
-    # t12_card_create_add_action_update_and_close_golden
-    created = call(
-        app, "card", op="create", fields={"title": "Supplier quote", "goal": "Agree price"}
-    )
-    golden("card_create", created)
-    handle = card_of(created).handle
-    added = call(
-        app,
-        "card",
-        op="add_action",
-        card=handle,
-        action_fields={"title": "Send the quote", "due_at": "2026-01-09T09:00:00Z"},
-    )
-    golden("card_add_action", added)
-    action = card_of(added).actions[0].handle
-    updated = call(
-        app,
-        "card",
-        op="update",
-        card=handle,
-        expected_version=2,
-        fields={"position": "Quote drafted"},
-    )
-    assert card_of(updated).version == 3
-    conflict = call(app, "card", op="update", card=handle, expected_version=2, fields={"goal": "x"})
-    golden("card_version_conflict", conflict)
-    finished = call(app, "card", op="finish_action", action=action, outcome="Quote sent.")
-    assert card_of(finished).actions == ()
-    closed = call(app, "card", op="close", card=handle, outcome="Agreed at the quoted price.")
-    golden("card_close", closed)
-    assert card_of(closed).state == "closed"
-
-    # t12_over_cap_update_names_the_field_and_limit
-    handle = card_of(call(app, "card", op="create", fields={"title": "Capped"})).handle
-    too_long = app.call(
-        "card",
-        {"session": SESSION, "op": "update", "card": handle, "fields": {"goal": "g" * 401}},
-    )
-    assert too_long.error is not None  # rejected by the request schema before any write
-    assert too_long.error.field is not None
-    assert "goal" in too_long.error.field
-
-
-def test_t10_keep_note_evidence_and_artifact_golden(app: App) -> None:
-    card = card_of(call(app, "card", op="create", fields={"title": "Keeps things"})).handle
-    action = (
-        card_of(
-            call(app, "card", op="add_action", card=card, action_fields={"title": "Do the thing"})
-        )
-        .actions[0]
-        .handle
-    )
-    note = call(app, "keep", kind="note", owner=action, reason="scratch", text="Remember the VAT")
-    golden("keep_note", note)
-    evidence = call(
-        app, "keep", kind="evidence", owner=card, reason="approval", text="User approved the quote."
-    )
-    golden("keep_evidence", evidence)
-    artifact = call(
-        app, "keep", kind="artifact", owner=action, reason="draft text", text="Dear supplier,"
-    )
-    golden("keep_artifact", artifact)
-    assert isinstance(artifact.data, KeepResponse)
-    assert artifact.data.sha256 == sha256_bytes(b"Dear supplier,")
-    opened = call(app, "open", handle=artifact.data.handle, part="body")
-    golden("open_artifact_body", opened)
-    viewed = call(app, "open", handle=card)
-    golden("open_card", viewed)
-    found = call(app, "find", scope="cards", query="keeps")
-    golden("find_cards", found)
-    assert isinstance(found.data, FindResponse)
-    forgotten = call(app, "forget", handle=artifact.data.handle)
-    golden("forget_artifact", forgotten)
-
-
 def test_t10_keep_without_a_live_owner_is_refused_with_a_fix_golden(app: App, ctx: Context) -> None:
     unknown = call(
         app, "keep", kind="artifact", owner="act_0123456789abcdef", reason="r", text="orphan bytes"
@@ -268,3 +190,33 @@ def test_m23_doctor_storage_checks_report_through_the_app(ctx: Context) -> None:
     assert data is not None
     ids = {c["id"] for c in data.model_dump()["checks"]}
     assert {"storage.sweep", "storage.deletions", "storage.orphans", "storage.budget"} <= ids
+
+
+@pytest.mark.parametrize(
+    ("kind", "owner_kind"), [("note", "action"), ("evidence", "card"), ("artifact", "action")]
+)
+def test_keep_kinds_preserve_contents_through_the_tool(
+    app: App, kind: str, owner_kind: str
+) -> None:
+    card = card_of(call(app, "card", op="create", fields={"title": "Owner"})).handle
+    action = (
+        card_of(call(app, "card", op="add_action", card=card, action_fields={"title": "Next"}))
+        .actions[0]
+        .handle
+    )
+    kept = call(
+        app,
+        "keep",
+        kind=kind,
+        owner=card if owner_kind == "card" else action,
+        reason="test",
+        text="retained text",
+    )
+    assert isinstance(kept.data, KeepResponse)
+    assert kept.data.kind == kind
+    assert kept.data.sha256 == sha256_bytes(b"retained text")
+    if kind == "artifact":
+        opened = call(app, "open", handle=kept.data.handle, part="body")
+        assert opened.data is not None
+        assert opened.data.model_dump(mode="json")["content"]["text"] == "retained text"
+        assert call(app, "forget", handle=kept.data.handle).ok

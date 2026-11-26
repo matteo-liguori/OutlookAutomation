@@ -10,6 +10,7 @@ Delivery is for the live suite.
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from cal_helpers import prepare_answer
 from cal_radicale import RadicaleServer
 from cal_rigs import CALDAV_ADDRESS, CalDavRig
 from test_caldav_contract import basic, build
@@ -24,7 +25,6 @@ from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
-    CalendarRespond,
     CalendarUpdate,
 )
 from chamberlain.domain.operations import DispatchOutcome, ReconcileStatus
@@ -243,16 +243,7 @@ def test_w33_a_received_invitation_reads_with_its_organiser_and_my_answer(world:
 def test_w33_answering_changes_only_my_partstat_and_leaves_the_sequence(world: World) -> None:
     port, rig = world
     received(rig, "boss.ics")
-    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, "boss.ics")
-    etag = port.read(SOURCE, "boss.ics").etag
-    answer = CalendarRespond(
-        source=SOURCE,
-        event_ref=handle,
-        expected_etag=etag,
-        response="declined",
-        organiser=BOSS,
-    )
-    prepared = port.prepare(answer, {handle: "boss.ics"})
+    prepared = prepare_answer(port, SOURCE, "boss.ics", BOSS, "declined")
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.APPLIED
     text = stored_text(rig, "boss.ics")
     assert f"PARTSTAT=DECLINED;RSVP=TRUE:mailto:{CALDAV_ADDRESS}" in text
@@ -267,39 +258,19 @@ def test_w33_answering_changes_only_my_partstat_and_leaves_the_sequence(world: W
 def test_w36_a_stale_answer_is_refused_and_a_plain_event_cannot_be_answered(world: World) -> None:
     port, rig = world
     received(rig, "boss.ics")
-    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, "boss.ics")
-    stale = CalendarRespond(
-        source=SOURCE, event_ref=handle, expected_etag="x", response="accepted", organiser=BOSS
-    )
     with pytest.raises(ChamberlainError) as raised:
-        port.prepare(stale, {handle: "boss.ics"})
+        prepare_answer(port, SOURCE, "boss.ics", BOSS, "accepted", expected_etag="x")
     assert raised.value.code is ErrorCode.REMOTE_CHANGED
     plain = invite(port, "uid-6@t", fields())
-    plain_handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, plain)
-    own = CalendarRespond(
-        source=SOURCE,
-        event_ref=plain_handle,
-        expected_etag=port.read(SOURCE, plain).etag,
-        response="accepted",
-        organiser=BOSS,
-    )
     with pytest.raises(ChamberlainError) as invalid:
-        port.prepare(own, {plain_handle: plain})
+        prepare_answer(port, SOURCE, plain, BOSS, "accepted")
     assert invalid.value.code is ErrorCode.REQUEST_INVALID
 
 
 def test_w8_an_answer_that_never_landed_is_proven_absent(world: World) -> None:
     port, rig = world
     received(rig, "boss.ics")
-    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, "boss.ics")
-    answer = CalendarRespond(
-        source=SOURCE,
-        event_ref=handle,
-        expected_etag=port.read(SOURCE, "boss.ics").etag,
-        response="accepted",
-        organiser=BOSS,
-    )
-    prepared = port.prepare(answer, {handle: "boss.ics"})
+    prepared = prepare_answer(port, SOURCE, "boss.ics", BOSS, "accepted")
     rig.inject(Fault.LOSE_BEFORE_APPLY)
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
     settled = port.reconcile(prepared, "k")

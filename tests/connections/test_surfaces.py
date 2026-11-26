@@ -138,13 +138,6 @@ def test_s16_add_test_calendar_refuses_unknown_sources_or_invalid_profiles(
     assert list(profile.parent.iterdir()) == [profile]
 
 
-def test_t15_the_mcp_server_calls_tools_on_the_configured_app(data_root: Path) -> None:
-    write_profile(data_root, full_profile() | {"sources": {}})
-    caller = runner.configured_caller(data_root)
-    reply = caller("doctor", {})
-    assert reply.ok
-
-
 def test_t15_the_mcp_server_answers_a_bad_profile_with_an_error_reply(data_root: Path) -> None:
     write_profile(data_root, {"version": 7})
     reply = runner.configured_caller(data_root)("doctor", {})

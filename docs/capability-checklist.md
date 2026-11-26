@@ -27,7 +27,7 @@ The permanent v1 importer, agent-use review, update check, local calendar events
 Regression tests include `tests/schema/test_registry.py::test_t1_standing_prompt_is_small_and_names_the_three_rules`, `tests/schema/test_registry.py::test_t2_there_are_exactly_twelve_tools`, `tests/writes/test_audit.py::test_g23_every_tool_call_writes_one_tool_call_row`, `tests/attention/test_scenarios.py::test_t7_start_returns_at_most_five_items_and_counts_the_rest`, `tests/memory/test_retrieval.py::test_t8_find_never_returns_a_body_and_hit_lines_are_single_lines`.
 
 - [ ] Twelve tools, prompt <400 characters, closed envelope, error `fix`, tick per call: `tests/schema/test_registry.py`, `tests/schema/test_envelope.py`, `tests/schema/test_errors.py`, `tests/surface/test_surfaces.py`; confirm prompt and tick assertions individually.
-- [ ] `start` interactive/scheduled, resume, scheduled day, source capabilities, at most five work items, housekeeping: `tests/attention/test_golden.py`, `tests/attention/test_sessions.py`, `tests/cleanup/test_cleanup.py::test_an_agents_start_runs_the_clean_up_and_reports_it`.
+- [ ] `start` interactive/scheduled, resume, scheduled day, source capabilities, at most five work items, housekeeping: `tests/attention/test_scenarios.py`, `tests/attention/test_sessions.py`, `tests/cleanup/test_cleanup.py::test_an_agents_start_runs_the_clean_up_and_reports_it`.
 - [ ] `next` handled, older mail and paging; `guide` index/one rule: `tests/attention/test_older_mail.py`, `tests/attention/test_handlers.py`, `tests/guidance/test_selection.py`.
 - [ ] `find` all scopes, filters, 90-day mail default and no bodies; `open` all parts, paging, leases, attachment text and series/occurrences: `tests/memory/test_retrieval.py::test_t8_mail_find_applies_every_filter_and_pages_the_filtered_hits` checks source, folder role, both flag values, query, inclusive dates, limit and cursor binding. The same file covers the seven scopes, 90-day default and `within` for mail, cards and artifacts. Attachment text and recurrence are exercised by `tests/memory/test_attachment_text.py` and `tests/calendars/test_google_calendar.py`.
 - [ ] `keep` all kinds and origins, instruction-email evidence; `forget` release/revoke/cancel; `card` lifecycle, actions, versions, caps and complex reason: `tests/memory/test_handlers.py`, `tests/memory/test_cards.py`, `tests/integration/test_instruction_email.py`, `tests/viewer/test_complex.py`.
@@ -103,7 +103,7 @@ Regression tests include `tests/viewer/test_front_page.py::test_a_scheduled_pass
 
 Regression tests include `tests/cleanup/test_cleanup.py::test_the_background_clean_up_is_off_by_default_and_runs_once_a_day`, `tests/cleanup/test_cleanup.py::test_no_limit_but_a_big_run_asks_the_agent_to_glance_at_trash`, `tests/surface/test_surfaces.py::test_s16_cleanup_reports_malformed_profile`.
 
-- [ ] Off by default, one-year filed and three-year qualifying Inbox, Trash only, `cleanup plan|grant|run`, automatic daily `start`, report line, no daily cap and >100 flag: `tests/cleanup/test_cleanup.py`; CLI error handling has checks in `tests/surface/test_surfaces.py::test_s16_cleanup_reports_malformed_profile` and `tests/surface/test_surfaces.py::test_t14_cleanup_reports_app_startup_failure`. Verify explicit age boundaries, bulk call count and grant lifecycle.
+- [ ] Off by default, one-year filed and three-year qualifying Inbox, Trash only, `cleanup plan|grant|run`, automatic daily `start`, report line, no daily cap and >100 flag: `tests/cleanup/test_cleanup.py`; CLI error handling has checks in `tests/surface/test_surfaces.py::test_s16_cleanup_reports_malformed_profile` and `tests/cleanup/test_cleanup.py::test_old_inbox_mail_goes_to_trash_only_after_the_owner_confirms`. Verify explicit age boundaries, bulk call count and grant lifecycle.
 
 ## C10 — Export
 
@@ -122,7 +122,7 @@ Regression tests include `tests/livetest/test_run.py::test_the_whole_suite_runs_
 
 ## C12 — CLI
 
-Regression tests include `tests/surface/test_surfaces.py::test_t14_cli_lists_the_twelve_tools_and_3_related_checks`, `tests/livetest/test_cli.py::test_it_is_off_until_switched_on_and_a_dry_run_changes_nothing`, `tests/viewer/test_server.py::test_tick_prints_the_passes_a_wake_adapter_should_start`.
+Regression tests include `tests/schema/test_registry.py::test_t2_there_are_exactly_twelve_tools`, `tests/surface/test_mcp_stdio.py::test_the_server_over_a_real_stdio_process_on_a_minimal_profile`, `tests/livetest/test_cli.py::test_it_is_off_until_switched_on_and_a_dry_run_changes_nothing`, `tests/viewer/test_server.py::test_tick_prints_the_passes_a_wake_adapter_should_start`.
 
 - [ ] Twelve tools plus `tools`, `schema`, `prompt`, `config validate|show`, `cleanup`, `export`, `addon update [--restart]`, `import`, `recipients seed`, `live-test`, `tick`, `viewer`, Thunderbird/Google/CalDAV setup and `dev check|fix`: `tests/surface/test_surfaces.py`, `tests/livetest/test_cli.py`, `tests/thunderbird/test_setup.py`, `tests/thunderbird/test_update.py`, `tests/calendars/test_google_setup.py`, `tests/calendars/test_caldav_setup.py`; audit each command. `demo init` and `guard` are explicitly dropped.
 

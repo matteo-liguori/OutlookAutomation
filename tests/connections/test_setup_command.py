@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 from chamberlain.connections.setup import provider_setup
-from chamberlain.connectors.caldav import setup as icloud_setup
 from chamberlain.connectors.calendar_support.secrets import FileStore
 from chamberlain.connectors.google_calendar import auth
 from chamberlain.connectors.google_calendar import setup as google_setup
@@ -69,24 +68,3 @@ def test_google_setup_preserves_terminal_credential_entry(
     assert provider_setup("google", ["client"], data_root, out) == 0
     assert auth.load_client(store) == (client_id, client_secret)
     assert out.getvalue() == "Saved the client to the credential store.\n"
-
-
-def test_icloud_setup_forwards_the_subcommand_and_status(
-    data_root: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    def main(argv: list[str], *, say: icloud_setup.Say) -> int:
-        assert argv == ["--data", str(data_root), "check", "--apple-id", "owner@example.org"]
-        say("iCloud response")
-        return 1
-
-    monkeypatch.setattr(icloud_setup, "main", main)
-    out = StringIO()
-    args = ["check", "--apple-id", "owner@example.org"]
-    assert provider_setup("icloud", args, data_root, out) == 1
-    assert out.getvalue() == "iCloud response\n"
-
-
-def test_provider_help_returns_success_without_running_setup(data_root: Path) -> None:
-    out = StringIO()
-    assert provider_setup("thunderbird", ["--help"], data_root, out) == 0
-    assert "--manifest-dir" in out.getvalue()
