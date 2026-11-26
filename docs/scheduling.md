@@ -24,7 +24,7 @@ This page is for the person setting up Chamberlain on their own computer. The co
    never holds a pass back: only another scheduled pass at work does.
 3. `chamberlain tick` prints `{"ran": ..., "wake": ..., "due": [{"run", "schedule", "kind",
    "day"}]}` and exits with status 10 when events wait and no scheduled pass is in progress. The wake
-   agent-app automations (or any wake command, below) start the agent for the entry in `due`. `due` lists one pass at a time (the
+   agent-app automations (or any wake command, below) start the agent. `due` lists one pass at a time (the
    oldest), and none while another pass is being worked, so two passes never share a session.
 4. The agent starts with `purpose: scheduled` and `scheduled_day: <day>`. A scheduled start for
    a day that is not today, or a scheduled session from an earlier day, is stopped by every
