@@ -18,14 +18,9 @@ from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 from chamberlain.writes import read_state
-from chamberlain.writes.engine import Engine
+from chamberlain.writes.core import Engine
 
 log = logging.getLogger("chamberlain.runs")
-
-
-class _SystemEngine(Engine):
-    def actor(self) -> str:
-        return read_state.ACTOR
 
 
 def mark_reported(ctx: Context, run: RunRow) -> None:
@@ -44,19 +39,22 @@ def mark_reported(ctx: Context, run: RunRow) -> None:
         by_source[str(row["source"])].append((int(row["seq"]), str(row["handle"])))
     if not by_source:
         return
-    engine = _SystemEngine(ctx)
-    waiting = [s for s in sorted(by_source) if read_state.active_grant(ctx.db, s) is None]
+    engine = Engine(ctx)
+    grants = {s: read_state.active_grant(ctx.db, s) for s in sorted(by_source)}
+    waiting = [s for s, grant in grants.items() if grant is None]
     if waiting:
-        read_state.propose_missing(ctx.db, ctx.clock, ctx.services.audit, waiting)
-    for source in sorted(set(by_source) - set(waiting)):
+        read_state.propose_missing(
+            ctx.db, ctx.clock, ctx.services.audit, waiting, policy=ctx.write_policy
+        )
+    for source, grant in grants.items():
+        if grant is None:
+            continue
         items = by_source[source]
         for start in range(0, len(items), MARK_READ_MAX):
             chunk = items[start : start + MARK_READ_MAX]
             try:
                 intent = MailMarkRead(source=source, messages=tuple(h for _, h in chunk))
-                proposal = engine.propose_intent(intent)
-                if proposal.ready and proposal.operation is not None:
-                    engine.do(proposal.operation.handle)
+                engine.run(intent, actor=read_state.ACTOR, grant=grant.handle)
             except Exception:
                 log_failure(log, "marking reported mail read failed")
             with transaction(ctx.db):

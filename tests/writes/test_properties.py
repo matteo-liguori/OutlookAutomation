@@ -1,7 +1,7 @@
 """The three engine properties of 04-writes.md, as Hypothesis state machines.
 
 Random sequences of propose, approve, confirm, do, fault, crash, restart,
-reconcile, user resolution, revocation, expiry and maintenance, against the
+reconcile, agent evidence, revocation, expiry and maintenance, against the
 fake provider with every `Fault` armed at random. After every step:
 
 1. No grant yields two confirmed operations beyond its limit, and a one-off
@@ -36,7 +36,14 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
 )
 from chamberlain.schema.errors import ChamberlainError
-from chamberlain.testing.write_rig import CALENDAR, MAIL, SimulatedCrash, WriteRig, make_rig
+from chamberlain.testing.write_rig import (
+    CALENDAR,
+    MAIL,
+    SESSION,
+    SimulatedCrash,
+    WriteRig,
+    make_rig,
+)
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
@@ -175,20 +182,20 @@ class WriteMachine(RuleBasedStateMachine):
             self.engine().grants.revoke(row.grant, actor="human:viewer")
 
     @rule(op=ops)
-    def honest_user_resolves(self, op: str) -> None:
+    def agent_records_found_write(self, op: str) -> None:
         row = repo.get_operation(self.r.db, op)
         if row is None or row.state is not OperationState.UNCERTAIN:
             return
         world = self.r.fake.world
-        if world._late:  # a late write is still on its way: the user cannot know yet
-            return
         token = row.reconcile_token or ""
         landed = (
             any(m.internet_message_id == token for m in world.mail[MAIL])
             or self.r.fake.calendar.count(CALENDAR, token) > 0
         )
-        with contextlib.suppress(ChamberlainError):
-            self.engine().resolve(op, happened=landed, actor="human:viewer")
+        if landed:
+            evidence = self.r.evidence.add(text="Found the write.", owner=op, session=SESSION)
+            with contextlib.suppress(ChamberlainError):
+                self.engine().reconcile(op, happened_evidence=evidence)
 
     # --- the world misbehaves ----------------------------------------------------------
 

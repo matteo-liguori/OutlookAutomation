@@ -16,8 +16,8 @@ from pydantic import ValidationError
 
 from chamberlain.app.services import AuditLog
 from chamberlain.app.wiring import build_services
-from chamberlain.connections.build import build_router
-from chamberlain.connections.load import dump_connections, profile_path
+from chamberlain.connections.build import build_router, policy_of
+from chamberlain.connections.load import dump_connections, load_connections, profile_path
 from chamberlain.connections.model import GoogleCalendarSource
 from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.caldav.setup import Check, connect_icloud
@@ -37,6 +37,7 @@ from chamberlain.store.db import transaction
 from chamberlain.store.migrate import open_store, stamp
 from chamberlain.store.schema import get_state, set_state
 from chamberlain.writes import read_state
+from chamberlain.writes.models import WritePolicy
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
 STATE_KEY = "importer.last_import"
@@ -233,6 +234,7 @@ def _propose_read_grants(
     the_clock: Clock,
     audit: AuditLog,
     report: ImportReport,
+    policy: WritePolicy,
 ) -> None:
     """The owner's v1 read-state options are on: propose the standing grant they need, per
     mailbox, once. Never confirmed here: only a click in the viewer activates it (G-24)."""
@@ -240,7 +242,7 @@ def _propose_read_grants(
     if not (state.filing_marks_read or state.reporting_marks_read):
         return
     mailboxes = sorted(s for s in mapped.connections.sources if s.startswith("mail:"))
-    for handle in read_state.propose_missing(db, the_clock, audit, mailboxes):
+    for handle in read_state.propose_missing(db, the_clock, audit, mailboxes, policy=policy):
         report.count("read_state_grants", new=True)
         report.read_state.setdefault("grants_proposed", []).append(handle)
     report.read_state["note"] = (
@@ -274,7 +276,8 @@ def _write_rows(
     db = open_store(data_root, the_clock)
     try:
         now = stamp(the_clock)
-        services = build_services(db, the_clock, data_root)
+        policy = policy_of(load_connections(data_root))
+        services = build_services(db, the_clock, data_root, policy=policy)
         with transaction(db):
             artifacts = ArtifactService(db, the_clock, data_root)
             imported = records.import_cards(db, old, zone, now, report, artifacts)
@@ -291,7 +294,7 @@ def _write_rows(
             grants = authority.import_grants(ctx)
             authority.import_journals(ctx, grants)
             instructions.carry(db, old, data_root, now, report)
-            _propose_read_grants(db, mapped, the_clock, services.audit, report)
+            _propose_read_grants(db, mapped, the_clock, services.audit, report, policy)
             if report.changed:
                 counts = json.dumps(report.counts, sort_keys=True)
                 services.audit.append(

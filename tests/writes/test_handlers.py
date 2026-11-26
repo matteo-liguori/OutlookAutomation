@@ -9,9 +9,11 @@ from typing import Any
 from chamberlain.app.core import App
 from chamberlain.app.wiring import load_tracks
 from chamberlain.connectors.fake import Fault
+from chamberlain.domain.grants import Requirement
 from chamberlain.schema.base import ToolName
-from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig
+from chamberlain.testing.write_rig import MAIL, SESSION, WriteRig, make_rig
 from chamberlain.writes.handlers import DOCTOR_CHECKS, HANDLERS, make_handlers
+from chamberlain.writes.models import WritePolicy
 
 GOLDEN = Path(__file__).parent / "golden" / "handlers.json"
 HANDLE = re.compile(r"\b(op|grant|evd)_[0-9a-f]{16}\b")
@@ -24,10 +26,23 @@ INTENT = {
 }
 
 
+def test_handlers_use_the_policy_on_the_current_context() -> None:
+    rig = make_rig(policy=WritePolicy(send_known=Requirement.HUMAN_CONFIRMATION))
+    try:
+        rig.know("friend@example.org")
+        response = App(rig.ctx, make_handlers()).call(
+            "propose", {"session": SESSION, "intent": INTENT}
+        )
+        assert response.data is not None
+        assert response.data.model_dump()["requirement"] == Requirement.HUMAN_CONFIRMATION
+    finally:
+        rig.close()
+
+
 class Recorder:
     def __init__(self, rig: WriteRig) -> None:
         self.rig = rig
-        self.app = App(rig.ctx, make_handlers(rig.policy, pause=rig._pause))
+        self.app = App(rig.ctx, make_handlers(pause=rig._pause))
         self.names: dict[str, str] = {}
         self.log: list[dict[str, Any]] = []
 

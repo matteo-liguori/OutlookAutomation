@@ -17,8 +17,6 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 
-_MAIL_KINDS = frozenset({EventKind.MAIL_NEW_FOR_CARD, EventKind.MAIL_NEW_UNMATCHED})
-
 
 def _suppressed(handled: EventRow, now: datetime) -> bool:
     """A handled event whose condition is still true stays quiet (A-3)."""
@@ -66,7 +64,10 @@ def reconcile(
         for key, event in live.items():
             if key in reported or event.kind not in evaluated or event.kind in hold:
                 continue
-            if event.kind in _MAIL_KINDS and event.attrs.source in unreadable_sources:
+            if (
+                event.kind is EventKind.MAIL_NEW_UNMATCHED
+                and event.attrs.source in unreadable_sources
+            ):
                 continue
             repo.expire_event(db, event.handle, stamped)
         for key, event in handled.items():
@@ -104,7 +105,7 @@ def handle_events(db: sqlite3.Connection, clock: Clock, handles: Iterable[str]) 
             interval = RERAISE.get(event.kind)
             quiet = None if interval is None else (now + interval).strftime("%Y-%m-%dT%H:%M:%SZ")
             repo.mark_handled(db, handle, stamp(clock), quiet)
-            if event.kind in _MAIL_KINDS and event.subject is not None:
+            if event.kind is EventKind.MAIL_NEW_UNMATCHED and event.subject is not None:
                 repo.triage_delivered(db, event.subject, handle, sent=event.attrs.reason == "sent")
             closed.append(handle)
         return closed
@@ -115,7 +116,7 @@ def deliver(db: sqlite3.Connection, clock: Clock, session: str, events: Iterable
     with transaction(db):
         for event in events:
             repo.mark_delivered(db, event.handle, session, stamp(clock))
-            if event.kind in _MAIL_KINDS and event.subject is not None:
+            if event.kind is EventKind.MAIL_NEW_UNMATCHED and event.subject is not None:
                 repo.stamp_delivered(
                     db,
                     event.subject,

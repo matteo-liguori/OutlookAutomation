@@ -7,7 +7,7 @@ Each track exposes, in its own `handlers.py`:
 
 and attention additionally exposes `HOOKS: Hooks | None`. Tracks never edit
 this file. Here the real `Services` are built (memory first, then writes with
-memory's artifact store), the write handlers get the configured policy, and the
+memory's artifact store), the configured policy goes on the context, and the
 tick's steps are put in the context: crash recovery and run planning on every call
 (`always`), the sweeper plus write maintenance after the inbox is reconciled (`extra`),
 and the owner's mail clean-up when an agent calls `start` (`on_start`).
@@ -34,7 +34,7 @@ from chamberlain.app.doctor import make_doctor
 from chamberlain.app.services import Services
 from chamberlain.attention import tick as attention_tick
 from chamberlain.cleanup.rules import CleanupConfig
-from chamberlain.cleanup.run import CLEANUP_AGENT, daily_cleanup
+from chamberlain.cleanup.run import daily_cleanup
 from chamberlain.memory import services as memory_services
 from chamberlain.memory.artifacts import Budgets
 from chamberlain.memory.sweeper import Compactor, sweep
@@ -63,7 +63,7 @@ TRACK_MODULES: tuple[str, ...] = (
 )
 
 WRITES_MODULE = "chamberlain.writes.handlers"
-"""Its handlers depend on the configured policy, so they come from `make_handlers`."""
+"""Write handlers are assembled by the writes track."""
 
 COMPACTORS: tuple[tuple[str, Compactor], ...] = (
     *write_maintenance.COMPACTORS,
@@ -76,9 +76,7 @@ Attention trims its own events and sessions inside its tick, so it supplies none
 track trims its run rows and notes."""
 
 
-def load_tracks(
-    policy: WritePolicy | None = None,
-) -> tuple[dict[ToolName, Handler], Hooks | None]:
+def load_tracks() -> tuple[dict[ToolName, Handler], Hooks | None]:
     """Collect handlers, doctor checks and hooks from the track modules."""
     handlers: dict[ToolName, Handler] = {}
     checks: list[tuple[DoctorCheck, DoctorCheckFn]] = []
@@ -87,7 +85,7 @@ def load_tracks(
         module = import_module(module_name)
         track = module_name.split(".")[1]
         track_handlers: dict[ToolName, Handler] = (
-            make_handlers(policy) if module_name == WRITES_MODULE else module.HANDLERS
+            make_handlers() if module_name == WRITES_MODULE else module.HANDLERS
         )
         for name, handler in track_handlers.items():
             if BY_NAME[name.value].owner != track:
@@ -105,7 +103,7 @@ def build_services(
     clock: Clock,
     data_root: Path,
     *,
-    policy: WritePolicy | None = None,
+    policy: WritePolicy,
     budgets: Budgets | None = None,
 ) -> Services:
     """The real cross-track services over one connection (09-storage.md, S-3)."""
@@ -115,7 +113,6 @@ def build_services(
 
 
 def tick_steps(
-    policy: WritePolicy | None,
     budgets: Budgets | None,
     update_lister: TagLister | None = None,
     review: ReviewSettings | None = None,
@@ -128,7 +125,7 @@ def tick_steps(
         sweep(ctx, ctx.clock.now(), budgets=budgets, compactors=COMPACTORS)
 
     def maintain_writes(ctx: Context) -> None:
-        write_maintenance.maintain(ctx, policy)
+        write_maintenance.maintain(ctx)
 
     always: list[Callable[[Context], None]] = [
         write_maintenance.recover_operations,
@@ -143,11 +140,8 @@ def tick_steps(
     if cleanup is not None and cleanup.enabled and cleanup.rules:
         rules = cleanup
 
-        def clean_up_mail(ctx: Context, agent: str) -> list[str]:
-            if agent == CLEANUP_AGENT:
-                return []  # the clean-up's own session
-            handlers, hooks = load_tracks(policy)
-            report = daily_cleanup(App(ctx, handlers, hooks), rules)
+        def clean_up_mail(ctx: Context, _agent: str) -> list[str]:
+            report = daily_cleanup(ctx, rules)
             return [] if report is None else report.summary()
 
         on_start.append(clean_up_mail)
@@ -174,16 +168,18 @@ def build_app(
     """
     the_clock = clock or SystemClock()
     db = open_store(data_root, the_clock)
+    configured_policy = policy if policy is not None else WritePolicy()
     context = Context(
         db=db,
         clock=the_clock,
         data_root=data_root,
         sources=sources or SourceRouter(),
         services=services
-        or build_services(db, the_clock, data_root, policy=policy, budgets=budgets),
-        tick_steps=tick_steps(policy, budgets, update_lister, review, cleanup),
+        or build_services(db, the_clock, data_root, policy=configured_policy, budgets=budgets),
+        write_policy=configured_policy,
+        tick_steps=tick_steps(budgets, update_lister, review, cleanup),
     )
-    handlers, hooks = load_tracks(policy)
+    handlers, hooks = load_tracks()
     return App(context, handlers, hooks)
 
 

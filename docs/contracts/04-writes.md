@@ -90,16 +90,16 @@ proposed -> authorised -> prepared -> dispatched -> confirmed
 obtained.
 
 - **W-6** The legal transitions are exactly the arrows above
-  (`domain.operations.TRANSITIONS`), plus `uncertain -> confirmed |
-  confirmed_absent` taken only by the user's resolution in the viewer
-  (W-13), `uncertain -> abandoned` taken only by the tick (W-13a) and
+  (`domain.operations.TRANSITIONS`), plus `uncertain -> confirmed` for happened
+  evidence or a match for an imported write (W-13, W-13a), `uncertain -> abandoned`
+  taken only by the tick (W-13a) and
   `uncertain -> superseded` taken only when a resend is authorised (W-38). Any other
   transition is a defect and raises before touching the store.
 - **W-7** Every transition is one SQLite transaction that updates the
   operation row and appends the audit row (G-20). The transition to
   `dispatched` MUST commit before the connector's `dispatch` is called.
 - **W-8** **No path re-dispatches.** `dispatch` is called at most once per
-  operation, ever. `uncertain` is left only through `reconciling`, which
+  operation, ever. Connector reconciliation goes through `reconciling`, which
   calls only the connector's read-only `reconcile`. A resend (W-38) is a NEW operation with
   its own one dispatch.
 - **W-9** A crash is treated as the worst case. On start-up, and on every
@@ -139,7 +139,7 @@ obtained.
   never dispatchable. `reconcile` reads the live source and settles `confirmed` on a match
   (calendar create or update, mail send; never deletes or moves). The agent may settle
   `confirmed` with `happened` plus its own session evidence, never "did not happen": only a
-  connector's proof of absence or the viewer click frees a grant. An `uncertain` operation with
+  connector's proof of absence frees the grant on that path. An `uncertain` operation with
   no possible resend (no intent, no grant, or a grant spent, expired or revoked) is closed
   `abandoned` by the tick after 14 days unsettled, except a mail send whose text the harness
   holds (W-40); the state is terminal, frees nothing and
@@ -174,7 +174,9 @@ obtained.
   grant (`grant.content_mismatch`).
 - **W-19** A standing grant may authorise the same content twice only if
   its scope sets `allow_repeat`. Otherwise an identical intent within 24
-  hours returns the earlier operation.
+  hours returns the earlier operation. Once a move or trash has settled, a new request
+  may move the same message again, for example after a restore. An in-flight operation
+  still deduplicates and a repeated `do` on its handle never dispatches twice.
 
 ## Authorisation
 
@@ -348,8 +350,9 @@ text below says "send" where the rule is about sends only.
   holds. It stays visible (read-only in the viewer) until the agent resends it, the agent settles
   it `happened` with evidence (W-13). Calendar writes and
   other mail writes with no way left to resend keep the 14-day close of W-13a.
-- **W-41** The owner's viewer lists each uncertain operation read-only, with the re-check result,
-  when it looked and where, and any redo. It says nothing is needed from the owner.
+- **W-41** The viewer's Timeline lists uncertain operations read-only, with the
+  re-check result, when and where it looked, and any redo. The agent gets unresolved
+  work via W-39 and records the outcome in the daily report.
 
 - **W-43** Marking mail read after a report. When a run finishes with a kept report and
   `read_state.reporting_marks_read` is on, the harness marks read each message of that run's session

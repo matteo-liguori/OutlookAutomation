@@ -38,7 +38,7 @@ passing in the gate. Briefs will be written then; this is the outline.
 - `surface/viewer/`: a loopback-only local web page on the new store. It
   mounts the confirmation handler from `writes/confirm.py` and adds the
   UI: pending grants with the exact content to be authorised, grant review,
-  uncertain operations to resolve, "what the assistant did today" from the
+  read-only uncertain operations in the Timeline, "what the assistant did today" from the
   audit log, cards and due actions, storage figures.
 - Scheduled passes as events (`schedule.pass_due`), the session and
   schedule record, `chamberlain tick` for the operating system scheduler,

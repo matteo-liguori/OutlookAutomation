@@ -20,6 +20,7 @@ from chamberlain.testing.write_rig import CALENDAR, CALENDAR_B, CALENDAR_PLAIN, 
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import grant_detail, list_grants
 from chamberlain.writes.maintenance import maintain
+from chamberlain.writes.models import WritePolicy
 from chamberlain.writes.read_state import propose_missing, scope_for
 
 CARD = "card_0123456789abcdef"
@@ -345,7 +346,9 @@ def test_a_store_with_old_grants_migrates_without_changing_what_they_mean() -> N
         grant.handle
     ]
     assert repo.get_operation(db, "op_old0000000001") is not None
-    assert propose_missing(db, clock, _Audit(), [MAIL]) == [], "the owner is not asked again"
+    assert propose_missing(db, clock, _Audit(), [MAIL], policy=WritePolicy()) == [], (
+        "the owner is not asked again"
+    )
     db.close()
 
 

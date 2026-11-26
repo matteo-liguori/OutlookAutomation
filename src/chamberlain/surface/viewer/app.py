@@ -5,8 +5,8 @@ Contract: docs/contracts/05-grants.md (G-14, G-17 to G-19). Routes:
 - `GET /` and `GET /static/page.js|page.css|calendar.js|calendar.css`: the shell. They hold no
   records, so they need no token, but they still need a loopback peer and the viewer's own
   Host (a rebinding page gets 403).
-- `/api/grants...` and `/api/operations/...`: handed to the writes track's `ConfirmationApp`
-  (list, exact content, confirm with the content hash, decline, revoke, keep, resolve).
+- `/api/grants...`: handed to the writes track's `ConfirmationApp` for listing,
+  exact content, confirmation, decline, revocation and review.
 - `/api/complex...`: the owner's answers on larger card limits (`complex_api.py`).
 - `/api/report`, `/api/local-events...`, `/api/appointments/...`: the report front page and the
   owner's own calendar actions (`report_api.py`).
@@ -48,7 +48,6 @@ STATIC_FILES: dict[str, tuple[str, str]] = {
     "/static/appointments.js": ("appointments.js", "text/javascript; charset=utf-8"),
     "/static/report.css": ("report.css", "text/css; charset=utf-8"),
 }
-_DELEGATED = ("/api/grants", "/api/operations/")
 _SAFE_PATH = re.compile(r"^/api/[A-Za-z0-9_/.-]{0,70}$")
 _RUN_REPORT = re.compile(r"^/api/runs/(run_[a-z0-9]{8,32})/reports$")
 _NOTE_WITHDRAW = re.compile(r"^/api/notes/(\d{1,9})/withdraw$")
@@ -99,7 +98,7 @@ class ViewerApp:
             return self._reply(start_response, refusal.status, _error("forbidden", "Refused."))
         if path in STATIC_FILES:
             return self._static(environ, start_response, path)
-        if path.startswith(_DELEGATED):
+        if path == "/api/grants" or path.startswith("/api/grants/"):
             return self._confirm(environ, _with_headers(start_response))
         if path.startswith("/api/"):
             return self._api(environ, start_response, path)

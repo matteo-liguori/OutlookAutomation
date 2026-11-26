@@ -174,7 +174,6 @@ The writes track builds this endpoint and its tests. The viewer UI is wave 2.
   | `POST /api/grants/{handle}/decline` | `proposed -> declined`. |
   | `POST /api/grants/{handle}/revoke` | `active|suspended -> revoked`. |
   | `POST /api/grants/{handle}/keep` | Review: advances `review_at` (G-7). |
-  | `POST /api/operations/{handle}/resolve` | Body `{outcome: happened|did_not_happen}` for an `uncertain` operation (W-13). |
 
   Every state change writes an audit row with actor `human:viewer`.
 

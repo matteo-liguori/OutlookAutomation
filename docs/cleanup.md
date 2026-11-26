@@ -51,3 +51,5 @@ chamberlain cleanup plan     # count what each rule would move; changes nothing
 chamberlain cleanup grant    # propose the permissions
 chamberlain cleanup run      # move what the rules name to Trash now
 ```
+
+Pass `--source mail:NAME` to `cleanup plan`, `cleanup grant` or `cleanup run` to apply the configured rules to one mailbox.

@@ -117,6 +117,7 @@ def _parser() -> argparse.ArgumentParser:
         "cleanup", help="move old mail to Trash by the cleanup rules (plan, grant or run)"
     )
     cleanup.add_argument("action", choices=["plan", "grant", "run"])
+    cleanup.add_argument("--source", help="apply the configured rules only to this mailbox")
     export = commands.add_parser(
         "export",
         help="a conversation as clean text plus attachments, zipped (exports/, kept a week)",
@@ -395,17 +396,32 @@ def _cleanup(args: argparse.Namespace, out: TextIO) -> int:
     root = Path(data)
     app = None
     try:
-        config = load_connections(root).cleanup
+        connections = load_connections(root)
+        config = connections.cleanup
+        if args.source:
+            source = connections.sources.get(args.source)
+            if not args.source.startswith("mail:") or source is None or not source.enabled:
+                out.write("Choose a configured, enabled mailbox.\n")
+                return EXIT_FAILED
+            rules = tuple(
+                rule.model_copy(update={"sources": (args.source,)})
+                for rule in config.rules
+                if "*" in rule.sources or args.source in rule.sources
+            )
+            config = config.model_copy(update={"rules": rules})
         if not config.rules:
-            out.write("No cleanup rules in connections.yaml (see docs/cleanup.md).\n")
+            if args.source:
+                out.write(f"No cleanup rules apply to {args.source}.\n")
+            else:
+                out.write("No cleanup rules in connections.yaml (see docs/cleanup.md).\n")
             return EXIT_OK
         app = open_app(root)
         if args.action == "grant":
-            for source, state, handle in propose_grants(app, config):
+            for source, state, handle in propose_grants(app.context, config):
                 out.write(f"{source}: {state} {handle}\n")
             out.write("Confirm each waiting grant in the viewer (chamberlain viewer).\n")
             return EXIT_OK
-        report = run_cleanup(app, config, dry_run=args.action == "plan")
+        report = run_cleanup(app.context, config, dry_run=args.action == "plan")
     except ChamberlainError as error:
         out.write(f"{error.message} {error.fix}".rstrip() + "\n")
         return EXIT_FAILED

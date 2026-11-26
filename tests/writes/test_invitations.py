@@ -26,6 +26,7 @@ from chamberlain.testing.write_rig import (
 )
 from chamberlain.writes.authorise import authorise, requirement_needed
 from chamberlain.writes.confirm import confirm_grant
+from chamberlain.writes.render import EVENT_ATTENDEES_REF, describe_intent
 
 START = datetime(2026, 2, 1, 12, tzinfo=UTC)
 END = datetime(2026, 2, 1, 13, tzinfo=UTC)
@@ -173,6 +174,12 @@ def test_w33_changing_the_time_resets_answers_and_cancelling_removes_the_copy(
     assert owned.engine().do(approved.operation.handle).state is OperationState.CONFIRMED
     assert mine.status is EventStatus.CANCELLED
     assert theirs.status is EventStatus.CANCELLED
+
+
+def test_w33_preview_reports_attendees_when_addresses_are_unavailable() -> None:
+    intent = CalendarDelete(source=CALENDAR, event_ref="cev_0000000000000001", expected_etag='"v1"')
+    preview, _ = describe_intent(intent, refs={EVENT_ATTENDEES_REF: "1"})
+    assert "Cancellation sent to: attendee addresses unavailable" in preview
 
 
 def test_w33_removing_an_attendee_cancels_that_persons_copy(owned: WriteRig) -> None:

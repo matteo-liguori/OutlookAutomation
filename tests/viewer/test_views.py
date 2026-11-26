@@ -64,7 +64,7 @@ def test_the_overview_today_cards_and_storage_views(rig: Rig) -> None:
     assert data["db_bytes"] > 0
 
 
-def test_an_uncertain_operation_shows_its_exact_text_and_can_be_resolved(rig: Rig) -> None:
+def test_w41_uncertain_history_is_read_only_and_outside_needs_you(rig: Rig) -> None:
     proposal = rig.proposal(subject="Did this go out?")
     operation = proposal.operation.handle  # type: ignore[union-attr]
     rig.ctx.db.execute(
@@ -75,11 +75,12 @@ def test_an_uncertain_operation_shows_its_exact_text_and_can_be_resolved(rig: Ri
     assert [o["handle"] for o in shown] == [operation]
     assert "Did this go out?" in shown[0]["rendered"]
     assert "The exact body text." in shown[0]["rendered"]
-    assert get(rig, "/api/overview")["needs_you"]["uncertain_operations"] == 1
-    done = rig.call("POST", f"/api/operations/{operation}/resolve", {"outcome": "did_not_happen"})
-    assert done.status == 200, done.body
-    assert done.body["state"] == "confirmed_absent"
-    assert get(rig, "/api/uncertain")["operations"] == []
+    assert "uncertain_operations" not in get(rig, "/api/overview")["needs_you"]
+
+    for outcome in ("happened", "did_not_happen"):
+        response = rig.call("POST", f"/api/operations/{operation}/resolve", {"outcome": outcome})
+        assert response.status == 404
+    assert get(rig, "/api/uncertain")["operations"] == shown
 
 
 def test_a_run_report_is_shown_and_then_gone_when_it_expires(rig: Rig) -> None:

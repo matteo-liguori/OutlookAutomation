@@ -40,10 +40,6 @@ class ScenarioFailure(Exception):
     """An assertion about the harness did not hold. The text names what was seen."""
 
 
-class RepeatRefused(ScenarioFailure):
-    """The same write was done in the last 24 hours and the harness will not repeat it."""
-
-
 class ScenarioSkip(Exception):
     """The scenario cannot run here. The text is the reason shown in the report."""
 
@@ -252,7 +248,7 @@ class Lab:
         if proposed["ready"]:
             return operation
         if proposed["requirement"] == "none":
-            raise RepeatRefused(f"{kind} repeats a write done in the last 24 hours")
+            raise ScenarioFailure(f"{kind} repeats a write done in the last 24 hours")
         if proposed["requirement"] != "agent_evidence" or not kind.startswith("calendar."):
             self._refused(operation, kind, str(proposed["requirement"]))
             raise ScenarioFailure(
@@ -345,20 +341,8 @@ class Lab:
         return self.confirmed(self.write(intent), f"send from {source}")
 
     def trash(self, handle: str) -> JSON:
-        """Trash a message. The harness refuses an identical repeat inside 24 hours (a message
-        trashed, restored and trashed again), so that case files it into the trash folder."""
         source = _source_of(self, handle)
-        try:
-            done = self.write({"kind": "mail.trash", "source": source, "messages": [handle]})
-        except RepeatRefused:
-            done = self.write(
-                {
-                    "kind": "mail.move",
-                    "source": source,
-                    "messages": [handle],
-                    "to_folder": self.folder_id(source, FolderRole.TRASH),
-                }
-            )
+        done = self.write({"kind": "mail.trash", "source": source, "messages": [handle]})
         return self.confirmed(done, "trash")
 
     # --- cleanup --------------------------------------------------------------------
@@ -419,16 +403,7 @@ class Lab:
     def _trash_batch(self, source: str, copies: list[MailCopy]) -> int:
         """One `mail.trash` write for these copies of one folder; how many moved."""
         handles = list(dict.fromkeys(self.handle_of(copy) for copy in copies))
-        if len(handles) == 1:
-            self.trash(handles[0])
-            return 1
-        try:
-            done = self.write({"kind": "mail.trash", "source": source, "messages": handles})
-        except RepeatRefused:
-            # The same set was trashed within 24 hours (restored since): one at a time.
-            for handle in handles:
-                self.trash(handle)
-            return len(handles)
+        done = self.write({"kind": "mail.trash", "source": source, "messages": handles})
         view = self.confirmed(done, "trash")
         return int(view.get("items_ok", len(handles)))
 

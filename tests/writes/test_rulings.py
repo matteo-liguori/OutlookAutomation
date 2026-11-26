@@ -23,7 +23,7 @@ from chamberlain.testing.write_rig import MAIL, WriteRig, make_rig
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
-from chamberlain.writes.engine import (
+from chamberlain.writes.core import (
     ALLOW_DUPLICATE_REF,
     CALENDAR_SETTLE_ATTEMPTS,
     MAIL_SETTLE_ATTEMPTS,
@@ -302,21 +302,25 @@ def test_r5_a_late_applied_result_after_takeover_confirms_through_the_reconcile_
         rig.close()
 
 
-def test_r5_a_taken_over_process_cannot_overwrite_a_newer_state() -> None:
+def test_r5_a_taken_over_process_preserves_the_newer_reconcile_receipt() -> None:
     rig = make_rig()
     try:
         op = rig.ready_send()
+        receipts: list[str | None] = []
 
-        def take_over_and_resolve() -> None:
+        def take_over_and_reconcile() -> None:
             rig.clock.advance(minutes=6)
-            rig.engine(worker="rescuer").recover()
-            rig.engine(worker="rescuer").resolve(op.handle, happened=False, actor="human:viewer")
+            newer, changed = rig.engine(worker="rescuer").reconcile(op.handle)
+            assert changed
+            assert newer.state is S.CONFIRMED
+            receipts.append(newer.receipt_json)
 
-        rig.mail.during_dispatch = take_over_and_resolve
-        with pytest.raises(ChamberlainError) as raised:
-            rig.engine(worker="original").do(op.handle)
-        assert raised.value.code is ErrorCode.OPERATION_ALREADY_SETTLED
-        assert rig.engine().get(op.handle).state is S.CONFIRMED_ABSENT
+        rig.mail.during_dispatch = take_over_and_reconcile
+        done = rig.engine(worker="original").do(op.handle)
+        assert done.state is S.CONFIRMED
+        assert done.receipt_json is not None
+        assert receipts == [done.receipt_json]
+        assert rig.sent_copies() == 1
     finally:
         rig.close()
 

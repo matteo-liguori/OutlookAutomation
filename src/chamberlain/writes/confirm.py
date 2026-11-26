@@ -30,7 +30,7 @@ from chamberlain.domain.operations import OUTSIDE_STATE_WORDS, outside_details
 from chamberlain.domain.permissions import click_reason, recipients_of
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.writes import repo
-from chamberlain.writes.engine import Engine
+from chamberlain.writes.grants import GrantService
 from chamberlain.writes.models import GrantRow, WritePolicy
 from chamberlain.writes.render import describe_intent, describe_scope
 
@@ -44,7 +44,6 @@ _LOOPBACK = frozenset({"127.0.0.1", "::1"})
 
 _GRANT_ACTION = re.compile(rf"^/api/grants/({_HANDLE})/(confirm|decline|revoke|keep)$")
 _GRANT_ONE = re.compile(rf"^/api/grants/({_HANDLE})$")
-_OP_RESOLVE = re.compile(rf"^/api/operations/({_HANDLE})/resolve$")
 
 
 @dataclass(frozen=True)
@@ -89,7 +88,7 @@ def _grant_json(grant: GrantRow) -> dict[str, Any]:
 
 
 class ConfirmationApp:
-    """Routes the seven endpoints of G-19 and enforces G-17 and G-18."""
+    """Routes the grant endpoints of G-19 and enforces G-17 and G-18."""
 
     def __init__(
         self,
@@ -181,12 +180,7 @@ class ConfirmationApp:
         return None
 
     def _reject(self, ctx: Context, method: str, path: str, body: bytes, why: str) -> None:
-        known = (
-            _GRANT_ACTION.match(path)
-            or _GRANT_ONE.match(path)
-            or _OP_RESOLVE.match(path)
-            or path == "/api/grants"
-        )
+        known = _GRANT_ACTION.match(path) or _GRANT_ONE.match(path) or path == "/api/grants"
         shown = path if known else "(unknown path)"
         ctx.services.audit.append(
             actor=REJECT_ACTOR,
@@ -218,9 +212,6 @@ class ConfirmationApp:
             else:
                 grant = keep_grant(ctx, handle, self._policy)
             return Response(200, _grant_json(grant))
-        match = _OP_RESOLVE.match(path)
-        if method == "POST" and match:
-            return Response(200, resolve_operation(ctx, match.group(1), _json(body), self._policy))
         return Response(404, {"error": "not_found", "message": "No such endpoint."})
 
 
@@ -286,12 +277,10 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
     ops = repo.operations_by_hash(ctx.db, grant.source_id, grant.content_sha256)
     shown = next((op for op in reversed(ops) if op.intent_json is not None), None)
     if shown is not None:
-        intent = Engine.intent_of(shown)
+        intent = shown.intent()
         detail["operation"] = shown.handle
         detail["intent"] = json.loads(shown.intent_json or "{}")
-        detail["rendered"] = describe_intent(
-            intent, limit=None, refs=json.loads(shown.refs_json or "{}")
-        )[0]
+        detail["rendered"] = describe_intent(intent, limit=None, refs=shown.refs())[0]
     elif grant.confirmed_via == "import":
         detail["rendered"] = _imported_wording(ctx, grant)
     return detail
@@ -356,9 +345,9 @@ def confirm_grant(
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID, "Bad expiry.", field="expires_at"
             ) from None
-    engine = Engine(ctx, policy)
+    grants = _grants(ctx, policy)
     recipients = _named_recipients(ctx, grant)
-    return engine.grants.activate(
+    return grants.activate(
         handle,
         via=ConfirmedVia.HUMAN_VIEWER,
         actor=ACTOR,
@@ -375,13 +364,17 @@ def _named_recipients(ctx: Context, grant: GrantRow) -> frozenset[str]:
         return frozenset()
     for op in repo.operations_by_hash(ctx.db, grant.source_id, grant.content_sha256):
         if op.intent_json is not None:
-            return recipients_of(Engine.intent_of(op))
+            return recipients_of(op.intent())
     return frozenset()
+
+
+def _grants(ctx: Context, policy: WritePolicy | None) -> GrantService:
+    return GrantService(ctx.db, ctx.clock, ctx.services.audit, policy or ctx.write_policy)
 
 
 def decline_grant(ctx: Context, handle: str, policy: WritePolicy | None = None) -> GrantRow:
     """`POST .../decline`: `proposed -> declined`."""
-    return Engine(ctx, policy).grants.decline(handle, actor=ACTOR)
+    return _grants(ctx, policy).decline(handle, actor=ACTOR)
 
 
 def revoke_grant(ctx: Context, handle: str, policy: WritePolicy | None = None) -> GrantRow:
@@ -389,23 +382,9 @@ def revoke_grant(ctx: Context, handle: str, policy: WritePolicy | None = None) -
     grant = _grant(ctx, handle)
     if grant.state not in (GrantState.ACTIVE, GrantState.SUSPENDED):
         raise ChamberlainError(ErrorCode.GRANT_NOT_ACTIVE, "Only a live grant can be revoked.")
-    return Engine(ctx, policy).grants.revoke(handle, actor=ACTOR)
+    return _grants(ctx, policy).revoke(handle, actor=ACTOR)
 
 
 def keep_grant(ctx: Context, handle: str, policy: WritePolicy | None = None) -> GrantRow:
     """`POST .../keep`: review done; advances `review_at` and nothing else (G-7)."""
-    return Engine(ctx, policy).grants.keep(handle, actor=ACTOR)
-
-
-def resolve_operation(
-    ctx: Context, handle: str, data: Mapping[str, Any], policy: WritePolicy | None = None
-) -> dict[str, Any]:
-    """`POST /api/operations/{handle}/resolve` for an uncertain operation (W-13)."""
-    outcome = data.get("outcome")
-    if outcome not in ("happened", "did_not_happen"):
-        raise ChamberlainError(
-            ErrorCode.REQUEST_INVALID, "Outcome is happened or did_not_happen.", field="outcome"
-        )
-    engine = Engine(ctx, policy)
-    op = engine.resolve(handle, happened=outcome == "happened", actor=ACTOR)
-    return {"handle": op.handle, "state": op.state.value}
+    return _grants(ctx, policy).keep(handle, actor=ACTOR)

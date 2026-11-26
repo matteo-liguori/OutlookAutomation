@@ -33,6 +33,7 @@ def inbox_ids(lab, folder: str = "f-inbox") -> set[str]:  # type: ignore[no-unty
 def test_old_inbox_mail_goes_to_trash_only_after_the_owner_confirms(tmp_path: Path) -> None:
     lab = build_fake_lab(tmp_path / "data")
     try:
+        sessions_before = lab.app.context.db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
         now = lab.clock.now()
         for number in (1, 2):
             lab.provider.mail.add_message(
@@ -52,17 +53,17 @@ def test_old_inbox_mail_goes_to_trash_only_after_the_owner_confirms(tmp_path: Pa
                 internet_message_id="<filed@x>",
                 date=now - timedelta(days=4 * 365),
             )
-        plan = run_cleanup(lab.app, RULES, dry_run=True)
+        plan = run_cleanup(lab.app.context, RULES, dry_run=True)
         assert plan.planned == {"Inbox-only mail after three years": 2}
         assert inbox_ids(lab) == {"<old1@x>", "<old2@x>", "<recent@x>", "<filed@x>"}, (
             "a plan moves nothing"
         )
 
-        before = run_cleanup(lab.app, RULES, dry_run=False)
+        before = run_cleanup(lab.app.context, RULES, dry_run=False)
         assert before.moved == 0
         assert before.waiting == [FAKE_MAIL_A], "nothing moves until the owner confirms"
 
-        [(source, state, grant)] = propose_grants(lab.app, RULES)
+        [(source, state, grant)] = propose_grants(lab.app.context, RULES)
         assert (source, state) == (FAKE_MAIL_A, "proposed")
         row = lab.app.context.db.execute(
             "SELECT content_sha256 FROM grants WHERE handle = ?", (grant,)
@@ -71,13 +72,29 @@ def test_old_inbox_mail_goes_to_trash_only_after_the_owner_confirms(tmp_path: Pa
         confirm_grant(lab.app.context, grant, {"content_sha256": row["content_sha256"]})
 
         writes_before = lab.app.context.db.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
-        done = run_cleanup(lab.app, RULES, dry_run=False)
+        # An existing v2 grant binds to the same card even after the owner renames it.
+        db = lab.app.context.db
+        db.execute(
+            "UPDATE cards SET title='Renamed' WHERE handle="
+            "(SELECT card FROM grants WHERE handle=?)",
+            (grant,),
+        )
+        db.execute("DELETE FROM system_state WHERE key='cleanup.card'")
+        done = run_cleanup(lab.app.context, RULES, dry_run=False)
+        assert db.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == sessions_before
+        assert (
+            db.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE actor='system:cleanup' "
+                "AND kind='operation.dispatched'"
+            ).fetchone()[0]
+            == 1
+        )
         assert (done.moved, done.failed) == (2, [])
         writes = lab.app.context.db.execute("SELECT COUNT(*) FROM operations").fetchone()[0]
         assert writes - writes_before == 1, "one write moves the whole batch"
         assert inbox_ids(lab) == {"<recent@x>", "<filed@x>"}
         assert inbox_ids(lab, "f-trash") == {"<old1@x>", "<old2@x>"}
-        assert run_cleanup(lab.app, RULES, dry_run=True).planned == {
+        assert run_cleanup(lab.app.context, RULES, dry_run=True).planned == {
             "Inbox-only mail after three years": 0
         }
     finally:
@@ -92,11 +109,11 @@ def test_the_background_clean_up_is_off_by_default_and_runs_once_a_day(tmp_path:
             FAKE_MAIL_A, internet_message_id="<old@x>", date=now - timedelta(days=4 * 365)
         )
         assert CleanupConfig().enabled is False
-        assert daily_cleanup(lab.app, RULES) is None, "not turned on: nothing at all"
+        assert daily_cleanup(lab.app.context, RULES) is None, "not turned on: nothing at all"
         assert lab.app.context.db.execute("SELECT COUNT(*) FROM grants").fetchone()[0] == 0
 
         on = RULES.model_copy(update={"enabled": True})
-        first = daily_cleanup(lab.app, on)
+        first = daily_cleanup(lab.app.context, on)
         assert first is not None
         assert first.waiting == [FAKE_MAIL_A]
         grant = lab.app.context.db.execute(
@@ -104,11 +121,11 @@ def test_the_background_clean_up_is_off_by_default_and_runs_once_a_day(tmp_path:
         ).fetchone()
         assert grant is not None, "the background run proposes the grant for the owner"
         confirm_grant(lab.app.context, grant["handle"], {"content_sha256": grant["content_sha256"]})
-        assert daily_cleanup(lab.app, on) is None, "at most once a day"
+        assert daily_cleanup(lab.app.context, on) is None, "at most once a day"
         assert inbox_ids(lab) == {"<old@x>"}
 
         lab.clock.advance(hours=24)
-        second = daily_cleanup(lab.app, on)
+        second = daily_cleanup(lab.app.context, on)
         assert second is not None
         assert second.moved == 1
         assert inbox_ids(lab) == set()
@@ -124,8 +141,8 @@ def test_an_agents_start_runs_the_clean_up_and_reports_it(tmp_path: Path) -> Non
             FAKE_MAIL_A, internet_message_id="<old@x>", date=now - timedelta(days=4 * 365)
         )
         on = RULES.model_copy(update={"enabled": True})
-        steps = tick_steps(None, None, cleanup=on)
-        app = App(replace(lab.app.context, tick_steps=steps), *load_tracks(None))
+        steps = tick_steps(None, cleanup=on)
+        app = App(replace(lab.app.context, tick_steps=steps), *load_tracks())
 
         first = app.call("start", {"agent": "codex"})
         assert first.data is not None

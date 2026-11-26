@@ -17,7 +17,7 @@ def build(
     db: sqlite3.Connection,
     clock: Clock,
     *,
-    policy: WritePolicy | None = None,
+    policy: WritePolicy,
     artifacts: ArtifactStore | None = None,
 ) -> tuple[AuditLog, WriteControl]:
     """The audit log and the write control, both bound to one connection.
@@ -25,5 +25,5 @@ def build(
     `artifacts` lets a cancelled operation let go of its attachment holds.
     """
     audit = AuditChain(db, clock)
-    control = Control(db, clock, audit, policy or WritePolicy(), artifacts)
+    control = Control(db, clock, audit, policy, artifacts)
     return audit, control

@@ -98,7 +98,13 @@ def open_app(
                 or connections.read_state.reporting_marks_read
             ):
                 mailboxes = sorted(s for s in connections.sources if s.startswith("mail:"))
-                read_state.propose_missing(db, the_clock, app.context.services.audit, mailboxes)
+                read_state.propose_missing(
+                    db,
+                    the_clock,
+                    app.context.services.audit,
+                    mailboxes,
+                    policy=app.context.write_policy,
+                )
         apply_schedules(app.context, _specs(connections))
     except BaseException:
         app.close()

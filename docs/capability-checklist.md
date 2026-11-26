@@ -2,13 +2,16 @@
 
 Use this checklist after each rewrite. Entries map the capabilities in section 1 of the architect's plan to regression tests, targeted live scenarios and walkthroughs. Check off a promise for the step under review when the named checks pass. Where coverage is partial, the entry identifies the remaining proof.
 
-The permanent v1 importer, agent-use review, update check, local calendar events and fake provider stay. The owner approved removing the Claude file guard, demo mode and viewer settle buttons. Open decisions concern standing send limits and the repeat rule for move/trash.
+The permanent v1 importer, agent-use review, update check, local calendar events and fake provider stay. The owner approved removing the Claude file guard, demo mode and viewer settle buttons.
 
 ## Decisions for final review
 
 | Decision | Current choice | Where to revisit and how to verify |
 | --- | --- | --- |
 | Owl calendar freshness | On 2026-11-26 the owner accepted a successful private create, read-back, delete and absence check as ordinary Owl freshness. | Thunderbird calendar adapter, behind CalendarPort.health. |
+| Repeating a move or trash | A completed filing operation may be requested again. This allows trash after restore. Repeating the same operation handle still dispatches once. | Write repeat policy and tests for restore followed by trash. |
+| Standing send limits | Retain an owner's explicit per-day limit on a particular grant. The existing hourly send ceiling also applies. | StandingScope.max_per_day and grant coverage tests. |
+
 
 ## Step 0 verification, 2026-11-25
 
@@ -90,7 +93,7 @@ Regression tests include `tests/viewer/test_front_page.py::test_a_scheduled_pass
 
 - [ ] Report front page and earlier reports: `tests/viewer/test_front_page.py`, `tests/viewer/test_pages.py`.
 - [ ] Grant confirm/keep/revoke and complex approve/decline/take-back: `tests/viewer/test_confirm.py`, `tests/viewer/test_complex.py`.
-- [ ] Uncertain list is read-only; **no settle buttons or endpoint**. Existing `tests/viewer/test_views.py::test_an_uncertain_operation_shows_its_exact_text_and_can_be_resolved` covers obsolete behavior; replace with a negative assertion. Agent/harness settle remains C3.
+- [ ] Timeline shows uncertain writes as read-only history. `tests/viewer/test_views.py::test_w41_uncertain_history_is_read_only_and_outside_needs_you` covers the viewer surface and refusal of the removed endpoint. Agent and harness settlement remain C3.
 - [ ] Calendar categories, local events, important appointments and hold-to-acknowledge: `tests/viewer/test_front_page.py`; verify hold gesture in walkthrough.
 - [ ] Cards, Timeline, Today/activity, Runs/reports, Live-test runs, Storage and owner notes: `tests/viewer/test_pages.py`, `tests/viewer/test_views.py`, `tests/viewer/test_live_test_page.py`, `tests/runs/test_notes_updates.py`; full viewer walkthrough required.
 

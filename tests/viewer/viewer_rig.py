@@ -14,7 +14,7 @@ from chamberlain.domain.intents import MailSend
 from chamberlain.ports.clock import ManualClock
 from chamberlain.surface.viewer.app import ViewerApp
 from chamberlain.writes.confirm import Response, create_token
-from chamberlain.writes.engine import Engine, Proposal
+from chamberlain.writes.core import Engine, Proposal
 from chamberlain.writes.models import WritePolicy
 
 MAIL = "mail:test"

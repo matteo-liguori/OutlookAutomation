@@ -18,7 +18,6 @@ PRIORITY: Final[dict[EventKind, int]] = {
     EventKind.ACTION_DUE: 75,
     EventKind.STORAGE_OVER_BUDGET: 70,
     EventKind.REMINDER_DUE: 65,
-    EventKind.MAIL_NEW_FOR_CARD: 65,
     EventKind.SOURCE_STALE: 60,
     EventKind.GRANT_REVIEW_DUE: 60,
     EventKind.CARD_REVIEW_DUE: 50,

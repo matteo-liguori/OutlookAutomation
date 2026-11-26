@@ -21,6 +21,7 @@ from chamberlain.schema.envelope import Coverage, NextStep, Reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.registry import ToolSpec
 from chamberlain.schema.tools import CheckResult, ToolRequest
+from chamberlain.writes.models import WritePolicy
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class Context:
     data_root: Path
     sources: SourceRouter
     services: Services
+    write_policy: WritePolicy = field(default_factory=WritePolicy)
     session: str | None = None
     """Set by the app from the request, after validation (T-3)."""
     tick_steps: TickSteps = TickSteps()

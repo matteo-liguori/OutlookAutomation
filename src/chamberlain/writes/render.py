@@ -28,8 +28,7 @@ from chamberlain.domain.recurrence import describe
 
 PREVIEW_CHARS = 1_500
 EVENT_ATTENDEES_REF = "_event_attendees"
-"""Key in the stored refs: the stored event an update or delete acts on has attendees. The value
-lists their addresses, comma separated; an older store holds `1` (not known)."""
+"""Key in the stored refs: the event has attendees, with any known addresses comma-separated."""
 EVENT_ORGANISER_REF = "_event_organiser"
 """Key in the stored refs: who organised the event a response answers (W-1)."""
 EVENT_WHEN_REF = "_event_when"
@@ -109,6 +108,11 @@ def describe_intent(
     event will also notify.
     """
     stored = refs or {}
+    attendees = stored.get(EVENT_ATTENDEES_REF)
+    notified = ""
+    if attendees is not None:
+        notified = ", ".join(address for address in attendees.split(",") if "@" in address)
+        notified = notified or "attendee addresses unavailable"
     lines: list[str] = [f"{_verb(intent)} ({intent.source})"]
     body = ""
     if isinstance(intent, MailSend | MailDraftSave | MailDraftUpdate):
@@ -141,16 +145,14 @@ def describe_intent(
             lines.extend(_reach(intent.scope, stored))
         if event.attendees:
             lines.append("Attendees (invited by the calendar): " + ", ".join(event.attendees))
-        if isinstance(intent, CalendarUpdate) and stored.get(EVENT_ATTENDEES_REF, "1") != "1":
-            lines.append(
-                "Also told of the change: " + stored[EVENT_ATTENDEES_REF].replace(",", ", ")
-            )
+        if isinstance(intent, CalendarUpdate) and notified:
+            lines.append("Also told of the change: " + notified)
     elif isinstance(intent, CalendarDelete):
         lines.append("Event: " + intent.event_ref)
         if intent.scope is not None:
             lines.extend(_reach(intent.scope, stored))
-        if stored.get(EVENT_ATTENDEES_REF, "1") != "1":
-            lines.append("Cancellation sent to: " + stored[EVENT_ATTENDEES_REF].replace(",", ", "))
+        if notified:
+            lines.append("Cancellation sent to: " + notified)
     elif isinstance(intent, CalendarRespond):
         lines.append(f"Answer: {intent.response}")
         lines.append("Sent to the organiser: " + (intent.organiser or "(unknown)"))

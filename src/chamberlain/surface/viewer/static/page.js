@@ -233,22 +233,13 @@
     if (op.rendered) card.appendChild(el("pre", { text: op.rendered }));
     card.appendChild(el("p", { class: "advice", text: op.advice }));
     resendLines(op).forEach(function (line) { card.appendChild(line); });
-    card.appendChild(el("p", { class: "muted", text: op.kind === "mail.send" && !op.imported ? "The harness looks for it, then the assistant decides whether to send it again and tells you. Nothing is needed from you; if you know, you can settle it:" : "The harness and the assistant look for it. Nothing is needed from you; if you know, you can settle it:" }));
-    [["happened", "It happened"], ["did_not_happen", "It did not happen"]].forEach(function (pair) {
-      card.appendChild(
-        el("button", {
-          class: "act",
-          text: pair[1],
-          onclick: function () { post("/api/operations/" + op.handle + "/resolve", { outcome: pair[0] }, render); },
-        })
-      );
-    });
     return card;
   }
 
   function uncertainCards(box) {
     api("GET", "/api/uncertain").then(function (data) {
-      if (!data.operations.length) box.appendChild(el("p", { class: "muted", text: "No writes are waiting to be confirmed." }));
+      if (!data.operations.length) return;
+      box.appendChild(el("h2", { text: "Unsettled writes" }));
       data.operations.forEach(function (op) { box.appendChild(uncertainCard(op)); });
     }, function (error) { box.appendChild(problem(error)); });
   }
@@ -273,8 +264,6 @@
     box.appendChild(el("h2", { text: "Waiting for your decision" }));
     runSections("needs", box);
     box.appendChild(grantsList(["proposed"], "Nothing is waiting for you to confirm."));
-    box.appendChild(el("h2", { text: "Writes not yet confirmed (for information)" }));
-    uncertainCards(box);
     box.appendChild(el("h2", { text: "Overview" }));
     api("GET", "/api/overview").then(function (data) {
       box.appendChild(
@@ -355,6 +344,7 @@
         list.appendChild(el("div", { class: "day" }, el("div", { class: "day-title" }, el("strong", { text: names.format(new Date(d.day + "T00:00:00Z")) })), items));
       });
     }, function (error) { list.appendChild(problem(error)); });
+    uncertainCards(box);
     return box;
   }
 

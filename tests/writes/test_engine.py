@@ -18,14 +18,21 @@ from chamberlain.domain.intents import (
     MailSend,
     MailTrash,
 )
-from chamberlain.domain.operations import OperationState
+from chamberlain.domain.operations import OperationState, ReconcileResult, ReconcileStatus
 from chamberlain.limits import (
     ABSENCE_MARGIN_SECONDS,
     CONNECTOR_DEADLINE_SECONDS,
     SETTLE_AFTER_MINUTES,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
-from chamberlain.testing.write_rig import CALENDAR, MAIL, SimulatedCrash, WriteRig, make_rig
+from chamberlain.testing.write_rig import (
+    CALENDAR,
+    MAIL,
+    SESSION,
+    SimulatedCrash,
+    WriteRig,
+    make_rig,
+)
 from chamberlain.writes import repo
 from chamberlain.writes.maintenance import maintain
 
@@ -160,6 +167,33 @@ def test_w4_p14_trash_goes_to_the_recoverable_folder_and_the_handle_survives(
     assert rig.refs.locate(handle)[1].startswith("f-trash/")
 
 
+def test_w19_restored_mail_can_be_trashed_again_but_active_proposals_still_match(
+    rig: WriteRig,
+) -> None:
+    engine = rig.engine()
+    handle = rig.seed_message()
+    trash = MailTrash(source=MAIL, messages=(handle,))
+    first = rig.agent_approves(engine.propose_intent(trash)).operation
+    assert first is not None
+    assert engine.do(first.handle).state is S.CONFIRMED
+
+    restore = MailMove(source=MAIL, messages=(handle,), to_folder="f-inbox")
+    move = rig.agent_approves(engine.propose_intent(restore)).operation
+    assert move is not None
+    assert engine.do(move.handle).state is S.CONFIRMED
+
+    second = engine.propose_intent(trash)
+    assert second.operation is not None
+    assert second.operation.handle != first.handle
+    assert engine.propose_intent(trash).operation == second.operation
+    approved = rig.agent_approves(second).operation
+    assert approved is not None
+    done = engine.do(approved.handle)
+    assert done.state is S.CONFIRMED
+    assert engine.do(approved.handle).receipt_json == done.receipt_json
+    assert len(rig.fake.dispatch_log) == 3
+
+
 def test_p11_an_uncertain_move_reconciles_without_a_second_mutation(rig: WriteRig) -> None:
     """Old: test_uncertain_move_reconciles_without_a_second_mutation."""
     handle = rig.seed_message("<mv@example.org>")
@@ -229,15 +263,19 @@ def test_w12_an_imported_uncertain_operation_is_not_reported_as_settled(rig: Wri
     assert rig.engine().get(op.handle).state is S.UNCERTAIN
 
 
-def test_w13_the_user_resolves_an_uncertain_operation(rig: WriteRig) -> None:
+def test_w13_the_agent_can_confirm_an_uncertain_write_with_observed_evidence(rig: WriteRig) -> None:
     op = rig.ready_send()
-    rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
+    rig.fake.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
+    rig.mail.reconcile_script = [ReconcileResult(status=ReconcileStatus.UNKNOWN)] * 10
     with fails(ErrorCode.OPERATION_UNCERTAIN):
         rig.engine().do(op.handle)
-    resolved = rig.engine().resolve(op.handle, happened=False, actor="human:viewer")
-    assert resolved.state is S.CONFIRMED_ABSENT
-    with fails(ErrorCode.OPERATION_ALREADY_SETTLED):
-        rig.engine().resolve(op.handle, happened=True, actor="human:viewer")
+    assert rig.sent_copies() == 1
+    evidence = rig.evidence.add(text="Found the message in Sent.", owner=op.handle, session=SESSION)
+    resolved, changed = rig.engine().reconcile(op.handle, happened_evidence=evidence)
+    assert changed
+    assert resolved.state is S.CONFIRMED
+    assert rig.engine().reconcile(op.handle) == (resolved, False)
+    assert rig.sent_copies() == 1
 
 
 def test_w14_a_client_verified_send_is_upgraded_by_reading_back(rig: WriteRig) -> None:
@@ -578,7 +616,7 @@ def test_w17_a_racing_do_cannot_fail_clean_a_dispatched_operation(rig: WriteRig)
     grant = rig.grant_for(op)
     rig.db.execute("UPDATE grants SET state = 'revoked' WHERE handle = ?", (grant.handle,))
     with fails(ErrorCode.OPERATION_NEEDS_RECONCILE):
-        eng._reserve(stale, eng.intent_of(stale))
+        eng.reserve(stale, eng.intent_of(stale))
     after = eng.get(op.handle)
     assert after.state is S.DISPATCHED
     assert after.error_code is None

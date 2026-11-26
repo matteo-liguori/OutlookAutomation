@@ -13,7 +13,6 @@ from chamberlain.domain.events import EventKind
 Detector = Callable[[DetectorInput], Iterable[EventDraft]]
 
 DETECTORS: dict[EventKind, Detector] = {
-    EventKind.MAIL_NEW_FOR_CARD: mail.new_for_card,
     EventKind.MAIL_NEW_UNMATCHED: mail.new_unmatched,
     EventKind.ACTION_DUE: due.action_due,
     EventKind.REMINDER_DUE: due.reminder_due,

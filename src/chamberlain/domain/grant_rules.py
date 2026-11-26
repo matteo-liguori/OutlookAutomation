@@ -124,14 +124,14 @@ def scope_mismatch(scope: StandingScope, intent: WriteIntent, card: str | None) 
             covered = covered | {a for a in addresses if _domain(a) in scope.recipient_domains}
         if not addresses <= covered:
             return True
-    if isinstance(intent, MailMove) and (
-        intent.to_folder not in scope.folders or (intent.mark_read and not scope.allow_mark_read)
-    ):
-        return True
-    if isinstance(intent, MailTrash) and (
-        intent.from_folder is None or intent.from_folder not in scope.folders
-    ):
-        return True
+    if cover.folders:
+        if isinstance(intent, MailMove):
+            return intent.to_folder not in scope.folders or (
+                intent.mark_read and not scope.allow_mark_read
+            )
+        if isinstance(intent, MailTrash):
+            return intent.from_folder is None or intent.from_folder not in scope.folders
+        return True  # A table entry requiring a folder must supply a known folder rule.
     return isinstance(intent, MailMarkRead) and not scope.allow_mark_read
 
 

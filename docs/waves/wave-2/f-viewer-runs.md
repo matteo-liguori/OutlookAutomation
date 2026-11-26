@@ -24,7 +24,7 @@ dashboard. Read `AGENTS.md`, `docs/BOARD.md`, then the contracts below.
 1. A loopback-only local web viewer (bind 127.0.0.1, random per-launch token, Origin and
    Host checks, no third-party assets) that mounts the writes track's confirmation
    handler and shows: pending grants with the exact content to be authorised, grant
-   review and revocation, uncertain operations awaiting a decision, "what the
+   review and revocation, read-only uncertain operations in the Timeline, "what the
    assistant did today" from the audit log, cards and due actions, storage figures.
    Port the safety checks from the old `monitor/ui/__init__.py`.
 2. Runs: scheduled mail and calendar passes as `schedule.pass_due` events; the

@@ -161,9 +161,7 @@ def test_missing_everywhere_is_reported_once_and_the_agent_may_send_it_again(
     assert twice.value.code is ErrorCode.REQUEST_INVALID
 
 
-def test_missing_and_the_permission_gone_stays_visible_until_the_owner_settles_it(
-    rig: WriteRig,
-) -> None:
+def test_w40_a_missing_send_remains_visible_after_its_permission_is_revoked(rig: WriteRig) -> None:
     handle = lost_send(rig, Fault.LOSE_BEFORE_APPLY)
     a_day_later(rig)
     grant = get(rig, handle).grant
@@ -178,6 +176,7 @@ def test_missing_and_the_permission_gone_stays_visible_until_the_owner_settles_i
     assert get(rig, handle).state is S.UNCERTAIN  # a send is never quietly closed
     assert reasons(rig) == ["missing"]
 
-    settled = rig.engine().resolve(handle, happened=False, actor="human:viewer")
-    assert settled.state is S.CONFIRMED_ABSENT
-    assert reasons(rig) == []
+    settled, changed = rig.engine().reconcile(handle)
+    assert settled.state is S.UNCERTAIN
+    assert not changed
+    assert reasons(rig) == ["missing"]

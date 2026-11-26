@@ -4,19 +4,22 @@ Contract: docs/contracts/04-writes.md, 05-grants.md. Rows are read from the
 store by `repo.py`; the pure rules in `authorise.py` see only these values.
 """
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from pydantic import Field
+from pydantic import Field, TypeAdapter
 
 from chamberlain.domain.grant_rules import check_config_requirement
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
-from chamberlain.domain.intents import IntentKind
-from chamberlain.domain.operations import ItemResult, OperationState, Receipt
+from chamberlain.domain.intents import IntentKind, WriteIntent
+from chamberlain.domain.operations import ItemResult, OperationState, ProviderReceipt, Receipt
 from chamberlain.limits import SENDS_PER_HOUR
 from chamberlain.schema.base import Handle, Model
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+
+_INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
 
 
 @dataclass(frozen=True)
@@ -115,6 +118,20 @@ class OperationRow:
     redo_of: str | None = None
     """On a resend: the uncertain send it replaces (W-38)."""
 
+    def intent(self) -> WriteIntent:
+        if self.intent_json is None:
+            raise ChamberlainError(
+                ErrorCode.OPERATION_ALREADY_SETTLED, "That operation has been compacted."
+            )
+        return _INTENT.validate_json(self.intent_json)
+
+    def refs(self) -> dict[str, str]:
+        stored: dict[str, str] = json.loads(self.refs_json or "{}")
+        return stored
+
+    def receipt(self) -> "StoredReceipt | None":
+        return StoredReceipt.model_validate_json(self.receipt_json) if self.receipt_json else None
+
 
 class StoredReceipt(Model):
     """What `operations.receipt_json` holds (S-2). Compaction keeps `summary` only (W-25)."""
@@ -125,3 +142,29 @@ class StoredReceipt(Model):
     warnings: tuple[str, ...] = ()
     reported: str | None = Field(default=None, max_length=500)
     """What the assistant said it did, for an outside action (W-46). Compaction drops it."""
+
+
+@dataclass(frozen=True)
+class Proposal:
+    """What `propose` learned (T-13): the operation or grant, what it needs, and a preview."""
+
+    operation: OperationRow | None
+    grant: GrantRow | None
+    state: OperationState | GrantState
+    requirement: Requirement
+    ready: bool
+    content_sha256: str
+    preview: str
+    truncated: bool
+    origin: str
+
+
+@dataclass(frozen=True)
+class Reading:
+    """A connector's reconcile answer, reduced to what the engine acts on (R2, P-12)."""
+
+    present: ProviderReceipt | None
+    absent_proof: bool
+    queued: bool
+    absent: bool = False
+    """The connector looked and found nothing (with or without proof)."""

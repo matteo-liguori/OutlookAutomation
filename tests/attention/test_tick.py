@@ -117,7 +117,7 @@ def test_a5_a2_a4_a1_g8_every_detector_is_pure_and_raises_exactly_its_and_1_rela
     drafts = list(DETECTORS[EventKind.MAIL_NEW_UNMATCHED](data))
     assert [(d.subject, d.discriminator) for d in drafts] == [("mail:a", "7"), ("mail:b", "9")]
     assert "1 with a suggested card" in drafts[0].summary
-    assert list(DETECTORS[EventKind.MAIL_NEW_FOR_CARD](data)) == []
+    assert "mail.new_for_card" not in {kind.value for kind in DETECTORS}
 
     # g8_grants_waiting_and_due
     data = DetectorInput(

@@ -42,9 +42,7 @@ TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
     ),
     _S.PREPARED: frozenset({_S.DISPATCHED, _S.FAILED_CLEAN}),
     _S.DISPATCHED: frozenset({_S.CONFIRMED, _S.FAILED_CLEAN, _S.UNCERTAIN}),
-    _S.UNCERTAIN: frozenset(
-        {_S.RECONCILING, _S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.ABANDONED, _S.SUPERSEDED}
-    ),
+    _S.UNCERTAIN: frozenset({_S.RECONCILING, _S.CONFIRMED, _S.ABANDONED, _S.SUPERSEDED}),
     _S.RECONCILING: frozenset({_S.CONFIRMED, _S.CONFIRMED_ABSENT, _S.UNCERTAIN}),
     _S.CONFIRMED: frozenset(),
     _S.FAILED_CLEAN: frozenset(),
@@ -56,8 +54,8 @@ TRANSITIONS: dict[OperationState, frozenset[OperationState]] = {
 }
 """Exactly the arrows of the state diagram (W-6).
 
-`uncertain -> confirmed | confirmed_absent` directly is the user resolving it
-in the viewer (W-13); the engine itself always goes through `reconciling`.
+`uncertain -> confirmed` directly records happened evidence or a match for an imported
+operation (W-13, W-13a). Proof of absence goes through `reconciling`.
 """
 
 TERMINAL_STATES = frozenset(state for state, targets in TRANSITIONS.items() if not targets)

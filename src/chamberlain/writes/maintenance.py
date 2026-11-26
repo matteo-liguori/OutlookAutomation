@@ -15,7 +15,7 @@ from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 from chamberlain.writes import repo
 from chamberlain.writes.audit import AuditChain, prune
-from chamberlain.writes.engine import Engine
+from chamberlain.writes.core import Engine
 from chamberlain.writes.models import StoredReceipt, WritePolicy
 
 

@@ -9,12 +9,11 @@ confirm in the viewer: this module only proposes it.
 import logging
 import time
 from collections import Counter
-from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Final
+from typing import Final
 
-from chamberlain.app.core import App
+from chamberlain.app.context import Context
 from chamberlain.cleanup.rules import (
     Candidate,
     CleanupConfig,
@@ -24,11 +23,15 @@ from chamberlain.cleanup.rules import (
 )
 from chamberlain.domain.grants import GrantState, StandingScope
 from chamberlain.domain.handles import HandleKind
-from chamberlain.domain.intents import IntentKind
+from chamberlain.domain.intents import IntentKind, MailTrash
+from chamberlain.domain.operations import OperationState
+from chamberlain.memory import repo as memory_repo
+from chamberlain.memory.cards import CardService
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.schema import get_state, set_state
 from chamberlain.writes import repo
+from chamberlain.writes.core import Engine
 
 log = logging.getLogger("chamberlain.cleanup")
 
@@ -41,8 +44,8 @@ BATCH: Final = 250
 LOOK_AT_TRASH_OVER: Final = 100
 """More than this from one mailbox in one run: the report asks the agent to glance at Trash."""
 CLEANUP_EVERY: Final = timedelta(days=1)
-CLEANUP_AGENT: Final = "cleanup"
-"""The clean-up's own session: its `start` never triggers the clean-up again."""
+ACTOR: Final = "system:cleanup"
+CARD_KEY: Final = "cleanup.card"
 LAST_RUN_KEY: Final = "cleanup.last_run_at"
 
 
@@ -93,42 +96,35 @@ class CleanupReport:
         return out
 
 
-class _Session:
-    def __init__(self, app: App, wait: Callable[[float], None] = time.sleep) -> None:
-        self.app = app
-        self.wait = wait
-        self.session = str(self.ok("start", agent=CLEANUP_AGENT)["session"])
-
-    def ok(self, tool: str, **request: Any) -> dict[str, Any]:
-        if tool != "start":
-            request.setdefault("session", getattr(self, "session", None))
-        reply = self.app.call(tool, request)
-        if not reply.ok or reply.data is None:
-            error = reply.error
-            code = error.code if error is not None else ErrorCode.INTERNAL_UNEXPECTED
-            message = error.message if error is not None else f"{tool} failed"
-            raise ChamberlainError(code, message)
-        data: dict[str, Any] = reply.data.model_dump(mode="json", exclude_none=True)
-        return data
-
-    def card(self) -> str:
-        found = self.ok("find", scope="cards", query=CARD_TITLE, limit=10)
-        hits: list[dict[str, Any]] = found.get("hits", [])
-        for hit in hits:
-            content: dict[str, Any] = hit.get("content") or {}
-            text = str(content.get("text", ""))
-            if text == CARD_TITLE and str(hit.get("summary", "")).startswith("open"):
-                return str(hit["handle"])
-        made = self.ok(
-            "card",
-            op="create",
-            fields={
-                "title": CARD_TITLE,
-                "goal": "Old mail the owner's clean-up rules move to Trash.",
-                "rules": "Only `chamberlain cleanup` works here.",
-            },
-        )
-        return str(made["card"]["handle"])
+def _card(ctx: Context) -> str:
+    """Keep the system card by handle, including grants created before the handle was stored."""
+    with transaction(ctx.db):
+        handle = get_state(ctx.db, CARD_KEY)
+        if handle is None:
+            for grant in repo.grants_in_states(ctx.db, (GrantState.ACTIVE, GrantState.PROPOSED)):
+                scope = grant.scope
+                if (
+                    grant.card
+                    and scope
+                    and scope == _scope(grant.source_id, scope.folders, grant.card)
+                ):
+                    handle = grant.card
+                    break
+        old = memory_repo.get_card(ctx.db, handle) if handle else None
+        if old is None or old["state"] != "open":
+            handle = (
+                CardService(ctx.db, ctx.clock)
+                .create(
+                    title=CARD_TITLE,
+                    goal="Old mail the owner's clean-up rules move to Trash.",
+                    rules="Only `chamberlain cleanup` works here.",
+                )
+                .handle
+            )
+        assert handle is not None
+        if get_state(ctx.db, CARD_KEY) != handle:
+            set_state(ctx.db, ctx.clock, CARD_KEY, handle)
+        return handle
 
 
 def _scope(source: str, folder_ids: frozenset[str], card: str) -> StandingScope:
@@ -143,10 +139,9 @@ def _scope(source: str, folder_ids: frozenset[str], card: str) -> StandingScope:
     )
 
 
-def _rule_folders(app: App, config: CleanupConfig) -> dict[str, set[str]]:
+def _rule_folders(ctx: Context, config: CleanupConfig) -> dict[str, set[str]]:
     """Every folder any rule names, per mailbox (the grant covers exactly these)."""
 
-    ctx = app.context
     by: dict[str, set[str]] = {}
     for rule in config.rules:
         for source in sources_of(ctx, rule):
@@ -159,27 +154,25 @@ def _rule_folders(app: App, config: CleanupConfig) -> dict[str, set[str]]:
     return by
 
 
-def propose_grants(app: App, config: CleanupConfig) -> list[tuple[str, str, str]]:
+def propose_grants(ctx: Context, config: CleanupConfig) -> list[tuple[str, str, str]]:
     """`(source, state, grant)` per mailbox; proposes what is missing. Never confirms."""
-    s = _Session(app)
-    card = s.card()
+    card = _card(ctx)
     out: list[tuple[str, str, str]] = []
-    for source, folders in sorted(_rule_folders(app, config).items()):
+    for source, folders in sorted(_rule_folders(ctx, config).items()):
         scope = _scope(source, frozenset(folders), card)
-        state, handle = _grant_state(app, source, scope)
+        state, handle = _grant_state(ctx, source, scope)
         if state == "missing":
-            made = s.ok(
-                "propose", standing=scope.model_dump(mode="json", exclude_none=True), card=card
-            )
-            state, handle = "proposed", str(made["grant"])
+            made = Engine(ctx, actor=ACTOR).propose_standing(scope, card=card)
+            assert made.grant is not None
+            state, handle = "proposed", made.grant.handle
         out.append((source, state, handle))
     return out
 
 
-def _grant_state(app: App, source: str, scope: StandingScope) -> tuple[str, str]:
+def _grant_state(ctx: Context, source: str, scope: StandingScope) -> tuple[str, str]:
     best = ("missing", "")
     states = (GrantState.ACTIVE, GrantState.PROPOSED)
-    for row in repo.grants_in_states(app.context.db, states, source):
+    for row in repo.grants_in_states(ctx.db, states, source):
         if row.scope != scope or row.card != scope.card:
             continue
         if row.state.value == "active":
@@ -189,32 +182,34 @@ def _grant_state(app: App, source: str, scope: StandingScope) -> tuple[str, str]
     return best
 
 
-def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupReport:
+def run_cleanup(ctx: Context, config: CleanupConfig, *, dry_run: bool) -> CleanupReport:
     """Count, or move to Trash, what the rules name."""
-    ctx = app.context
     now = ctx.clock.now()
     report = CleanupReport()
     if dry_run:
         for rule in config.rules:
             report.planned[rule.name] = sum(1 for _ in candidates(ctx, rule, now))
         return report
-    folders = _rule_folders(app, config)
+    folders = _rule_folders(ctx, config)
     if not folders:
         return report
-    s = _Session(app)
-    card = s.card()
-    active: list[str] = []
+    card = _card(ctx)
+    engine = Engine(ctx)
+    active: dict[str, str] = {}
     for source, wanted in sorted(folders.items()):
-        state, _ = _grant_state(app, source, _scope(source, frozenset(wanted), card))
-        (active.append(source) if state == "active" else report.waiting.append(source))
+        state, grant = _grant_state(ctx, source, _scope(source, frozenset(wanted), card))
+        if state == "active":
+            active[source] = grant
+        else:
+            report.waiting.append(source)
     unsure: set[str] = set()
     for rule in config.rules:
-        for source in active:
+        for source, grant in active.items():
             found = list(candidates(ctx, rule, now, only=source, unsure=unsure))
             # One write per batch: one Thunderbird move, one check (never one per message).
             for start in range(0, len(found), BATCH):
                 batch = found[start : start + BATCH]
-                moved = _trash(s, card, source, batch, report)
+                moved = _trash(engine, grant, card, source, batch, report)
                 if moved is None:
                     break  # not covered: the rest of this mailbox would be refused too
                 if moved:
@@ -228,45 +223,47 @@ def run_cleanup(app: App, config: CleanupConfig, *, dry_run: bool) -> CleanupRep
 
 
 def _trash(
-    s: _Session, card: str, source: str, batch: list[Candidate], report: CleanupReport
+    engine: Engine,
+    grant: str,
+    card: str,
+    source: str,
+    batch: list[Candidate],
+    report: CleanupReport,
 ) -> int | None:
     """Move one batch; how many moved, or None when the grant does not cover it."""
-    refs = s.app.context.services.refs
+    refs = engine.ctx.services.refs
     handles = [refs.remember(HandleKind.MESSAGE, source, c.summary.locator) for c in batch]
-    intent = {"kind": "mail.trash", "source": source, "messages": handles}
+    intent = MailTrash(source=source, messages=tuple(handles))
     attempt = 0
     while True:
         try:
-            proposed = s.ok("propose", intent=intent, card=card)
-            if not proposed.get("ready"):
+            done = engine.run(intent, actor=ACTOR, grant=grant, card=card)
+            if done is None:
                 report.failed += ["not covered by the grant"] * len(batch)
                 return None
-            done = s.ok("do", operation=proposed["operation"])
             break
         except ChamberlainError as error:
             # Busy means Thunderbird refused before doing anything: wait and try again.
             attempt += 1
             if error.code is ErrorCode.SOURCE_BUSY and attempt < BUSY_TRIES:
-                s.wait(BUSY_WAIT_SECONDS)
+                time.sleep(BUSY_WAIT_SECONDS)
                 continue
             report.failed += [error.code.value] * len(batch)
             return 0
-    operation: dict[str, Any] = done["operation"]
-    if operation["state"] != "confirmed":
-        report.failed += [str(operation["state"])] * len(batch)
+    operation = engine.view(done)
+    if operation.state is not OperationState.CONFIRMED:
+        report.failed += [operation.state.value] * len(batch)
         return 0
-    failed = int(operation.get("items_failed", 0))
-    report.failed += ["no longer there"] * failed
-    return int(operation.get("items_ok", len(batch) - failed))
+    report.failed += ["no longer there"] * operation.items_failed
+    return operation.items_ok
 
 
-def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
+def daily_cleanup(ctx: Context, config: CleanupConfig) -> CleanupReport | None:
     """The run an agent's `start` triggers: at most once a day, only when the owner turned it on.
 
     It proposes any missing grant (so the owner sees it in the viewer), then moves what the
     active grants cover. The day is claimed first, so a slow run is never doubled.
     """
-    ctx = app.context
     if not config.enabled or not config.rules:
         return None
     now = ctx.clock.now()
@@ -275,8 +272,8 @@ def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
         if last and now - datetime.fromisoformat(last) < CLEANUP_EVERY:
             return None
         set_state(ctx.db, ctx.clock, LAST_RUN_KEY, now.strftime("%Y-%m-%dT%H:%M:%SZ"))
-    propose_grants(app, config)
-    report = run_cleanup(app, config, dry_run=False)
+    propose_grants(ctx, config)
+    report = run_cleanup(ctx, config, dry_run=False)
     log.info(
         "clean-up moved %d to Trash; %d not moved; waiting: %s",
         report.moved,
@@ -288,7 +285,6 @@ def daily_cleanup(app: App, config: CleanupConfig) -> CleanupReport | None:
 
 __all__ = [
     "CARD_TITLE",
-    "CLEANUP_AGENT",
     "CleanupReport",
     "daily_cleanup",
     "propose_grants",

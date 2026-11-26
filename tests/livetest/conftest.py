@@ -20,7 +20,7 @@ from chamberlain.livetest.fakeworld import (
 )
 from chamberlain.livetest.runner import RunOptions, open_lab
 from chamberlain.writes.confirm import confirm_grant
-from chamberlain.writes.engine import Engine
+from chamberlain.writes.core import Engine
 
 
 def confirm_all(lab: FakeLab, options: RunOptions | None = None) -> list[str]:

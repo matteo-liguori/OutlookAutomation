@@ -250,3 +250,22 @@ def test_m36_migration_0120_gives_each_seen_message_one_key_and_drops_second_cop
     assert mark["held_from"] is None
     assert mark["scan_started_at"] == when, "an unfinished scan restarts from the watermark"
     db.close()
+
+
+def test_a1_migration_0250_retires_only_old_card_mail_events(
+    empty: sqlite3.Connection, clock: ManualClock
+) -> None:
+    before = [m for m in discover() if m.version < 250]
+    migrate(empty, clock, backup_dir=None, migrations=before)
+    empty.executemany(
+        "INSERT INTO events (handle, kind, dedupe_key, priority, summary, detected_at) "
+        "VALUES (?, ?, ?, 40, 'New mail', '2026-01-01T00:00:00Z')",
+        [
+            ("evt_0000000000000001", "mail.new_for_card", "retired"),
+            ("evt_0000000000000002", "mail.new_unmatched", "current"),
+            ("evt_0000000000000003", "operation.uncertain", "unsettled"),
+        ],
+    )
+    assert 250 in migrate(empty, clock, backup_dir=None)
+    kinds = {row["kind"] for row in empty.execute("SELECT kind FROM events")}
+    assert kinds == {"mail.new_unmatched", "operation.uncertain"}

@@ -21,7 +21,9 @@ MORNING = ScheduleSpec("morning", PassKind.MAIL, "08:00", "UTC")
 
 
 def _grant(rig: Rig) -> list[str]:
-    return read_state.propose_missing(rig.ctx.db, rig.clock, rig.ctx.services.audit, [MAIL])
+    return read_state.propose_missing(
+        rig.ctx.db, rig.clock, rig.ctx.services.audit, [MAIL], policy=rig.ctx.write_policy
+    )
 
 
 @pytest.mark.parametrize("case", ["option off", "option on, no grant", "option on, grant"])

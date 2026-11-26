@@ -7,7 +7,7 @@ Rule zero: no write without verifiable authority, and no blind resend.
   journals `dispatched` (committed before the connector is called) and
   dispatches exactly once. Nothing ever dispatches an operation twice.
 * An uncertain operation leaves that state only through read-only
-  `reconcile` or the user's resolution in the viewer.
+  `reconcile`.
 * A dispatch holds a lease (R5). Recovery touches only expired leases, and a
   late `applied` from a process that lost its lease is recorded as reconcile
   evidence.
@@ -20,16 +20,13 @@ import secrets
 import sqlite3
 import time
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import timedelta
 from typing import Final
 
-from pydantic import TypeAdapter
-
 from chamberlain.app.context import Context
-from chamberlain.domain.calendar import CalendarEvent
 from chamberlain.domain.canonical import sha256_bytes, sha256_text
-from chamberlain.domain.capabilities import Capability, CapabilityName
+from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.grant_rules import (
     format_ts,
     intent_hash,
@@ -44,16 +41,8 @@ from chamberlain.domain.grants import (
 )
 from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.domain.intents import (
-    CalendarCreate,
-    CalendarDelete,
-    CalendarRespond,
-    CalendarUpdate,
     IntentKind,
-    MailDraftSave,
-    MailDraftUpdate,
-    MailMove,
     MailSend,
-    MailTrash,
     OutsideAction,
     WriteIntent,
 )
@@ -66,20 +55,15 @@ from chamberlain.domain.operations import (
     Prepared,
     ProviderReceipt,
     ReconcileResult,
-    ReconcileStatus,
     Verification,
     recheck_text,
 )
-from chamberlain.domain.permissions import recipients_of
-from chamberlain.domain.recurrence import describe
 from chamberlain.domain.senders import parse_instruction_ref
 from chamberlain.limits import (
     ABSENCE_MARGIN_SECONDS,
     CONNECTOR_DEADLINE_SECONDS,
     REPEAT_WINDOW_HOURS,
     SETTLE_AFTER_MINUTES,
-    UNCERTAIN_ABANDON_DAYS,
-    UNCERTAIN_SEND_RECHECK_HOURS,
 )
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -87,7 +71,7 @@ from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import OperationView
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
-from chamberlain.writes import read_state, repo
+from chamberlain.writes import kinds, outside, repo, resend
 from chamberlain.writes.authorise import (
     Allow,
     Decision,
@@ -101,14 +85,14 @@ from chamberlain.writes.control import cancel_operation
 from chamberlain.writes.grants import GrantService
 from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.imported_match import found_live
-from chamberlain.writes.models import GrantRow, OperationRow, StoredReceipt, WritePolicy
-from chamberlain.writes.recheck import look_in_recipient_mailboxes, sender_places
+from chamberlain.writes.models import (
+    GrantRow,
+    OperationRow,
+    Proposal,
+    Reading,
+    WritePolicy,
+)
 from chamberlain.writes.render import (
-    EVENT_ATTENDEES_REF,
-    EVENT_ORGANISER_REF,
-    EVENT_REPEATS_REF,
-    EVENT_WHEN_REF,
-    describe_intent,
     describe_scope,
     grant_summary,
     grant_title,
@@ -138,36 +122,13 @@ MAIL_SETTLE_ATTEMPTS: Final = 3
 MAIL_SETTLE_WINDOW_SECONDS: Final = 30
 CALENDAR_SETTLE_ATTEMPTS: Final = 7
 CALENDAR_SETTLE_WINDOW_SECONDS: Final = 60
-ALLOW_DUPLICATE_REF: Final = "_allow_duplicate"
+ALLOW_DUPLICATE_REF = kinds.ALLOW_DUPLICATE_REF
 """Reserved key in the `refs` mapping given to `prepare` (board R3)."""
 OUTSIDE_REPORT_HOURS: Final = 24
 """How long the assistant has to report an outside action it was allowed to do (W-46)."""
 INVITATIONS_UNSUPPORTED: Final = "invitations-not-supported"
 RECURRENCE_UNSUPPORTED: Final = "recurrence-not-supported"
 
-_INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
-_CAPABILITY: dict[IntentKind, CapabilityName] = {
-    IntentKind.MAIL_SEND: CapabilityName.MAIL_SEND,
-    IntentKind.MAIL_DRAFT_SAVE: CapabilityName.MAIL_DRAFT,
-    IntentKind.MAIL_DRAFT_UPDATE: CapabilityName.MAIL_DRAFT,
-    IntentKind.MAIL_DRAFT_DISCARD: CapabilityName.MAIL_DRAFT,
-    IntentKind.MAIL_MOVE: CapabilityName.MAIL_MOVE,
-    IntentKind.MAIL_TRASH: CapabilityName.MAIL_TRASH,
-    IntentKind.MAIL_MARK_READ: CapabilityName.MAIL_MARK_READ,
-    IntentKind.CALENDAR_CREATE: CapabilityName.CALENDAR_WRITE,
-    IntentKind.CALENDAR_UPDATE: CapabilityName.CALENDAR_WRITE,
-    IntentKind.CALENDAR_DELETE: CapabilityName.CALENDAR_WRITE,
-    IntentKind.CALENDAR_RESPOND: CapabilityName.CALENDAR_WRITE,
-}
-_CALENDAR_KINDS = frozenset(
-    {
-        IntentKind.CALENDAR_CREATE,
-        IntentKind.CALENDAR_UPDATE,
-        IntentKind.CALENDAR_DELETE,
-        IntentKind.CALENDAR_RESPOND,
-    }
-)
-_CALENDAR_INTENTS = (CalendarCreate, CalendarUpdate, CalendarDelete, CalendarRespond)
 _PROCESS_TOKEN: list[str] = []
 
 
@@ -191,32 +152,6 @@ def clock_pause(ctx: Context) -> Callable[[float], None]:
     return pause
 
 
-@dataclass(frozen=True)
-class Proposal:
-    """What `propose` learned (T-13): the operation or grant, what it needs, and a preview."""
-
-    operation: OperationRow | None
-    grant: GrantRow | None
-    state: OperationState | GrantState
-    requirement: Requirement
-    ready: bool
-    content_sha256: str
-    preview: str
-    truncated: bool
-    origin: str
-
-
-@dataclass(frozen=True)
-class Reading:
-    """A connector's reconcile answer, reduced to what the engine acts on (R2, P-12)."""
-
-    present: ProviderReceipt | None
-    absent_proof: bool
-    queued: bool
-    absent: bool = False
-    """The connector looked and found nothing (with or without proof)."""
-
-
 def read_reconcile(result: ReconcileResult) -> Reading:
     """The one place a reconcile status is interpreted. `queued` never frees a grant."""
     status = result.status.value
@@ -237,21 +172,77 @@ class Engine:
         *,
         pause: Callable[[float], None] | None = None,
         worker: str | None = None,
+        actor: str | None = None,
     ) -> None:
         self.ctx = ctx
         self.db: sqlite3.Connection = ctx.db
-        self.policy = policy or WritePolicy()
+        self.policy = ctx.write_policy if policy is None else policy
+        self._actor = actor
+        self._only_grant: str | None = None
         self.pause = pause or clock_pause(ctx)
         self.worker = worker or process_token()
         self.grants = GrantService(ctx.db, ctx.clock, ctx.services.audit, self.policy)
-        self._audit = ctx.services.audit
+        self.audit = ctx.services.audit
+
+    # Both the compare-and-set and its audit row commit in move_operation (W-7).
+    def transition(
+        self,
+        op: OperationRow,
+        to: OperationState,
+        *,
+        summary: str,
+        actor: str | None = None,
+        expected_lease: str | bool | None = False,
+        **columns: str | int | None,
+    ) -> OperationRow | None:
+        return move_operation(
+            self.db,
+            self.ctx.clock,
+            self.audit,
+            op,
+            to,
+            actor=self.actor() if actor is None else actor,
+            summary=summary,
+            expected_lease=expected_lease,
+            **columns,
+        )
+
+    def close_unreported_outside(self) -> int:
+        return outside.close_unreported_outside(self)
+
+    def recheck_sends(self) -> int:
+        return resend.recheck_sends(self)
+
+    def abandon(self, op: OperationRow) -> OperationRow | None:
+        return resend.abandon(self, op)
+
+    def propose_redo(
+        self,
+        original: str,
+        *,
+        card: str | None = None,
+        evidence: tuple[str, ...] = (),
+    ) -> Proposal:
+        return resend.propose_redo(self, original, card=card, evidence=evidence)
 
     # --- small helpers ------------------------------------------------------------
 
     def actor(self) -> str:
-        return f"agent:{self.ctx.session}" if self.ctx.session else "agent:none"
+        return self._actor or (f"agent:{self.ctx.session}" if self.ctx.session else "agent:none")
 
-    def _now(self) -> str:
+    def run(
+        self, intent: WriteIntent, *, actor: str, grant: str, card: str | None = None
+    ) -> OperationRow | None:
+        """Execute an internal write using exactly the caller's selected grant and audit actor."""
+        worker = Engine(self.ctx, self.policy, pause=self.pause, worker=self.worker, actor=actor)
+        worker._only_grant = grant
+        proposal = worker.propose_intent(intent, card=card)
+        op = proposal.operation
+        if not proposal.ready or op is None or op.card != card or op.grant not in (None, grant):
+            return None
+        return worker.do(op.handle)
+
+    def now(self) -> str:
         return stamp(self.ctx.clock)
 
     def get(self, handle: str) -> OperationRow:
@@ -262,28 +253,10 @@ class Engine:
 
     @staticmethod
     def intent_of(op: OperationRow) -> WriteIntent:
-        if op.intent_json is None:
-            raise ChamberlainError(
-                ErrorCode.OPERATION_ALREADY_SETTLED, "That operation has been compacted."
-            )
-        return _INTENT.validate_json(op.intent_json)
+        return op.intent()
 
-    def _refs(self, op: OperationRow) -> dict[str, str]:
-        loaded: dict[str, str] = json.loads(op.refs_json or "{}")
-        return loaded
-
-    def _capability(self, intent: WriteIntent) -> Capability:
-        kind = IntentKind(intent.kind)
-        if kind in _CALENDAR_KINDS:
-            port_caps = self.ctx.sources.calendar_port(intent.source).capabilities(intent.source)
-        else:
-            port_caps = self.ctx.sources.mail_port(intent.source).capabilities(intent.source)
-        capability = port_caps.get(_CAPABILITY[kind])
-        if capability is None:
-            raise ChamberlainError(
-                ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
-            )
-        return capability
+    def located(self, op: OperationRow) -> kinds.Located:
+        return kinds.Located.from_refs(op.refs())
 
     # --- propose ------------------------------------------------------------------
 
@@ -295,48 +268,26 @@ class Engine:
         evidence: tuple[str, ...] = (),
     ) -> Proposal:
         """Store a complete intent and report the authority it needs (W-1, W-18, W-19)."""
-        completed: WriteIntent
         if isinstance(intent, OutsideAction):
             # No connector stands behind it: nothing to locate, complete or limit (W-44).
-            self._check_outside(intent, card)
-            refs: dict[str, str] = {}
-            completed = intent
+            outside.check_outside(self, intent, card)
+            completed, located = intent, kinds.Located()
         else:
-            capability = self._capability(intent)
-            refs = self._locate(intent)
-            self._require_invitations(intent, refs)
-            self._require_recurrence(intent)
-            completed = self._complete(intent, refs)
-            self._check_limits(completed, capability)
+            completed, located = kinds.prepare_intent(self.ctx, intent, self.policy)
+        refs = located.to_refs()
         sha = intent_hash(completed)
         existing = self._existing(completed, sha, card)
         if existing is not None:
-            return self._proposal_for(existing, completed)
+            return self.proposal_for(existing, completed)
         handle = new_handle(HandleKind.OPERATION)
-        decision = self._decide(completed, handle, sha, card, reserved=None, refs=refs)
+        decision = self.decide(completed, handle, sha, card, reserved=None, located=located)
         if isinstance(completed, MailSend):
-            self._scan_before_storing(completed, handle, refs, decision)
+            self.scan_before_storing(completed, handle, refs, decision)
         with transaction(self.db):
-            repo.insert_operation(
-                self.db,
-                handle=handle,
-                idempotency_key=sha256_text("proposed:" + handle),
-                kind=IntentKind(completed.kind),
-                source_id=completed.source,
-                card=card,
-                session=self.ctx.session,
-                intent_sha256=sha,
-                intent_json=completed.model_dump_json(exclude_none=True),
-                refs_json=json.dumps(refs, sort_keys=True),
-                at=stamp(self.ctx.clock),
-            )
-            self._audit.append(
-                actor=self.actor(),
-                kind="operation.proposed",
-                subject=handle,
-                summary=f"{completed.kind} proposed on {completed.source}.",
-                payload_sha256=sha,
-            )
+            existing = self._existing(completed, sha, card)
+            if existing is not None:
+                return self.proposal_for(existing, completed)
+            self.insert_proposal(completed, handle, sha, card, refs)
             grant: GrantRow | None = None
             if isinstance(decision, Allow):
                 grant = repo.get_grant(self.db, decision.grant)
@@ -354,12 +305,9 @@ class Engine:
                         card=card,
                         actor=self.actor(),
                     )
-        for attachment in getattr(completed, "attachments", ()):
-            self.ctx.services.artifacts.add_owner(attachment.artifact, handle)
-        for item in evidence:
-            self.ctx.services.evidence.link(item, handle)
+        self.hold_inputs(completed, handle, evidence)
         op = self.get(handle)
-        text, cut = describe_intent(completed, refs=refs)
+        text, cut = kinds.describe_write(completed, located)
         return Proposal(
             operation=op,
             grant=grant,
@@ -372,7 +320,47 @@ class Engine:
             origin=handle,
         )
 
-    def _scan_before_storing(
+    def insert_proposal(
+        self,
+        intent: WriteIntent,
+        handle: str,
+        sha: str,
+        card: str | None,
+        refs: Mapping[str, str],
+        *,
+        redo_of: str | None = None,
+    ) -> None:
+        """Insert and audit a proposal inside the workflow's transaction."""
+        repo.insert_operation(
+            self.db,
+            handle=handle,
+            idempotency_key=sha256_text("proposed:" + handle),
+            kind=IntentKind(intent.kind),
+            source_id=intent.source,
+            card=card,
+            session=self.ctx.session,
+            intent_sha256=sha,
+            intent_json=intent.model_dump_json(exclude_none=True),
+            refs_json=json.dumps(dict(refs), sort_keys=True),
+            at=self.now(),
+            redo_of=redo_of,
+        )
+        suffix = f" as a resend of {redo_of}." if redo_of is not None else "."
+        self.audit.append(
+            actor=self.actor(),
+            kind="operation.proposed",
+            subject=handle,
+            summary=f"{intent.kind} proposed on {intent.source}{suffix}",
+            payload_sha256=sha,
+        )
+
+    def hold_inputs(self, intent: WriteIntent, handle: str, evidence: tuple[str, ...]) -> None:
+        for attachment in kinds.attachments_of(intent):
+            self.ctx.services.artifacts.add_owner(attachment.artifact, handle)
+        for item in evidence:
+            self.ctx.services.evidence.link(item, handle)
+
+    def scan_before_storing(
         self, intent: MailSend, handle: str, refs: Mapping[str, str], decision: Decision
     ) -> None:
         """Run the connector's read-only `prepare` so its duplicate scan fails early (R3).
@@ -381,11 +369,11 @@ class Engine:
         throwaway: the real one is derived from the idempotency key when `do` reserves.
         """
         scan_refs = dict(refs)
-        scan, _ = _with_token(intent, sha256_text("scan:" + handle))
+        scan, _ = kinds.with_token(intent, sha256_text("scan:" + handle))
         if isinstance(decision, Allow) and decision.allow_duplicate:
             scan_refs[ALLOW_DUPLICATE_REF] = "1"
         try:
-            self._port_prepare(scan, scan_refs)
+            kinds.port_prepare(self.ctx, scan, scan_refs)
         except ChamberlainError:
             raise
         except Exception as error:
@@ -413,15 +401,19 @@ class Engine:
         else:
             for source in sorted(scope.all_sources()):
                 for kind in scope.intent_kinds:
-                    capability = _CAPABILITY[kind]
+                    spec = kinds.KINDS[kind]
                     port_caps = (
                         self.ctx.sources.calendar_port(source).capabilities(source)
-                        if kind in _CALENDAR_KINDS
+                        if spec.calendar
                         else self.ctx.sources.mail_port(source).capabilities(source)
                     )
-                    if port_caps.get(capability) is None or (
-                        kind is IntentKind.CALENDAR_RESPOND
-                        and port_caps.get(CapabilityName.CALENDAR_INVITE) is None
+                    if (
+                        spec.capability is None
+                        or port_caps.get(spec.capability) is None
+                        or (
+                            kind is IntentKind.CALENDAR_RESPOND
+                            and port_caps.get(CapabilityName.CALENDAR_INVITE) is None
+                        )
                     ):
                         raise ChamberlainError(
                             ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
@@ -444,7 +436,7 @@ class Engine:
         op = self.get(operation)
         intent = self.intent_of(op)
         if op.state is not OperationState.PROPOSED:
-            return self._proposal_for(op, intent)
+            return self.proposal_for(op, intent)
         grant = repo.proposed_one_off(self.db, op.source_id, op.intent_sha256)
         if grant is not None:
             needed = requirement_needed(intent, self._usage(intent, op.handle, None), self.policy)
@@ -457,7 +449,7 @@ class Engine:
                 grant.handle, via=ConfirmedVia.AGENT_EVIDENCE, actor=self.actor()
             )
             self.ctx.services.evidence.link(evidence, activated.handle)
-        return self._proposal_for(self.get(operation), intent)
+        return self.proposal_for(self.get(operation), intent)
 
     def _check_evidence(self, evidence: str, intent: WriteIntent) -> None:
         """The approval is the user's own words from this session, or an authenticated email
@@ -483,7 +475,7 @@ class Engine:
                 field="approval_evidence",
             )
 
-    def _proposal_for(self, op: OperationRow, intent: WriteIntent) -> Proposal:
+    def proposal_for(self, op: OperationRow, intent: WriteIntent) -> Proposal:
         """The current picture for an operation that already exists."""
         grant = repo.proposed_one_off(self.db, op.source_id, op.intent_sha256)
         ready = False
@@ -493,12 +485,12 @@ class Engine:
             OperationState.AUTHORISED,
             OperationState.PREPARED,
         ):
-            original = self._original_of(op)
+            original = resend.original_of(self, op)
             if op.redo_of is not None and original is None:
                 # The send it would replace has settled: nothing can authorise this any more.
                 decision: Decision = Deny(ErrorCode.OPERATION_ALREADY_SETTLED, Requirement.NONE)
             else:
-                decision = self._decide(
+                decision = self.decide(
                     intent, op.handle, op.intent_sha256, op.card, op.grant, redo=original
                 )
             if isinstance(decision, Allow):
@@ -506,7 +498,7 @@ class Engine:
                 grant = repo.get_grant(self.db, decision.grant)
             else:
                 requirement = decision.requirement
-        text, cut = describe_intent(intent, refs=self._refs(op))
+        text, cut = kinds.describe_write(intent, self.located(op))
         return Proposal(
             operation=op,
             grant=grant,
@@ -523,7 +515,7 @@ class Engine:
         """An identical live operation, or a recent one that may not repeat (W-18, W-19)."""
         window = self.ctx.clock.now() - timedelta(hours=REPEAT_WINDOW_HOURS)
         # The same form may be filled again later: only a live outside action matches (W-44).
-        repeat_ok = isinstance(intent, OutsideAction) or self._repeat_allowed(intent, card)
+        repeat_ok = kinds.KINDS[intent.kind].terminal_repeat or self._repeat_allowed(intent, card)
         found = [
             op
             for op in repo.live_by_hash(self.db, intent.source, sha)
@@ -538,217 +530,6 @@ class Engine:
                 return True
         return False
 
-    def _locate(self, intent: WriteIntent) -> dict[str, str]:
-        """Stable locators for every handle the intent names (D-5, P-9)."""
-        handles: list[str] = []
-        for name in ("reply_to", "draft", "event_ref"):
-            value = getattr(intent, name, None)
-            if isinstance(value, str):
-                handles.append(value)
-        handles.extend(getattr(intent, "messages", ()))
-        located: dict[str, str] = {}
-        for handle in handles:
-            source, locator = self.ctx.services.refs.locate(handle)
-            if source != intent.source:
-                raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID, "A handle belongs to a different source."
-                )
-            located[handle] = locator
-        if isinstance(intent, CalendarUpdate | CalendarDelete | CalendarRespond):
-            port = self.ctx.sources.calendar_port(intent.source)
-            event = port.read(intent.source, located[intent.event_ref])
-            if isinstance(intent, CalendarUpdate | CalendarDelete):
-                self._check_scope(intent, event, located)
-            if isinstance(intent, CalendarRespond):
-                if event.organiser is None or event.my_response is None:
-                    raise ChamberlainError(
-                        ErrorCode.REQUEST_INVALID,
-                        "That event is not an invitation to this calendar's owner.",
-                        fix="Only an event someone else invited the owner to can be answered.",
-                        field="event_ref",
-                    )
-                located[EVENT_ORGANISER_REF] = event.organiser
-            else:
-                if event.my_response is not None:
-                    raise ChamberlainError(
-                        ErrorCode.CAPABILITY_UNSUPPORTED,
-                        "This is someone else's invitation; only its organiser can change it.",
-                        fix="Answer it with calendar.respond instead.",
-                        detail="invitee-copy",
-                    )
-                if event.fields.attendees:
-                    located[EVENT_ATTENDEES_REF] = ",".join(sorted(event.fields.attendees))
-        return located
-
-    @staticmethod
-    def _check_scope(
-        intent: CalendarUpdate | CalendarDelete, event: CalendarEvent, located: dict[str, str]
-    ) -> None:
-        """The scope must say which part of a repeating event is meant, and fit the handle (P-25).
-
-        The fix names the handle to use, so the agent needs no standing knowledge of series.
-        """
-        scope = intent.scope
-        if event.series_locator is None:
-            if scope is not None:
-                raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID,
-                    "That event does not repeat, so it takes no scope.",
-                    fix="Leave scope out.",
-                    field="scope",
-                )
-            if isinstance(intent, CalendarUpdate) and intent.event.recurrence is not None:
-                raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID,
-                    "An event that exists cannot be made to repeat.",
-                    fix="Create a repeating event with calendar.create instead.",
-                    field="event",
-                )
-            return
-        wanted = "series" if event.is_series else "occurrence"
-        if scope != wanted:
-            fix = (
-                "This is the whole series. Give scope series, or open one date and use that "
-                "date's handle with scope occurrence."
-                if event.is_series
-                else "This is one date of a repeating event. Give scope occurrence, or use "
-                "view.series of this event as the handle with scope series."
-            )
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID,
-                "Say which part of the repeating event this reaches.",
-                fix=fix,
-                field="scope",
-            )
-        if (
-            isinstance(intent, CalendarUpdate)
-            and scope == "occurrence"
-            and intent.event.recurrence is not None
-        ):
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID,
-                "One date of a repeating event takes no repeat rule.",
-                fix="Leave recurrence out, or change the series with scope series.",
-                field="event",
-            )
-        if scope == "occurrence":
-            located[EVENT_WHEN_REF] = event.fields.start.isoformat()
-        elif event.fields.recurrence is not None:
-            located[EVENT_REPEATS_REF] = describe(event.fields.recurrence)
-
-    def _require_recurrence(self, intent: WriteIntent) -> None:
-        """A write that repeats needs a source that says it can; checked at propose (P-26)."""
-        if not isinstance(intent, _CALENDAR_INTENTS) or isinstance(intent, CalendarRespond):
-            return
-        needed: CapabilityName | None = None
-        if isinstance(intent, CalendarCreate):
-            if intent.event.recurrence is not None:
-                needed = CapabilityName.CALENDAR_RECURRENCE
-        elif intent.scope == "occurrence":
-            needed = CapabilityName.CALENDAR_OCCURRENCE
-        elif intent.scope == "series":
-            needed = CapabilityName.CALENDAR_RECURRENCE
-        if needed is None:
-            return
-        caps = self.ctx.sources.calendar_port(intent.source).capabilities(intent.source)
-        if caps.get(needed) is None:
-            raise ChamberlainError(
-                ErrorCode.CAPABILITY_UNSUPPORTED,
-                "This calendar cannot write repeating events that way.",
-                fix="Use a calendar that can, or write a single event.",
-                detail=RECURRENCE_UNSUPPORTED,
-            )
-
-    def _require_invitations(self, intent: WriteIntent, refs: Mapping[str, str]) -> None:
-        """A write that reaches other people needs a source that can send invitations (P-2).
-
-        Checked at propose so the owner is never asked to confirm what cannot happen.
-        """
-        if not isinstance(intent, _CALENDAR_INTENTS):
-            return
-        reaches = (
-            isinstance(intent, CalendarRespond)
-            or EVENT_ATTENDEES_REF in refs
-            or (
-                isinstance(intent, CalendarCreate | CalendarUpdate) and bool(intent.event.attendees)
-            )
-        )
-        if not reaches:
-            return
-        caps = self.ctx.sources.calendar_port(intent.source).capabilities(intent.source)
-        if caps.get(CapabilityName.CALENDAR_INVITE) is None:
-            raise ChamberlainError(
-                ErrorCode.CAPABILITY_UNSUPPORTED,
-                "This calendar cannot send or answer invitations.",
-                fix="Use a calendar that can, or write the event without other people.",
-                detail=INVITATIONS_UNSUPPORTED,
-            )
-
-    def _complete(self, intent: WriteIntent, refs: Mapping[str, str]) -> WriteIntent:
-        """Fill the harness-completed fields and drop agent-supplied tokens (W-1, R1)."""
-        blank: dict[str, object] = {}
-        for name in ("message_id", "uid"):
-            if name in type(intent).model_fields:
-                blank[name] = None
-        if isinstance(intent, MailMove | MailTrash):
-            # A batch: the folder comes from the locators alone, never one call per message.
-            port = self.ctx.sources.mail_port(intent.source)
-            folders = {port.folder_of(intent.source, refs[h]) for h in intent.messages}
-            if len(folders) != 1:
-                raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID,
-                    "A batch moves messages from one folder at a time.",
-                    field="messages",
-                )
-            blank["from_folder"] = folders.pop()
-        if isinstance(intent, MailMove) and not intent.mark_read:
-            blank["mark_read"] = self._filing_marks_read(intent.source)
-        if isinstance(intent, CalendarRespond):
-            blank["organiser"] = refs[EVENT_ORGANISER_REF]
-        if isinstance(intent, CalendarCreate | CalendarUpdate):
-            rule = intent.event.recurrence
-            if rule is not None and rule.zone is None:
-                # Nine o'clock stays nine o'clock across a clock change (P-23).
-                blank["event"] = intent.event.model_copy(
-                    update={"recurrence": rule.model_copy(update={"zone": self.policy.zone})}
-                )
-        completed = intent.model_copy(update=blank)
-        for attachment in getattr(completed, "attachments", ()):
-            info = self.ctx.services.artifacts.info(attachment.artifact)
-            if not info.live:
-                raise ChamberlainError(ErrorCode.ARTIFACT_EXPIRED, "An attachment has expired.")
-            if info.sha256 != attachment.sha256:
-                raise ChamberlainError(
-                    ErrorCode.ARTIFACT_HASH_MISMATCH, "An attachment does not match its hash."
-                )
-        return completed
-
-    def _filing_marks_read(self, source: str) -> bool:
-        """The owner's `read_state.filing_marks_read` option, which acts only through a grant.
-
-        With the option on and the mailbox's standing grant active, a move marks the message
-        read. Without the grant the move leaves it unread and the grant is proposed, once, for
-        the owner's click (G-24).
-        """
-        if not read_state.options(self.db).filing_marks_read:
-            return False
-        if read_state.active_grant(self.db, source) is not None:
-            return True
-        read_state.propose_missing(self.db, self.ctx.clock, self._audit, [source])
-        return False
-
-    def _check_limits(self, intent: WriteIntent, capability: Capability) -> None:
-        """Connector limits are checked before `prepare` (P-2)."""
-        limits = capability.limits
-        most = limits.get("max_recipients")
-        if most is not None and len(recipients_of(intent)) > most:
-            raise ChamberlainError(ErrorCode.REQUEST_TOO_LARGE, "Too many recipients.")
-        biggest = limits.get("max_attachment_bytes")
-        if biggest is not None:
-            for attachment in getattr(intent, "attachments", ()):
-                if self.ctx.services.artifacts.info(attachment.artifact).size > biggest:
-                    raise ChamberlainError(ErrorCode.REQUEST_TOO_LARGE, "An attachment is too big.")
-
     # --- authorisation ------------------------------------------------------------
 
     def _usage(
@@ -756,13 +537,13 @@ class Engine:
         intent: WriteIntent,
         handle: str,
         reserved: str | None,
-        refs: Mapping[str, str] | None = None,
+        located: kinds.Located | None = None,
         redo: OperationRow | None = None,
     ) -> Usage:
         now = self.ctx.clock.now()
-        if refs is None:
+        if located is None:
             stored = repo.get_operation(self.db, handle)
-            refs = {} if stored is None else self._refs(stored)
+            located = kinds.Located() if stored is None else self.located(stored)
         grants = self._grants_for(intent.source, reserved, redo)
         names = [g.handle for g in grants]
         skip: str | tuple[str, ...] = handle if redo is None else (handle, redo.handle)
@@ -775,14 +556,14 @@ class Engine:
                 self.db, intent.source, format_ts(now - timedelta(hours=1)), handle
             ),
             known_recipients=self._known_for(intent),
-            event_attendees=_attendees_in(refs),
+            event_attendees=located.event_attendees,
             owner_addresses=repo.owner_addresses(self.db),
         )
 
     def _known_for(self, intent: WriteIntent) -> frozenset[str]:
         """Mail: this mailbox's known recipients. A calendar invitation: those of any source."""
         known = repo.known_recipients(self.db, intent.source)
-        if isinstance(intent, _CALENDAR_INTENTS):
+        if kinds.KINDS[intent.kind].calendar:
             known |= repo.known_recipients_anywhere(self.db)
         return known
 
@@ -792,6 +573,8 @@ class Engine:
             held = repo.get_grant(self.db, reserved)
             if held is not None:
                 grants.append(held)
+        if self._only_grant is not None:
+            return [grant for grant in grants if grant.handle == self._only_grant]
         return grants
 
     def _grants_for(
@@ -815,14 +598,14 @@ class Engine:
             )
         return [held]
 
-    def _decide(
+    def decide(
         self,
         intent: WriteIntent,
         handle: str,
         sha: str,
         card: str | None,
         reserved: str | None,
-        refs: Mapping[str, str] | None = None,
+        located: kinds.Located | None = None,
         redo: OperationRow | None = None,
     ) -> Decision:
         pinned = reserved if redo is None else redo.grant
@@ -830,7 +613,7 @@ class Engine:
             intent,
             OperationFacts(handle, sha, card, pinned),
             self._grants_for(intent.source, reserved, redo),
-            self._usage(intent, handle, reserved, refs, redo),
+            self._usage(intent, handle, reserved, located, redo),
             self.policy,
             self.ctx.clock.now(),
         )
@@ -844,7 +627,7 @@ class Engine:
         the second, with `report`, records what the assistant did (W-46)."""
         op = self.get(handle)
         if op.kind is IntentKind.OUTSIDE_ACTION:
-            return self._do_outside(op, report)
+            return outside.do_outside(self, op, report)
         if report is not None:
             raise ChamberlainError(
                 ErrorCode.REQUEST_INVALID,
@@ -853,116 +636,25 @@ class Engine:
                 field="report",
             )
         if op.state in TERMINAL_STATES:
-            return self._terminal_reply(op)
+            return self.terminal_reply(op)
         if op.state in MAY_HAVE_HAPPENED_STATES:
             self.recover()
             op = self.get(handle)
             if op.state in TERMINAL_STATES:
-                return self._terminal_reply(op)
+                return self.terminal_reply(op)
             if op.state in MAY_HAVE_HAPPENED_STATES:
                 raise self.needs_reconcile(handle)
         intent = self.intent_of(op)
         if op.redo_of is not None and op.state is OperationState.PROPOSED:
-            self._guard_resend(op.redo_of)
-        op = self._reserve(op, intent)
+            resend.guard_resend(self, op.redo_of)
+        op = self.reserve(op, intent)
         op = self._prepare(op)
         final = self._dispatch(op)
         if final.state is OperationState.CONFIRMED:
             return final
         if final.state in TERMINAL_STATES:
-            return self._terminal_reply(final)
+            return self.terminal_reply(final)
         raise self.uncertain(final.handle)
-
-    # --- outside actions (W-44 to W-47) -----------------------------------------------
-
-    def _check_outside(self, intent: OutsideAction, card: str | None) -> None:
-        """Refuse what only the owner does, and an action for a closed card, before any grant."""
-        owner_only = [
-            words
-            for words, flag in (
-                ("entering a password", intent.enters_password),
-                ("paying", intent.pays),
-                ("accepting terms", intent.accepts_terms),
-            )
-            if flag
-        ]
-        if owner_only:
-            self._audit.append(
-                actor=self.actor(),
-                kind="outside.refused",
-                subject=None,
-                summary="Refused an outside action: it involves " + ", ".join(owner_only) + ".",
-                payload_sha256=intent_hash(intent),
-            )
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID,
-                "Passwords, payments and accepting terms are never done for the owner.",
-                fix="Stop before that step and ask the owner to do it themselves.",
-                field="intent",
-                detail="owner-only-step",
-            )
-        if card is not None and not repo.card_is_open(self.db, card):
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID, "That card does not exist or is closed.", field="card"
-            )
-
-    def _do_outside(self, op: OperationRow, report: str | None) -> OperationRow:
-        """Reserve the use, or record the assistant's report. Never touches a port (W-46)."""
-        if op.state in TERMINAL_STATES:
-            return self._terminal_reply(op)
-        intent = self.intent_of(op)
-        if not isinstance(intent, OutsideAction):
-            raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Not an outside action.")
-        if op.state is OperationState.PROPOSED:
-            if report is not None:
-                raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID,
-                    "Take the permission first: call do without a report, then act.",
-                    field="report",
-                )
-            self._check_outside(intent, op.card)
-            return self._reserve(op, intent)
-        if op.state is not OperationState.AUTHORISED:
-            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
-        if report is None:
-            return op
-        moved = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
-            op,
-            OperationState.AGENT_REPORTED,
-            actor=self.actor(),
-            summary="The assistant reported doing this outside Chamberlain; not checked.",
-            receipt_json=build_receipt(
-                op, OperationState.AGENT_REPORTED, self._now(), reported=report
-            ),
-            dispatched_at=self._now(),  # when it counts against a daily limit
-        )
-        if moved is None:
-            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
-        if moved.grant is not None:
-            self.grants.mark_spent(moved.grant, actor=self.actor())
-        return moved
-
-    def close_unreported_outside(self) -> int:
-        """An outside action allowed a day ago and never reported is closed, use kept (W-46)."""
-        cutoff = format_ts(self.ctx.clock.now() - timedelta(hours=OUTSIDE_REPORT_HOURS))
-        closed = 0
-        for op in repo.stale_outside(self.db, cutoff):
-            moved = move_operation(
-                self.db,
-                self.ctx.clock,
-                self._audit,
-                op,
-                OperationState.ABANDONED,
-                actor="system:tick",
-                summary="Allowed but never reported by the assistant; closed.",
-                receipt_json=build_receipt(op, OperationState.ABANDONED, self._now()),
-                dispatched_at=format_ts(op.updated_at or self.ctx.clock.now()),
-            )
-            closed += 1 if moved is not None else 0
-        return closed
 
     @staticmethod
     def needs_reconcile(handle: str) -> ChamberlainError:
@@ -978,7 +670,7 @@ class Engine:
             f"Operation {handle} may have happened and could not be confirmed yet.",
         )
 
-    def _terminal_reply(self, op: OperationRow) -> OperationRow:
+    def terminal_reply(self, op: OperationRow) -> OperationRow:
         """The stored outcome, with the same `ok` as the first time (W-16)."""
         if op.state in (OperationState.CONFIRMED, OperationState.AGENT_REPORTED):
             return op
@@ -995,7 +687,7 @@ class Engine:
             )
         raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED)
 
-    def _reserve(self, op: OperationRow, intent: WriteIntent) -> OperationRow:
+    def reserve(self, op: OperationRow, intent: WriteIntent) -> OperationRow:
         """Authorise and reserve the grant use in one transaction (W-21)."""
         denied: ChamberlainError | None = None
         reserved: OperationRow | None = None
@@ -1008,7 +700,7 @@ class Engine:
                 raise ChamberlainError(
                     ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed."
                 )
-            original = self._original_of(current)
+            original = resend.original_of(self, current)
             if current.redo_of is not None and current.state is OperationState.PROPOSED:
                 if original is None:
                     raise ChamberlainError(
@@ -1017,7 +709,7 @@ class Engine:
                     )
             else:
                 original = None
-            decision = self._decide(
+            decision = self.decide(
                 intent,
                 current.handle,
                 current.intent_sha256,
@@ -1035,13 +727,10 @@ class Engine:
                 )
                 seed = f"{decision.grant}:{current.intent_sha256}"
                 key = sha256_text(seed if attempt == 0 else f"{seed}:{attempt}")
-                completed, token = _with_token(intent, key)
+                completed, token = kinds.with_token(intent, key)
                 if original is not None:
-                    self._supersede(original, current.handle)
-                reserved = move_operation(
-                    self.db,
-                    self.ctx.clock,
-                    self._audit,
+                    resend.supersede(self, original, current.handle)
+                reserved = self.transition(
                     current,
                     OperationState.AUTHORISED,
                     actor=self.actor(),
@@ -1060,34 +749,8 @@ class Engine:
         if reserved.redo_of is not None:
             replaced = repo.get_operation(self.db, reserved.redo_of)
             if replaced is not None:
-                self._release_attachments(replaced)
+                self.release_attachments(replaced)
         return reserved
-
-    def _original_of(self, op: OperationRow) -> OperationRow | None:
-        """The still-uncertain send that a resend replaces; None once it has settled."""
-        if op.redo_of is None:
-            return None
-        original = repo.get_operation(self.db, op.redo_of)
-        if original is None or original.state is not OperationState.UNCERTAIN:
-            return None
-        return original
-
-    def _supersede(self, original: OperationRow, resend: str) -> None:
-        """The send ends `superseded`; its grant use passes to the resend (W-38)."""
-        moved = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
-            original,
-            OperationState.SUPERSEDED,
-            actor=self.actor(),
-            summary=f"Done again as {resend}; the grant use passed to it.",
-            receipt_json=build_receipt(original, OperationState.SUPERSEDED, self._now()),
-        )
-        if moved is None:
-            raise ChamberlainError(
-                ErrorCode.OPERATION_ALREADY_SETTLED, "The send this one replaces just changed."
-            )
 
     def _fail_clean(
         self,
@@ -1107,10 +770,7 @@ class Engine:
                 ErrorCode.INTERNAL_UNEXPECTED,
                 f"Operation {op.handle} may have happened and cannot be failed clean.",
             )
-        row = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
+        row = self.transition(
             op,
             OperationState.FAILED_CLEAN,
             actor=self.actor(),
@@ -1120,19 +780,19 @@ class Engine:
                 + "); grant use released."
             ),
             expected_lease=expected_lease,
-            receipt_json=build_receipt(op, OperationState.FAILED_CLEAN, self._now()),
+            receipt_json=build_receipt(op, OperationState.FAILED_CLEAN, self.now()),
             error_code=code.value,
             lease_owner=None,
             lease_expires_at=None,
         )
         if row is not None:
-            self._release_attachments(row)
+            self.release_attachments(row)
         return row
 
-    def _release_attachments(self, op: OperationRow) -> None:
+    def release_attachments(self, op: OperationRow) -> None:
         if op.intent_json is None:
             return
-        for attachment in getattr(self.intent_of(op), "attachments", ()):
+        for attachment in kinds.attachments_of(self.intent_of(op)):
             try:
                 self.ctx.services.artifacts.release_owner(attachment.artifact, op.handle)
             except ChamberlainError:
@@ -1143,13 +803,13 @@ class Engine:
         if op.state is OperationState.PREPARED:
             return op
         intent = self.intent_of(op)
-        refs = self._refs(op)
+        refs = self.located(op).to_refs()
         grant = repo.get_grant(self.db, op.grant) if op.grant else None
         if grant is not None and grant.scope is not None and grant.scope.allow_duplicate:
             refs[ALLOW_DUPLICATE_REF] = "1"
         try:
             self._read_attachments(intent)
-            prepared = self._port_prepare(intent, refs)
+            prepared = kinds.port_prepare(self.ctx, intent, refs)
         except ChamberlainError as error:
             self._fail_clean(op, error.code)
             raise
@@ -1159,10 +819,7 @@ class Engine:
             raise ChamberlainError(
                 ErrorCode.SOURCE_UNAVAILABLE, "The source could not prepare the write."
             ) from error
-        moved = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
+        moved = self.transition(
             op,
             OperationState.PREPARED,
             actor=self.actor(),
@@ -1176,7 +833,7 @@ class Engine:
     def _read_attachments(self, intent: WriteIntent) -> dict[str, bytes]:
         """Attachment bytes from the artifact store, matched by hash (W-3)."""
         payloads: dict[str, bytes] = {}
-        for attachment in getattr(intent, "attachments", ()):
+        for attachment in kinds.attachments_of(intent):
             data = self.ctx.services.artifacts.read_bytes(attachment.artifact)
             if sha256_bytes(data) != attachment.sha256:
                 raise ChamberlainError(
@@ -1197,10 +854,7 @@ class Engine:
             self._fail_clean(op, error.code)
             raise
         now = self.ctx.clock.now()
-        journal = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
+        journal = self.transition(
             op,
             OperationState.DISPATCHED,
             actor=self.actor(),
@@ -1213,7 +867,9 @@ class Engine:
         if journal is None:
             raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
         try:
-            result = self._port_dispatch(intent, prepared, journal.idempotency_key, payloads)
+            result = kinds.port_dispatch(
+                self.ctx, intent, prepared, journal.idempotency_key, payloads
+            )
         except Exception:
             log_failure(log, "dispatch raised for %s", journal.handle)
             result = DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="exception")
@@ -1224,7 +880,7 @@ class Engine:
     ) -> OperationRow:
         """Map the connector's outcome to a state (W-10)."""
         if result.outcome is DispatchOutcome.APPLIED and result.receipt is not None:
-            row = self._confirm(
+            row = self.confirm_receipt(
                 journal,
                 result.receipt,
                 expected_lease=self.worker,
@@ -1240,10 +896,7 @@ class Engine:
                 journal, ErrorCode.SOURCE_BUSY, expected_lease=self.worker, detail=result.detail
             )
             return row or self.get(journal.handle)
-        moved = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
+        moved = self.transition(
             journal,
             OperationState.UNCERTAIN,
             actor=self.actor(),
@@ -1269,7 +922,7 @@ class Engine:
             held = self._enter_reconciling(current, summary="Late result recorded as evidence.")
             if held is None:
                 return self.get(journal.handle)
-            self._confirm(
+            self.confirm_receipt(
                 held,
                 receipt,
                 expected_lease=self.worker,
@@ -1280,7 +933,7 @@ class Engine:
 
     # --- confirming ---------------------------------------------------------------
 
-    def _confirm(
+    def confirm_receipt(
         self,
         op: OperationRow,
         receipt: ProviderReceipt,
@@ -1290,13 +943,10 @@ class Engine:
         summary: str,
     ) -> OperationRow | None:
         intent = self.intent_of(op)
-        result_ref = self._result_ref(op, intent, receipt)
+        result_ref = kinds.result_ref(self.ctx, op, receipt)
         verification = receipt.verification
         with transaction(self.db):
-            moved = move_operation(
-                self.db,
-                self.ctx.clock,
-                self._audit,
+            moved = self.transition(
                 op,
                 OperationState.CONFIRMED,
                 actor=actor,
@@ -1306,7 +956,7 @@ class Engine:
                 receipt_json=build_receipt(
                     op,
                     OperationState.CONFIRMED,
-                    self._now(),
+                    self.now(),
                     verification=verification,
                     items=receipt.items,
                     result_ref=result_ref,
@@ -1321,42 +971,9 @@ class Engine:
                 return None
             if moved.grant is not None:
                 self.grants.mark_spent(moved.grant, actor=actor)
-        self._after_confirmed(moved, intent, receipt)
+        kinds.after_confirmed(self.ctx, moved, intent, self.located(moved), receipt)
+        self.release_attachments(moved)
         return moved
-
-    def _result_ref(
-        self, op: OperationRow, intent: WriteIntent, receipt: ProviderReceipt
-    ) -> str | None:
-        """The handle of what the write produced (a saved draft, a created event)."""
-        if receipt.locator is None:
-            return None
-        refs = self.ctx.services.refs
-        if isinstance(intent, MailDraftSave):
-            return refs.remember(HandleKind.MESSAGE, op.source_id, receipt.locator)
-        if isinstance(intent, CalendarCreate):
-            return refs.remember(HandleKind.CALENDAR_EVENT, op.source_id, receipt.locator)
-        return None
-
-    def _after_confirmed(
-        self, op: OperationRow, intent: WriteIntent, receipt: ProviderReceipt
-    ) -> None:
-        """Keep handles alive after filing (R4) and release the attachment holds."""
-        old: str | None = None
-        if isinstance(intent, MailDraftUpdate):
-            old = self._refs(op).get(intent.draft)
-        moves: list[tuple[str, str]] = [
-            (item.locator, item.moved_to) for item in receipt.items if item.moved_to is not None
-        ]
-        if old is not None and receipt.locator is not None:
-            moves.append((old, receipt.locator))
-        for before, after in moves:
-            if after == before:
-                continue
-            try:
-                self.ctx.services.refs.repoint(before, after, source=op.source_id)
-            except Exception:
-                log_failure(log, "could not repoint a handle of %s", op.handle)
-        self._release_attachments(op)
 
     def _upgrade_verification(self, op: OperationRow, prepared: Prepared) -> None:
         """Try to upgrade a client-verified result by reading back (W-14, R6).
@@ -1379,10 +996,10 @@ class Engine:
                     op.handle,
                     expected_state=OperationState.CONFIRMED,
                     server_verified=1,
-                    updated_at=self._now(),
+                    updated_at=self.now(),
                 )
                 if upgraded:
-                    self._audit.append(
+                    self.audit.append(
                         actor="system:tick",
                         kind="operation.verified",
                         subject=op.handle,
@@ -1394,17 +1011,14 @@ class Engine:
 
     @staticmethod
     def _window(op: OperationRow) -> tuple[int, int]:
-        if op.kind in _CALENDAR_KINDS:
+        if kinds.KINDS[op.kind].calendar:
             return CALENDAR_SETTLE_ATTEMPTS, CALENDAR_SETTLE_WINDOW_SECONDS
         return MAIL_SETTLE_ATTEMPTS, MAIL_SETTLE_WINDOW_SECONDS
 
     def _enter_reconciling(
         self, op: OperationRow, *, summary: str, actor: str | None = None
     ) -> OperationRow | None:
-        return move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
+        return self.transition(
             op,
             OperationState.RECONCILING,
             actor=actor or self.actor(),
@@ -1421,7 +1035,9 @@ class Engine:
         started = self.ctx.clock.now()
         reading = Reading(None, False, False)
         for index in range(attempts):
-            reading = read_reconcile(self._port_reconcile(intent, prepared, op.idempotency_key))
+            reading = read_reconcile(
+                kinds.port_reconcile(self.ctx, intent, prepared, op.idempotency_key)
+            )
             if reading.present is not None:
                 return reading
             elapsed = (self.ctx.clock.now() - started).total_seconds()
@@ -1434,9 +1050,9 @@ class Engine:
         self, op: OperationRow, *, window: tuple[int, int], allow_absent: bool
     ) -> OperationRow:
         """`uncertain -> reconciling -> confirmed | confirmed_absent | uncertain` (W-8, W-12)."""
-        return self._reconcile_reading(op, window=window, allow_absent=allow_absent)[0]
+        return self.reconcile_reading(op, window=window, allow_absent=allow_absent)[0]
 
-    def _reconcile_reading(
+    def reconcile_reading(
         self,
         op: OperationRow,
         *,
@@ -1455,7 +1071,7 @@ class Engine:
             return self.get(op.handle), None
         reading = self._reconcile_loop(held, intent, prepared, window)
         if reading.present is not None:
-            confirmed = self._confirm(
+            confirmed = self.confirm_receipt(
                 held,
                 reading.present,
                 expected_lease=self.worker,
@@ -1464,27 +1080,21 @@ class Engine:
             )
             return (confirmed or self.get(op.handle)), reading
         if allow_absent and reading.absent_proof and self._absence_proven(held, intent):
-            absent = move_operation(
-                self.db,
-                self.ctx.clock,
-                self._audit,
+            absent = self.transition(
                 held,
                 OperationState.CONFIRMED_ABSENT,
                 actor=who,
                 summary="Reconcile proved the write did not happen; grant use released.",
                 expected_lease=self.worker,
-                receipt_json=build_receipt(held, OperationState.CONFIRMED_ABSENT, self._now()),
+                receipt_json=build_receipt(held, OperationState.CONFIRMED_ABSENT, self.now()),
                 lease_owner=None,
                 lease_expires_at=None,
             )
             if absent is not None:
-                self._release_attachments(absent)
+                self.release_attachments(absent)
                 return absent, reading
             return self.get(op.handle), reading
-        back = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
+        back = self.transition(
             held,
             OperationState.UNCERTAIN,
             actor=who,
@@ -1508,7 +1118,7 @@ class Engine:
         if self.ctx.clock.now() < settled:
             return False
         try:
-            capability = self._capability(intent)
+            capability = kinds.capability(self.ctx, intent)
         except ChamberlainError:
             return False
         return op.kind.value in capability.absence_provable
@@ -1532,8 +1142,8 @@ class Engine:
                 before, happened_evidence, "The agent recorded evidence that it happened."
             )
         if before.rechecked_at is not None:
-            after, _ = self._look_for_send(
-                before, actor=self.actor(), record=True, allow_absent=True
+            after, _ = resend.look_for_send(
+                self, before, actor=self.actor(), record=True, allow_absent=True
             )
             return after, after.state is not before.state
         after = self._reconcile(before, window=(1, 0), allow_absent=True)
@@ -1566,15 +1176,12 @@ class Engine:
         if evidence is not None:
             self._check_seen(evidence)
         with transaction(self.db):
-            moved = move_operation(
-                self.db,
-                self.ctx.clock,
-                self._audit,
+            moved = self.transition(
                 op,
                 OperationState.CONFIRMED,
                 actor=self.actor(),
                 summary=summary,
-                receipt_json=build_receipt(op, OperationState.CONFIRMED, self._now()),
+                receipt_json=build_receipt(op, OperationState.CONFIRMED, self.now()),
             )
             if moved is None:
                 raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That changed.")
@@ -1582,241 +1189,8 @@ class Engine:
                 self.ctx.services.evidence.link(evidence, moved.handle)
             if moved.grant is not None:
                 self.grants.mark_spent(moved.grant, actor=self.actor())
-        self._release_attachments(moved)
+        self.release_attachments(moved)
         return moved, True
-
-    def abandon(self, op: OperationRow) -> OperationRow | None:
-        """Close an uncertain operation nothing can resend. It frees no grant and claims nothing."""
-        moved = move_operation(
-            self.db,
-            self.ctx.clock,
-            self._audit,
-            op,
-            OperationState.ABANDONED,
-            actor="system:tick",
-            summary="Closed unsettled after "
-            f"{UNCERTAIN_ABANDON_DAYS} days; nothing can send it again; no grant was freed.",
-            receipt_json=build_receipt(op, OperationState.ABANDONED, self._now()),
-        )
-        if moved is not None:
-            self._release_attachments(moved)
-        return moved
-
-    # --- the 24-hour look for an uncertain send, and the resend (W-37 to W-41) -------------
-
-    def recheck_sends(self) -> int:
-        """The tick's step: each uncertain send old enough gets one more look. Never raises."""
-        cutoff = self.ctx.clock.now() - timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS)
-        looked = 0
-        for op in repo.sends_due_recheck(self.db, format_ts(cutoff)):
-            try:
-                _, outcome = self._look_for_send(op, actor="system:tick", record=True)
-            except Exception:
-                log_failure(log, "re-check failed for %s", op.handle)
-                continue
-            looked += 1 if outcome is not None else 0
-        return looked
-
-    def _look_for_send(
-        self, op: OperationRow, *, actor: str, record: bool, allow_absent: bool = False
-    ) -> tuple[OperationRow, str | None]:
-        """Read the target (a send: Sent, Outbox and Drafts, then any recipient Inbox).
-
-        Returns the operation and `found` (settled confirmed), `queued`, `missing`, or None when
-        nothing could be concluded (the read failed, or the operation is no longer uncertain).
-        With `record`, a `queued` or `missing` answer is stored on the operation and audited.
-        """
-        before = self.get(op.handle)
-        if before.state is not OperationState.UNCERTAIN or before.intent_json is None:
-            return before, None
-        intent = self.intent_of(before)
-        row, reading = self._reconcile_reading(
-            before, window=(1, 0), allow_absent=allow_absent, actor=actor
-        )
-        if row.state is OperationState.CONFIRMED:
-            return row, "found"
-        if row.state is not OperationState.UNCERTAIN or reading is None:
-            return row, None
-        if not isinstance(intent, MailSend):
-            if reading.absent and not reading.queued:
-                if record:
-                    self._record_recheck(row, "missing", [f"the {row.kind.value} target"], actor)
-                return row, "missing"
-            return row, None
-        looked = [sender_places(row.source_id)]
-        if reading.queued:
-            outcome = "queued"
-        elif reading.absent:
-            nearby = look_in_recipient_mailboxes(self.ctx, row, intent)
-            if nearby.receipt is not None:
-                done = self._confirm(
-                    row,
-                    nearby.receipt,
-                    expected_lease=False,
-                    actor=actor,
-                    summary="The re-check found it in a recipient's own mailbox.",
-                )
-                return (done or self.get(row.handle)), "found"
-            looked.extend(nearby.looked)
-            outcome = "missing"
-        else:
-            return row, None
-        if record:
-            self._record_recheck(row, outcome, looked, actor)
-        return row, outcome
-
-    def _record_recheck(
-        self, op: OperationRow, outcome: str, looked: list[str], actor: str
-    ) -> None:
-        age = self.ctx.clock.now() - (op.dispatched_at or op.created_at)
-        with transaction(self.db):
-            stored = repo.record_recheck(
-                self.db,
-                op.handle,
-                result=outcome,
-                looked_json=json.dumps({"looked": looked}),
-                at=self._now(),
-            )
-            if stored:
-                self._audit.append(
-                    actor=actor,
-                    kind="operation.rechecked",
-                    subject=op.handle,
-                    summary=f"Looked again after {int(age.total_seconds() // 3600)} hours: "
-                    f"{outcome}. Looked in {'; '.join(looked)}.",
-                    payload_sha256=op.intent_sha256,
-                )
-
-    def propose_redo(
-        self,
-        original: str,
-        *,
-        card: str | None = None,
-        evidence: tuple[str, ...] = (),
-    ) -> Proposal:
-        """Send an uncertain, missing send again, on its original authority (W-38).
-
-        Only after the harness's 24-hour look found it missing. The text is the original's, never
-        the agent's. The original ends `superseded` only when `do` runs the resend.
-        """
-        old = self.get(original)
-        intent = self._resendable(old)
-        existing = repo.resend_of(self.db, old.handle)
-        if existing is not None:
-            return self._proposal_for(existing, intent)
-        self._guard_resend(old.handle)
-        old = self.get(old.handle)
-        for attachment in getattr(intent, "attachments", ()):
-            if not self.ctx.services.artifacts.info(attachment.artifact).live:
-                raise ChamberlainError(ErrorCode.ARTIFACT_EXPIRED, "An attachment has expired.")
-        completed = (
-            intent.model_copy(update={"message_id": None})
-            if isinstance(intent, MailSend)
-            else intent
-        )
-        sha = intent_hash(completed)
-        refs = self._refs(old)
-        handle = new_handle(HandleKind.OPERATION)
-        decision = self._decide(completed, handle, sha, card or old.card, None, refs, redo=old)
-        if isinstance(decision, Deny):
-            raise ChamberlainError(
-                decision.code,
-                "The permission behind the first send no longer covers sending it again.",
-                fix="Ask the owner, in chat, whether to send it again.",
-            )
-        if isinstance(completed, MailSend):
-            self._scan_before_storing(completed, handle, refs, decision)
-        with transaction(self.db):
-            repo.insert_operation(
-                self.db,
-                handle=handle,
-                idempotency_key=sha256_text("proposed:" + handle),
-                kind=IntentKind(completed.kind),
-                source_id=completed.source,
-                card=card or old.card,
-                session=self.ctx.session,
-                intent_sha256=sha,
-                intent_json=completed.model_dump_json(exclude_none=True),
-                refs_json=json.dumps(refs, sort_keys=True),
-                at=self._now(),
-                redo_of=old.handle,
-            )
-            self._audit.append(
-                actor=self.actor(),
-                kind="operation.proposed",
-                subject=handle,
-                summary=f"{completed.kind} proposed on {completed.source} as a resend of "
-                f"{old.handle}.",
-                payload_sha256=sha,
-            )
-        for attachment in getattr(completed, "attachments", ()):
-            self.ctx.services.artifacts.add_owner(attachment.artifact, handle)
-        for item in evidence:
-            self.ctx.services.evidence.link(item, handle)
-        return self._proposal_for(self.get(handle), completed)
-
-    def _resendable(self, old: OperationRow) -> WriteIntent:
-        """Refuse, with a plain reason, anything that is not an uncertain send awaiting a resend."""
-        if old.intent_json is None:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_WRONG_KIND,
-                "Only a write the harness holds the full request of can be done again. "
-                "One from the old harness cannot.",
-                field="redo_of",
-            )
-        intent = self.intent_of(old)
-        if repo.resend_of(self.db, old.handle) is not None:
-            return intent
-        if old.redo_of is not None:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID,
-                "That send was already a resend. A second resend needs the owner's word.",
-                fix="Ask the owner, in chat, whether to send it again.",
-                field="redo_of",
-            )
-        self.recover()
-        old = self.get(old.handle)
-        if old.state is not OperationState.UNCERTAIN:
-            raise ChamberlainError(
-                ErrorCode.OPERATION_ALREADY_SETTLED,
-                f"That write is {old.state.value}; there is nothing to do again.",
-            )
-        if old.rechecked_at is None:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID,
-                "Too early. A write is not done again before the harness has looked for it "
-                f"after {UNCERTAIN_SEND_RECHECK_HOURS} hours.",
-                fix="Wait for the item that says it is missing. Until then do not do it again.",
-                field="redo_of",
-            )
-        return intent
-
-    def _guard_resend(self, original: str) -> None:
-        """One last read-only look just before a resend. Anything but `missing` stops it."""
-        old = self.get(original)
-        if old.state is not OperationState.UNCERTAIN:
-            raise ChamberlainError(
-                ErrorCode.OPERATION_ALREADY_SETTLED,
-                f"That write is {old.state.value}; there is nothing to do again.",
-            )
-        row, outcome = self._look_for_send(old, actor=self.actor(), record=True)
-        if row.state is OperationState.CONFIRMED:
-            raise ChamberlainError(
-                ErrorCode.OPERATION_ALREADY_SETTLED,
-                "It turned up, so it was sent. Nothing needs sending again.",
-            )
-        if outcome == "queued":
-            raise ChamberlainError(
-                ErrorCode.REQUEST_INVALID,
-                "It is waiting in the mail client's Outbox. Sending again would make two.",
-                fix="Tell the owner it is stuck in the Outbox; do not send it again.",
-                field="redo_of",
-            )
-        if outcome != "missing":
-            raise ChamberlainError(
-                ErrorCode.SOURCE_UNAVAILABLE,
-                "The mailbox could not be read just now, so it is not known to be missing.",
-            )
 
     def _check_seen(self, evidence: str) -> None:
         """Evidence that it happened is something this session recorded. It frees nothing."""
@@ -1837,10 +1211,7 @@ class Engine:
         ):
             if op.lease_expires_at is not None and op.lease_expires_at > now:
                 continue
-            row = move_operation(
-                self.db,
-                self.ctx.clock,
-                self._audit,
+            row = self.transition(
                 op,
                 OperationState.UNCERTAIN,
                 actor="system:tick",
@@ -1852,51 +1223,23 @@ class Engine:
             moved += 1 if row is not None else 0
         return moved
 
-    def resolve(self, handle: str, *, happened: bool, actor: str) -> OperationRow:
-        """The user's resolution of an uncertain operation in the viewer (W-13)."""
-        self.recover()
-        op = self.get(handle)
-        if op.state is not OperationState.UNCERTAIN:
-            if op.state in TERMINAL_STATES:
-                raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED)
-            raise ChamberlainError(ErrorCode.REQUEST_WRONG_KIND, "That operation is not uncertain.")
-        target = OperationState.CONFIRMED if happened else OperationState.CONFIRMED_ABSENT
-        with transaction(self.db):
-            moved = move_operation(
-                self.db,
-                self.ctx.clock,
-                self._audit,
-                op,
-                target,
-                actor=actor,
-                summary="The user resolved it: "
-                + ("it happened." if happened else "it did not happen."),
-                receipt_json=build_receipt(op, target, self._now()),
-            )
-            if moved is None:
-                raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That changed.")
-            if happened and moved.grant is not None:
-                self.grants.mark_spent(moved.grant, actor=actor)
-        self._release_attachments(moved)
-        return moved
-
     def cancel(self, handle: str, *, actor: str) -> OperationRow:
         """Withdraw an operation before it is prepared (T-11). Never touches dispatched ones."""
         return cancel_operation(
             self.db,
             self.ctx.clock,
-            self._audit,
+            self.audit,
             self.grants,
             handle,
             actor=actor,
-            release=self._release_attachments,
+            release=self.release_attachments,
         )
 
     # --- views --------------------------------------------------------------------
 
     def view(self, op: OperationRow) -> OperationView:
         resent = repo.resend_of(self.db, op.handle)
-        stored = StoredReceipt.model_validate_json(op.receipt_json) if op.receipt_json else None
+        stored = op.receipt()
         code: ErrorCode | None
         try:
             code = ErrorCode(op.error_code) if op.error_code else None
@@ -1922,54 +1265,3 @@ class Engine:
             redo_of=op.redo_of,
             redone_by=None if resent is None else resent.handle,
         )
-
-    # --- connector calls (the only ones) --------------------------------------------
-
-    def _port_prepare(self, intent: WriteIntent, refs: Mapping[str, str]) -> Prepared:
-        if isinstance(intent, OutsideAction):
-            raise _no_connector()
-        if isinstance(intent, _CALENDAR_INTENTS):
-            return self.ctx.sources.calendar_port(intent.source).prepare(intent, refs)
-        return self.ctx.sources.mail_port(intent.source).prepare(intent, refs)
-
-    def _port_dispatch(
-        self, intent: WriteIntent, prepared: Prepared, key: str, payloads: Mapping[str, bytes]
-    ) -> DispatchResult:
-        if isinstance(intent, OutsideAction):
-            raise _no_connector()
-        if isinstance(intent, _CALENDAR_INTENTS):
-            return self.ctx.sources.calendar_port(intent.source).dispatch(prepared, key)
-        return self.ctx.sources.mail_port(intent.source).dispatch(prepared, key, payloads)
-
-    def _port_reconcile(self, intent: WriteIntent, prepared: Prepared, key: str) -> ReconcileResult:
-        """Read-only. Any failure is `unknown`, never a reason to resend."""
-        try:
-            if isinstance(intent, OutsideAction):
-                raise _no_connector()
-            if isinstance(intent, _CALENDAR_INTENTS):
-                return self.ctx.sources.calendar_port(intent.source).reconcile(prepared, key)
-            return self.ctx.sources.mail_port(intent.source).reconcile(prepared, key)
-        except Exception:
-            log_failure(log, "reconcile failed")
-            return ReconcileResult(status=ReconcileStatus.UNKNOWN)
-
-
-def _no_connector() -> ChamberlainError:
-    """An outside action is never prepared, dispatched or reconciled: it has no connector."""
-    return ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "An outside action has no connector.")
-
-
-def _attendees_in(refs: Mapping[str, str]) -> frozenset[str]:
-    """The stored event's attendees noted at propose; empty when unknown (an older `1`)."""
-    listed = refs.get(EVENT_ATTENDEES_REF, "")
-    return frozenset(a for a in listed.split(",") if "@" in a)
-
-
-def _with_token(intent: WriteIntent, key: str) -> tuple[WriteIntent, str | None]:
-    """Complete the harness-assigned token, derived from the idempotency key (R1, Q4)."""
-    if isinstance(intent, MailSend | MailDraftSave | MailDraftUpdate):
-        token = f"<{key[:32]}@chamberlain.invalid>"
-        return intent.model_copy(update={"message_id": token}), token
-    if isinstance(intent, CalendarCreate):
-        return intent.model_copy(update={"uid": key[:32]}), key[:32]
-    return intent, None

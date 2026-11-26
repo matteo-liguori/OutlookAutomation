@@ -151,7 +151,7 @@ def test_g19_the_detail_shows_exactly_what_would_be_authorised(
     assert "At most 5 a day" in shown["rendered"]
 
 
-def test_g19_decline_revoke_keep_and_resolve(rig: WriteRig, viewer: Viewer) -> None:
+def test_g19_decline_revoke_and_keep(rig: WriteRig, viewer: Viewer) -> None:
     declined = new_proposal(rig, to="no@example.org")
     reply = viewer.call("POST", f"/api/grants/{declined.grant.handle}/decline")  # type: ignore[union-attr]
     assert reply.body["state"] == "declined"
@@ -159,22 +159,26 @@ def test_g19_decline_revoke_keep_and_resolve(rig: WriteRig, viewer: Viewer) -> N
     assert viewer.call("POST", f"/api/grants/{standing.handle}/keep").body["state"] == "active"
     assert viewer.call("POST", f"/api/grants/{standing.handle}/revoke").body["state"] == "revoked"
     assert viewer.call("POST", f"/api/grants/{standing.handle}/revoke").status == 409
+    actors = {
+        r.actor
+        for r in repo.audit_rows(rig.db)
+        if r.kind in ("grant.declined", "grant.revoked", "grant.kept")
+    }
+    assert actors == {"human:viewer"}
+
+
+def test_w41_confirmation_app_cannot_settle_an_uncertain_operation(
+    rig: WriteRig, viewer: Viewer
+) -> None:
     op = rig.ready_send()
     rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
     with pytest.raises(Exception):  # noqa: B017, PT011 - the uncertain error
         rig.engine().do(op.handle)
-    bad = viewer.call("POST", f"/api/operations/{op.handle}/resolve", {"outcome": "maybe"})
-    assert bad.status == 400
-    done = viewer.call(
+    reply = viewer.call(
         "POST", f"/api/operations/{op.handle}/resolve", {"outcome": "did_not_happen"}
     )
-    assert done.body["state"] == "confirmed_absent"
-    actors = {
-        r.actor
-        for r in repo.audit_rows(rig.db)
-        if r.kind in ("grant.declined", "grant.revoked", "grant.kept", "operation.confirmed_absent")
-    }
-    assert actors == {"human:viewer"}
+    assert reply.status == 404
+    assert rig.engine().get(op.handle).state is OperationState.UNCERTAIN
 
 
 def test_g18_the_token_never_appears_in_a_reply_a_log_line_or_an_audit_row(

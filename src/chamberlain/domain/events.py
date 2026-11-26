@@ -7,7 +7,6 @@ from enum import StrEnum
 
 
 class EventKind(StrEnum):
-    MAIL_NEW_FOR_CARD = "mail.new_for_card"
     MAIL_NEW_UNMATCHED = "mail.new_unmatched"
     ACTION_DUE = "action.due"
     REMINDER_DUE = "reminder.due"

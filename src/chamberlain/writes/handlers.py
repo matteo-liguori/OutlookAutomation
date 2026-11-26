@@ -25,8 +25,7 @@ from chamberlain.schema.tools import (
 )
 from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
-from chamberlain.writes.engine import Engine, Proposal
-from chamberlain.writes.models import WritePolicy
+from chamberlain.writes.core import Engine, Proposal
 
 
 def _propose_response(proposal: Proposal) -> ProposeResponse:
@@ -47,13 +46,11 @@ def _propose_response(proposal: Proposal) -> ProposeResponse:
     )
 
 
-def make_handlers(
-    policy: WritePolicy | None = None, pause: Callable[[float], None] | None = None
-) -> dict[ToolName, Handler]:
-    """Handlers over one policy. `pause` replaces waiting on the clock (tests)."""
+def make_handlers(pause: Callable[[float], None] | None = None) -> dict[ToolName, Handler]:
+    """Handlers use each call's context. `pause` replaces waiting on the clock (tests)."""
 
     def engine(ctx: Context) -> Engine:
-        return Engine(ctx, policy, pause=pause)
+        return Engine(ctx, pause=pause)
 
     def propose(ctx: Context, request: ProposeRequest) -> Result:
         eng = engine(ctx)

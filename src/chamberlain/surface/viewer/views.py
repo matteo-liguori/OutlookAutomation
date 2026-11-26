@@ -1,11 +1,10 @@
 """What the viewer shows, as plain JSON-ready dicts built from the store and the services.
 
 Contract: docs/contracts/06-memory.md (read-only views), 10-targets.md (storage figures),
-05-grants.md (uncertain operations, G-19). Mail bodies and recipient lists never appear here
-except in `rendered`, the exact text of an operation the person is asked to decide on.
+04-writes.md (uncertain operations, W-41). Operation text is available in the
+read-only history.
 """
 
-import json
 from collections import Counter
 from datetime import datetime, timedelta
 from typing import Any
@@ -23,7 +22,6 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.migrate import stamp
 from chamberlain.surface.viewer import repo
 from chamberlain.writes import repo as write_repo
-from chamberlain.writes.engine import Engine
 from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.models import OperationRow
 from chamberlain.writes.render import describe_intent
@@ -51,16 +49,12 @@ def overview(ctx: Context) -> dict[str, Any]:
         and g.review_at is not None
         and g.review_at.strftime("%Y-%m-%dT%H:%M:%SZ") <= now
     ]
-    uncertain = write_repo.operations_in_states(
-        db, (OperationState.UNCERTAIN, OperationState.RECONCILING)
-    )
     return {
         "version": __version__,
         "now": now,
         "needs_you": {
             "grants_to_confirm": len(waiting),
             "grants_to_review": len(review),
-            "uncertain_operations": len(uncertain),
         },
         "counts": {
             "active_grants": sum(1 for g in grants if g.state is GrantState.ACTIVE),
@@ -119,9 +113,7 @@ def uncertain(ctx: Context) -> dict[str, Any]:
         imported = op.intent_json is None
         rendered: str | None = None
         if not imported:
-            rendered = describe_intent(
-                Engine.intent_of(op), limit=None, refs=json.loads(op.refs_json or "{}")
-            )[0]
+            rendered = describe_intent(op.intent(), limit=None, refs=op.refs())[0]
         summary = parse_summary(op.summary_json)
         found.append(
             {

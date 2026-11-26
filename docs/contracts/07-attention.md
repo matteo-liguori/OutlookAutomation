@@ -16,7 +16,7 @@ An event row: `handle`, `kind`, `subject` (a handle or source ID),
 
 Kinds (closed enumeration `EventKind`):
 
-`mail.new_for_card`, `mail.new_unmatched`, `action.due`, `reminder.due`,
+`mail.new_unmatched`, `action.due`, `reminder.due`,
 `card.review_due`, `grant.needed`, `grant.review_due`,
 `operation.uncertain`, `send.missing`, `source.stale`, `source.sign_in_needed`,
 `calendar.conflict`, `user.note`, `storage.over_budget`, `storage.orphans`,
@@ -118,7 +118,7 @@ Detector = Callable[[DetectorInput], Iterable[EventDraft]]
   one `mail.new_unmatched` event (reason `received`) per source for received mail, keyed by
   the oldest waiting row, whose next call is a `find` of that source since then, in every folder. Handling the
   event triages only the rows shown with it, in its own direction (received or sent); mail that
-  arrived later raises a fresh event. `mail.new_for_card` is retired as a trigger. A mail
+  arrived later raises a fresh event. A mail
   event no longer ends because the message was marked read; it ends when the agent handles it.
 - **A-22** The harness only suggests a card (reply headers first, then a sender who
   corresponds with exactly one open card; for sent mail, recipients that all point to one

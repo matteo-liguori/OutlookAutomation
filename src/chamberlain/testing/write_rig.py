@@ -37,7 +37,7 @@ from chamberlain.store.db import MEMORY, connect
 from chamberlain.store.migrate import migrate, stamp
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import confirm_grant
-from chamberlain.writes.engine import Engine, Proposal
+from chamberlain.writes.core import Engine, Proposal
 from chamberlain.writes.models import GrantRow, OperationRow, WritePolicy
 from chamberlain.writes.services import build
 
@@ -287,7 +287,8 @@ def make_rig(*, send_absence_provable: bool = False, policy: WritePolicy | None 
     artifacts = MemoryArtifactStore()
     evidence = MemoryEvidenceStore()
     refs = MemoryRefResolver()
-    audit, control = build(db, clock, policy=policy, artifacts=artifacts)
+    configured_policy = policy if policy is not None else WritePolicy()
+    audit, control = build(db, clock, policy=configured_policy, artifacts=artifacts)
     ctx = Context(
         db=db,
         clock=clock,
@@ -303,8 +304,9 @@ def make_rig(*, send_absence_provable: bool = False, policy: WritePolicy | None 
         services=Services(
             audit=audit, artifacts=artifacts, evidence=evidence, refs=refs, writes=control
         ),
+        write_policy=configured_policy,
         session=SESSION,
     )
     return WriteRig(
-        db, clock, fake, mail, calendar, artifacts, evidence, refs, ctx, policy or WritePolicy()
+        db, clock, fake, mail, calendar, artifacts, evidence, refs, ctx, configured_policy
     )

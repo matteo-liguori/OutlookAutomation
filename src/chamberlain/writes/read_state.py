@@ -58,7 +58,12 @@ def active_grant(db: sqlite3.Connection, source: str) -> GrantRow | None:
 
 
 def propose_missing(
-    db: sqlite3.Connection, clock: Clock, audit: AuditLog, sources: list[str]
+    db: sqlite3.Connection,
+    clock: Clock,
+    audit: AuditLog,
+    sources: list[str],
+    *,
+    policy: WritePolicy,
 ) -> list[str]:
     """Propose the standing grant for each listed mailbox that has never had one proposed.
 
@@ -66,7 +71,7 @@ def propose_missing(
     (a declined or revoked one is not proposed again). Returns the handles proposed.
     """
     proposed: list[str] = []
-    service = GrantService(db, clock, audit, WritePolicy())
+    service = GrantService(db, clock, audit, policy)
     for source in sources:
         scope = scope_for(source)
         known = db.execute(
