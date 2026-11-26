@@ -60,7 +60,7 @@ def remember_many(
                 repo.touch_ref(db, handle, internet_message_id, now)
             else:
                 handle = ref_handle(kind, source, locator)
-                if repo.get_ref(db, handle) is not None:
+                if repo.get(db, "refs", handle) is not None:
                     handle = ref_handle(kind, source, f"{locator}\n{now}")
                 repo.insert_ref(
                     db,
@@ -83,7 +83,7 @@ def existing_handles(
 
 def locate(db: sqlite3.Connection, handle: str) -> tuple[str, str]:
     """`(source id, stable locator)` for a msg, cev or con handle."""
-    row = repo.get_ref(db, handle)
+    row = repo.get(db, "refs", handle)
     if row is None:
         raise ChamberlainError(
             ErrorCode.REQUEST_UNKNOWN_HANDLE, "That item is no longer known; find it again."
@@ -121,7 +121,7 @@ def repoint(
         clash = repo.find_ref(db, str(old["source_id"]), str(old["kind"]), new_locator)
         if clash is not None and str(clash["handle"]) != handle:
             clashing = str(clash["handle"])
-            repo.delete_ref(db, clashing)
+            repo.delete(db, "refs", "handle", clashing)
             repo.rewrite_ref_users(db, clashing, handle)
         repo.set_ref_locator(db, handle, new_locator, now)
     return handle

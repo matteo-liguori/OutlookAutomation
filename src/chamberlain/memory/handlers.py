@@ -4,6 +4,7 @@ Contract: docs/contracts/06-memory.md and 02-tools.md (T-8 to T-12).
 """
 
 import sqlite3
+from datetime import datetime
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
 from chamberlain.domain.actors import agent_actor
@@ -48,12 +49,7 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
             return keep_finding(ctx, request)
         assert request.text is not None
         handle = CardService(ctx.db, ctx.clock).add_note(request.owner, request.text)
-        data = request.text.encode()
-        return Result(
-            KeepResponse(
-                handle=handle, kind=KeepKind.NOTE, size=len(data), sha256=sha256_bytes(data)
-            )
-        )
+        return _text_response(handle, KeepKind.NOTE, request.text)
     if request.kind is KeepKind.EVIDENCE and request.from_handle is not None:
         return _instruction_evidence(ctx, request)
     if request.kind is KeepKind.EVIDENCE:
@@ -61,12 +57,7 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
         handle = ctx.services.evidence.add(
             text=request.text, owner=request.owner, session=ctx.session
         )
-        data = request.text.encode()
-        return Result(
-            KeepResponse(
-                handle=handle, kind=KeepKind.EVIDENCE, size=len(data), sha256=sha256_bytes(data)
-            )
-        )
+        return _text_response(handle, KeepKind.EVIDENCE, request.text)
     if request.filename == REPORT_OUTLINE_FILENAME:
         raise ChamberlainError(
             ErrorCode.REQUEST_INVALID, "That file name is the harness's own.", field="filename"
@@ -92,6 +83,11 @@ def keep(ctx: Context, request: KeepRequest) -> Result:
             expires_at=parse(kept.expires_at),
         )
     )
+
+
+def _text_response(handle: str, kind: KeepKind, text: str) -> Result:
+    data = text.encode()
+    return Result(KeepResponse(handle=handle, kind=kind, size=len(data), sha256=sha256_bytes(data)))
 
 
 def _instruction_evidence(ctx: Context, request: KeepRequest) -> Result:
@@ -149,12 +145,7 @@ def _instruction_evidence(ctx: Context, request: KeepRequest) -> Result:
         f"evidence {evidence}.",
         payload_sha256=message.raw_sha256,
     )
-    data = text.encode()
-    return Result(
-        KeepResponse(
-            handle=evidence, kind=KeepKind.EVIDENCE, size=len(data), sha256=sha256_bytes(data)
-        )
-    )
+    return _text_response(evidence, KeepKind.EVIDENCE, text)
 
 
 def load_authorised_senders(db: sqlite3.Connection) -> AuthorisedSenders:
@@ -243,16 +234,26 @@ def forget(ctx: Context, request: ForgetRequest) -> Result:
 # --- card ------------------------------------------------------------------------------------
 
 
+def _need[T](value: T | None) -> T:
+    """A request field the op needs; the request model already guarantees it."""
+    assert value is not None
+    return value
+
+
+def _stored(moment: datetime | None) -> str | None:
+    return None if moment is None else ts(moment)
+
+
 def card(ctx: Context, request: CardRequest) -> Result:
     service = CardService(ctx.db, ctx.clock)
     fields = {} if request.fields is None else request.fields.model_dump(exclude_none=True)
     action_fields = request.action_fields
     if request.complex_reason is not None:
-        assert request.card is not None
+        card_handle = _need(request.card)
         ComplexCards(ctx.db, ctx.clock, ctx.services.audit).request(
-            request.card, request.complex_reason, agent_actor(ctx.session)
+            card_handle, request.complex_reason, agent_actor(ctx.session)
         )
-        return Result(CardResponse(card=service.view(request.card)))
+        return Result(CardResponse(card=service.view(card_handle)))
     match request.op:
         case CardOp.CREATE:
             view = service.create(
@@ -269,30 +270,24 @@ def card(ctx: Context, request: CardRequest) -> Result:
                     fix="Give the fields to replace in fields.",
                     field="fields",
                 )
-            assert request.card is not None
-            view = service.update(request.card, request.expected_version, fields)
+            view = service.update(_need(request.card), request.expected_version, fields)
         case CardOp.CLOSE:
-            assert request.card is not None
-            assert request.outcome is not None
-            view = service.close(request.card, request.expected_version, request.outcome)
+            view = service.close(
+                _need(request.card), request.expected_version, _need(request.outcome)
+            )
         case CardOp.REOPEN:
-            assert request.card is not None
-            view = service.reopen(request.card, request.expected_version)
+            view = service.reopen(_need(request.card), request.expected_version)
         case CardOp.ADD_ACTION:
-            assert request.card is not None
-            assert action_fields is not None
+            new = _need(action_fields)
             view = service.add_action(
-                request.card,
+                _need(request.card),
                 request.expected_version,
-                title=action_fields.title or "",
-                due_at=None if action_fields.due_at is None else ts(action_fields.due_at),
-                snooze_until=(
-                    None if action_fields.snooze_until is None else ts(action_fields.snooze_until)
-                ),
-                important=bool(action_fields.important),
+                title=new.title or "",
+                due_at=_stored(new.due_at),
+                snooze_until=_stored(new.snooze_until),
+                important=bool(new.important),
             )
         case CardOp.UPDATE_ACTION:
-            assert request.action is not None
             if action_fields is None or not action_fields.model_fields_set:
                 raise ChamberlainError(
                     ErrorCode.REQUEST_INVALID,
@@ -301,21 +296,19 @@ def card(ctx: Context, request: CardRequest) -> Result:
                     field="action_fields",
                 )
             view = service.update_action(
-                request.action,
+                _need(request.action),
                 request.expected_version,
                 title=action_fields.title,
-                due_at=None if action_fields.due_at is None else ts(action_fields.due_at),
-                snooze_until=(
-                    None if action_fields.snooze_until is None else ts(action_fields.snooze_until)
-                ),
+                due_at=_stored(action_fields.due_at),
+                snooze_until=_stored(action_fields.snooze_until),
                 set_due="due_at" in action_fields.model_fields_set,
                 set_snooze="snooze_until" in action_fields.model_fields_set,
                 important=action_fields.important,
             )
         case CardOp.FINISH_ACTION:
-            assert request.action is not None
-            assert request.outcome is not None
-            view = service.finish_action(request.action, request.expected_version, request.outcome)
+            view = service.finish_action(
+                _need(request.action), request.expected_version, _need(request.outcome)
+            )
     return Result(CardResponse(card=view))
 
 

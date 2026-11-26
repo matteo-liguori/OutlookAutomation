@@ -97,7 +97,7 @@ def next_page(ctx: Context, tool: str, qhash: str, cursor: str, limit: int) -> P
     cursor_id, _, raw = cursor.partition(".")
     if not raw.isdigit():
         raise ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid.")
-    row = repo.get_cursor(ctx.db, cursor_id)
+    row = repo.get(ctx.db, "cursors", cursor_id)
     if row is None:
         raise ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not known.")
     if str(row["expires_at"]) <= ts(ctx.clock.now()):
@@ -120,7 +120,7 @@ def next_page(ctx: Context, tool: str, qhash: str, cursor: str, limit: int) -> P
 
 
 def _store(ctx: Context, tool: str, qhash: str, snapshot: Snapshot) -> str:
-    if ctx.session is None or not repo.session_exists(ctx.db, ctx.session):
+    if ctx.session is None or repo.get(ctx.db, "sessions", ctx.session) is None:
         raise ChamberlainError(ErrorCode.SESSION_REQUIRED, "That session is not open.")
     cursor_id = f"cur{secrets.token_hex(8)}"
     now = ctx.clock.now()

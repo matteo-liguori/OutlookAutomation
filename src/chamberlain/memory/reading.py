@@ -118,7 +118,7 @@ def _evidence(ctx: Context, handle: str) -> OpenResponse:
     view = EvidenceView(
         handle=handle,
         text=str(row["text"]),
-        ref=None if row["ref"] is None else str(row["ref"]),
+        ref=repo.opt(row, "ref"),
         created_at=parse(str(row["created_at"])),
     )
     return OpenResponse(handle=handle, view=view)
@@ -126,7 +126,7 @@ def _evidence(ctx: Context, handle: str) -> OpenResponse:
 
 def _artifact(ctx: Context, request: OpenRequest) -> OpenResponse:
     store = ctx.services.artifacts
-    row = repo.get_artifact(ctx.db, request.handle)
+    row = repo.get(ctx.db, "artifacts", request.handle)
     if row is None:
         raise _unknown()
     owners = tuple(str(o["owner"]) for o in repo.artifact_owners(ctx.db, request.handle))
@@ -183,7 +183,7 @@ def _attachment_page(
 
 
 def _grant(ctx: Context, handle: str) -> OpenResponse:
-    row = repo.get_grant(ctx.db, handle)
+    row = repo.get(ctx.db, "grants", handle)
     if row is None:
         raise _unknown()
     view = GrantView(
@@ -195,16 +195,16 @@ def _grant(ctx: Context, handle: str) -> OpenResponse:
         source=str(row["source_id"]),
         requirement=Requirement(str(row["requirement"])),
         content_sha256=str(row["content_sha256"]),
-        card=None if row["card"] is None else str(row["card"]),
-        granted_at=None if row["granted_at"] is None else parse(str(row["granted_at"])),
-        expires_at=None if row["expires_at"] is None else parse(str(row["expires_at"])),
-        review_at=None if row["review_at"] is None else parse(str(row["review_at"])),
+        card=repo.opt(row, "card"),
+        granted_at=repo.opt(row, "granted_at", parse),
+        expires_at=repo.opt(row, "expires_at", parse),
+        review_at=repo.opt(row, "review_at", parse),
     )
     return OpenResponse(handle=handle, view=view)
 
 
 def _operation(ctx: Context, handle: str) -> OpenResponse:
-    row = repo.get_operation(ctx.db, handle)
+    row = repo.get(ctx.db, "operations", handle)
     if row is None:
         raise _unknown()
     state = OperationState(str(row["state"]))
@@ -213,16 +213,16 @@ def _operation(ctx: Context, handle: str) -> OpenResponse:
         intent_kind=IntentKind(str(row["kind"])),
         source=str(row["source_id"]),
         state=state,
-        grant=None if row["grant"] is None else str(row["grant"]),
+        grant=repo.opt(row, "grant"),
         verification=Verification(
             client_verified=bool(row["client_verified"]),
             server_verified=bool(row["server_verified"]),
         ),
         may_have_happened=state in MAY_HAVE_HAPPENED_STATES,
-        error_code=None if row["error_code"] is None else ErrorCode(str(row["error_code"])),
-        settled_at=None if row["settled_at"] is None else parse(str(row["settled_at"])),
+        error_code=repo.opt(row, "error_code", ErrorCode),
+        settled_at=repo.opt(row, "settled_at", parse),
         recheck=recheck_text(row["recheck_result"], row["recheck_json"]),
-        redo_of=None if row["redo_of"] is None else str(row["redo_of"]),
+        redo_of=repo.opt(row, "redo_of"),
         redone_by=repo.resend_handle(ctx.db, handle),
     )
     return OpenResponse(handle=handle, view=view)
@@ -230,10 +230,10 @@ def _operation(ctx: Context, handle: str) -> OpenResponse:
 
 def _event(ctx: Context, request: OpenRequest) -> OpenResponse:
     handle = request.handle
-    row = repo.get_event(ctx.db, handle)
+    row = repo.get(ctx.db, "events", handle)
     if row is None:
         raise _unknown()
-    subject = None if row["subject"] is None else str(row["subject"])
+    subject = repo.opt(row, "subject")
     view = EventView(
         handle=handle,
         event_kind=EventKind(str(row["kind"])),

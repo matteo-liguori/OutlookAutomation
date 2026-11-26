@@ -74,68 +74,44 @@ def _in_window(request: FindRequest, when: str) -> bool:
 
 def _cards(ctx: Context, request: FindRequest) -> Snapshot:
     hits: list[Hit] = []
-    for row in repo.list_cards(ctx.db, request.query, SNAPSHOT_MAX):
+    for row in repo.search(ctx.db, "cards", request.query, SNAPSHOT_MAX):
         if not _in_window(request, str(row["updated_at"])):
             continue
         handle = str(row["handle"])
-        title = str(row["title"])
         hits.append(
             Hit(
                 handle=handle,
                 kind="card",
                 when=parse(str(row["updated_at"])),
                 summary=f"{row['state']} card, version {row['version']}",
-                content=one_line(title, ContentKind.STORED_TEXT, handle),
+                content=one_line(str(row["title"]), ContentKind.STORED_TEXT, handle),
             )
         )
     return Snapshot(hits=tuple(hits))
 
 
+_STORED: tuple[tuple[str, str, str, str], ...] = (
+    ("artifacts", "artifact", "reason", "{kind}, {size} bytes"),
+    ("evidence", "evidence", "text", "evidence"),
+    ("notes", "note", "text", "note"),
+)
+"""Per stored table: its `find` kind, the column shown, and the summary template."""
+
+
 def _stored(ctx: Context, request: FindRequest) -> Snapshot:
     found: list[tuple[str, Hit]] = []
-    for row in repo.search_artifacts(ctx.db, request.query, SNAPSHOT_MAX):
-        handle = str(row["handle"])
-        found.append(
-            (
-                str(row["created_at"]),
-                Hit(
-                    handle=handle,
-                    kind="artifact",
-                    when=parse(str(row["created_at"])),
-                    summary=f"{row['kind']}, {row['size']} bytes",
-                    content=one_line(str(row["reason"]), ContentKind.STORED_TEXT, handle),
-                ),
+    for table, kind, column, summary in _STORED:
+        for row in repo.search(ctx.db, table, request.query, SNAPSHOT_MAX):
+            handle = str(row["handle"])
+            hit = Hit(
+                handle=handle,
+                kind=kind,
+                when=parse(str(row["created_at"])),
+                summary=summary.format_map(row),
+                content=one_line(str(row[column]), ContentKind.STORED_TEXT, handle),
             )
-        )
-    for row in repo.search_evidence(ctx.db, request.query, SNAPSHOT_MAX):
-        handle = str(row["handle"])
-        found.append(
-            (
-                str(row["created_at"]),
-                Hit(
-                    handle=handle,
-                    kind="evidence",
-                    when=parse(str(row["created_at"])),
-                    summary="evidence",
-                    content=one_line(str(row["text"]), ContentKind.STORED_TEXT, handle),
-                ),
-            )
-        )
-    for row in repo.search_notes(ctx.db, request.query, SNAPSHOT_MAX):
-        handle = str(row["handle"])
-        found.append(
-            (
-                str(row["created_at"]),
-                Hit(
-                    handle=handle,
-                    kind="note",
-                    when=parse(str(row["created_at"])),
-                    summary="note",
-                    content=one_line(str(row["text"]), ContentKind.STORED_TEXT, handle),
-                ),
-            )
-        )
-    found = [(when, hit) for when, hit in found if _in_window(request, when)]
+            if _in_window(request, str(row["created_at"])):
+                found.append((str(row["created_at"]), hit))
     found.sort(key=lambda pair: (pair[0], pair[1].handle), reverse=True)
     return Snapshot(hits=tuple(hit for _, hit in found[:SNAPSHOT_MAX]))
 
@@ -149,7 +125,7 @@ def _grants(ctx: Context, request: FindRequest) -> Snapshot:
             summary=f"{row['kind']} grant, {row['state']}",
             content=one_line(str(row["title"]), ContentKind.STORED_TEXT, str(row["handle"])),
         )
-        for row in repo.list_grants(ctx.db, request.query, SNAPSHOT_MAX)
+        for row in repo.search(ctx.db, "grants", request.query, SNAPSHOT_MAX)
         if _in_window(request, str(row["proposed_at"]))
     )
     return Snapshot(hits=hits)
@@ -163,7 +139,7 @@ def _operations(ctx: Context, request: FindRequest) -> Snapshot:
             when=parse(str(row["created_at"])),
             summary=f"{row['kind']}, {row['state']}",
         )
-        for row in repo.list_operations(ctx.db, request.query, SNAPSHOT_MAX)
+        for row in repo.search(ctx.db, "operations", request.query, SNAPSHOT_MAX)
         if _in_window(request, str(row["created_at"]))
     )
     return Snapshot(hits=hits)

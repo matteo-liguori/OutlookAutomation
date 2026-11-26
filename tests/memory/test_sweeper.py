@@ -249,10 +249,10 @@ def test_m3_tombstones_vanish_after_a_week(
     handle = keep_text(store, action, "tombstone")
     store.release(handle, None)
     sweep(ctx, clock.now())
-    assert repo.get_artifact(ctx.db, handle) is not None
+    assert repo.get(ctx.db, "artifacts", handle) is not None
     clock.advance(hours=24 * 8)
     sweep(ctx, clock.now())
-    assert repo.get_artifact(ctx.db, handle) is None
+    assert repo.get(ctx.db, "artifacts", handle) is None
 
 
 def test_m4_unclaimed_inputs_expire_but_pending_work_survives(

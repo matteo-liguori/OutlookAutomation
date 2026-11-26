@@ -206,7 +206,7 @@ class SweeperMachine(RuleBasedStateMachine):
 
     def expected_live(self, handle: str) -> bool:
         now = self.clock.now()
-        row = repo.get_artifact(self.ctx.db, handle)
+        row = repo.get(self.ctx.db, "artifacts", handle)
         if row is None or handle in self.dead:
             return False
         holders = [o for o in self.holds[handle] if self.live(o)]
@@ -217,7 +217,7 @@ class SweeperMachine(RuleBasedStateMachine):
 
     def check_properties(self) -> None:
         for handle in sorted(self.holds):
-            row = repo.get_artifact(self.ctx.db, handle)
+            row = repo.get(self.ctx.db, "artifacts", handle)
             if self.expected_live(handle):
                 # 1. nothing owned by a live owner is deleted
                 assert row is not None

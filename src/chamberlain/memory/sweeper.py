@@ -210,7 +210,7 @@ def _release_dead_holds(run: _Run) -> None:
     released = 0
     with transaction(run.db):
         for row in repo.dead_holds(run.db, run.edges()):
-            repo.remove_artifact_owner(run.db, str(row["artifact"]), str(row["owner"]))
+            repo.release_hold(run.db, "artifact_owners", str(row["artifact"]), str(row["owner"]))
             repo.release_if_unheld(run.db, str(row["artifact"]))
             released += 1
     run.add("holds_released", released)
@@ -220,7 +220,7 @@ def _expire_artifacts(run: _Run) -> None:
     expired = 0
     with transaction(run.db):
         for handle in repo.expirable_artifacts(run.db, ts(run.now)):
-            repo.remove_artifact_owner(run.db, handle, None)
+            repo.release_hold(run.db, "artifact_owners", handle, None)
             repo.release_if_unheld(run.db, handle)
             expired += 1
         for handle in repo.unheld_live_artifacts(run.db):
@@ -245,7 +245,7 @@ def _delete_bytes(run: _Run) -> None:
         if not blob_path(run.root, str(row["sha256"])).exists():
             with transaction(run.db):
                 repo.set_artifact_state(run.db, str(row["handle"]), "deleted", ts(run.now))
-                repo.remove_artifact_owner(run.db, str(row["handle"]), None)
+                repo.release_hold(run.db, "artifact_owners", str(row["handle"]), None)
             lost += 1
     for sha in repo.released_shas(run.db):
         if repo.sha_has_live_row(run.db, sha):
@@ -314,7 +314,7 @@ def _trim_ephemeral(run: _Run) -> None:
                 run.failed += 1
                 continue
         with transaction(run.db):
-            repo.delete_lease(run.db, str(row["id"]))
+            repo.delete(run.db, "leases", "id", str(row["id"]))
         leases += 1
     run.add("leases_expired", leases)
 
@@ -457,6 +457,16 @@ def _quarantine(run: _Run, path: Path) -> bool:
     return True
 
 
+def _unlink_or_count(run: _Run, entry: Path) -> bool:
+    """Remove a file; a failure is counted for the retry and returns False."""
+    try:
+        entry.unlink()
+    except OSError:
+        run.failed += 1
+        return False
+    return True
+
+
 def _rotate_system_files(run: _Run) -> None:
     removed = 0
     freed = 0
@@ -472,10 +482,7 @@ def _rotate_system_files(run: _Run) -> None:
     total = sum(size for _, size, _ in files)
     for mtime, size, entry in files:
         if mtime < cutoff or total > LOG_MAX_BYTES:
-            try:
-                entry.unlink()
-            except OSError:
-                run.failed += 1
+            if not _unlink_or_count(run, entry):
                 continue
             total -= size
             removed += 1
@@ -486,23 +493,13 @@ def _rotate_system_files(run: _Run) -> None:
     if exports.is_dir() and not exports.is_symlink():
         for entry in exports.iterdir():
             if entry.is_file() and not entry.is_symlink() and entry.stat().st_mtime < export_cutoff:
-                try:
-                    entry.unlink()
-                except OSError:
-                    run.failed += 1
-                    continue
-                removed += 1
+                removed += _unlink_or_count(run, entry)
     temp_cutoff = run.now.timestamp() - RUN_TEMP_MINUTES * 60
     temp_dir = run.root / RUN_DIR
     if temp_dir.is_dir() and not temp_dir.is_symlink():
         for entry in temp_dir.glob("*.tmp"):
             if entry.is_file() and not entry.is_symlink() and entry.stat().st_mtime < temp_cutoff:
-                try:
-                    entry.unlink()
-                except OSError:
-                    run.failed += 1
-                    continue
-                removed += 1
+                removed += _unlink_or_count(run, entry)
     removed += backups.rotate(run.root)
     run.add("system_files_rotated", removed, freed)
 

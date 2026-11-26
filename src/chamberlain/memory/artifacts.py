@@ -287,7 +287,7 @@ class ArtifactService:
     # --- reading ---------------------------------------------------------------------
 
     def _row(self, handle: str) -> repo.Row:
-        row = repo.get_artifact(self._db, handle)
+        row = repo.get(self._db, "artifacts", handle)
         if row is None:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "No such stored item.")
         return row
@@ -322,7 +322,7 @@ class ArtifactService:
         present = blob_path(self._root, str(row["sha256"])).exists()
         with transaction(self._db):
             repo.set_artifact_state(self._db, handle, "deleted", ts(self._clock.now()))
-            repo.remove_artifact_owner(self._db, handle, None)
+            repo.release_hold(self._db, "artifact_owners", handle, None)
         if present:
             raise ChamberlainError(
                 ErrorCode.ARTIFACT_HASH_MISMATCH, "The stored content no longer matches its hash."
@@ -347,7 +347,7 @@ class ArtifactService:
         """Drop one hold, or all. Returns `(no longer readable, holds remaining)` (M-10)."""
         self._row(handle)
         with transaction(self._db):
-            repo.remove_artifact_owner(self._db, handle, owner)
+            repo.release_hold(self._db, "artifact_owners", handle, owner)
             repo.release_if_unheld(self._db, handle)
             gone = str(self._row(handle)["state"]) != "live"
         remaining = len(repo.artifact_owners(self._db, handle))

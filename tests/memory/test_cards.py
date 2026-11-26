@@ -172,7 +172,7 @@ def test_m16_m3_a_stale_version_conflicts_and_1_related_checks(
     assert (closed.state, closed.outcome) == ("closed", "Settled with the supplier.")
     assert (closed.goal, closed.position, closed.rules) == ("", "", "")
     assert closed.actions == ()
-    assert repo.get_note(ctx.db, note) is None
+    assert repo.get(ctx.db, "notes", note) is None
     assert repo.get_evidence(ctx.db, evidence) is None
     assert repo.cards_for_ref(ctx.db, "msg_aaaaaaaaaaaa") == []
     assert (
@@ -219,7 +219,7 @@ def test_m3_reopening_starts_empty_and_outcome_lines_age_out_and_1_related_check
     assert card is not None
     view = cards.finish_action(action, None, "Quote sent.")
     assert view.actions == ()
-    assert repo.get_note(ctx.db, note) is None
+    assert repo.get(ctx.db, "notes", note) is None
     row = repo.get_action(ctx.db, action)
     assert row is not None
     assert (row["state"], row["outcome"]) == ("done", "Quote sent.")
@@ -235,10 +235,10 @@ def test_m3_t10_a_note_untouched_for_30_days_goes_even_with_and_1_related_checks
     note = cards.add_note(action, "stale scratch")
     clock.advance(hours=24 * 29)
     sweep(ctx, clock.now())
-    assert repo.get_note(ctx.db, note) is not None
+    assert repo.get(ctx.db, "notes", note) is not None
     clock.advance(hours=24 * 2)
     sweep(ctx, clock.now())
-    assert repo.get_note(ctx.db, note) is None
+    assert repo.get(ctx.db, "notes", note) is None
 
     # t10_a_note_needs_an_open_action
     card = cards.create(title="Not an action")
