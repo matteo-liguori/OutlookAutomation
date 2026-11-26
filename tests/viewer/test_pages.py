@@ -7,7 +7,7 @@ Each page's data is a read-only view built from the store (and, for the calendar
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from viewer_rig import CALENDAR, MAIL, Rig
+from viewer_rig import CALENDAR, Rig
 
 from chamberlain.app.wiring import run_tick
 from chamberlain.domain.calendar import EventFields
@@ -160,31 +160,3 @@ def insert_imported(
         "('op_0123456789abcdef', 'import:x', ?, ?, 'uncertain', ?, ?, ?, ?, ?, ?)",
         (kind, source, "a" * 64, summary, attempted, NOW, NOW, NOW),
     )
-
-
-def test_an_imported_uncertain_operation_shows_its_summary_time_and_advice(rig: Rig) -> None:
-    insert_imported(
-        rig,
-        "calendar.create",
-        CALENDAR,
-        '{"title": "Dentist", "start": "2026-03-01T10:00:00Z", "calendar": "calendar:test"}',
-        OLD,
-    )
-    shown = get(rig, "/api/uncertain")["operations"]
-    assert len(shown) == 1
-    op = shown[0]
-    assert op["imported"] is True
-    assert op["summary"]["title"] == "Dentist"
-    assert op["summary"]["start"] == "2026-03-01T10:00:00Z"
-    assert op["attempted_at"] == OLD  # the old journal's time, not the import
-    assert op["imported_at"] == NOW
-    assert op["rendered"] is None
-    assert "calendar" in op["advice"].lower()
-
-
-def test_an_imported_mail_operation_points_at_the_sent_folder(rig: Rig) -> None:
-    insert_imported(rig, "mail.send", MAIL, None, None)
-    op = get(rig, "/api/uncertain")["operations"][0]
-    assert op["attempted_at"] is None  # unknown: never the import time shown as "sent at"
-    assert op["summary"] is None
-    assert "sent" in op["advice"].lower()

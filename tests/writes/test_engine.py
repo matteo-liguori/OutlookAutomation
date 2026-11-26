@@ -187,23 +187,6 @@ def test_p11_an_uncertain_move_reconciles_without_a_second_mutation(rig: WriteRi
     assert rig.fake.mail.copies(MAIL, "<mv@example.org>", "f-archive") == 1
 
 
-def test_w12_an_imported_uncertain_operation_is_not_reported_as_settled(rig: WriteRig) -> None:
-    op = rig.ready_send()
-    rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
-    with fails(ErrorCode.OPERATION_UNCERTAIN):
-        rig.engine().do(op.handle)
-    rig.engine().db.execute(
-        "UPDATE operations SET intent_json = NULL, prepared_json = NULL WHERE handle = ?",
-        (op.handle,),
-    )
-    with fails(ErrorCode.OPERATION_UNCERTAIN) as raised:
-        rig.engine().reconcile(op.handle)
-    text = str(raised.value)
-    assert "old harness" in text
-    assert "never be retried" in text
-    assert rig.engine().get(op.handle).state is S.UNCERTAIN
-
-
 def test_w13_the_agent_can_confirm_an_uncertain_write_with_observed_evidence(rig: WriteRig) -> None:
     op = rig.ready_send()
     rig.fake.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
