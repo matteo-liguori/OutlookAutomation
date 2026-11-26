@@ -15,12 +15,12 @@ holds only the calendar address, the user name and the credential's name.
 import argparse
 import base64
 import getpass
-import os
 import re
 import shutil
 import sys
 from collections.abc import Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 from urllib.parse import urljoin
@@ -30,14 +30,15 @@ import yaml
 from chamberlain.connectors.caldav import dav
 from chamberlain.connectors.caldav.credentials import SERVICE, credential_name
 from chamberlain.connectors.calendar_support.http import (
-    HttpReply,
     HttpTransport,
-    TransportFailure,
     UrllibTransport,
+    calendar_unavailable,
+    check_read_status,
+    read_http,
     require_secure,
 )
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
-from chamberlain.dataroot import refuse_inside_checkout
+from chamberlain.dataroot import data_root_arg
 from chamberlain.importer.credentials import icloud_credential
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -65,32 +66,23 @@ def profile_path(data_root: Path) -> Path:
 def _propfind(
     transport: HttpTransport, url: str, body: bytes, depth: str, auth: str
 ) -> list[dav.DavResponse]:
-    try:
-        reply: HttpReply = transport.send(
+    reply = read_http(
+        lambda: transport.send(
             "PROPFIND",
             require_secure(url),
             headers={"Authorization": auth, "Depth": depth, "Content-Type": "application/xml"},
             body=body,
             timeout=30,
-        )
-    except TransportFailure as error:
-        raise ChamberlainError(
-            ErrorCode.SOURCE_UNAVAILABLE,
-            "Could not reach the calendar server.",
-            detail=str(error),
-        ) from None
-    if reply.status in (401, 403):
-        raise ChamberlainError(
-            ErrorCode.SOURCE_SIGN_IN_NEEDED,
-            "The server refused the sign-in: check the Apple ID and use an app-specific "
-            "password, not your normal Apple password.",
-        )
-    if reply.status != 207:
-        raise ChamberlainError(
-            ErrorCode.SOURCE_UNAVAILABLE,
-            "The calendar server gave an unexpected answer.",
-            detail=f"http {reply.status}",
-        )
+        ),
+        partial(calendar_unavailable, message="Could not reach the calendar server."),
+    )
+    check_read_status(
+        reply,
+        207,
+        partial(calendar_unavailable, message="The calendar server gave an unexpected answer."),
+        "The server refused the sign-in: check the Apple ID and use an app-specific "
+        "password, not your normal Apple password.",
+    )
     try:
         return dav.parse_multistatus(reply.body)
     except ValueError:
@@ -307,17 +299,6 @@ def _dump(profile: dict[str, Any]) -> str:
     return yaml.safe_dump(profile, sort_keys=True)  # pyright: ignore[reportUnknownMemberType]
 
 
-def _data_root(data: str | None) -> Path:
-    root = data or os.environ.get("CHAMBERLAIN_DATA")
-    if not root:
-        raise ChamberlainError(
-            ErrorCode.CONFIG_INVALID,
-            "Give the data root with --data or CHAMBERLAIN_DATA.",
-            field="data",
-        )
-    return refuse_inside_checkout(root)
-
-
 def main(argv: list[str] | None = None, *, say: Say = print) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m chamberlain.connectors.caldav.setup",
@@ -342,7 +323,7 @@ def main(argv: list[str] | None = None, *, say: Say = print) -> int:
             step.add_argument("--source", default=ICLOUD_SOURCE)
     args = parser.parse_args(argv)
     try:
-        root = _data_root(args.data)
+        root = data_root_arg(args.data)
         store = default_store(root)
         if args.step == "import-old":
             apple_id, connected = adopt_old_credential(root, Path(args.old_data), store)

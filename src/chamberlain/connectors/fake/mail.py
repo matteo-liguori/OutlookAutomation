@@ -6,14 +6,14 @@ locators (`<folder id>/<Message-ID>`) that do not.
 Contract: docs/contracts/08-ports.md.
 """
 
-from collections.abc import Callable, Collection, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime, timedelta
 from typing import cast
 
 from pydantic import JsonValue
 
-from chamberlain.connectors.fake.world import DispatchRecord, FakeWorld, Fault, StoredMail
+from chamberlain.connectors.fake.world import FakeWorld, Fault, StoredMail, text
 from chamberlain.domain.canonical import sha256_bytes, sha256_text
 from chamberlain.domain.capabilities import (
     Capability,
@@ -53,7 +53,7 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
     Verification,
 )
-from chamberlain.ports.page import Gap, Page
+from chamberlain.ports.page import Page
 from chamberlain.ports.sync import FOLDER_SECONDS, FolderOutcome, SyncReport, run_sync
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -77,13 +77,6 @@ _ALWAYS_PROVABLE = frozenset(
         _K.MAIL_MARK_READ.value,
     }
 )
-
-
-def _text(data: Mapping[str, JsonValue], key: str) -> str:
-    value = data[key]
-    if not isinstance(value, str):
-        raise TypeError(f"prepared field {key} is not text")
-    return value
 
 
 def _texts(data: Mapping[str, JsonValue], key: str) -> list[str]:
@@ -258,26 +251,17 @@ class FakeMail:
         self, source: str, query: MailQuery, cursor: str | None = None
     ) -> Page[MessageSummary]:
         self._begin_read(source)
-        try:
-            offset = int(cursor or "0")
-        except ValueError:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid."
-            ) from None
         matches = [
             m for m in self._world.mail[source] if not m.unsynced and self._matches(m, query)
         ]
         matches.sort(key=lambda m: (m.date, m.uid), reverse=True)
-        window = matches[offset : offset + query.limit]
-        more = offset + query.limit < len(matches)
-        gaps: tuple[Gap, ...] = ()
-        if self._world.take(Fault.STALE):
-            gaps = (Gap.model_validate({"source": source, "reason": "The mail store is stale."}),)
-        return Page[MessageSummary](
-            items=tuple(self._summary(source, m) for m in window),
-            cursor=str(offset + query.limit) if more else None,
-            complete=not more and not gaps,
-            gaps=gaps,
+        return self._world.page(
+            Page[MessageSummary],
+            source,
+            [self._summary(source, m) for m in matches],
+            cursor,
+            query.limit,
+            "mail store",
         )
 
     def read(self, source: str, locator: str) -> Message:
@@ -397,54 +381,29 @@ class FakeMail:
         self, prepared: Prepared, key: str, payloads: Mapping[str, bytes]
     ) -> DispatchResult:
         """The one mutation (P-10). Never retries and never raises."""
-        world = self._world
-        world.begin_call()
         kind = prepared.intent_kind
 
-        def apply() -> ProviderReceipt:
-            return self._apply(prepared, payloads)
+        def finish(receipt: ProviderReceipt) -> DispatchResult:
+            if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH} and not self._move_settled(prepared):
+                return DispatchResult(
+                    outcome=DispatchOutcome.UNKNOWN, detail="fake: move not verified"
+                )
+            if receipt.items and not any(item.ok for item in receipt.items):
+                return DispatchResult(
+                    outcome=DispatchOutcome.NOT_APPLIED, detail="fake: none moved"
+                )
+            return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
 
-        if world.take(Fault.BUSY_BEFORE_APPLY):
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            return DispatchResult(outcome=DispatchOutcome.NOT_APPLIED, detail="fake: busy")
-        if world.take(Fault.LOSE_BEFORE_APPLY):
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: lost before apply")
-        if kind is _K.MAIL_SEND and world.take(Fault.QUEUE_INSTEAD_OF_SEND):
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            world.outbox.setdefault(prepared.source, set()).add(prepared.reconcile_token or "")
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: held in Outbox")
-        if world.take(Fault.SLOW):
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            world.apply_late(_swallow(apply))
-            world.clock.advance(seconds=world.deadline_seconds + 1)
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: deadline passed")
-        try:
-            receipt = apply()
-        except ChamberlainError as error:
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            return DispatchResult(
-                outcome=DispatchOutcome.NOT_APPLIED, detail=f"fake: precondition {error.code}"
-            )
-        world.dispatch_log.append(DispatchRecord(key, kind, applied=True))
-        if world.take(Fault.LOSE_RESPONSE_AFTER_APPLY):
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: response lost")
-        if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH} and not self._move_settled(prepared):
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: move not verified")
-        if receipt.items and not any(item.ok for item in receipt.items):
-            return DispatchResult(outcome=DispatchOutcome.NOT_APPLIED, detail="fake: none moved")
-        return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
+        return self._world.run_dispatch(
+            prepared, key, lambda: self._apply(prepared, payloads), finish
+        )
 
     def reconcile(self, prepared: Prepared, key: str) -> ReconcileResult:
         """Read-only (P-11). Needs only `prepared`."""
         source = prepared.source
         world = self._world
-        world.begin_call()
-        if world.take(Fault.SLOW):
-            world.clock.advance(seconds=world.deadline_seconds + 1)
-            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: deadline passed")
-        if world.take(Fault.STALE):
-            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: stale store")
+        if (gated := world.reconcile_gate("store")) is not None:
+            return gated
         data = prepared.data
         kind = prepared.intent_kind
         provable = kind.value in _ALWAYS_PROVABLE or (
@@ -466,9 +425,9 @@ class FakeMail:
             found = self._matching(source, prepared.reconcile_token or "", folder)
             if found:
                 return self._present(found[0])
-            return absent if self._find(source, _text(data, "draft_locator")) else unknown
+            return absent if self._find(source, text(data, "draft_locator")) else unknown
         if kind is _K.MAIL_DRAFT_DISCARD:
-            still = self._find(source, _text(data, "draft_locator"))
+            still = self._find(source, text(data, "draft_locator"))
             if not still:
                 return ReconcileResult(
                     status=ReconcileStatus.PRESENT, receipt=ProviderReceipt(verification=_VERIFIED)
@@ -477,7 +436,7 @@ class FakeMail:
         if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH}:
             # As Thunderbird: moved = gone from the folder and at the destination; stuck =
             # still in the folder with no copy at the destination.
-            target = _text(data, "to_folder")
+            target = text(data, "to_folder")
             moved = stuck = 0
             items: list[ItemResult] = []
             for locator in _texts(data, "locators"):
@@ -523,7 +482,7 @@ class FakeMail:
             attachments = self._attachments(data, payloads)
             if kind is _K.MAIL_DRAFT_UPDATE:
                 old = self._draft(
-                    source, _text(data, "draft_locator"), _text(data, "expected_sha256")
+                    source, text(data, "draft_locator"), text(data, "expected_sha256")
                 )
                 world.mail[source].remove(old)
             role = FolderRole.SENT if kind is _K.MAIL_SEND else FolderRole.DRAFTS
@@ -532,15 +491,15 @@ class FakeMail:
                 session_id=world.next_session_id(),
                 folder_id=world.folder_by_role(source, role).id,
                 internet_message_id=prepared.reconcile_token or "",
-                subject=_text(data, "subject"),
+                subject=text(data, "subject"),
                 sender=Address(address="owner@example.org"),
                 to=tuple(Address(address=a) for a in _texts(data, "to")),
                 cc=tuple(Address(address=a) for a in _texts(data, "cc")),
                 date=world.clock.now(),
                 unread=False,
-                body=_text(data, "body"),
+                body=text(data, "body"),
                 attachments=attachments,
-                raw_sha256=_text(data, "raw_sha256"),
+                raw_sha256=text(data, "raw_sha256"),
             )
             world.mail[source].append(stored)
             verification = _CLIENT_ONLY if kind is _K.MAIL_SEND else _VERIFIED
@@ -550,11 +509,11 @@ class FakeMail:
                 verification=verification,
             )
         if kind is _K.MAIL_DRAFT_DISCARD:
-            old = self._draft(source, _text(data, "draft_locator"), _text(data, "expected_sha256"))
+            old = self._draft(source, text(data, "draft_locator"), text(data, "expected_sha256"))
             world.mail[source].remove(old)
             return ProviderReceipt(verification=_VERIFIED)
         if kind in {_K.MAIL_MOVE, _K.MAIL_TRASH}:
-            target = _text(data, "to_folder")
+            target = text(data, "to_folder")
             moved: list[ItemResult] = []
             for locator in _texts(data, "locators"):
                 found = self._find(source, locator)
@@ -591,7 +550,7 @@ class FakeMail:
         for locator in _texts(data, "locators"):
             message_id = locator.split("/", 1)[1]
             here = self._find(prepared.source, locator)
-            there = self._matching(prepared.source, message_id, _text(data, "to_folder"))
+            there = self._matching(prepared.source, message_id, text(data, "to_folder"))
             if here and there:
                 return False
         return True
@@ -724,15 +683,3 @@ class FakeMail:
             haystack = f"{stored.subject}\n{stored.body}\n{stored.sender.address}".casefold()
             return query.text.casefold() in haystack
         return True
-
-
-def _swallow(apply: Callable[[], ProviderReceipt]) -> Callable[[], None]:
-    """A late write that fails its precondition simply does not happen."""
-
-    def run() -> None:
-        try:
-            apply()
-        except ChamberlainError:
-            return
-
-    return run

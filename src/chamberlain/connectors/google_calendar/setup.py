@@ -13,22 +13,24 @@ operating system credential store (S-17), never to a file or the screen.
 import argparse
 import getpass
 import json
-import os
 import sys
 import webbrowser
 from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any, cast
 
 from chamberlain.connectors.calendar_support.http import (
     HttpTransport,
-    TransportFailure,
     UrllibTransport,
+    calendar_unavailable,
+    check_read_status,
+    read_http,
 )
 from chamberlain.connectors.calendar_support.secrets import SecretStore, default_store
 from chamberlain.connectors.google_calendar import auth
 from chamberlain.connectors.google_calendar.pages import write_pages
-from chamberlain.dataroot import refuse_inside_checkout
+from chamberlain.dataroot import data_root_arg
 from chamberlain.ports.clock import Clock, SystemClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -60,26 +62,18 @@ def list_calendars(
 ) -> list[dict[str, str]]:
     """The account's calendars with the ids a source binding needs."""
     token = auth.AccessTokens(store, clock or SystemClock())(email)
-    try:
-        reply = (transport or UrllibTransport()).send(
+    reply = read_http(
+        lambda: (transport or UrllibTransport()).send(
             "GET",
             CALENDAR_LIST,
             headers={"Authorization": f"Bearer {token}"},
             body=None,
             timeout=30,
-        )
-    except TransportFailure as error:
-        raise ChamberlainError(
-            ErrorCode.SOURCE_UNAVAILABLE, "Google did not answer.", detail=str(error)
-        ) from None
-    if reply.status != 200:
-        raise ChamberlainError(
-            ErrorCode.SOURCE_SIGN_IN_NEEDED
-            if reply.status in (401, 403)
-            else ErrorCode.SOURCE_UNAVAILABLE,
-            "The calendar list could not be read.",
-            detail=f"http {reply.status}",
-        )
+        ),
+        partial(calendar_unavailable, message="Google did not answer."),
+    )
+    message = "The calendar list could not be read."
+    check_read_status(reply, 200, partial(calendar_unavailable, message=message), message)
     body = cast(dict[str, Any], json.loads(reply.body))
     return [
         {
@@ -140,14 +134,7 @@ def check(store: SecretStore, *, say: Say = print, lister: ListCalendars | None 
 
 
 def _store(data: str | None) -> SecretStore:
-    root = data or os.environ.get("CHAMBERLAIN_DATA")
-    if not root:
-        raise ChamberlainError(
-            ErrorCode.CONFIG_INVALID,
-            "Give the data root with --data or CHAMBERLAIN_DATA.",
-            field="data",
-        )
-    return default_store(refuse_inside_checkout(root))
+    return default_store(data_root_arg(data))
 
 
 def main(argv: list[str] | None = None, *, say: Say = print) -> int:

@@ -43,7 +43,6 @@ from chamberlain.connectors.calendar_support.port import (
     CalendarWritePort,
     Current,
     Observation,
-    WriteFailure,
     WriteReply,
     binding_for,
     calendar_capabilities,
@@ -247,23 +246,20 @@ class CalDavCalendar(CalendarWritePort):
         return data
 
     def write(self, prepared: Prepared) -> WriteReply:
-        try:
-            data = payload(prepared)
-            kind = prepared.intent_kind
-            name = prepared_text(data, "name")
-            headers = conditional_headers(prepared, exclusive_create=True)
-            if kind is IntentKind.CALENDAR_DELETE and "ics" not in data:
-                method, body = "DELETE", None
-            else:
-                method, body = "PUT", prepared_text(data, "ics").encode("utf-8")
-                headers.update(_CALENDAR_TYPE)
-            binding = self._binding(prepared.source)
-            target = self._resource(binding, name)
-        except Exception as error:
-            raise WriteFailure(type(error).__name__, sent=False) from error
-        return commit_http(
-            lambda: self._send(binding, method, target, body, headers), "caldav", (200, 201, 204)
-        )
+        return commit_http(lambda: self._request(prepared), "caldav")
+
+    def _request(self, prepared: Prepared) -> tuple[Callable[[], HttpReply], tuple[int, ...]]:
+        data = payload(prepared)
+        name = prepared_text(data, "name")
+        headers = conditional_headers(prepared, exclusive_create=True)
+        if prepared.intent_kind is IntentKind.CALENDAR_DELETE and "ics" not in data:
+            method, body = "DELETE", None
+        else:
+            method, body = "PUT", prepared_text(data, "ics").encode("utf-8")
+            headers.update(_CALENDAR_TYPE)
+        binding = self._binding(prepared.source)
+        target = self._resource(binding, name)
+        return lambda: self._send(binding, method, target, body, headers), (200, 201, 204)
 
     def observe(self, prepared: Prepared, reply: WriteReply | None) -> Observation:
         binding = self._binding(prepared.source)

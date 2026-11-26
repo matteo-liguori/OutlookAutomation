@@ -28,7 +28,6 @@ from chamberlain.connectors.calendar_support.port import (
     CalendarWritePort,
     Current,
     Observation,
-    WriteFailure,
     WriteReply,
     binding_for,
     calendar_capabilities,
@@ -208,27 +207,25 @@ class GoogleCalendar(CalendarWritePort):
                 )
 
     def write(self, prepared: Prepared) -> WriteReply:
-        try:
-            binding = self._binding(prepared.source)
-            values = payload(prepared)
-            events = self._events_path(binding)
-            kind = prepared.intent_kind
-            notify = values.get("notify") is True
-            params = {"sendUpdates": "all"} if notify else {}
-            headers = conditional_headers(prepared)
-            raw_body = values.get("body")
-            body = dict(raw_body) if isinstance(raw_body, dict) else None
-            if kind is IntentKind.CALENDAR_CREATE:
-                method = "POST"
-                path = events if "event_id" in values else events + "/import"
-            else:
-                path = f"{events}/{_quote(locator(prepared))}"
-                method = _EDIT_METHODS[kind]
-        except Exception as error:
-            raise WriteFailure(type(error).__name__, sent=False) from error
-        return commit_http(
+        return commit_http(lambda: self._request(prepared), "google")
+
+    def _request(self, prepared: Prepared) -> tuple[Callable[[], HttpReply], tuple[int, ...]]:
+        binding = self._binding(prepared.source)
+        values = payload(prepared)
+        events = self._events_path(binding)
+        kind = prepared.intent_kind
+        params = {"sendUpdates": "all"} if values.get("notify") is True else {}
+        headers = conditional_headers(prepared)
+        raw_body = values.get("body")
+        body = dict(raw_body) if isinstance(raw_body, dict) else None
+        if kind is IntentKind.CALENDAR_CREATE:
+            method = "POST"
+            path = events if "event_id" in values else events + "/import"
+        else:
+            path = f"{events}/{_quote(locator(prepared))}"
+            method = _EDIT_METHODS[kind]
+        return (
             lambda: self._send(binding, method, path, params=params, body=body, headers=headers),
-            "google",
             (200, 204, 410) if method == "DELETE" else (200, 204),
         )
 

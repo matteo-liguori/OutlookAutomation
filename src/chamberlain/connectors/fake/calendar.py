@@ -12,7 +12,10 @@ from datetime import datetime, timedelta
 
 from pydantic import JsonValue
 
-from chamberlain.connectors.fake.world import DispatchRecord, FakeWorld, Fault, StoredEvent
+from chamberlain.connectors.calendar_support.ics import split_locator
+from chamberlain.connectors.calendar_support.paging import matches_window
+from chamberlain.connectors.calendar_support.port import calendar_capabilities
+from chamberlain.connectors.fake.world import FakeWorld, StoredEvent, text
 from chamberlain.domain.calendar import (
     CalendarEvent,
     CalendarQuery,
@@ -22,11 +25,8 @@ from chamberlain.domain.calendar import (
     Response,
 )
 from chamberlain.domain.capabilities import (
-    Capability,
-    CapabilityName,
     CapabilitySet,
     SourceHealth,
-    VerificationLevel,
 )
 from chamberlain.domain.intents import (
     CalendarCreate,
@@ -37,7 +37,6 @@ from chamberlain.domain.intents import (
     IntentKind,
 )
 from chamberlain.domain.operations import (
-    DispatchOutcome,
     DispatchResult,
     Prepared,
     ProviderReceipt,
@@ -46,31 +45,16 @@ from chamberlain.domain.operations import (
     Verification,
 )
 from chamberlain.domain.recurrence import expand, occurrence_id, parse_occurrence_id
-from chamberlain.ports.page import Gap, Page
+from chamberlain.ports.page import Page
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 _K = IntentKind
 _VERIFIED = Verification(client_verified=True, server_verified=True)
-_PROVABLE = frozenset(
-    {
-        _K.CALENDAR_CREATE.value,
-        _K.CALENDAR_UPDATE.value,
-        _K.CALENDAR_DELETE.value,
-        _K.CALENDAR_RESPOND.value,
-    }
-)
 _ANSWERS = {
     "accepted": Response.ACCEPTED,
     "tentative": Response.TENTATIVE,
     "declined": Response.DECLINED,
 }
-
-
-def _text(data: Mapping[str, JsonValue], key: str) -> str:
-    value = data[key]
-    if not isinstance(value, str):
-        raise TypeError(f"prepared field {key} is not text")
-    return value
 
 
 class FakeCalendar:
@@ -102,9 +86,6 @@ class FakeCalendar:
         world.recurrence[source] = recurrence
         if address is not None:
             world.addresses[source] = address.lower()
-
-    def address(self, source: str) -> str:
-        return self._world.addresses[source]
 
     def add_event(
         self,
@@ -154,45 +135,11 @@ class FakeCalendar:
 
     def capabilities(self, source: str) -> CapabilitySet:
         self._world.require_source(self._world.events, source)
-        return CapabilitySet.model_validate(
-            {
-                "source": source,
-                "capabilities": [
-                    Capability(
-                        name=CapabilityName.CALENDAR_READ, level=VerificationLevel.IMPLEMENTED
-                    ),
-                    Capability(
-                        name=CapabilityName.CALENDAR_WRITE,
-                        level=VerificationLevel.IMPLEMENTED,
-                        absence_provable=_PROVABLE,
-                    ),
-                    *(
-                        [
-                            Capability(
-                                name=CapabilityName.CALENDAR_INVITE,
-                                level=VerificationLevel.IMPLEMENTED,
-                            )
-                        ]
-                        if self._world.invitations.get(source, True)
-                        else []
-                    ),
-                    *(
-                        [
-                            Capability(
-                                name=name,
-                                level=VerificationLevel.IMPLEMENTED,
-                                absence_provable=_PROVABLE,
-                            )
-                            for name in (
-                                CapabilityName.CALENDAR_RECURRENCE,
-                                CapabilityName.CALENDAR_OCCURRENCE,
-                            )
-                        ]
-                        if self._world.recurrence.get(source, True)
-                        else []
-                    ),
-                ],
-            }
+        return calendar_capabilities(
+            source,
+            server=True,
+            invitations=self._world.invitations.get(source, True),
+            recurrence=self._world.recurrence.get(source, True),
         )
 
     def health(self, source: str) -> SourceHealth:
@@ -205,28 +152,18 @@ class FakeCalendar:
         self, source: str, query: CalendarQuery, cursor: str | None = None
     ) -> Page[CalendarEvent]:
         self._begin_read(source)
-        try:
-            offset = int(cursor or "0")
-        except ValueError:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid."
-            ) from None
-        matches = self._window(source, query)
-        window = matches[offset : offset + query.limit]
-        more = offset + query.limit < len(matches)
-        gaps: tuple[Gap, ...] = ()
-        if self._world.take(Fault.STALE):
-            gaps = (Gap.model_validate({"source": source, "reason": "The calendar is stale."}),)
-        return Page[CalendarEvent](
-            items=tuple(window),
-            cursor=str(offset + query.limit) if more else None,
-            complete=not more and not gaps,
-            gaps=gaps,
+        return self._world.page(
+            Page[CalendarEvent],
+            source,
+            self._window(source, query),
+            cursor,
+            query.limit,
+            "calendar",
         )
 
     def read(self, source: str, locator: str) -> CalendarEvent:
         self._begin_read(source)
-        base, occurrence = _split(locator)
+        base, occurrence = split_locator(locator)
         stored = self._one(source, base)
         if occurrence is None:
             return self._event(source, stored)
@@ -257,7 +194,7 @@ class FakeCalendar:
             case CalendarUpdate():
                 locator = refs[intent.event_ref]
                 self._check_scope(source, intent.scope, locator, intent.event)
-                stored = self._current(source, _split(locator)[0], intent.expected_etag)
+                stored = self._current(source, split_locator(locator)[0], intent.expected_etag)
                 self._own_event(stored)
                 data = {
                     "locator": locator,
@@ -267,7 +204,7 @@ class FakeCalendar:
             case CalendarDelete():
                 locator = refs[intent.event_ref]
                 self._check_scope(source, intent.scope, locator, None)
-                stored = self._current(source, _split(locator)[0], intent.expected_etag)
+                stored = self._current(source, split_locator(locator)[0], intent.expected_etag)
                 self._own_event(stored)
                 data = {"locator": locator, "expected_etag": intent.expected_etag}
             case CalendarRespond():
@@ -287,67 +224,29 @@ class FakeCalendar:
 
     def dispatch(self, prepared: Prepared, key: str) -> DispatchResult:
         """The one mutation (P-10). Never retries and never raises."""
-        world = self._world
-        world.begin_call()
-        kind = prepared.intent_kind
-
-        def apply() -> ProviderReceipt:
-            return self._apply(prepared)
-
-        def late() -> None:
-            try:
-                apply()
-            except ChamberlainError:
-                return
-
-        if world.take(Fault.BUSY_BEFORE_APPLY):
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            return DispatchResult(outcome=DispatchOutcome.NOT_APPLIED, detail="fake: busy")
-        if world.take(Fault.LOSE_BEFORE_APPLY):
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: lost before apply")
-        if world.take(Fault.SLOW):
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            world.apply_late(late)
-            world.clock.advance(seconds=world.deadline_seconds + 1)
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: deadline passed")
-        try:
-            receipt = apply()
-        except ChamberlainError as error:
-            world.dispatch_log.append(DispatchRecord(key, kind, applied=False))
-            return DispatchResult(
-                outcome=DispatchOutcome.NOT_APPLIED, detail=f"fake: precondition {error.code}"
-            )
-        world.dispatch_log.append(DispatchRecord(key, kind, applied=True))
-        if world.take(Fault.LOSE_RESPONSE_AFTER_APPLY):
-            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: response lost")
-        return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
+        return self._world.run_dispatch(prepared, key, lambda: self._apply(prepared))
 
     def reconcile(self, prepared: Prepared, key: str) -> ReconcileResult:
         """Read-only (P-11). Settles only from an exact read-back."""
         source = prepared.source
         world = self._world
-        world.begin_call()
-        if world.take(Fault.SLOW):
-            world.clock.advance(seconds=world.deadline_seconds + 1)
-            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: deadline passed")
-        if world.take(Fault.STALE):
-            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: stale calendar")
+        if (gated := world.reconcile_gate("calendar")) is not None:
+            return gated
         data = prepared.data
         absent = ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
         if prepared.intent_kind is _K.CALENDAR_CREATE:
             found = [e for e in world.events[source].values() if e.uid == prepared.reconcile_token]
             return self._present(found[0]) if found else absent
-        locator = _text(data, "locator")
-        base, occurrence = _split(locator)
+        locator = text(data, "locator")
+        base, occurrence = split_locator(locator)
         stored = world.events[source].get(base)
         if stored is None:
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: event missing")
-        unchanged = stored.etag == _text(data, "expected_etag")
+        unchanged = stored.etag == text(data, "expected_etag")
         if prepared.intent_kind is _K.CALENDAR_RESPOND:
             if unchanged:
                 return absent
-            if stored.my_response is _ANSWERS[_text(data, "response")]:
+            if stored.my_response is _ANSWERS[text(data, "response")]:
                 return self._present(stored)
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: changed otherwise")
         if prepared.intent_kind is _K.CALENDAR_DELETE:
@@ -384,11 +283,11 @@ class FakeCalendar:
             stored = self._create(source, EventFields.model_validate(data["fields"]), uid)
             self._invite(source, stored)
             return ProviderReceipt(locator=stored.id, etag=stored.etag, verification=_VERIFIED)
-        locator = _text(data, "locator")
-        base, occurrence = _split(locator)
-        stored = self._current(source, base, _text(data, "expected_etag"))
+        locator = text(data, "locator")
+        base, occurrence = split_locator(locator)
+        stored = self._current(source, base, text(data, "expected_etag"))
         if prepared.intent_kind is _K.CALENDAR_RESPOND:
-            self._answer(source, stored, _ANSWERS[_text(data, "response")])
+            self._answer(source, stored, _ANSWERS[text(data, "response")])
         elif occurrence is not None:
             if self._slot(stored, occurrence) is None:
                 raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "That occurrence is gone.")
@@ -580,7 +479,7 @@ class FakeCalendar:
         self, source: str, scope: str | None, locator: str, fields: EventFields | None
     ) -> None:
         """What the connector checks itself: it says what it cannot do, never fakes it (P-26)."""
-        occurrence = _split(locator)[1]
+        occurrence = split_locator(locator)[1]
         repeats = scope is not None or (fields is not None and fields.recurrence is not None)
         if repeats and not self._world.recurrence.get(source, True):
             raise ChamberlainError(
@@ -650,7 +549,7 @@ class FakeCalendar:
             rule = stored.fields.recurrence
             if rule is None:
                 event = self._event(source, stored)
-                if _matches(event, query):
+                if matches_window(query, event.fields, event.status):
                     found.append(event)
                 continue
             if stored.status is EventStatus.CANCELLED:
@@ -664,15 +563,10 @@ class FakeCalendar:
                 window_end=query.end + pad,
             ):
                 event = self._occurrence(source, stored, begin, finish)
-                if _matches(event, query):
+                if matches_window(query, event.fields, event.status):
                     found.append(event)
         found.sort(key=lambda e: (e.fields.start, e.locator))
         return found
-
-
-def _split(locator: str) -> tuple[str, str | None]:
-    base, _, occurrence = locator.partition("#")
-    return base, occurrence or None
 
 
 def _series_fields(stored: StoredEvent, wanted: EventFields) -> EventFields:
@@ -690,15 +584,3 @@ def _occurrence_fields(stored: StoredEvent, occurrence: str, wanted: EventFields
     return wanted.model_copy(
         update={"recurrence": None, "visibility": wanted.visibility or before.visibility}
     )
-
-
-def _matches(event: CalendarEvent, query: CalendarQuery) -> bool:
-    if event.status is EventStatus.CANCELLED and not query.include_cancelled:
-        return False
-    fields = event.fields
-    if fields.end < query.start or fields.start > query.end:
-        return False
-    if query.text:
-        haystack = f"{fields.title}\n{fields.description}".casefold()
-        return query.text.casefold() in haystack
-    return True

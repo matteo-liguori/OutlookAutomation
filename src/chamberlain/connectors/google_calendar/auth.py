@@ -13,13 +13,15 @@ import threading
 import urllib.parse
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
+from functools import partial
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Final, cast
 
 from chamberlain.connectors.calendar_support.http import (
     HttpTransport,
-    TransportFailure,
     UrllibTransport,
+    calendar_unavailable,
+    read_http,
 )
 from chamberlain.connectors.calendar_support.secrets import SecretStore
 from chamberlain.ports.clock import Clock
@@ -114,18 +116,16 @@ def post_form(
 ) -> dict[str, object]:
     """One token request. A 4xx answer is a refusal; anything else wrong is unavailable."""
     body = urllib.parse.urlencode(dict(fields)).encode()
-    try:
-        reply = (transport or UrllibTransport()).send(
+    reply = read_http(
+        lambda: (transport or UrllibTransport()).send(
             "POST",
             url,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             body=body,
             timeout=30,
-        )
-    except TransportFailure as error:
-        raise ChamberlainError(
-            ErrorCode.SOURCE_UNAVAILABLE, "Google did not answer.", detail=str(error)
-        ) from None
+        ),
+        partial(calendar_unavailable, message="Google did not answer."),
+    )
     if 400 <= reply.status < 500:
         raise ChamberlainError(
             ErrorCode.SOURCE_SIGN_IN_NEEDED,
