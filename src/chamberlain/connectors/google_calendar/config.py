@@ -4,14 +4,18 @@ Contract: docs/contracts/09-storage.md (S-16). A source is bound to one Google
 account (the sign-in) and one calendar id (`primary` for the main one).
 """
 
+from typing import Literal
+
 from pydantic import Field
 
 from chamberlain.schema.base import Model, SourceId
 
 
 class GoogleBinding(Model):
+    kind: Literal["google"] = "google"
     account: str = Field(min_length=3)
     calendar_id: str = Field(min_length=1)
+    """`primary` for the account's main calendar."""
 
 
 class GoogleCalendarConfig(Model):

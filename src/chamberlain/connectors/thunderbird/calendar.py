@@ -12,7 +12,7 @@ proven (the client calendar is a cache, so `server_verified` is always False).
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, cast
+from typing import Literal, Protocol, cast
 
 from pydantic import Field, JsonValue
 
@@ -77,6 +77,7 @@ class FreshnessStore(Protocol):
 
 
 class OwlBinding(Model):
+    kind: Literal["owl"] = "owl"
     calendar_id: str = Field(min_length=1)
     """The Thunderbird calendar id."""
 

@@ -259,3 +259,38 @@ def test_authorised_senders_in_the_profile_reach_the_and_1_related_checks(
     with pytest.raises(ChamberlainError) as raised:
         load_connections(data_root)
     assert raised.value.code is ErrorCode.CONFIG_INVALID
+
+
+def test_s16_the_stored_binding_of_every_kind_keeps_its_field_order() -> None:
+    sources = {
+        "mail:work": {
+            "kind": "thunderbird", "label": "Work", "account_id": "a1", "mailbox": "me@x.org",
+            "inbox_folder_id": "i", "sent_folder_id": "s", "draft_folder_id": "d",
+            "trash_folder_id": "t",
+        },
+        "contacts:book": {"kind": "thunderbird_contacts", "address_book_ids": ["b1", "b2"]},
+        "calendar:owl": {"kind": "owl", "calendar_id": "c1", "commitments": False},
+        "calendar:google": {"kind": "google", "account": "me@x.org", "calendar_id": "primary"},
+        "calendar:dav": {
+            "kind": "caldav", "url": "https://h/u/cal/", "username": "u", "credential": "cr",
+            "address": "a@b.c",
+        },
+    }  # fmt: skip
+    stored = {
+        key: source.model_dump_json(exclude_none=True)
+        for key, source in parse_connections({"version": 1, "sources": sources}).sources.items()
+    }
+    head = '"enabled":true,"commitments":true'
+    assert stored == {
+        "mail:work": '{"label":"Work",' + head + ',"kind":"thunderbird","account_id":"a1",'
+        '"mailbox":"me@x.org","inbox_folder_id":"i","sent_folder_id":"s",'
+        '"draft_folder_id":"d","trash_folder_id":"t"}',
+        "contacts:book": '{"label":"",' + head + ',"kind":"thunderbird_contacts",'
+        '"address_book_ids":["b1","b2"]}',
+        "calendar:owl": '{"label":"","enabled":true,"commitments":false,"kind":"owl",'
+        '"calendar_id":"c1"}',
+        "calendar:google": '{"label":"",' + head + ',"kind":"google","account":"me@x.org",'
+        '"calendar_id":"primary"}',
+        "calendar:dav": '{"label":"",' + head + ',"kind":"caldav","url":"https://h/u/cal/",'
+        '"username":"u","credential":"cr","address":"a@b.c"}',
+    }

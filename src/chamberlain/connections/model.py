@@ -11,6 +11,11 @@ from typing import Annotated, Literal, Self
 from pydantic import Field, model_validator
 
 from chamberlain.cleanup.rules import CleanupConfig
+from chamberlain.connectors.caldav.config import CalDavBinding
+from chamberlain.connectors.google_calendar.config import GoogleBinding
+from chamberlain.connectors.thunderbird.calendar import OwlBinding
+from chamberlain.connectors.thunderbird.contacts import ContactsBinding
+from chamberlain.connectors.thunderbird.mail_reads import ThunderbirdBinding
 from chamberlain.domain.grants import Requirement
 from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.domain.senders import AuthorisedSenders
@@ -31,51 +36,24 @@ class _Source(Model):
     clash (A-26)."""
 
 
-class ThunderbirdMailSource(_Source):
+class ThunderbirdMailSource(ThunderbirdBinding, _Source):
     """A mailbox bound to its Thunderbird account and exact folders."""
 
-    kind: Literal["thunderbird"] = "thunderbird"
-    account_id: str = Field(min_length=1)
-    mailbox: str = Field(min_length=3, pattern=r"^[^@\s]+@[^@\s]+$")
-    inbox_folder_id: str = Field(min_length=1)
-    sent_folder_id: str = Field(min_length=1)
-    draft_folder_id: str = Field(min_length=1)
-    trash_folder_id: str = Field(min_length=1)
+
+class ThunderbirdContactsSource(ContactsBinding, _Source):
+    pass
 
 
-class ThunderbirdContactsSource(_Source):
-    kind: Literal["thunderbird_contacts"] = "thunderbird_contacts"
-    address_book_ids: tuple[str, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def _unique(self) -> Self:
-        if len(set(self.address_book_ids)) != len(self.address_book_ids):
-            raise ValueError("address_book_ids must be unique")
-        return self
-
-
-class OwlCalendarSource(_Source):
+class OwlCalendarSource(OwlBinding, _Source):
     """The Microsoft 365 calendar reached through Thunderbird with Owl."""
 
-    kind: Literal["owl"] = "owl"
-    calendar_id: str = Field(min_length=1)
+
+class GoogleCalendarSource(GoogleBinding, _Source):
+    pass
 
 
-class GoogleCalendarSource(_Source):
-    kind: Literal["google"] = "google"
-    account: str = Field(min_length=3)
-    calendar_id: str = Field(min_length=1)
-    """`primary` for the account's main calendar."""
-
-
-class CalDavSource(_Source):
-    kind: Literal["caldav"] = "caldav"
-    url: str = Field(min_length=8)
-    username: str = Field(min_length=1)
-    credential: str = Field(min_length=1)
-    """The name of the password in the credential store, never the password."""
-    address: str | None = Field(default=None, pattern=r"^[^@\s]+@[^@\s]+$")
-    """The address invitations are sent from. Optional when the username is an address."""
+class CalDavSource(CalDavBinding, _Source):
+    pass
 
 
 SourceConfig = Annotated[

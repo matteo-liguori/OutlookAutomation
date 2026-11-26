@@ -5,7 +5,9 @@ import time
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Final, TypedDict
+from typing import Final, Literal, TypedDict
+
+from pydantic import Field
 
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, typed
@@ -75,17 +77,16 @@ class _AccountFields(TypedDict):
     mailbox: str
 
 
-@dataclass(frozen=True)
-class ThunderbirdBinding:
+class ThunderbirdBinding(Model):
     """One mailbox bound to its Thunderbird account and its exact folders."""
 
-    account_id: str
-    mailbox: str
-    inbox_folder_id: str
-    sent_folder_id: str
-    draft_folder_id: str
-
-    trash_folder_id: str
+    kind: Literal["thunderbird"] = "thunderbird"
+    account_id: str = Field(min_length=1)
+    mailbox: str = Field(min_length=3, pattern=r"^[^@\s]+@[^@\s]+$")
+    inbox_folder_id: str = Field(min_length=1)
+    sent_folder_id: str = Field(min_length=1)
+    draft_folder_id: str = Field(min_length=1)
+    trash_folder_id: str = Field(min_length=1)
 
     @property
     def account(self) -> _AccountFields:
