@@ -2,6 +2,8 @@
 
 Use this checklist after each rewrite. Entries map the capabilities in section 1 of the architect's plan to regression tests, targeted live scenarios and walkthroughs. Check off a promise for the step under review when the named checks pass. Where coverage is partial, the entry identifies the remaining proof.
 
+The automated capability pins below name their tests. A passing pin verifies the named behavior. Broader live and walkthrough checks stay open until exercised.
+
 The permanent v1 importer, agent-use review, update check, local calendar events and fake provider stay. The owner approved removing the Claude file guard, demo mode and viewer settle buttons.
 
 ## Decisions for final review
@@ -27,10 +29,10 @@ Regression tests include `tests/schema/test_registry.py::test_t1_standing_prompt
 - [ ] Twelve tools, prompt <400 characters, closed envelope, error `fix`, tick per call: `tests/schema/test_registry.py`, `tests/schema/test_envelope.py`, `tests/schema/test_errors.py`, `tests/surface/test_surfaces.py`; confirm prompt and tick assertions individually.
 - [ ] `start` interactive/scheduled, resume, scheduled day, source capabilities, at most five work items, housekeeping: `tests/attention/test_golden.py`, `tests/attention/test_sessions.py`, `tests/cleanup/test_cleanup.py::test_an_agents_start_runs_the_clean_up_and_reports_it`.
 - [ ] `next` handled, older mail and paging; `guide` index/one rule: `tests/attention/test_older_mail.py`, `tests/attention/test_handlers.py`, `tests/guidance/test_selection.py`.
-- [ ] `find` all scopes, filters, 90-day mail default and no bodies; `open` all parts, paging, leases, attachment text and series/occurrences: `tests/memory/test_retrieval.py`, `tests/memory/test_attachment_text.py`, `tests/calendars/test_google_calendar.py`; verify each scope and filter separately.
+- [ ] `find` all scopes, filters, 90-day mail default and no bodies; `open` all parts, paging, leases, attachment text and series/occurrences: `tests/memory/test_retrieval.py::test_t8_mail_find_applies_every_filter_and_pages_the_filtered_hits` checks source, folder role, both flag values, query, inclusive dates, limit and cursor binding. The same file covers the seven scopes, 90-day default and `within` for mail, cards and artifacts. Attachment text and recurrence are exercised by `tests/memory/test_attachment_text.py` and `tests/calendars/test_google_calendar.py`.
 - [ ] `keep` all kinds and origins, instruction-email evidence; `forget` release/revoke/cancel; `card` lifecycle, actions, versions, caps and complex reason: `tests/memory/test_handlers.py`, `tests/memory/test_cards.py`, `tests/integration/test_instruction_email.py`, `tests/viewer/test_complex.py`.
 - [ ] `propose` intent/scope/evidence/redo, preview and requirements; `do` including report; `reconcile` including happened: `tests/writes/test_handlers.py`, `tests/writes/test_outside.py`, `tests/writes/test_uncertain_send.py`.
-- [ ] `doctor` six checks and sixteen metrics: `tests/attention/test_golden.py`, `tests/attention/golden/doctor_metrics.json`; confirm exact counts.
+- [x] `doctor` six separately selectable check groups and sixteen metrics. `tests/attention/test_doctor_contract.py::test_t16_doctor_runs_six_check_groups_and_returns_sixteen_metrics` checks the wired tool. `tests/attention/test_doctor_contract.py::test_t16_doctor_access_reports_the_private_data_root_without_writing` tests the read-only access check for a readable root, a checkout path and missing or invalid paths. `tests/integration/test_wiring.py::test_t1_doctor_metrics_has_every_key_of_the_targets_contract` checks every metric key.
 
 ## C2 — Write kinds
 
@@ -53,21 +55,21 @@ Regression tests include the locator checks in `tests/support/mail_contract.py`,
 
 ## C4 — Grants and permissions
 
-Regression tests include `tests/writes/test_grants.py::test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled`, `tests/writes/test_grant_rules.py::test_g8_an_unreviewed_grant_is_suspended_fourteen_days_after_review_is_due`, `tests/writes/test_authorise.py::test_g16_standing_daily_and_hourly_limits`, `tests/viewer/test_gate.py::test_g17_a_wrong_origin_host_peer_or_fetch_site_is_403`.
+Regression tests include `tests/writes/test_grants.py::test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled`, `tests/writes/test_grant_rules.py::test_g8_an_unreviewed_grant_is_suspended_fourteen_days_after_review_is_due`, `tests/writes/test_authorise.py::test_g16_standing_daily_limit`, `tests/viewer/test_gate.py::test_g17_a_wrong_origin_host_peer_or_fetch_site_is_403`.
 
 - [ ] Seven-day content-bound one-off; standing scope addresses/domains/folders, multiple sources, daily limit, monthly review, 14-day suspension, one-year expiry and card binding: `tests/writes/test_grants.py`, `tests/writes/test_grant_rules.py`, `tests/writes/test_authorise.py`. Lapse persistence and cancellation are checked by `tests/writes/test_grants.py::test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled`. An explicitly configured daily limit is retained.
 - [ ] One permission table and generated documentation: `tests/writes/test_permission_table.py`.
 - [ ] Known recipients and seed; authenticated authorised senders: `tests/writes/test_recipients.py`, `tests/domain/test_senders.py`.
-- [ ] 200 sends/hour per source, all-owner recipients exempt: `tests/writes/test_authorise.py` is a lead; explicit boundary, mixed-recipient and exempt tests needed.
+- [x] 200 sends/hour per source, with all-owner recipients exempt. `tests/writes/test_authorise.py::test_g16_the_200_send_boundary_exempts_only_all_owner_recipients` tests the 199/200 boundary and mixtures in To, Cc and Bcc. `tests/writes/test_grants.py::test_g16_the_hourly_send_limit_refuses_the_next_send` exercises dispatch, source isolation and recovery as the window expires using a lower configured limit.
 - [ ] `read_state` via standing grant: `tests/writes/test_read_state.py`, `tests/runs/test_read_state.py`. Viewer confirmation loopback/token/origin: `tests/viewer/test_gate.py`, `tests/viewer/test_confirm.py`.
 
 ## C5 — Attention
 
 Regression tests include `tests/attention/test_watermark.py::test_a_nothing_is_skipped_and_nothing_is_shown_twice_across_folders`, `tests/attention/test_scenarios.py::test_a26_two_events_that_overlap_are_raised_with_their_rule_and_clear_when_apart`, `tests/guidance/test_selection.py::test_selection_once_per_always_repeats_and_3_related_checks`.
 
-- [ ] All event kinds: `mail.new_unmatched`, `action.due`, `reminder.due`, `card.review_due`, `grant.needed`, `grant.review_due`, `operation.uncertain`, `send.missing`, `source.stale`, `source.sign_in_needed`, `calendar.conflict`, `user.note`, `storage.over_budget`, `storage.orphans`, `update.available`, `schedule.pass_due`, `report.due`, `harness.review`: `tests/attention/test_scenarios.py`, `tests/attention/test_tick.py`, `tests/runs/test_notes_updates.py`, `tests/review/test_review.py`; audit each kind and dedupe/expiry/re-raise individually.
+- [ ] All event kinds: `mail.new_unmatched`, `action.due`, `reminder.due`, `card.review_due`, `grant.needed`, `grant.review_due`, `operation.uncertain`, `send.missing`, `source.stale`, `source.sign_in_needed`, `calendar.conflict`, `user.note`, `storage.over_budget`, `storage.orphans`, `update.available`, `schedule.pass_due`, `report.due`, `harness.review`: `tests/attention/test_scenarios.py`, `tests/attention/test_tick.py`, `tests/runs/test_notes_updates.py`, `tests/review/test_review.py`. `tests/domain/test_events.py::test_a1_the_18_event_kinds_have_exact_public_names` checks all 18 public spellings and aliases. Audit each kind's dedupe, expiry and re-raise separately.
 - [ ] Pull, piggyback and wake exit 10: `tests/attention/test_handlers.py`, `tests/viewer/test_server.py::test_tick_prints_the_passes_a_wake_adapter_should_start`; verify exit code assertion.
-- [ ] 46 guidance rules, selection/budgets/once-per, private overrides and owner instruction topics: `tests/guidance/test_rules.py`, `tests/guidance/test_selection.py`, `tests/integration/test_budgets.py`; live `harness.guidance_budgets`.
+- [ ] 46 guidance rules, selection/budgets/once-per, private overrides and owner instruction topics: `tests/guidance/test_rules.py::test_a12_exactly_46_guidance_rules_are_shipped`, `tests/guidance/test_selection.py`, `tests/integration/test_budgets.py`; live `harness.guidance_budgets`.
 - [ ] Watermark all folders except Trash/Junk/Drafts, older-mail question and card suggestions: `tests/attention/test_watermark.py`, `tests/attention/test_older_mail.py`; live `mail.watermark_suggestion`.
 
 ## C6 — Memory
@@ -94,7 +96,7 @@ Regression tests include `tests/viewer/test_front_page.py::test_a_scheduled_pass
 - [ ] Report front page and earlier reports: `tests/viewer/test_front_page.py`, `tests/viewer/test_pages.py`.
 - [ ] Grant confirm/keep/revoke and complex approve/decline/take-back: `tests/viewer/test_confirm.py`, `tests/viewer/test_complex.py`.
 - [ ] Timeline shows uncertain writes as read-only history. `tests/viewer/test_views.py::test_w41_uncertain_history_is_read_only_and_outside_needs_you` covers the viewer surface and refusal of the removed endpoint. Agent and harness settlement remain C3.
-- [ ] Calendar categories, local events, important appointments and hold-to-acknowledge: `tests/viewer/test_front_page.py`; verify hold gesture in walkthrough.
+- [ ] Calendar categories, local events, important appointments and hold-to-acknowledge. `tests/viewer/test_front_page.py` checks the authenticated acknowledgement route. `tests/viewer/test_static_scripts.py::test_viewer_scripts_parse_and_acknowledgement_requires_a_continuous_hold` runs the served JavaScript with deterministic pointer, keyboard, visibility and animation-frame events.
 - [ ] Cards, Timeline, Today/activity, Runs/reports, Live-test runs, Storage and owner notes: `tests/viewer/test_pages.py`, `tests/viewer/test_views.py`, `tests/viewer/test_live_test_page.py`, `tests/runs/test_notes_updates.py`; full viewer walkthrough required.
 
 ## C9 — Mail clean-up
@@ -137,7 +139,7 @@ Regression tests include `tests/contract/test_fake_contracts.py::test_the_fakes_
 
 Regression tests include `tests/runs/test_mail_sync.py::test_folders_synced_too_long_ago_are_synced_again_when_the_agent_starts`, `tests/runs/test_mail_sync.py::test_a_folder_that_will_not_sync_is_reported_waited_for_once_and_retried`, `tests/attention/test_scenarios.py::test_e3_incomplete_coverage_brings_the_coverage_rule`.
 
-- [ ] Sync before read; ten-minute freshness, five-minute limit, stuck folders reported/retried, health and disclosed coverage gaps: `tests/runs/test_mail_sync.py`, `tests/runs/test_sync_overall_limit.py`, `tests/runs/test_stuck_folder_older_mail.py`; verify sync-before-every-read and coverage disclosure.
+- [ ] Sync before read, ten-minute freshness, five-minute limit, stuck folders reported and retried, and coverage gaps. `tests/attention/test_sync_before_read.py::test_a24_a_stale_mail_source_is_synced_before_normal_tool_reads` observes sync completion before the normal `start`, `find` and `open` read paths and checks the fresh-cache case. `tests/attention/test_sync_before_read.py::test_a25_a_stuck_folder_is_reported_while_other_folders_are_read` checks a failed folder alongside a successful read and verifies that the failed folder is reported in `next`. `tests/memory/test_retrieval.py::test_e3_a_stale_source_is_incomplete_not_empty_and_1_related_checks` checks disclosure in reply coverage. Scheduled pre-sync, overall budget and catch-up remain covered by `tests/runs/test_mail_sync.py`, `tests/runs/test_sync_overall_limit.py` and `tests/runs/test_stuck_folder_older_mail.py`.
 
 ## C15 — Review
 
@@ -153,10 +155,10 @@ Regression tests include `tests/importer/test_import.py::test_s14_a_second_impor
 
 ## C17 — Setup, migration and onboarding
 
-Regression tests include `tests/calendars/test_google_setup.py::test_s17_the_loopback_flow_uses_pkce_ignores_strays_and_saves_the_token`, `tests/calendars/test_caldav_setup.py::test_registering_is_idempotent_keeps_a_backup_and_holds_no_password`, `tests/thunderbird/test_setup.py::test_b10_setup_writes_only_where_told_and_registers_nothing`. These cover existing components, not the planned end-to-end flow.
+Regression tests include `tests/calendars/test_google_setup.py::test_s17_the_loopback_flow_uses_pkce_ignores_strays_and_saves_the_token`, `tests/calendars/test_caldav_setup.py::test_registering_is_idempotent_keeps_a_backup_and_holds_no_password`, `tests/thunderbird/test_setup.py::test_b10_setup_writes_only_where_told_and_registers_nothing`. These verify individual provider setup paths. The end-to-end agent-led setup and migration flow is pending.
 
 - [ ] Agent guide, resumable queryable flow, ask user only where needed, GUI collaboration, first-use check: current setup tests `tests/thunderbird/test_setup.py`, `tests/calendars/test_google_setup.py`, `tests/calendars/test_caldav_setup.py` are partial; end-to-end agent-guided fresh-install walkthrough and first-use check are gaps.
-- [ ] Guided Google/iCloud, capability status, tagged updates/notes, supervised read-only first pass, `config migrate`: `tests/calendars/test_google_setup.py`, `tests/calendars/test_caldav_setup.py`, `tests/runs/test_notes_updates.py` cover parts; status, first pass and config migration need explicit evidence.
+- [ ] Provider setup commands and update detection have component tests in `tests/connections/test_setup_command.py` and `tests/runs/test_notes_updates.py`. Capability status, tagged release-note display, a supervised read-only first pass and `config migrate` still need their own evidence.
 - [ ] Resumable v1 detect/backup/import/read-only comparison/switch and recovery: `tests/importer/test_import.py::test_s14_a_second_import_changes_nothing` is partial. A dry run on a copy and end-to-end checks are gaps.
 
 ## Additional inventory

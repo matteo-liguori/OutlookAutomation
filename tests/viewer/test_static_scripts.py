@@ -1,4 +1,4 @@
-"""The viewer's scripts are valid JavaScript (checked with Node when it is installed)."""
+"""Execute the viewer scripts and check their syntax with Node."""
 
 import shutil
 import subprocess
@@ -12,7 +12,7 @@ STATIC = Path(viewer_package.__file__).parent / "static"
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is not installed")
-def test_each_viewer_script_parses() -> None:
+def test_viewer_scripts_parse_and_acknowledgement_requires_a_continuous_hold() -> None:
     node = shutil.which("node")
     assert node is not None
     for name in [
@@ -27,6 +27,12 @@ def test_each_viewer_script_parses() -> None:
             [node, "--check", str(STATIC / name)], capture_output=True, text=True, check=False
         )
         assert done.returncode == 0, (name, done.stderr)
+
+    script = Path(__file__).with_name("appointments.test.mjs")
+    result = subprocess.run(
+        [node, "--test", str(script)], capture_output=True, text=True, timeout=5, check=False
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_the_token_survives_a_reload_in_the_tab_only() -> None:

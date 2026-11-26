@@ -1,22 +1,32 @@
 """find and open through App.call: docs/contracts/06-memory.md (M-17 to M-20), 02-tools.md
 (T-8, T-9) and 03-envelope-errors.md (E-2, E-3, E-7)."""
 
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
 import pytest
-from memory_helpers import OTHER_SESSION, SESSION, add_session, keep_text
+from memory_helpers import (
+    OTHER_SESSION,
+    SESSION,
+    add_grant,
+    add_operation,
+    add_session,
+    keep_text,
+)
 
-from chamberlain.app.context import Context
+from chamberlain.app.context import Context, SourceRouter
 from chamberlain.app.core import App
 from chamberlain.connectors.fake import FakeProvider, Fault
 from chamberlain.domain.calendar import EventFields
 from chamberlain.limits import MAX_REPLY_CHARS, PAGE_CHARS
 from chamberlain.memory.artifacts import ArtifactService
 from chamberlain.memory.cards import CardService
+from chamberlain.memory.handlers import HANDLERS
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.base import Model
 from chamberlain.schema.envelope import Reply
+from chamberlain.schema.errors import ErrorCode
 from chamberlain.schema.tools import FindResponse, OpenResponse
 
 pytestmark = pytest.mark.usefixtures("session")
@@ -221,6 +231,11 @@ def test_t8_m18_within_a_message_and_a_card_and_1_related_checks(
 
     # m18_open_returns_one_bounded_range
     store = ArtifactService(ctx.db, ctx.clock, ctx.data_root)
+    artifact = keep_text(store, action, "first\nAn archived budget line.\nlast")
+    [match] = hits(call(app, "find", scope="stored", within=artifact, query="BUDGET"))
+    assert match.handle == artifact
+    assert match.offset == 6
+
     handle = keep_text(store, action, "z" * 9000)
     page = call(app, "open", handle=handle, part="body")
     assert isinstance(page.data, OpenResponse)
@@ -265,7 +280,7 @@ def test_m19_m9_default_open_is_the_minimal_view_and_1_related_checks(
 
 
 def test_t8_e13_find_scopes_cards_stored_calendar_contacts_and_1_related_checks(
-    app: App, fake: FakeProvider, cards: CardService, ctx: Context, action: str
+    app: App, fake: FakeProvider, cards: CardService, ctx: Context, action: str, clock: ManualClock
 ) -> None:
     # t8_find_scopes_cards_stored_calendar_contacts_grants_operations
     cards.create(title="Supplier negotiation")
@@ -298,6 +313,14 @@ def test_t8_e13_find_scopes_cards_stored_calendar_contacts_and_1_related_checks(
     assert call(app, "find", scope="contacts").error is not None
     assert hits(call(app, "find", scope="grants")) == []
     assert hits(call(app, "find", scope="operations")) == []
+    grant = add_grant(ctx.db, clock, "grant_findscope0001")
+    operation = add_operation(ctx.db, clock, "op_findscope0001")
+    for scope, expected, query in (
+        ("grants", grant, "send a note"),
+        ("operations", operation, "mail.send"),
+    ):
+        assert [h.handle for h in hits(call(app, "find", scope=scope, query=query))] == [expected]
+        assert hits(call(app, "find", scope=scope, query="unmatched")) == []
 
     # e13_unknown_and_wrong_kind_handles_have_fixes
     unknown = call(app, "open", handle="msg_0123456789abcdef")
@@ -320,3 +343,60 @@ def test_a_mail_search_without_a_date_looks_back_ninety_days(
     assert len(hits(call(app, "find", scope="mail", query="Visa"))) == 1
     since = (now - timedelta(days=200)).strftime("%Y-%m-%dT%H:%M:%SZ")
     assert len(hits(call(app, "find", scope="mail", query="Visa", since=since))) == 2
+
+
+def test_t8_mail_find_applies_every_filter_and_pages_the_filtered_hits(
+    ctx: Context, fake: FakeProvider
+) -> None:
+    fake.mail.add_source("mail:other")
+    sources = SourceRouter(mail={"mail:test": fake.mail, "mail:other": fake.mail})
+    app = App(replace(ctx, sources=sources), HANDLERS)
+    now = ctx.clock.now()
+    since, until = now - timedelta(days=3), now - timedelta(days=1)
+    middle = now - timedelta(days=2)
+    messages = [
+        ("needle at since", "mail:test", "f-inbox", True, since),
+        ("needle at until", "mail:test", "f-inbox", True, until),
+        ("needle other source", "mail:other", "f-inbox", True, middle),
+        ("needle filed", "mail:test", "f-archive", True, middle),
+        ("needle already read", "mail:test", "f-inbox", False, middle),
+        ("needle before since", "mail:test", "f-inbox", True, since - timedelta(seconds=1)),
+        ("needle after until", "mail:test", "f-inbox", True, until + timedelta(seconds=1)),
+        ("different words", "mail:test", "f-inbox", True, middle),
+    ]
+    for index, (label, source, folder, unread, date) in enumerate(messages):
+        fake.mail.add_message(
+            source,
+            internet_message_id=f"<filter-{index}@example.org>",
+            subject=label,
+            folder_id=folder,
+            unread=unread,
+            date=date,
+        )
+    filters = {
+        "scope": "mail",
+        "source": "mail:test",
+        "folder": "inbox",
+        "unread": True,
+        "query": "NEEDLE",
+        "since": since.isoformat(),
+        "until": until.isoformat(),
+        "limit": 1,
+    }
+    first = call(app, "find", **filters)
+    [latest] = hits(first)
+    assert "needle at until" in latest.content.text
+    assert first.coverage is not None
+    cursor = first.coverage.cursor
+    assert cursor is not None
+    second = call(app, "find", cursor=cursor, **filters)
+    [earliest] = hits(second)
+    assert "needle at since" in earliest.content.text
+    assert second.coverage is not None
+    assert second.coverage.cursor is None
+
+    [read] = hits(call(app, "find", **{**filters, "unread": False}))
+    assert "needle already read" in read.content.text
+    refused = call(app, "find", cursor=cursor, **{**filters, "source": "mail:other"})
+    assert refused.error is not None
+    assert refused.error.code is ErrorCode.REQUEST_BAD_CURSOR

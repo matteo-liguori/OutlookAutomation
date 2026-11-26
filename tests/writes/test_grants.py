@@ -12,6 +12,7 @@ from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.store.migrate import stamp
 from chamberlain.writes import repo
 from chamberlain.writes.confirm import confirm_grant, grant_detail, list_grants
 from chamberlain.writes.maintenance import maintain
@@ -402,6 +403,16 @@ def test_g15_receiving_or_agent_sending_never_makes_a_recipient_known(rig: Write
 def test_g16_the_hourly_send_limit_refuses_the_next_send() -> None:
     rig = make_rig(policy=WritePolicy(sends_per_hour=5))  # a tightened cap; the default is 200
     try:
+        now = stamp(rig.clock)
+        rig.db.executemany(
+            "INSERT INTO operations (handle, idempotency_key, kind, source_id, state, "
+            "intent_sha256, dispatched_at, created_at, updated_at) "
+            "VALUES (?, ?, 'mail.send', 'mail:other', 'confirmed', ?, ?, ?, ?)",
+            [
+                (f"op_othersend{index:08}", f"other:{index}", "a" * 64, now, now, now)
+                for index in range(5)
+            ],
+        )
         rig.standing_grant(max_per_day=50)
         for index in range(5):
             proposal = rig.engine().propose_intent(rig.send(subject=f"n{index}"))

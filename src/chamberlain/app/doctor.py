@@ -5,11 +5,14 @@ The app owns the handler; each track adds its checks to `DOCTOR_CHECKS` in its
 own `handlers.py`; the sixteen `--metrics` figures are collected by `app/metrics.py`.
 """
 
+import os
 from collections.abc import Sequence
 
 from chamberlain.app.context import Context, DoctorCheckFn, Handler, Result
 from chamberlain.app.metrics import collect_metrics
+from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.memory.history import stored_bytes_history
+from chamberlain.schema.errors import ChamberlainError
 from chamberlain.schema.tools import CheckResult, DoctorCheck, DoctorRequest, DoctorResponse
 from chamberlain.store.db import table_names
 from chamberlain.store.migrate import discover, pending
@@ -36,10 +39,40 @@ def schema_checks(ctx: Context) -> list[CheckResult]:
     ]
 
 
+def access_checks(ctx: Context) -> list[CheckResult]:
+    """Verify where the private data lives and whether this process can list its root."""
+    try:
+        root = refuse_inside_checkout(ctx.data_root)
+        with os.scandir(root) as entries:
+            next(entries, None)
+    except ChamberlainError:
+        result = CheckResult(
+            id="access.data_root",
+            status="fail",
+            summary="The data folder is inside the code checkout.",
+            fix="Choose a private data folder outside the code checkout.",
+        )
+    except OSError:
+        result = CheckResult(
+            id="access.data_root",
+            status="fail",
+            summary="The process could not list the data folder.",
+            fix="Check that the configured data folder exists and can be read.",
+        )
+    else:
+        result = CheckResult(
+            id="access.data_root",
+            status="ok",
+            summary="The data folder is outside the code checkout and can be listed.",
+        )
+    return [result]
+
+
 def make_doctor(extra: Sequence[tuple[DoctorCheck, DoctorCheckFn]] = ()) -> Handler:
     """Build the doctor handler from the app's checks plus the tracks' checks."""
     checks: list[tuple[DoctorCheck, DoctorCheckFn]] = [
         (DoctorCheck.SCHEMA, schema_checks),
+        (DoctorCheck.ACCESS, access_checks),
         *extra,
     ]
 

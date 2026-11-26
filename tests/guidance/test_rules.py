@@ -28,6 +28,11 @@ LOCK = Path(__file__).with_name("rules.lock.json")
 GUIDANCE_DIR = Path(__file__).resolve().parents[2] / "src" / "chamberlain" / "guidance"
 
 
+def test_a12_exactly_46_guidance_rules_are_shipped() -> None:
+    assert len(RULES) == 46
+    assert len(list(GUIDANCE_DIR.glob("*.yaml"))) == 46
+
+
 def test_t1_a12_the_standing_prompt_is_short_and_3_related_checks() -> None:
     # t1_the_standing_prompt_is_short
     assert len(STANDING_PROMPT) < STANDING_PROMPT_MAX

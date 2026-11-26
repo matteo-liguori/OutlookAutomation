@@ -54,6 +54,7 @@ def test_start_next_and_guide_golden(app: App, seed: Any) -> None:
 
 
 def test_doctor_golden(ctx: Context) -> None:
+    ctx.data_root.mkdir()
     app = App(ctx, {**HANDLERS, ToolName.DOCTOR: make_doctor(DOCTOR_CHECKS)}, HOOKS)
     plain = app.call("doctor", {})
     assert plain.ok

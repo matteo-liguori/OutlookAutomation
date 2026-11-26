@@ -150,20 +150,38 @@ def test_g11_a_one_off_with_a_live_use_is_unavailable() -> None:
     assert denied.code is ErrorCode.GRANT_LIMIT_REACHED
 
 
-def test_g16_standing_daily_and_hourly_limits() -> None:
+def test_g16_standing_daily_limit() -> None:
     handle = "grant_0123456789abcdef"
     assert isinstance(decide([standing(2)], Usage(recent_uses={handle: 1})), Allow)
     full = decide([standing(2)], Usage(recent_uses={handle: 2}))
     assert isinstance(full, Deny)
     assert full.code is ErrorCode.GRANT_LIMIT_REACHED
-    cap = POLICY.sends_per_hour
-    busy = decide([one_off()], Usage(source_sends_last_hour=cap))
+
+
+def test_g16_the_200_send_boundary_exempts_only_all_owner_recipients() -> None:
+    assert POLICY.sends_per_hour == 200
+    assert isinstance(decide([one_off()], Usage(source_sends_last_hour=199)), Allow)
+    busy = decide([one_off()], Usage(source_sends_last_hour=200))
     assert isinstance(busy, Deny)
     assert busy.code is ErrorCode.GRANT_LIMIT_REACHED
-    assert isinstance(decide([one_off()], Usage(source_sends_last_hour=cap - 1)), Allow)
-    # Mail only to the owner's own addresses (a live test) is never capped.
-    owned = Usage(source_sends_last_hour=cap, owner_addresses=frozenset({"friend@example.org"}))
-    assert isinstance(decide([one_off()], owned), Allow)
+
+    owned = Usage(
+        source_sends_last_hour=200,
+        owner_addresses=frozenset({"friend@example.org", "alias@example.org"}),
+    )
+    recipients = SEND.model_copy(
+        update={"cc": ("alias@example.org",), "bcc": ("friend@example.org",)}
+    )
+    assert isinstance(authorise(recipients, FACTS, [one_off()], owned, POLICY, NOW), Allow)
+    for field in ("to", "cc", "bcc"):
+        mixed = recipients.model_copy(update={field: ("friend@example.org", "outside@example.org")})
+        allowed_below = authorise(
+            mixed, FACTS, [one_off()], replace(owned, source_sends_last_hour=199), POLICY, NOW
+        )
+        assert isinstance(allowed_below, Allow)
+        denied = authorise(mixed, FACTS, [one_off()], owned, POLICY, NOW)
+        assert isinstance(denied, Deny)
+        assert denied.code is ErrorCode.GRANT_LIMIT_REACHED
 
 
 def test_g15_an_unknown_recipient_is_reported_and_needs_the_human() -> None:

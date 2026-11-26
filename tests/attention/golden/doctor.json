@@ -13,6 +13,11 @@
         "summary": "0 tables have no lifetime class."
       },
       {
+        "id": "access.data_root",
+        "status": "ok",
+        "summary": "The data folder is outside the code checkout and can be listed."
+      },
+      {
         "id": "guidance.rules",
         "status": "ok",
         "summary": "46 rules, 8981 characters."
