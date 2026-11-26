@@ -9,19 +9,14 @@ from collections.abc import Iterator
 from datetime import timedelta
 
 import pytest
-from tests.store.legacy import legacy_migrations
 
 from chamberlain.connectors.fake import Fault
 from chamberlain.domain.grant_rules import format_ts
 from chamberlain.domain.operations import OperationState
 from chamberlain.limits import UNCERTAIN_SEND_RECHECK_HOURS
-from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.store.db import MEMORY, connect
-from chamberlain.store.migrate import migrate
 from chamberlain.writes import repo
 from chamberlain.writes.maintenance import maintain
-from chamberlain.writes.models import StoredReceipt
 from chamberlain.writes.resend import propose_redo
 from support.write_rig import CALENDAR, MAIL, OWNER, WriteRig, make_rig
 
@@ -95,40 +90,3 @@ def test_a_send_the_harness_could_not_read_still_reaches_the_agent_and_is_never_
     assert early.value.code is ErrorCode.REQUEST_INVALID
     assert rig.sent_copies() == 0
     assert rig.state(op.handle) == "uncertain"
-
-
-def test_migration_0220_closes_imported_uncertain_operations_and_leaves_the_rest(
-    clock: ManualClock,
-) -> None:
-    db = connect(MEMORY)
-    upto = [m for m in legacy_migrations() if m.version <= 201]
-    assert migrate(db, clock, backup_dir=None, migrations=upto)[-1] == 201
-    when = "2026-01-01T00:00:00Z"
-    sha = "a" * 64
-    rows = [
-        ("op_0000000000000001", "import:thunderbird:send:x", "uncertain", None),
-        ("op_0000000000000002", "import:thunderbird:send:y", "confirmed", None),
-        ("op_0000000000000003", "native-key", "uncertain", "{}"),
-    ]
-    for handle, key, state, intent in rows:
-        db.execute(
-            "INSERT INTO operations (handle, idempotency_key, kind, source_id, state, "
-            "intent_sha256, intent_json, created_at, updated_at) "
-            "VALUES (?, ?, 'mail.send', 'mail:t', ?, ?, ?, ?, ?)",
-            (handle, key, state, sha, intent, when, when),
-        )
-    db.commit()
-    assert migrate(db, clock, backup_dir=None, migrations=legacy_migrations())[0] == 220
-    states = {r["handle"]: r["state"] for r in db.execute("SELECT handle, state FROM operations")}
-    assert states == {
-        "op_0000000000000001": "abandoned",
-        "op_0000000000000002": "confirmed",
-        "op_0000000000000003": "uncertain",  # one of this harness's own: still its business
-    }
-    receipt = db.execute(
-        "SELECT receipt_json FROM operations WHERE handle = 'op_0000000000000001'"
-    ).fetchone()[0]
-    assert StoredReceipt.model_validate_json(receipt).summary.state is S.ABANDONED
-    later = "2099-01-01T00:00:00Z"
-    assert "op_0000000000000001" not in [o.handle for o in repo.uncertain_operations(db, later)]
-    db.close()

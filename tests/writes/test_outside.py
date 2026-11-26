@@ -5,24 +5,19 @@ from zoneinfo import ZoneInfo
 
 import pytest
 from pydantic import ValidationError
-from tests.store.legacy import legacy_migrations
 
-from chamberlain.domain.canonical import canonical_json, content_hash
+from chamberlain.domain.canonical import content_hash
 from chamberlain.domain.grants import ConfirmedVia, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import CalendarCreate, IntentKind, OutsideAction, OutsideCategory
 from chamberlain.domain.operations import OperationState
 from chamberlain.runs import sections
 from chamberlain.runs.models import RunRow, RunState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.store.db import MEMORY, connect
-from chamberlain.store.migrate import migrate, stamp
+from chamberlain.store.migrate import stamp
 from chamberlain.surface.viewer import pages
 from chamberlain.writes import repo
-from chamberlain.writes.audit import AuditChain
 from chamberlain.writes.confirm import grant_detail, list_grants
 from chamberlain.writes.maintenance import maintain
-from chamberlain.writes.models import WritePolicy
-from chamberlain.writes.read_state import propose_missing, scope_for
 from support.write_rig import CALENDAR, CALENDAR_B, CALENDAR_PLAIN, MAIL, WriteRig
 
 CARD = "card_0123456789abcdef"
@@ -300,60 +295,3 @@ def test_one_standing_permission_covers_each_of_several_calendars_and_nothing_el
             )
         )
         assert not gone.ready, "revoking ends it for every calendar it named"
-
-
-def test_a_store_with_old_grants_migrates_without_changing_what_they_mean() -> None:
-    """Migration 0230 rebuilds `operations`; grants keep their scope, hash and matches."""
-    from chamberlain.ports.clock import ManualClock
-
-    clock = ManualClock()
-    db = connect(MEMORY)
-    migrate(
-        db, clock, backup_dir=None, migrations=[m for m in legacy_migrations() if m.version < 230]
-    )
-    scope = scope_for(MAIL)
-    hash_before = content_hash(scope)
-    stored = stamp(clock)
-    db.execute(
-        "INSERT INTO grants (handle, kind, state, source_id, title, requirement, content_sha256, "
-        "scope_json, proposed_at, granted_at, expires_at, confirmed_via) "
-        "VALUES ('grant_old000000001', 'standing', 'active', ?, 'Mark read', "
-        "'human_confirmation', ?, ?, ?, ?, '2027-01-01T00:00:00Z', 'human_viewer')",
-        (MAIL, hash_before, canonical_json(scope), stored, stored),
-    )
-    repo.insert_operation(
-        db,
-        handle="op_old0000000001",
-        idempotency_key="k1",
-        kind=IntentKind.MAIL_MARK_READ,
-        source_id=MAIL,
-        card=None,
-        session=None,
-        intent_sha256="a" * 64,
-        intent_json="{}",
-        refs_json="{}",
-        at=stored,
-    )
-    db.execute("UPDATE operations SET state = 'confirmed' WHERE handle = 'op_old0000000001'")
-
-    migrate(db, clock, backup_dir=None, migrations=legacy_migrations())
-
-    grant = repo.get_grant(db, "grant_old000000001")
-    assert grant is not None
-    assert grant.state is GrantState.ACTIVE
-    assert grant.scope is not None
-    assert content_hash(grant.scope) == hash_before
-    assert grant.scope.all_sources() == {MAIL}
-    assert grant.scope.sources is None
-    assert grant.content_sha256 == hash_before
-    assert [g.handle for g in repo.grants_in_states(db, [GrantState.ACTIVE], MAIL)] == [
-        grant.handle
-    ]
-    assert repo.get_operation(db, "op_old0000000001") is not None
-    audit = AuditChain(db, clock)
-    before = repo.audit_count(db)
-    assert propose_missing(db, clock, audit, [MAIL], policy=WritePolicy()) == [], (
-        "the owner is not asked again"
-    )
-    assert repo.audit_count(db) == before
-    db.close()

@@ -31,14 +31,11 @@ from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.domain.intents import (
     IntentKind,
     MailMarkRead,
-    MailMove,
     MailSend,
-    MailTrash,
     OutsideAction,
     WriteIntent,
     attachments_of,
 )
-from chamberlain.domain.mail import bare
 from chamberlain.domain.operations import (
     MAY_HAVE_HAPPENED_STATES,
     TERMINAL_STATES,
@@ -808,16 +805,6 @@ class Engine:
         if grant is not None and grant.scope is not None and grant.scope.allow_duplicate:
             refs[ALLOW_DUPLICATE_REF] = "1"
         try:
-            original = refs.get("_original_move_intent")
-            if original and isinstance(intent, MailMove | MailTrash):
-                old = json.loads(original)
-                if old.get("internet_message_id") is not None:
-                    port = self.ctx.sources.mail_port(intent.source)
-                    current = port.resolve(intent.source, refs[intent.messages[0]])
-                    if bare(current.internet_message_id) != bare(old["internet_message_id"]):
-                        raise ChamberlainError(
-                            ErrorCode.REMOTE_CHANGED, "The message identity differs."
-                        )
             self._read_attachments(intent)
             prepared = kinds.port_prepare(self.ctx, intent, refs)
         except ChamberlainError as error:

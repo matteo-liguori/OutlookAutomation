@@ -4,10 +4,8 @@ Old tests: `calendar_timeout_settles_only_from_exact_readback_without_reissuing`
 `calendar_reconcile_settles_a_late_write_without_reissuing_it` (docs/contracts/11).
 """
 
-import json
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import pytest
 from cal_bridge import FakeCalendarBridge
@@ -18,16 +16,12 @@ from test_caldav_contract import basic
 from test_caldav_contract import build as build_caldav
 from test_google_contract import build as build_google
 from test_owl_calendar import build as build_owl
-from tests.store.legacy import legacy_migrations
 
-from chamberlain.connectors.calendar_support.port import payload
 from chamberlain.connectors.fake.world import Fault
 from chamberlain.domain.calendar import EventFields
 from chamberlain.domain.intents import CalendarCreate
-from chamberlain.domain.operations import DispatchOutcome, Prepared, ReconcileStatus
+from chamberlain.domain.operations import DispatchOutcome, ReconcileStatus
 from chamberlain.ports.clock import ManualClock
-from chamberlain.store.db import MEMORY, connect
-from chamberlain.store.migrate import migrate
 from support.rigs import CalendarRig
 
 START = datetime(2027, 3, 1, 10, 0, tzinfo=UTC)
@@ -89,58 +83,3 @@ def test_p11_a_late_write_is_found_by_reconcile_which_never_writes(kit: Kit) -> 
     rig.advance(600)
     assert rig.port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
     assert rig.count(uid) == 1
-
-
-def test_migrated_old_create_reconciles_without_redispatch(
-    kit: Kit, request: pytest.FixtureRequest
-) -> None:
-    rig, mutations = kit
-    connector = {"google": "google_calendar", "caldav": "caldav", "owl": "thunderbird"}[
-        request.node.callspec.id  # type: ignore[attr-defined]
-    ]
-    start = datetime(2027, 3, 1, 10, tzinfo=UTC)
-    event = EventFields(
-        title="Existing test appointment", start=start, end=start + timedelta(minutes=30)
-    )
-    uid = rig.new_uid()
-    prepared = rig.port.prepare(CalendarCreate(source=rig.source, event=event, uid=uid), {})
-    # Capture the equivalent old flat plan, before the single write happens.
-    data: dict[str, Any] = dict(payload(prepared))
-    data["fields"] = event.model_dump(mode="json")
-    data.pop("kind", None)
-    old = {
-        "source": rig.source,
-        "intent_kind": "calendar.create",
-        "reconcile_token": uid,
-        "data": data,
-    }
-    assert rig.port.dispatch(prepared, "one-write").outcome is DispatchOutcome.APPLIED
-    before = mutations()
-
-    db, clock = connect(MEMORY), ManualClock()
-    try:
-        migrate(
-            db,
-            clock,
-            backup_dir=None,
-            migrations=[m for m in legacy_migrations() if m.version < 260],
-        )
-        db.execute(
-            "INSERT INTO sources (id,kind,connector,created_at,updated_at) "
-            "VALUES (?, 'calendar', ?, 'now','now')",
-            (rig.source, connector),
-        )
-        db.execute(
-            "INSERT INTO operations (handle,idempotency_key,kind,source_id,state,intent_sha256,"
-            "prepared_json,created_at,updated_at) "
-            "VALUES ('op','key','calendar.create',?,'uncertain',?,?, 'now','now')",
-            (rig.source, "0" * 64, json.dumps(old)),
-        )
-        migrate(db, clock, backup_dir=None)
-        saved = db.execute("SELECT prepared_json FROM operations WHERE handle='op'").fetchone()[0]
-        recovered = Prepared.model_validate_json(saved)
-        assert rig.port.reconcile(recovered, "one-write").status is ReconcileStatus.PRESENT
-        assert rig.port.reconcile(recovered, "one-write").status is ReconcileStatus.PRESENT
-        assert mutations() == before
-    finally:
-        db.close()

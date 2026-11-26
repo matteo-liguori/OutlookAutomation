@@ -2,8 +2,6 @@
 
 from collections.abc import Iterable, Mapping
 
-from pydantic import Field, StrictBool
-
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.client import BridgeFailure
 from chamberlain.connectors.thunderbird.identity import (
@@ -40,7 +38,6 @@ from chamberlain.domain.intents import (
     MailSend,
     MailTrash,
 )
-from chamberlain.domain.mail import bare
 from chamberlain.domain.operations import (
     DispatchOutcome,
     DispatchResult,
@@ -72,19 +69,8 @@ def _change_groups(refs: Iterable[tuple[str, str]]) -> tuple[protocol.ChangeGrou
     )
 
 
-class _LegacyMarkPlan(Model):
-    refs: tuple[MessageRef, ...] = Field(min_length=1, max_length=200)
-    read: StrictBool
-
-
 def _shape(prepared: Prepared) -> ComposePlan | ChangePlan | DiscardPlan:
     try:
-        if prepared.intent_kind is _K.MAIL_MARK_READ and "refs" in prepared.data:
-            old = _LegacyMarkPlan.model_validate(prepared.data)
-            refs = [(ref.folder_id, bare(ref.internet_message_id)) for ref in old.refs]
-            if len(set(refs)) != len(refs):
-                raise ValueError("duplicate message in the stored mark-read request")
-            return ChangePlan(items=_change_groups(refs), set_read=old.read)
         return _SHAPES[prepared.intent_kind].model_validate(prepared.data)
     except (KeyError, ValueError):
         raise ChamberlainError(
