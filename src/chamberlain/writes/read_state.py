@@ -74,9 +74,9 @@ def active_grant(
         )
     usage = Usage(
         mail_folders=folders,
-        recent_uses=repo.recent_uses(
+        recent_uses=repo.grant_usage(
             ctx.db, [g.handle for g in pool], format_ts(now - timedelta(hours=24)), ""
-        ),
+        ).recent,
     )
     decision = authorise(
         intent, OperationFacts("", intent_hash(intent), card), pool, usage, ctx.write_policy, now

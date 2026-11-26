@@ -105,6 +105,19 @@ def test_still_in_the_outbox_is_reported_and_never_resent(rig: WriteRig) -> None
     assert get(rig, handle).state is S.UNCERTAIN
 
 
+def test_reserved_resend_remains_ready_after_its_original_is_superseded(rig: WriteRig) -> None:
+    rig.standing_grant()
+    handle = lost_send(rig, Fault.LOSE_BEFORE_APPLY, to=("friend@example.org",))
+    a_day_later(rig)
+    engine = rig.engine()
+    resend = engine.propose_redo(handle).operation
+    assert resend is not None
+    engine.reserve(resend, resend.intent())
+    assert engine.propose_redo(handle).ready
+    assert engine.do(resend.handle).state is S.CONFIRMED
+    assert rig.sent_copies() == 1
+
+
 def test_missing_everywhere_is_reported_once_and_the_agent_may_send_it_again(
     rig: WriteRig,
 ) -> None:

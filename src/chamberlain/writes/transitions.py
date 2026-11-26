@@ -11,8 +11,8 @@ import sqlite3
 from chamberlain.domain.grant_rules import parse_ts
 from chamberlain.domain.operations import (
     TERMINAL_STATES,
-    ItemResult,
     OperationState,
+    ProviderReceipt,
     Receipt,
     Verification,
     check_transition,
@@ -74,24 +74,27 @@ def build_receipt(
     state: OperationState,
     now: str,
     *,
-    verification: Verification | None = None,
-    items: tuple[ItemResult, ...] = (),
+    provider: ProviderReceipt | None = None,
     result_ref: str | None = None,
-    warnings: tuple[str, ...] = (),
     reported: str | None = None,
 ) -> str:
     """The stored receipt of a terminal state (S-2: one named model)."""
+    items = provider.items if provider else ()
     summary = Receipt(
         intent_kind=op.kind,
         source=op.source_id,
         state=state,
         intent_sha256=op.intent_sha256,
         settled_at=parse_ts(now),
-        verification=verification or Verification(),
+        verification=provider.verification if provider else Verification(),
         items_ok=sum(1 for item in items if item.ok),
         items_failed=sum(1 for item in items if not item.ok),
     )
     stored = StoredReceipt(
-        summary=summary, result_ref=result_ref, items=items, warnings=warnings, reported=reported
+        summary=summary,
+        result_ref=result_ref,
+        items=items,
+        warnings=provider.warnings if provider else (),
+        reported=reported,
     )
     return stored.model_dump_json(exclude_none=True)

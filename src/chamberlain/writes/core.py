@@ -61,6 +61,7 @@ from chamberlain.domain.operations import (
     Prepared,
     ProviderReceipt,
     ReconcileResult,
+    ReconcileStatus,
     Verification,
     recheck_text,
 )
@@ -87,7 +88,7 @@ from chamberlain.writes.authorise import (
     authorise,
     requirement_needed,
 )
-from chamberlain.writes.control import cancel_operation
+from chamberlain.writes.control import cancel_operation, release_holds
 from chamberlain.writes.grants import GrantService
 from chamberlain.writes.imported import advice_for, parse_summary
 from chamberlain.writes.imported_match import found_live
@@ -95,7 +96,6 @@ from chamberlain.writes.models import (
     GrantRow,
     OperationRow,
     Proposal,
-    Reading,
     WritePolicy,
 )
 from chamberlain.writes.render import (
@@ -154,16 +154,6 @@ def clock_pause(ctx: Context) -> Callable[[float], None]:
     return pause
 
 
-def read_reconcile(result: ReconcileResult) -> Reading:
-    """The one place a reconcile status is interpreted. `queued` never frees a grant."""
-    status = result.status.value
-    if status == "present" and result.receipt is not None:
-        return Reading(result.receipt, False, False)
-    return Reading(
-        None, status == "absent" and result.proof, status == "queued", status == "absent"
-    )
-
-
 class Engine:
     """The write engine for one context. Cheap to build; holds no state beyond its worker id."""
 
@@ -191,23 +181,60 @@ class Engine:
         self,
         op: OperationRow,
         to: OperationState,
-        *,
         summary: str,
+        *,
         actor: str | None = None,
         expected_lease: str | bool | None = False,
         **columns: str | int | None,
     ) -> OperationRow | None:
-        return move_operation(
-            self.db,
-            self.ctx.clock,
-            self.audit,
-            op,
-            to,
-            actor=self.actor() if actor is None else actor,
-            summary=summary,
-            expected_lease=expected_lease,
-            **columns,
-        )
+        leased = (OperationState.DISPATCHED, OperationState.RECONCILING)
+        if to in leased:
+            columns["lease_owner"] = self.worker
+            columns["lease_expires_at"] = format_ts(
+                self.ctx.clock.now() + timedelta(seconds=LEASE_SECONDS)
+            )
+        elif op.state in leased:
+            if expected_lease is False:
+                expected_lease = self.worker
+            columns.update(lease_owner=None, lease_expires_at=None)
+        if (
+            to
+            in (
+                OperationState.FAILED_CLEAN,
+                OperationState.CONFIRMED_ABSENT,
+                OperationState.ABANDONED,
+                OperationState.SUPERSEDED,
+            )
+            and "receipt_json" not in columns
+        ):
+            columns["receipt_json"] = build_receipt(op, to, self.now())
+        actor = self.actor() if actor is None else actor
+        with transaction(self.db):
+            moved = move_operation(
+                self.db,
+                self.ctx.clock,
+                self.audit,
+                op,
+                to,
+                actor=actor,
+                summary=summary,
+                expected_lease=expected_lease,
+                **columns,
+            )
+            if (
+                moved
+                and moved.grant
+                and to in (OperationState.CONFIRMED, OperationState.AGENT_REPORTED)
+            ):
+                self.grants.mark_spent(moved.grant, actor=actor)
+            if moved and to in (
+                OperationState.CONFIRMED,
+                OperationState.CONFIRMED_ABSENT,
+                OperationState.ABANDONED,
+                OperationState.FAILED_CLEAN,
+            ):
+                self.release_attachments(moved)
+            return moved
 
     def close_unreported_outside(self) -> int:
         return outside.close_unreported_outside(self)
@@ -276,13 +303,31 @@ class Engine:
             completed, located = intent, kinds.Located()
         else:
             completed, located = kinds.prepare_intent(self.ctx, intent, self.policy, card)
+        return self.propose_completed(completed, located, card, evidence)
+
+    def propose_completed(
+        self,
+        intent: WriteIntent,
+        located: kinds.Located,
+        card: str | None,
+        evidence: tuple[str, ...],
+        *,
+        redo: OperationRow | None = None,
+    ) -> Proposal:
+        """One storage and duplicate-check path for fresh proposals and authorised resends."""
         refs = located.to_refs()
-        sha = intent_hash(completed)
-        existing = self._existing(completed, sha, card)
+        sha = intent_hash(intent)
+        existing = self._existing(intent, sha, card, redo)
         if existing is not None:
-            return self.proposal_for(existing, completed)
+            return self.proposal_for(existing, intent)
         handle = new_handle(HandleKind.OPERATION)
-        decision = self.decide(completed, handle, sha, card, reserved=None, located=located)
+        decision = self.decide(intent, handle, sha, card, reserved=None, located=located, redo=redo)
+        if redo is not None and isinstance(decision, Deny):
+            raise ChamberlainError(
+                decision.code,
+                "The permission behind the first send no longer covers sending it again.",
+                fix="Ask the owner, in chat, whether to send it again.",
+            )
         if self._only_grant is not None and isinstance(decision, Deny):
             return Proposal(
                 operation=None,
@@ -295,43 +340,35 @@ class Engine:
                 truncated=False,
                 origin=handle,
             )
-        if isinstance(completed, MailSend):
-            self.scan_before_storing(completed, handle, refs, decision)
+        if isinstance(intent, MailSend):
+            self.scan_before_storing(intent, handle, refs, decision)
         with transaction(self.db):
-            existing = self._existing(completed, sha, card)
+            existing = self._existing(intent, sha, card, redo)
             if existing is not None:
-                return self.proposal_for(existing, completed)
-            self.insert_proposal(completed, handle, sha, card, refs)
-            grant: GrantRow | None = None
-            if isinstance(decision, Allow):
-                grant = repo.get_grant(self.db, decision.grant)
-                requirement = Requirement.NONE
-            else:
-                requirement = decision.requirement
-                grant = repo.proposed_one_off(self.db, completed.source, sha)
-                if grant is None:
-                    grant = self.grants.propose_one_off(
-                        source_id=completed.source,
-                        intent_sha256=sha,
-                        title=grant_title(completed),
-                        summary=grant_summary(completed),
-                        requirement=requirement,
-                        card=card,
-                        actor=self.actor(),
-                    )
-        self.hold_inputs(completed, handle, evidence)
-        op = self.get(handle)
-        text, cut = kinds.describe_write(completed, located)
-        return Proposal(
-            operation=op,
-            grant=grant,
-            state=op.state,
-            requirement=requirement,
-            ready=isinstance(decision, Allow),
-            content_sha256=sha,
-            preview=text,
-            truncated=cut,
-            origin=handle,
+                return self.proposal_for(existing, intent)
+            if redo is not None and self.get(redo.handle).state is not OperationState.UNCERTAIN:
+                raise ChamberlainError(
+                    ErrorCode.OPERATION_ALREADY_SETTLED, "The write this one replaces just changed."
+                )
+            self.insert_proposal(
+                intent, handle, sha, card, refs, redo_of=redo.handle if redo else None
+            )
+            if (
+                isinstance(decision, Deny)
+                and repo.proposed_one_off(self.db, intent.source, sha) is None
+            ):
+                self.grants.propose_one_off(
+                    source_id=intent.source,
+                    intent_sha256=sha,
+                    title=grant_title(intent),
+                    summary=grant_summary(intent),
+                    requirement=decision.requirement,
+                    card=card,
+                    actor=self.actor(),
+                )
+        self.hold_inputs(intent, handle, evidence)
+        return self.proposal_for(
+            self.get(handle), intent, decision=decision if redo is None else None
         )
 
     def insert_proposal(
@@ -415,19 +452,11 @@ class Engine:
         else:
             for source in sorted(scope.all_sources()):
                 for kind in scope.intent_kinds:
-                    spec = kinds.KINDS[kind]
-                    port_caps = (
-                        self.ctx.sources.calendar_port(source).capabilities(source)
-                        if spec.calendar
-                        else self.ctx.sources.mail_port(source).capabilities(source)
-                    )
+                    caps = kinds.capabilities(self.ctx, source, kind)
+                    kinds.require_write(caps, kind)
                     if (
-                        spec.capability is None
-                        or port_caps.get(spec.capability) is None
-                        or (
-                            kind is IntentKind.CALENDAR_RESPOND
-                            and port_caps.get(CapabilityName.CALENDAR_INVITE) is None
-                        )
+                        kind is IntentKind.CALENDAR_RESPOND
+                        and caps.get(CapabilityName.CALENDAR_INVITE) is None
                     ):
                         raise ChamberlainError(
                             ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
@@ -453,7 +482,9 @@ class Engine:
             return self.proposal_for(op, intent)
         grant = repo.proposed_one_off(self.db, op.source_id, op.intent_sha256)
         if grant is not None:
-            needed = requirement_needed(intent, self._usage(intent, op.handle, None), self.policy)
+            needed = requirement_needed(
+                intent, self._recipients(intent, self.located(op)), self.policy
+            )
             if grant.requirement is Requirement.HUMAN_CONFIRMATION or (
                 needed is Requirement.HUMAN_CONFIRMATION
             ):
@@ -489,44 +520,36 @@ class Engine:
                 field="approval_evidence",
             )
 
-    def proposal_for(self, op: OperationRow, intent: WriteIntent) -> Proposal:
+    def proposal_for(
+        self, op: OperationRow, intent: WriteIntent, *, decision: Decision | None = None
+    ) -> Proposal:
         """The current picture for an operation that already exists."""
-        grant = repo.proposed_one_off(self.db, op.source_id, op.intent_sha256)
-        ready = False
-        requirement = Requirement.NONE
-        if op.state in (
-            OperationState.PROPOSED,
-            OperationState.AUTHORISED,
-            OperationState.PREPARED,
-        ):
-            original = resend.original_of(self, op)
-            if op.redo_of is not None and original is None:
-                # The send it would replace has settled: nothing can authorise this any more.
-                decision: Decision = Deny(ErrorCode.OPERATION_ALREADY_SETTLED, Requirement.NONE)
-            else:
-                decision = self.decide(
-                    intent, op.handle, op.intent_sha256, op.card, op.grant, redo=original
-                )
-            if isinstance(decision, Allow):
-                ready = True
-                grant = repo.get_grant(self.db, decision.grant)
-            else:
-                requirement = decision.requirement
+        if decision is None and op.state in _RESERVABLE_STATES:
+            decision, _ = self._reservation_decision(op, intent)
+        grant = (
+            repo.get_grant(self.db, decision.grant)
+            if isinstance(decision, Allow)
+            else repo.proposed_one_off(self.db, op.source_id, op.intent_sha256)
+        )
         text, cut = kinds.describe_write(intent, self.located(op))
         return Proposal(
             operation=op,
             grant=grant,
             state=op.state,
-            requirement=requirement,
-            ready=ready,
+            requirement=decision.requirement if isinstance(decision, Deny) else Requirement.NONE,
+            ready=isinstance(decision, Allow),
             content_sha256=op.intent_sha256,
             preview=text,
             truncated=cut,
             origin=op.handle,
         )
 
-    def _existing(self, intent: WriteIntent, sha: str, card: str | None) -> OperationRow | None:
+    def _existing(
+        self, intent: WriteIntent, sha: str, card: str | None, redo: OperationRow | None
+    ) -> OperationRow | None:
         """An identical live operation, or a recent one that may not repeat (W-18, W-19)."""
+        if redo is not None:
+            return repo.resend_of(self.db, redo.handle)
         window = self.ctx.clock.now() - timedelta(hours=REPEAT_WINDOW_HOURS)
         # The same form may be filled again later: only a live outside action matches (W-44).
         repeat_ok = kinds.KINDS[intent.kind].terminal_repeat or self._repeat_allowed(intent, card)
@@ -550,15 +573,11 @@ class Engine:
         self,
         intent: WriteIntent,
         handle: str,
-        reserved: str | None,
-        located: kinds.Located | None = None,
-        redo: OperationRow | None = None,
+        grants: list[GrantRow],
+        located: kinds.Located,
+        redo: OperationRow | None,
     ) -> Usage:
         now = self.ctx.clock.now()
-        if located is None:
-            stored = repo.get_operation(self.db, handle)
-            located = kinds.Located() if stored is None else self.located(stored)
-        grants = self._grants_for(intent.source, reserved, redo)
         names = [g.handle for g in grants]
         skip: str | tuple[str, ...] = handle if redo is None else (handle, redo.handle)
         folders: frozenset[str] = frozenset()
@@ -567,51 +586,46 @@ class Engine:
             folders = frozenset(
                 port.folder_of(intent.source, located.refs[h]) for h in intent.messages
             )
-        return Usage(
+        uses = repo.grant_usage(self.db, names, format_ts(now - timedelta(hours=24)), skip)
+        return replace(
+            self._recipients(intent, located),
             mail_folders=folders,
-            live_uses=repo.live_uses(self.db, names, skip),
-            recent_uses=repo.recent_uses(
-                self.db, names, format_ts(now - timedelta(hours=24)), skip
-            ),
+            live_uses=uses.reserved_or_spent,
+            recent_uses=uses.recent,
             source_sends_last_hour=repo.sends_since(
                 self.db, intent.source, format_ts(now - timedelta(hours=1)), handle
             ),
-            known_recipients=self._known_for(intent),
+        )
+
+    def _recipients(self, intent: WriteIntent, located: kinds.Located) -> Usage:
+        known = repo.known_recipients(self.db, intent.source)
+        if kinds.KINDS[intent.kind].calendar:
+            known |= repo.known_recipients_anywhere(self.db)
+        return Usage(
+            known_recipients=known,
             event_attendees=located.event_attendees,
             owner_addresses=repo.owner_addresses(self.db),
         )
 
-    def _known_for(self, intent: WriteIntent) -> frozenset[str]:
-        """Mail: this mailbox's known recipients. A calendar invitation: those of any source."""
-        known = repo.known_recipients(self.db, intent.source)
-        if kinds.KINDS[intent.kind].calendar:
-            known |= repo.known_recipients_anywhere(self.db)
-        return known
-
-    def _active_grants(self, source: str, reserved: str | None) -> list[GrantRow]:
-        grants = repo.grants_in_states(self.db, (GrantState.ACTIVE,), source)
-        if reserved is not None and all(g.handle != reserved for g in grants):
-            held = repo.get_grant(self.db, reserved)
-            if held is not None:
-                grants.append(held)
-        if self._only_grant is not None:
-            return [grant for grant in grants if grant.handle == self._only_grant]
-        return grants
-
     def _grants_for(
         self, source: str, reserved: str | None, redo: OperationRow | None
     ) -> list[GrantRow]:
-        """The grants that may authorise: for a resend, only the original send's grant (W-38).
-
-        A one-off grant that timed out while its send was uncertain still stands for that one
-        message, because the owner approved exactly this text and it has not been spent.
-        """
-        if redo is None:
-            return self._active_grants(source, reserved)
-        held = None if redo.grant is None else repo.get_grant(self.db, redo.grant)
+        pinned = redo.grant if redo is not None else reserved
+        if self._only_grant is not None:
+            if pinned is not None and pinned != self._only_grant:
+                return []
+            pinned = self._only_grant
+        if pinned is None:
+            return (
+                []
+                if redo is not None
+                else repo.grants_in_states(self.db, (GrantState.ACTIVE,), source)
+            )
+        held = repo.get_grant(self.db, pinned)
         if held is None:
             return []
-        if held.kind is GrantKind.ONE_OFF and held.state is GrantState.EXPIRED:
+        # An expired one-off still covers the identical, unspent resend (W-38).
+        if redo is not None and held.kind is GrantKind.ONE_OFF and held.state is GrantState.EXPIRED:
             held = replace(
                 held,
                 state=GrantState.ACTIVE,
@@ -626,20 +640,34 @@ class Engine:
         sha: str,
         card: str | None,
         reserved: str | None,
-        located: kinds.Located | None = None,
+        located: kinds.Located,
         redo: OperationRow | None = None,
     ) -> Decision:
+        grants = self._grants_for(intent.source, reserved, redo)
         pinned = reserved if redo is None else redo.grant
         return authorise(
             intent,
             OperationFacts(handle, sha, card, pinned),
-            self._grants_for(intent.source, reserved, redo),
-            self._usage(intent, handle, reserved, located, redo),
+            grants,
+            self._usage(intent, handle, grants, located, redo),
             self.policy,
             self.ctx.clock.now(),
         )
 
     # --- do -----------------------------------------------------------------------
+
+    def _reservation_decision(
+        self, op: OperationRow, intent: WriteIntent
+    ) -> tuple[Decision, OperationRow | None]:
+        original = None
+        if op.redo_of is not None and op.state is OperationState.PROPOSED:
+            original = resend.original_of(self, op)
+            if original is None:
+                return Deny(ErrorCode.OPERATION_ALREADY_SETTLED, Requirement.NONE), None
+        decision = self.decide(
+            intent, op.handle, op.intent_sha256, op.card, op.grant, self.located(op), original
+        )
+        return decision, original
 
     def do(self, handle: str, report: str | None = None) -> OperationRow:
         """Execute an authorised operation once (W-7, W-8, W-16, W-17).
@@ -656,23 +684,19 @@ class Engine:
                 fix="Leave report out.",
                 field="report",
             )
-        if op.state in TERMINAL_STATES:
-            return self.terminal_reply(op)
         if op.state in MAY_HAVE_HAPPENED_STATES:
             self.recover()
             op = self.get(handle)
-            if op.state in TERMINAL_STATES:
-                return self.terminal_reply(op)
             if op.state in MAY_HAVE_HAPPENED_STATES:
                 raise self.needs_reconcile(handle)
+        if op.state in TERMINAL_STATES:
+            return self.terminal_reply(op)
         intent = self.intent_of(op)
         if op.redo_of is not None and op.state is OperationState.PROPOSED:
             resend.guard_resend(self, op.redo_of)
         op = self.reserve(op, intent)
         op = self._prepare(op)
         final = self._dispatch(op)
-        if final.state is OperationState.CONFIRMED:
-            return final
         if final.state in TERMINAL_STATES:
             return self.terminal_reply(final)
         raise self.uncertain(final.handle)
@@ -721,23 +745,7 @@ class Engine:
                 raise ChamberlainError(
                     ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed."
                 )
-            original = resend.original_of(self, current)
-            if current.redo_of is not None and current.state is OperationState.PROPOSED:
-                if original is None:
-                    raise ChamberlainError(
-                        ErrorCode.OPERATION_ALREADY_SETTLED,
-                        "The send this one replaces has settled. Nothing needs sending again.",
-                    )
-            else:
-                original = None
-            decision = self.decide(
-                intent,
-                current.handle,
-                current.intent_sha256,
-                current.card,
-                current.grant,
-                redo=original,
-            )
+            decision, original = self._reservation_decision(current, intent)
             if isinstance(decision, Deny):
                 denied = ChamberlainError(decision.code)
                 if current.state is not OperationState.PROPOSED:
@@ -754,7 +762,6 @@ class Engine:
                 reserved = self.transition(
                     current,
                     OperationState.AUTHORISED,
-                    actor=self.actor(),
                     summary="Authorised; grant use reserved.",
                     grant=decision.grant,
                     idempotency_key=key,
@@ -791,40 +798,27 @@ class Engine:
                 ErrorCode.INTERNAL_UNEXPECTED,
                 f"Operation {op.handle} may have happened and cannot be failed clean.",
             )
-        row = self.transition(
+        return self.transition(
             op,
             OperationState.FAILED_CLEAN,
-            actor=self.actor(),
             summary=(
                 f"Nothing happened ({code.value}"
                 + (f": {detail[:200]}" if detail else "")
                 + "); grant use released."
             ),
             expected_lease=expected_lease,
-            receipt_json=build_receipt(op, OperationState.FAILED_CLEAN, self.now()),
             error_code=code.value,
-            lease_owner=None,
-            lease_expires_at=None,
         )
-        if row is not None:
-            self.release_attachments(row)
-        return row
 
     def release_attachments(self, op: OperationRow) -> None:
-        if op.intent_json is None:
-            return
-        for attachment in attachments_of(self.intent_of(op)):
-            try:
-                self.ctx.services.artifacts.release_owner(attachment.artifact, op.handle)
-            except ChamberlainError:
-                log.warning("could not release an attachment hold for %s", op.handle)
+        release_holds(self.ctx.services.artifacts, op)
 
     def _prepare(self, op: OperationRow) -> OperationRow:
         """Read-only. A failure cannot have changed anything and frees the grant (W-11)."""
         if op.state is OperationState.PREPARED:
             return op
         intent = self.intent_of(op)
-        refs = self.located(op).to_refs()
+        refs = op.refs()
         grant = repo.get_grant(self.db, op.grant) if op.grant else None
         if grant is not None and grant.scope is not None and grant.scope.allow_duplicate:
             refs[ALLOW_DUPLICATE_REF] = "1"
@@ -853,7 +847,6 @@ class Engine:
         moved = self.transition(
             op,
             OperationState.PREPARED,
-            actor=self.actor(),
             summary="Prepared by a read-only connector call.",
             prepared_json=prepared.model_dump_json(exclude_none=True),
         )
@@ -888,10 +881,7 @@ class Engine:
         journal = self.transition(
             op,
             OperationState.DISPATCHED,
-            actor=self.actor(),
             summary="Journalled before the one mutation call.",
-            lease_owner=self.worker,
-            lease_expires_at=format_ts(now + timedelta(seconds=LEASE_SECONDS)),
             dispatched_at=format_ts(now),
             worker=self.worker,
         )
@@ -914,8 +904,6 @@ class Engine:
             row = self.confirm_receipt(
                 journal,
                 result.receipt,
-                expected_lease=self.worker,
-                actor=self.actor(),
                 summary="Dispatch applied.",
             )
             if row is None:
@@ -930,11 +918,7 @@ class Engine:
         moved = self.transition(
             journal,
             OperationState.UNCERTAIN,
-            actor=self.actor(),
             summary="Outcome unknown; it may have happened.",
-            expected_lease=self.worker,
-            lease_owner=None,
-            lease_expires_at=None,
         )
         if moved is None:
             return self.get(journal.handle)
@@ -950,13 +934,14 @@ class Engine:
         if current.state is not OperationState.UNCERTAIN:
             return current
         with transaction(self.db):
-            held = self._enter_reconciling(current, summary="Late result recorded as evidence.")
+            held = self.transition(
+                current, OperationState.RECONCILING, "Late result recorded as evidence."
+            )
             if held is None:
                 return self.get(journal.handle)
             self.confirm_receipt(
                 held,
                 receipt,
-                expected_lease=self.worker,
                 actor="system:tick",
                 summary="A late applied result was recorded as reconcile evidence.",
             )
@@ -965,45 +950,25 @@ class Engine:
     # --- confirming ---------------------------------------------------------------
 
     def confirm_receipt(
-        self,
-        op: OperationRow,
-        receipt: ProviderReceipt,
-        *,
-        expected_lease: str | bool | None,
-        actor: str,
-        summary: str,
+        self, op: OperationRow, receipt: ProviderReceipt, summary: str, *, actor: str | None = None
     ) -> OperationRow | None:
-        intent = self.intent_of(op)
         result_ref = kinds.result_ref(self.ctx, op, receipt)
-        verification = receipt.verification
-        with transaction(self.db):
-            moved = self.transition(
-                op,
-                OperationState.CONFIRMED,
-                actor=actor,
-                summary=summary
-                + (" Warnings: " + ", ".join(receipt.warnings) if receipt.warnings else ""),
-                expected_lease=expected_lease,
-                receipt_json=build_receipt(
-                    op,
-                    OperationState.CONFIRMED,
-                    self.now(),
-                    verification=verification,
-                    items=receipt.items,
-                    result_ref=result_ref,
-                    warnings=receipt.warnings,
-                ),
-                client_verified=int(verification.client_verified),
-                server_verified=int(verification.server_verified),
-                lease_owner=None,
-                lease_expires_at=None,
-            )
-            if moved is None:
-                return None
-            if moved.grant is not None:
-                self.grants.mark_spent(moved.grant, actor=actor)
-        kinds.after_confirmed(self.ctx, moved, intent, self.located(moved), receipt)
-        self.release_attachments(moved)
+        verified = receipt.verification
+        if receipt.warnings:
+            summary += " Warnings: " + ", ".join(receipt.warnings)
+        moved = self.transition(
+            op,
+            OperationState.CONFIRMED,
+            summary,
+            actor=actor,
+            receipt_json=build_receipt(
+                op, OperationState.CONFIRMED, self.now(), provider=receipt, result_ref=result_ref
+            ),
+            client_verified=int(verified.client_verified),
+            server_verified=int(verified.server_verified),
+        )
+        if moved is not None:
+            kinds.after_confirmed(self.ctx, moved, moved.intent(), self.located(moved), receipt)
         return moved
 
     def _upgrade_verification(self, op: OperationRow, prepared: Prepared) -> None:
@@ -1019,7 +984,7 @@ class Engine:
         except Exception:
             log_failure(log, "verification upgrade failed for %s", op.handle)
             return
-        found = reading.present
+        found = reading.receipt
         if found is not None and found.verification.server_verified:
             with transaction(self.db):
                 upgraded = repo.update_operation(
@@ -1046,30 +1011,16 @@ class Engine:
             return CALENDAR_SETTLE_ATTEMPTS, CALENDAR_SETTLE_WINDOW_SECONDS
         return MAIL_SETTLE_ATTEMPTS, MAIL_SETTLE_WINDOW_SECONDS
 
-    def _enter_reconciling(
-        self, op: OperationRow, *, summary: str, actor: str | None = None
-    ) -> OperationRow | None:
-        return self.transition(
-            op,
-            OperationState.RECONCILING,
-            actor=actor or self.actor(),
-            summary=summary,
-            lease_owner=self.worker,
-            lease_expires_at=format_ts(self.ctx.clock.now() + timedelta(seconds=LEASE_SECONDS)),
-        )
-
     def _reconcile_loop(
         self, op: OperationRow, intent: WriteIntent, prepared: Prepared, window: tuple[int, int]
-    ) -> Reading:
+    ) -> ReconcileResult:
         """Bounded, read-only reconciles (R6). Stops at the first `present`."""
         attempts, seconds = window
         started = self.ctx.clock.now()
-        reading = Reading(None, False, False)
+        reading = ReconcileResult(status=ReconcileStatus.UNKNOWN)
         for index in range(attempts):
-            reading = read_reconcile(
-                kinds.port_reconcile(self.ctx, intent, prepared, op.idempotency_key)
-            )
-            if reading.present is not None:
+            reading = kinds.port_reconcile(self.ctx, intent, prepared, op.idempotency_key)
+            if reading.receipt is not None:
                 return reading
             elapsed = (self.ctx.clock.now() - started).total_seconds()
             if index + 1 >= attempts or elapsed + SETTLE_INTERVAL_SECONDS > seconds:
@@ -1090,50 +1041,41 @@ class Engine:
         window: tuple[int, int],
         allow_absent: bool,
         actor: str | None = None,
-    ) -> tuple[OperationRow, Reading | None]:
+    ) -> tuple[OperationRow, ReconcileResult | None]:
         """`_reconcile`, and what the connector said (None when no read was made)."""
         who = actor or self.actor()
         intent = self.intent_of(op)
         if op.prepared_json is None:
             return op, None
         prepared = Prepared.model_validate_json(op.prepared_json)
-        held = self._enter_reconciling(op, summary="Read-only reconcile started.", actor=who)
+        held = self.transition(
+            op, OperationState.RECONCILING, "Read-only reconcile started.", actor=who
+        )
         if held is None:
             return self.get(op.handle), None
         reading = self._reconcile_loop(held, intent, prepared, window)
-        if reading.present is not None:
+        if reading.receipt is not None:
             confirmed = self.confirm_receipt(
                 held,
-                reading.present,
-                expected_lease=self.worker,
+                reading.receipt,
                 actor=who,
                 summary="Reconcile found the write.",
             )
             return (confirmed or self.get(op.handle)), reading
-        if allow_absent and reading.absent_proof and self._absence_proven(held, intent):
+        if allow_absent and reading.proof and self._absence_proven(held, intent):
             absent = self.transition(
                 held,
                 OperationState.CONFIRMED_ABSENT,
                 actor=who,
                 summary="Reconcile proved the write did not happen; grant use released.",
-                expected_lease=self.worker,
-                receipt_json=build_receipt(held, OperationState.CONFIRMED_ABSENT, self.now()),
-                lease_owner=None,
-                lease_expires_at=None,
             )
-            if absent is not None:
-                self.release_attachments(absent)
-                return absent, reading
-            return self.get(op.handle), reading
+            return absent or self.get(op.handle), reading
         back = self.transition(
             held,
             OperationState.UNCERTAIN,
             actor=who,
             summary="Still uncertain after a read-only reconcile."
-            + (" An exact copy is queued." if reading.queued else ""),
-            expected_lease=self.worker,
-            lease_owner=None,
-            lease_expires_at=None,
+            + (" An exact copy is queued." if reading.status is ReconcileStatus.QUEUED else ""),
         )
         return (back or self.get(op.handle)), reading
 
@@ -1149,7 +1091,9 @@ class Engine:
         if self.ctx.clock.now() < settled:
             return False
         try:
-            capability = kinds.capability(self.ctx, intent)
+            capability = kinds.require_write(
+                kinds.capabilities(self.ctx, intent.source, intent.kind), intent.kind
+            )
         except ChamberlainError:
             return False
         return op.kind.value in capability.absence_provable
@@ -1166,12 +1110,12 @@ class Engine:
         before = self.get(handle)
         if before.state is not OperationState.UNCERTAIN:
             return before, False
-        if before.intent_json is None:
-            return self._reconcile_imported(before, happened_evidence)
         if happened_evidence is not None:
             return self._settle_happened(
                 before, happened_evidence, "The agent recorded evidence that it happened."
             )
+        if before.intent_json is None:
+            return self._reconcile_imported(before)
         if before.rechecked_at is not None:
             after, _ = resend.look_for_send(
                 self, before, actor=self.actor(), record=True, allow_absent=True
@@ -1180,17 +1124,11 @@ class Engine:
         after = self._reconcile(before, window=(1, 0), allow_absent=True)
         return after, after.state is not before.state
 
-    def _reconcile_imported(
-        self, op: OperationRow, evidence: str | None
-    ) -> tuple[OperationRow, bool]:
+    def _reconcile_imported(self, op: OperationRow) -> tuple[OperationRow, bool]:
         """An old journal's operation: found on the live source settles it, nothing else does.
 
         It has no intent, so nothing here can send it. Not found is not proof of absence.
         """
-        if evidence is not None:
-            return self._settle_happened(
-                op, evidence, "The agent recorded evidence that it happened."
-            )
         summary = parse_summary(op.summary_json)
         if summary is not None and found_live(self.ctx, op, summary):
             return self._settle_happened(op, None, "Reconcile found the item on the live source.")
@@ -1210,7 +1148,6 @@ class Engine:
             moved = self.transition(
                 op,
                 OperationState.CONFIRMED,
-                actor=self.actor(),
                 summary=summary,
                 receipt_json=build_receipt(op, OperationState.CONFIRMED, self.now()),
             )
@@ -1218,9 +1155,6 @@ class Engine:
                 raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That changed.")
             if evidence is not None:
                 self.ctx.services.evidence.link(evidence, moved.handle)
-            if moved.grant is not None:
-                self.grants.mark_spent(moved.grant, actor=self.actor())
-        self.release_attachments(moved)
         return moved, True
 
     def _check_seen(self, evidence: str) -> None:
@@ -1248,8 +1182,6 @@ class Engine:
                 actor="system:tick",
                 summary="Lease expired; treated as may have happened.",
                 expected_lease=op.lease_owner,
-                lease_owner=None,
-                lease_expires_at=None,
             )
             moved += 1 if row is not None else 0
         return moved

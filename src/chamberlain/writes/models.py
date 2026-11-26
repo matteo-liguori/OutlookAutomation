@@ -14,7 +14,7 @@ from pydantic import Field, TypeAdapter
 from chamberlain.domain.grant_rules import check_config_requirement
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind, WriteIntent
-from chamberlain.domain.operations import ItemResult, OperationState, ProviderReceipt, Receipt
+from chamberlain.domain.operations import ItemResult, OperationState, Receipt
 from chamberlain.limits import SENDS_PER_HOUR
 from chamberlain.schema.base import Handle, Model
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -157,14 +157,3 @@ class Proposal:
     preview: str
     truncated: bool
     origin: str
-
-
-@dataclass(frozen=True)
-class Reading:
-    """A connector's reconcile answer, reduced to what the engine acts on (R2, P-12)."""
-
-    present: ProviderReceipt | None
-    absent_proof: bool
-    queued: bool
-    absent: bool = False
-    """The connector looked and found nothing (with or without proof)."""

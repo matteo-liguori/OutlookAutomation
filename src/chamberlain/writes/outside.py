@@ -9,7 +9,6 @@ from chamberlain.domain.grant_rules import format_ts, intent_hash
 from chamberlain.domain.intents import OutsideAction
 from chamberlain.domain.operations import TERMINAL_STATES, OperationState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.store.db import transaction
 from chamberlain.writes import core, repo
 from chamberlain.writes.models import OperationRow
 from chamberlain.writes.transitions import build_receipt
@@ -69,21 +68,17 @@ def do_outside(engine: core.Engine, op: OperationRow, report: str | None) -> Ope
         raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
     if report is None:
         return op
-    with transaction(engine.db):
-        moved = engine.transition(
-            op,
-            OperationState.AGENT_REPORTED,
-            actor=engine.actor(),
-            summary="The assistant reported doing this outside Chamberlain; not checked.",
-            receipt_json=build_receipt(
-                op, OperationState.AGENT_REPORTED, engine.now(), reported=report
-            ),
-            dispatched_at=engine.now(),  # when it counts against a daily limit
-        )
-        if moved is None:
-            raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
-        if moved.grant is not None:
-            engine.grants.mark_spent(moved.grant, actor=engine.actor())
+    moved = engine.transition(
+        op,
+        OperationState.AGENT_REPORTED,
+        "The assistant reported doing this outside Chamberlain; not checked.",
+        receipt_json=build_receipt(
+            op, OperationState.AGENT_REPORTED, engine.now(), reported=report
+        ),
+        dispatched_at=engine.now(),  # when it counts against a daily limit
+    )
+    if moved is None:
+        raise ChamberlainError(ErrorCode.OPERATION_ALREADY_SETTLED, "That operation changed.")
     return moved
 
 
@@ -97,7 +92,6 @@ def close_unreported_outside(engine: core.Engine) -> int:
             OperationState.ABANDONED,
             actor="system:tick",
             summary="Allowed but never reported by the assistant; closed.",
-            receipt_json=build_receipt(op, OperationState.ABANDONED, engine.now()),
             dispatched_at=format_ts(op.updated_at or engine.ctx.clock.now()),
         )
         closed += 1 if moved is not None else 0

@@ -9,7 +9,7 @@ import contextlib
 import json
 import sqlite3
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from datetime import datetime
 from typing import Any, cast
 
@@ -24,8 +24,17 @@ from chamberlain.writes.models import GrantRow, OperationRow
 _RELEASING = tuple(state.value for state in RELEASING_STATES)
 
 
-def _ts(value: str | None) -> datetime | None:
-    return None if value is None else parse_ts(value)
+_GRANT_COLUMNS = tuple(f.name for f in fields(GrantRow) if f.name != "scope")
+_OPERATION_COLUMNS = tuple(f.name for f in fields(OperationRow))
+
+
+def _row_values(row: sqlite3.Row, columns: tuple[str, ...]) -> dict[str, Any]:
+    """Storage timestamps share one UTC format. Plain columns retain their SQLite values."""
+    values = {column: row[column] for column in columns}
+    for key, value in values.items():
+        if key.endswith("_at") and value is not None:
+            values[key] = parse_ts(value)
+    return values
 
 
 def _marks(items: Sequence[object]) -> str:
@@ -36,29 +45,15 @@ def _marks(items: Sequence[object]) -> str:
 
 
 def _grant(row: sqlite3.Row) -> GrantRow:
-    scope_json: str | None = row["scope_json"]
-    return GrantRow(
-        handle=row["handle"],
+    values = _row_values(row, _GRANT_COLUMNS)
+    scope = row["scope_json"]
+    values.update(
         kind=GrantKind(row["kind"]),
         state=GrantState(row["state"]),
-        source_id=row["source_id"],
-        title=row["title"],
-        summary=row["summary"],
         requirement=Requirement(row["requirement"]),
-        content_sha256=row["content_sha256"],
-        scope=None if scope_json is None else StandingScope.model_validate_json(scope_json),
-        card=row["card"],
-        supersedes=row["supersedes"],
-        proposed_by=row["proposed_by"],
-        proposed_at=parse_ts(row["proposed_at"]),
-        confirmed_via=row["confirmed_via"],
-        granted_at=_ts(row["granted_at"]),
-        expires_at=_ts(row["expires_at"]),
-        review_at=_ts(row["review_at"]),
-        last_reviewed_at=_ts(row["last_reviewed_at"]),
-        ended_at=_ts(row["ended_at"]),
-        compacted_at=_ts(row["compacted_at"]),
+        scope=None if scope is None else StandingScope.model_validate_json(scope),
     )
+    return GrantRow(**values)
 
 
 def insert_grant(
@@ -292,38 +287,14 @@ def recipient_counts(db: sqlite3.Connection, source_id: str) -> dict[str, int]:
 
 
 def _operation(row: sqlite3.Row) -> OperationRow:
-    return OperationRow(
-        handle=row["handle"],
-        idempotency_key=row["idempotency_key"],
+    values = _row_values(row, _OPERATION_COLUMNS)
+    values.update(
         kind=IntentKind(row["kind"]),
-        source_id=row["source_id"],
         state=OperationState(row["state"]),
-        grant=row["grant"],
-        card=row["card"],
-        session=row["session"],
-        intent_sha256=row["intent_sha256"],
-        intent_json=row["intent_json"],
-        reconcile_token=row["reconcile_token"],
-        refs_json=row["refs_json"],
-        prepared_json=row["prepared_json"],
-        receipt_json=row["receipt_json"],
         client_verified=bool(row["client_verified"]),
         server_verified=bool(row["server_verified"]),
-        error_code=row["error_code"],
-        lease_owner=row["lease_owner"],
-        lease_expires_at=_ts(row["lease_expires_at"]),
-        created_at=parse_ts(row["created_at"]),
-        dispatched_at=_ts(row["dispatched_at"]),
-        settled_at=_ts(row["settled_at"]),
-        compacted_at=_ts(row["compacted_at"]),
-        updated_at=parse_ts(row["updated_at"]),
-        summary_json=row["summary_json"],
-        attempted_at=_ts(row["attempted_at"]),
-        rechecked_at=_ts(row["rechecked_at"]),
-        recheck_result=row["recheck_result"],
-        recheck_json=row["recheck_json"],
-        redo_of=row["redo_of"],
     )
+    return OperationRow(**values)
 
 
 def insert_operation(
@@ -452,45 +423,37 @@ def _but(other_than: str | tuple[str, ...]) -> tuple[str, ...]:
     return (other_than,) if isinstance(other_than, str) else other_than
 
 
+@dataclass(frozen=True)
+class GrantUsage:
+    reserved_or_spent: dict[str, int]
+    recent: dict[str, int]
+
+
+def grant_usage(
+    db: sqlite3.Connection, grants: Iterable[str], since: str, other_than: str | tuple[str, ...]
+) -> GrantUsage:
+    """Count uses in one snapshot. Reserved uses count toward the daily limit until dispatched."""
+    wanted = list(grants)
+    if not wanted:
+        return GrantUsage({}, {})
+    skip = _but(other_than)
+    rows = db.execute(
+        "SELECT grant, COUNT(*) AS total, "
+        "COUNT(*) FILTER (WHERE dispatched_at IS NULL OR dispatched_at >= ?) AS recent "
+        f"FROM operations WHERE grant IN ({_marks(wanted)}) AND handle NOT IN ({_marks(skip)}) "
+        f"AND state NOT IN ({_marks(_RELEASING)}) AND state <> 'proposed' GROUP BY grant",
+        (since, *wanted, *skip, *_RELEASING),
+    ).fetchall()
+    return GrantUsage(
+        {row["grant"]: row["total"] for row in rows},
+        {row["grant"]: row["recent"] for row in rows if row["recent"]},
+    )
+
+
 def live_uses(
     db: sqlite3.Connection, grants: Iterable[str], other_than: str | tuple[str, ...]
 ) -> dict[str, int]:
-    """Reserved or spent uses per grant, derived from operations (G-11).
-
-    `other_than` may name two operations: a resend and the send it replaces (W-38).
-    """
-    wanted = list(grants)
-    if not wanted:
-        return {}
-    skip = _but(other_than)
-    rows = db.execute(
-        f"SELECT grant, COUNT(*) AS n FROM operations WHERE grant IN ({_marks(wanted)}) "
-        f"AND handle NOT IN ({_marks(skip)}) AND state NOT IN ({_marks(_RELEASING)}) "
-        "AND state <> 'proposed' GROUP BY grant",
-        (*wanted, *skip, *_RELEASING),
-    ).fetchall()
-    return {row["grant"]: int(row["n"]) for row in rows}
-
-
-def recent_uses(
-    db: sqlite3.Connection,
-    grants: Iterable[str],
-    since: str,
-    other_than: str | tuple[str, ...],
-) -> dict[str, int]:
-    """Uses that count against `max_per_day`: dispatched since, or reserved and waiting."""
-    wanted = list(grants)
-    if not wanted:
-        return {}
-    skip = _but(other_than)
-    rows = db.execute(
-        f"SELECT grant, COUNT(*) AS n FROM operations WHERE grant IN ({_marks(wanted)}) "
-        f"AND handle NOT IN ({_marks(skip)}) AND state NOT IN ({_marks(_RELEASING)}) "
-        "AND state <> 'proposed' "
-        "AND (dispatched_at IS NULL OR dispatched_at >= ?) GROUP BY grant",
-        (*wanted, *skip, *_RELEASING, since),
-    ).fetchall()
-    return {row["grant"]: int(row["n"]) for row in rows}
+    return grant_usage(db, grants, "", other_than).reserved_or_spent
 
 
 def sends_since(db: sqlite3.Connection, source_id: str, since: str, other_than: str) -> int:

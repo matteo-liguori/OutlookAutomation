@@ -9,9 +9,7 @@ import logging
 import sqlite3
 from collections.abc import Callable, Iterable
 
-from pydantic import TypeAdapter
-
-from chamberlain.domain.intents import WriteIntent, attachments_of
+from chamberlain.domain.intents import attachments_of
 from chamberlain.domain.operations import (
     MAY_HAVE_HAPPENED_STATES,
     TERMINAL_STATES,
@@ -28,14 +26,13 @@ from chamberlain.writes.models import OperationRow, WritePolicy
 from chamberlain.writes.transitions import build_receipt, move_operation
 
 log = logging.getLogger("chamberlain.writes")
-_INTENT: TypeAdapter[WriteIntent] = TypeAdapter(WriteIntent)
 
 
 def release_holds(artifacts: ArtifactService | None, op: OperationRow) -> None:
     """Let go of the attachments an operation held (M-11)."""
     if artifacts is None or op.intent_json is None:
         return
-    intent = _INTENT.validate_json(op.intent_json)
+    intent = op.intent()
     for attachment in attachments_of(intent):
         try:
             artifacts.release_owner(attachment.artifact, op.handle)

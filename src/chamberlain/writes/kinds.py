@@ -7,7 +7,7 @@ from typing import Final
 
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarEvent
-from chamberlain.domain.capabilities import Capability, CapabilityName
+from chamberlain.domain.capabilities import Capability, CapabilityName, CapabilitySet
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import (
     CalendarCreate,
@@ -64,13 +64,10 @@ class Located:
     def from_refs(cls, refs: Mapping[str, str]) -> "Located":
         stable = dict(refs)
         guests = stable.pop(EVENT_ATTENDEES_REF, "")
-        return cls(
-            refs=stable_after_metadata(stable),
-            event_attendees=frozenset(a for a in guests.split(",") if a),
-            organiser=refs.get(EVENT_ORGANISER_REF),
-            when=refs.get(EVENT_WHEN_REF),
-            repeats=refs.get(EVENT_REPEATS_REF),
-        )
+        organiser = stable.pop(EVENT_ORGANISER_REF, None)
+        when = stable.pop(EVENT_WHEN_REF, None)
+        repeats = stable.pop(EVENT_REPEATS_REF, None)
+        return cls(stable, frozenset(filter(None, guests.split(","))), organiser, when, repeats)
 
     def to_refs(self) -> dict[str, str]:
         """The render/storage adapter for the established operation row format."""
@@ -81,12 +78,6 @@ class Located:
             EVENT_REPEATS_REF: self.repeats,
         }
         return {**self.refs, **{key: value for key, value in facts.items() if value}}
-
-
-def stable_after_metadata(refs: dict[str, str]) -> dict[str, str]:
-    for key in (EVENT_ORGANISER_REF, EVENT_WHEN_REF, EVENT_REPEATS_REF):
-        refs.pop(key, None)
-    return refs
 
 
 @dataclass(frozen=True)
@@ -121,16 +112,18 @@ KINDS: Final = {
 }
 
 
-def capability(ctx: Context, intent: WriteIntent) -> Capability:
-    spec = KINDS[intent.kind]
-    if spec.capability is None:
+def capabilities(ctx: Context, source: str, kind: IntentKind) -> CapabilitySet:
+    if kind is IntentKind.OUTSIDE_ACTION:
         raise _no_connector()
     port = (
-        ctx.sources.calendar_port(intent.source)
-        if spec.calendar
-        else ctx.sources.mail_port(intent.source)
+        ctx.sources.calendar_port(source) if KINDS[kind].calendar else ctx.sources.mail_port(source)
     )
-    found = port.capabilities(intent.source).get(spec.capability)
+    return port.capabilities(source)
+
+
+def require_write(caps: CapabilitySet, kind: IntentKind) -> Capability:
+    name = KINDS[kind].capability
+    found = caps.get(name) if name is not None else None
     if found is None:
         raise ChamberlainError(
             ErrorCode.CAPABILITY_UNSUPPORTED, "This source cannot do that write."
@@ -163,8 +156,7 @@ def locate(ctx: Context, intent: WriteIntent) -> Located:
                 field="event_ref",
             )
         return Located(refs, organiser=event.organiser)
-    scope: dict[str, str] = {}
-    _check_scope(intent, event, scope)
+    when, repeats = _check_scope(intent, event)
     if event.my_response is not None:
         raise ChamberlainError(
             ErrorCode.CAPABILITY_UNSUPPORTED,
@@ -175,8 +167,8 @@ def locate(ctx: Context, intent: WriteIntent) -> Located:
     return Located(
         refs,
         event_attendees=frozenset(event.fields.attendees),
-        when=scope.get(EVENT_WHEN_REF),
-        repeats=scope.get(EVENT_REPEATS_REF),
+        when=when,
+        repeats=repeats,
     )
 
 
@@ -211,14 +203,6 @@ def complete(
             completed["event"] = intent.event.model_copy(
                 update={"recurrence": rule.model_copy(update={"zone": policy.zone})}
             )
-    for attachment in attachments_of(intent):
-        info = ctx.services.artifacts.info(attachment.artifact)
-        if not info.live:
-            raise ChamberlainError(ErrorCode.ARTIFACT_EXPIRED, "An attachment has expired.")
-        if info.sha256 != attachment.sha256:
-            raise ChamberlainError(
-                ErrorCode.ARTIFACT_HASH_MISMATCH, "An attachment does not match its hash."
-            )
     return intent.model_copy(update=completed)
 
 
@@ -239,10 +223,10 @@ def _filing_marks_read(ctx: Context, move: MailMove, policy: WritePolicy, card: 
 def prepare_intent(
     ctx: Context, intent: WriteIntent, policy: WritePolicy, card: str | None = None
 ) -> tuple[WriteIntent, Located]:
-    cap = capability(ctx, intent)
+    caps = capabilities(ctx, intent.source, intent.kind)
+    cap = require_write(caps, intent.kind)
     located = locate(ctx, intent)
-    _require_invitations(ctx, intent, located)
-    _require_recurrence(ctx, intent)
+    _check_calendar_features(caps, intent, located)
     completed = complete(ctx, intent, located, policy, card)
     _check_limits(ctx, completed, cap)
     return completed, located
@@ -326,8 +310,8 @@ def _no_connector() -> ChamberlainError:
 
 
 def _check_scope(
-    intent: CalendarUpdate | CalendarDelete, event: CalendarEvent, located: dict[str, str]
-) -> None:
+    intent: CalendarUpdate | CalendarDelete, event: CalendarEvent
+) -> tuple[str | None, str | None]:
     """The scope must say which part of a repeating event is meant, and fit the handle (P-25).
 
     The fix names the handle to use, so the agent needs no standing knowledge of series.
@@ -348,7 +332,7 @@ def _check_scope(
                 fix="Create a repeating event with calendar.create instead.",
                 field="event",
             )
-        return
+        return None, None
     wanted = "series" if event.is_series else "occurrence"
     if scope != wanted:
         fix = (
@@ -376,58 +360,42 @@ def _check_scope(
             field="event",
         )
     if scope == "occurrence":
-        located[EVENT_WHEN_REF] = event.fields.start.isoformat()
-    elif event.fields.recurrence is not None:
-        located[EVENT_REPEATS_REF] = describe(event.fields.recurrence)
+        return event.fields.start.isoformat(), None
+    return None, describe(event.fields.recurrence) if event.fields.recurrence is not None else None
 
 
-def _require_recurrence(ctx: Context, intent: WriteIntent) -> None:
-    """A write that repeats needs a source that says it can; checked at propose (P-26)."""
-    if not isinstance(
-        intent, (CalendarCreate, CalendarUpdate, CalendarDelete, CalendarRespond)
-    ) or isinstance(intent, CalendarRespond):
+def _check_calendar_features(caps: CapabilitySet, intent: WriteIntent, located: Located) -> None:
+    if not isinstance(intent, CalendarCreate | CalendarUpdate | CalendarDelete | CalendarRespond):
         return
-    needed: CapabilityName | None = None
-    if isinstance(intent, CalendarCreate):
-        if intent.event.recurrence is not None:
-            needed = CapabilityName.CALENDAR_RECURRENCE
-    elif intent.scope == "occurrence":
-        needed = CapabilityName.CALENDAR_OCCURRENCE
-    elif intent.scope == "series":
-        needed = CapabilityName.CALENDAR_RECURRENCE
-    if needed is None:
-        return
-    caps = ctx.sources.calendar_port(intent.source).capabilities(intent.source)
-    if caps.get(needed) is None:
-        raise ChamberlainError(
-            ErrorCode.CAPABILITY_UNSUPPORTED,
-            "This calendar cannot write repeating events that way.",
-            fix="Use a calendar that can, or write a single event.",
-            detail=RECURRENCE_UNSUPPORTED,
-        )
-
-
-def _require_invitations(ctx: Context, intent: WriteIntent, located: Located) -> None:
-    """A write that reaches other people needs a source that can send invitations (P-2).
-
-    Checked at propose so the owner is never asked to confirm what cannot happen.
-    """
-    if not isinstance(intent, (CalendarCreate, CalendarUpdate, CalendarDelete, CalendarRespond)):
-        return
-    reaches = (
+    event = intent.event if isinstance(intent, CalendarCreate | CalendarUpdate) else None
+    invites = (
         isinstance(intent, CalendarRespond)
-        or bool(located.event_attendees)
-        or (isinstance(intent, CalendarCreate | CalendarUpdate) and bool(intent.event.attendees))
+        or located.event_attendees
+        or (event and event.attendees)
     )
-    if not reaches:
-        return
-    caps = ctx.sources.calendar_port(intent.source).capabilities(intent.source)
-    if caps.get(CapabilityName.CALENDAR_INVITE) is None:
+    if invites and caps.get(CapabilityName.CALENDAR_INVITE) is None:
         raise ChamberlainError(
             ErrorCode.CAPABILITY_UNSUPPORTED,
             "This calendar cannot send or answer invitations.",
             fix="Use a calendar that can, or write the event without other people.",
             detail=INVITATIONS_UNSUPPORTED,
+        )
+    scope = intent.scope if isinstance(intent, CalendarUpdate | CalendarDelete) else None
+    if isinstance(intent, CalendarCreate) and intent.event.recurrence is not None:
+        scope = "series"
+    if scope is None:
+        return
+    feature = (
+        CapabilityName.CALENDAR_OCCURRENCE
+        if scope == "occurrence"
+        else CapabilityName.CALENDAR_RECURRENCE
+    )
+    if caps.get(feature) is None:
+        raise ChamberlainError(
+            ErrorCode.CAPABILITY_UNSUPPORTED,
+            "This calendar cannot write repeating events that way.",
+            fix="Use a calendar that can, or write a single event.",
+            detail=RECURRENCE_UNSUPPORTED,
         )
 
 
@@ -438,7 +406,13 @@ def _check_limits(ctx: Context, intent: WriteIntent, capability: Capability) -> 
     if most is not None and len(recipients_of(intent)) > most:
         raise ChamberlainError(ErrorCode.REQUEST_TOO_LARGE, "Too many recipients.")
     biggest = limits.get("max_attachment_bytes")
-    if biggest is not None:
-        for attachment in attachments_of(intent):
-            if ctx.services.artifacts.info(attachment.artifact).size > biggest:
-                raise ChamberlainError(ErrorCode.REQUEST_TOO_LARGE, "An attachment is too big.")
+    for attachment in attachments_of(intent):
+        info = ctx.services.artifacts.info(attachment.artifact)
+        if not info.live:
+            raise ChamberlainError(ErrorCode.ARTIFACT_EXPIRED, "An attachment has expired.")
+        if info.sha256 != attachment.sha256:
+            raise ChamberlainError(
+                ErrorCode.ARTIFACT_HASH_MISMATCH, "An attachment does not match its hash."
+            )
+        if biggest is not None and info.size > biggest:
+            raise ChamberlainError(ErrorCode.REQUEST_TOO_LARGE, "An attachment is too big.")

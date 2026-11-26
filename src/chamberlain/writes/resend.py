@@ -6,19 +6,16 @@ import json
 import logging
 from datetime import timedelta
 
-from chamberlain.domain.grant_rules import format_ts, intent_hash
-from chamberlain.domain.handles import HandleKind, new_handle
+from chamberlain.domain.grant_rules import format_ts
 from chamberlain.domain.intents import MailSend, WriteIntent, attachments_of
-from chamberlain.domain.operations import OperationState
+from chamberlain.domain.operations import OperationState, ReconcileStatus
 from chamberlain.limits import UNCERTAIN_ABANDON_DAYS, UNCERTAIN_SEND_RECHECK_HOURS
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
 from chamberlain.writes import core, repo
-from chamberlain.writes.authorise import Deny
 from chamberlain.writes.models import OperationRow, Proposal
 from chamberlain.writes.recheck import look_in_recipient_mailboxes, sender_places
-from chamberlain.writes.transitions import build_receipt
 
 log = logging.getLogger("chamberlain.writes")
 
@@ -40,7 +37,6 @@ def supersede(engine: core.Engine, original: OperationRow, resend: str) -> None:
         OperationState.SUPERSEDED,
         actor=engine.actor(),
         summary=f"Done again as {resend}; the grant use passed to it.",
-        receipt_json=build_receipt(original, OperationState.SUPERSEDED, engine.now()),
     )
     if moved is None:
         raise ChamberlainError(
@@ -50,17 +46,13 @@ def supersede(engine: core.Engine, original: OperationRow, resend: str) -> None:
 
 def abandon(engine: core.Engine, op: OperationRow) -> OperationRow | None:
     """Close an uncertain operation nothing can resend. It frees no grant and claims nothing."""
-    moved = engine.transition(
+    return engine.transition(
         op,
         OperationState.ABANDONED,
         actor="system:tick",
         summary="Closed unsettled after "
         f"{UNCERTAIN_ABANDON_DAYS} days; nothing can send it again; no grant was freed.",
-        receipt_json=build_receipt(op, OperationState.ABANDONED, engine.now()),
     )
-    if moved is not None:
-        engine.release_attachments(moved)
-    return moved
 
 
 def recheck_sends(engine: core.Engine) -> int:
@@ -103,21 +95,20 @@ def look_for_send(
     if row.state is not OperationState.UNCERTAIN or reading is None:
         return row, None
     if not isinstance(intent, MailSend):
-        if reading.absent and not reading.queued:
+        if reading.status is ReconcileStatus.ABSENT:
             if record:
                 _record_recheck(engine, row, "missing", [f"the {row.kind.value} target"], actor)
             return row, "missing"
         return row, None
     looked = [sender_places(row.source_id)]
-    if reading.queued:
+    if reading.status is ReconcileStatus.QUEUED:
         outcome = "queued"
-    elif reading.absent:
+    elif reading.status is ReconcileStatus.ABSENT:
         nearby = look_in_recipient_mailboxes(engine.ctx, row, intent)
         if nearby.receipt is not None:
             done = engine.confirm_receipt(
                 row,
                 nearby.receipt,
-                expected_lease=False,
                 actor=actor,
                 summary="The re-check found it in a recipient's own mailbox.",
             )
@@ -179,30 +170,9 @@ def propose_redo(
     completed = (
         intent.model_copy(update={"message_id": None}) if isinstance(intent, MailSend) else intent
     )
-    sha = intent_hash(completed)
-    located = engine.located(old)
-    refs = located.to_refs()
-    handle = new_handle(HandleKind.OPERATION)
-    decision = engine.decide(completed, handle, sha, card or old.card, None, located, redo=old)
-    if isinstance(decision, Deny):
-        raise ChamberlainError(
-            decision.code,
-            "The permission behind the first send no longer covers sending it again.",
-            fix="Ask the owner, in chat, whether to send it again.",
-        )
-    if isinstance(completed, MailSend):
-        engine.scan_before_storing(completed, handle, refs, decision)
-    with transaction(engine.db):
-        existing = repo.resend_of(engine.db, old.handle)
-        if existing is not None:
-            return engine.proposal_for(existing, completed)
-        if engine.get(old.handle).state is not OperationState.UNCERTAIN:
-            raise ChamberlainError(
-                ErrorCode.OPERATION_ALREADY_SETTLED, "The write this one replaces just changed."
-            )
-        engine.insert_proposal(completed, handle, sha, card or old.card, refs, redo_of=old.handle)
-    engine.hold_inputs(completed, handle, evidence)
-    return engine.proposal_for(engine.get(handle), completed)
+    return engine.propose_completed(
+        completed, engine.located(old), card or old.card, evidence, redo=old
+    )
 
 
 def _resendable(engine: core.Engine, old: OperationRow) -> WriteIntent:
