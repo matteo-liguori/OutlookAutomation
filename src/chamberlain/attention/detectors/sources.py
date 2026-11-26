@@ -3,8 +3,7 @@
 from collections import Counter
 from collections.abc import Iterable
 
-from chamberlain.attention.models import DetectorInput, EventAttrs, EventDraft
-from chamberlain.attention.tuning import PRIORITY
+from chamberlain.attention.models import DetectorInput, EventAttrs, EventDraft, draft
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.events import EventKind
 from chamberlain.limits import SUMMARY_MAX
@@ -21,22 +20,21 @@ OLDER_DECLINED = "older_mail_declined"
 
 
 def _held_events(data: DetectorInput) -> Iterable[EventDraft]:
-    for held in data.mail_held:
+    for source, held in data.mail_held:
         span = f"{_span(held.start)} to {_span(held.end)} UTC"
         size = "" if held.estimate is None else f", about {held.estimate} messages"
         declined = held.state == "declined"
         if held.state == "asking":
-            text = f"{held.source}: mail from {span}{size} was not read. Ask the owner."
+            text = f"{source}: mail from {span}{size} was not read. Ask the owner."
         elif held.state == "approved":
-            text = f"{held.source}: reading older mail; {span} is not covered yet."
+            text = f"{source}: reading older mail; {span} is not covered yet."
         else:
-            text = f"{held.source}: mail from {span} was left unread, as the owner said."
-        yield EventDraft(
+            text = f"{source}: mail from {span} was left unread, as the owner said."
+        yield draft(
             EventKind.SOURCE_STALE,
-            held.source,
+            source,
             text,
-            PRIORITY[EventKind.SOURCE_STALE],
-            EventAttrs(source=held.source, reason=OLDER_DECLINED if declined else OLDER),
+            EventAttrs(source=source, reason=OLDER_DECLINED if declined else OLDER),
             discriminator=f"{'declined' if declined else 'older'}:{held.end}",
         )
 
@@ -49,12 +47,11 @@ def _sync_events(data: DetectorInput) -> Iterable[EventDraft]:
     for gap in data.sync_gaps:
         counts = Counter(gap.roles)
         what = ", ".join(f"{n} {role}" for role, n in sorted(counts.items()))
-        yield EventDraft(
+        yield draft(
             EventKind.SOURCE_STALE,
             gap.source,
             f"{gap.source}: {len(gap.roles)} folder(s) did not sync ({what}); "
             "mail there may be missing or late."[:SUMMARY_MAX],
-            PRIORITY[EventKind.SOURCE_STALE],
             EventAttrs(source=gap.source, reason=SYNC),
             discriminator=SYNC,
         )
@@ -78,11 +75,10 @@ def source_stale(data: DetectorInput) -> Iterable[EventDraft]:
                 f"Source {source.id}: mail from {_span(gap.start)} to {_span(gap.end)} UTC "
                 "is not covered yet."
             )
-        yield EventDraft(
+        yield draft(
             EventKind.SOURCE_STALE,
             source.id,
             text,
-            PRIORITY[EventKind.SOURCE_STALE],
             EventAttrs(source=source.id, health=source.state),
         )
 
@@ -90,10 +86,9 @@ def source_stale(data: DetectorInput) -> Iterable[EventDraft]:
 def source_sign_in_needed(data: DetectorInput) -> Iterable[EventDraft]:
     for source in data.sources:
         if source.state is HealthState.SIGN_IN_NEEDED:
-            yield EventDraft(
+            yield draft(
                 EventKind.SOURCE_SIGN_IN_NEEDED,
                 source.id,
                 f"Source {source.id} needs the user to sign in.",
-                PRIORITY[EventKind.SOURCE_SIGN_IN_NEEDED],
                 EventAttrs(source=source.id, health=source.state),
             )

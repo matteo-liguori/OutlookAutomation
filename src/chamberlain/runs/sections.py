@@ -8,11 +8,11 @@ then left out). All times are shown in the schedule's own zone.
 """
 
 from collections import defaultdict
-from datetime import datetime
 from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
 from chamberlain.domain.operations import OUTSIDE_STATE_WORDS
+from chamberlain.domain.timefmt import parse
 from chamberlain.runs import appointments
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs.models import RunRow
@@ -34,7 +34,7 @@ def when(value: str | None, zone: ZoneInfo) -> str:
     """`Mon 05 Jan 09:00`, or `never` for a missing time."""
     if not value:
         return "never"
-    moment = datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(zone)
+    moment = parse(value).astimezone(zone)
     return moment.strftime("%a %d %b %H:%M")
 
 
@@ -100,7 +100,7 @@ def important_appointments(facts: Facts) -> str:
     lines: list[str] = []
     today = facts.ctx.clock.now().astimezone(facts.zone).date()
     for item in appointments.upcoming(facts.ctx):
-        start = datetime.fromisoformat(item.start.replace("Z", "+00:00")).astimezone(facts.zone)
+        start = parse(item.start).astimezone(facts.zone)
         days = (start.date() - today).days
         away = "today" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
         state = (

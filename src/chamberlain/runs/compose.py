@@ -15,7 +15,7 @@ callouts (red access problem, orange important appointment) come from the layout
 from the assistant's text, so nothing the assistant or an email says can pose as one.
 """
 
-from datetime import datetime
+from datetime import date
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
@@ -64,7 +64,7 @@ def zone_of(ctx: Context, run: RunRow) -> ZoneInfo:
 
 
 def _title(template: ReportTemplate, run: RunRow, zone: ZoneInfo) -> str:
-    day = datetime.strptime(run.day, "%Y-%m-%d")  # noqa: DTZ007 (a date only)
+    day = date.fromisoformat(run.day)
     return (
         template.title.replace("{date}", day.strftime("%d/%m/%Y"))
         .replace("{timezone}", zone.key)

@@ -8,6 +8,7 @@ so a missed wake-up shows as a missed run rather than silently disappearing.
 import re
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from chamberlain.app.context import Context
@@ -58,6 +59,11 @@ def validate(spec: ScheduleSpec) -> ScheduleSpec:
     except (ZoneInfoNotFoundError, ValueError, OSError):
         raise _invalid("That time zone is not known.", "zone") from None
     return spec
+
+
+def due_instant(at_local: str, day: str, zone: ZoneInfo) -> datetime:
+    """The UTC instant a pass at `at_local` on local `day` (YYYY-MM-DD) comes due."""
+    return datetime.fromisoformat(f"{day}T{at_local}").replace(tzinfo=zone).astimezone(UTC)
 
 
 def _weekdays_text(days: Iterable[int]) -> str:

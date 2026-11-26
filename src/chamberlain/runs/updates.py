@@ -16,7 +16,7 @@ from pathlib import Path
 
 from chamberlain import __version__
 from chamberlain.app.context import Context
-from chamberlain.domain.timefmt import ts
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.runs.tuning import TAG_PREFIX, UPDATE_CHECK_EVERY, UPDATE_RETRY_AFTER
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
@@ -125,7 +125,7 @@ def _due(ctx: Context, now: datetime, force: bool) -> bool:
     last = get_state(ctx.db, "runs.update_checked_at")
     if force or last is None:
         return True
-    return now - datetime.fromisoformat(last.replace("Z", "+00:00")) >= UPDATE_CHECK_EVERY
+    return now - parse(last) >= UPDATE_CHECK_EVERY
 
 
 def check_for_update(

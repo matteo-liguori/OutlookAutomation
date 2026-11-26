@@ -11,18 +11,20 @@ import hashlib
 from collections.abc import Iterable
 from datetime import datetime
 
-from chamberlain.attention.models import CalendarSlot, DetectorInput, EventAttrs, EventDraft
-from chamberlain.attention.tuning import CONFLICT_MAX, PRIORITY
+from chamberlain.attention.models import (
+    CalendarSlot,
+    DetectorInput,
+    EventAttrs,
+    EventDraft,
+    draft,
+)
+from chamberlain.attention.tuning import CONFLICT_MAX
 from chamberlain.domain.events import EventKind
 from chamberlain.domain.same_event import same_event
 from chamberlain.domain.timefmt import ts
 from chamberlain.limits import SUMMARY_MAX
 
 NOTE_PREFIX = "Note from the user: "
-
-
-def _stored(moment: datetime) -> str:
-    return ts(moment)
 
 
 def _one_each(slots: Iterable[CalendarSlot]) -> list[CalendarSlot]:
@@ -79,20 +81,20 @@ def calendar_conflict(data: DetectorInput) -> Iterable[EventDraft]:
             if possible
             else ""
         )
-        yield EventDraft(
+        yield draft(
             EventKind.CALENDAR_CONFLICT,
             None,
             (
                 f"{lead} on {begins:%Y-%m-%d} from {begins:%H:%M} to {ends:%H:%M} UTC "
                 f"({where}){tail}."
             )[:SUMMARY_MAX],
-            PRIORITY[EventKind.CALENDAR_CONFLICT] - (20 if possible else 0),
             EventAttrs(
                 source=first.source,
-                since=_stored(begins),
-                until=_stored(ends),
+                since=ts(begins),
+                until=ts(ends),
                 reason="possible" if possible else None,
             ),
+            bump=-20 if possible else 0,
             discriminator=hashlib.sha256(f"{key}|{second.start}".encode()).hexdigest()[:12],
         )
 
@@ -100,11 +102,10 @@ def calendar_conflict(data: DetectorInput) -> Iterable[EventDraft]:
 def user_note(data: DetectorInput) -> Iterable[EventDraft]:
     """One event per open note; the note is the person's own words, shown as written."""
     for note in data.notes:
-        yield EventDraft(
+        yield draft(
             EventKind.USER_NOTE,
             None,
             (NOTE_PREFIX + note.text)[:SUMMARY_MAX],
-            PRIORITY[EventKind.USER_NOTE],
             EventAttrs(),
             discriminator=str(note.id),
         )
@@ -112,11 +113,10 @@ def user_note(data: DetectorInput) -> Iterable[EventDraft]:
 
 def update_available(data: DetectorInput) -> Iterable[EventDraft]:
     if data.update_tag:
-        yield EventDraft(
+        yield draft(
             EventKind.UPDATE_AVAILABLE,
             None,
             f"A newer release, {data.update_tag}, is available. Offer to tell the user.",
-            PRIORITY[EventKind.UPDATE_AVAILABLE],
             EventAttrs(),
             discriminator=data.update_tag,
         )
@@ -130,12 +130,11 @@ def schedule_pass_due(data: DetectorInput) -> Iterable[EventDraft]:
     running = [run for run in data.runs_due if run.state == "running"]
     waiting = [run for run in data.runs_due if run.state == "due"][:1]
     for run in running or waiting:
-        yield EventDraft(
+        yield draft(
             EventKind.SCHEDULE_PASS_DUE,
             run.handle,
             f"The {run.kind} pass {run.schedule} for {run.day} is due. "
             f"Keep its report under {run.handle}.",
-            PRIORITY[EventKind.SCHEDULE_PASS_DUE],
             EventAttrs(reason=run.kind),
         )
 
@@ -144,12 +143,11 @@ def report_due(data: DetectorInput) -> Iterable[EventDraft]:
     """The last item of a pass being worked: its report. It ends when a report is kept."""
     for run in data.runs_due:
         if run.state == "running" and not run.has_report and run.outline is not None:
-            yield EventDraft(
+            yield draft(
                 EventKind.REPORT_DUE,
                 run.outline,
                 f"Last step of the {run.schedule} pass for {run.day}: write its report and "
                 f"keep it under {run.handle}. Open this item for what to write.",
-                PRIORITY[EventKind.REPORT_DUE],
                 EventAttrs(reason=run.kind),
             )
 
@@ -160,11 +158,10 @@ def harness_review(data: DetectorInput) -> Iterable[EventDraft]:
     It comes after every pass item, so it never delays the work or the report.
     """
     for review in data.reviews:
-        yield EventDraft(
+        yield draft(
             EventKind.HARNESS_REVIEW,
             None,
             "Review how the harness is being used. Open this item for the list to read.",
-            PRIORITY[EventKind.HARNESS_REVIEW],
             EventAttrs(),
             discriminator=str(review.id),
         )

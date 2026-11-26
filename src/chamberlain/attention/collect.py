@@ -14,9 +14,6 @@ from chamberlain.attention import repo
 from chamberlain.attention.models import (
     CalendarSlot,
     DetectorInput,
-    HeldMail,
-    MailGap,
-    OpenReview,
     SourceSnapshot,
     SyncGap,
 )
@@ -90,7 +87,7 @@ def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> set[str]:
     suggester = Suggester(ctx)
     for source in sorted(ctx.sources.mail):
         try:
-            if not scan(ctx, source, states.get(source), suggester).complete:
+            if not scan(ctx, source, states.get(source), suggester):
                 unreadable.add(source)
         except Exception:
             log_failure(log, "mail scan failed for %s", source)
@@ -199,12 +196,9 @@ def collect(ctx: Context) -> Collected:
         now=ctx.clock.now(),
         sources=snapshots,
         mail=tuple(repo.mail_batches(ctx.db)),
-        mail_gaps=tuple(MailGap(*g) for g in repo.mail_gaps(ctx.db)),
+        mail_gaps=tuple(repo.mail_gaps(ctx.db)),
         sync_gaps=_sync_gaps(ctx),
-        mail_held=tuple(
-            HeldMail(source, h.start, h.end, h.state, h.estimate)
-            for source, h in repo.mail_held(ctx.db)
-        ),
+        mail_held=tuple(repo.mail_held(ctx.db)),
         actions=tuple(memory_repo.due_actions(ctx.db, now)),
         cards=tuple(memory_repo.cards_needing_review(ctx.db, now)),
         open_cards=tuple(memory_repo.open_card_summaries(ctx.db)),
@@ -226,6 +220,6 @@ def collect(ctx: Context) -> Collected:
         notes=tuple(runs_repo.open_notes(ctx.db, stamp_before(ctx, NOTE_OPEN))),
         calendar_slots=slots,
         update_tag=runs_repo.update_tag(ctx.db),
-        reviews=tuple(OpenReview(r.id, r.new_patterns) for r in review_repo.open_rounds(ctx.db)),
+        reviews=tuple(review_repo.open_rounds(ctx.db)),
     )
     return Collected(data, frozenset(unreadable), frozenset(unreadable_calendars))

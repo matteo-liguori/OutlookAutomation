@@ -8,12 +8,10 @@ of the actor, never the text (G-21).
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import sha256_text
 from chamberlain.runs import repo
-from chamberlain.runs.tuning import NOTE_MAX_CHARS
+from chamberlain.runs.tuning import NOTE_MAX_CHARS, VIEWER_ACTOR
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
-
-ACTOR = "human:viewer"
 
 
 def clean_note(text: str) -> str:
@@ -34,7 +32,7 @@ def add_note(ctx: Context, text: str) -> int:
     with transaction(ctx.db):
         number = repo.insert_note(ctx.db, note, stamp(ctx.clock))
         ctx.services.audit.append(
-            actor=ACTOR,
+            actor=VIEWER_ACTOR,
             kind="user.note",
             subject=None,
             summary="The person left a note for the assistant.",
@@ -49,7 +47,7 @@ def withdraw_note(ctx: Context, number: int) -> None:
         if repo.set_note_state(ctx.db, number, "withdrawn") == 0:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "There is no such note.")
         ctx.services.audit.append(
-            actor=ACTOR,
+            actor=VIEWER_ACTOR,
             kind="user.note",
             subject=None,
             summary="The person withdrew a note.",

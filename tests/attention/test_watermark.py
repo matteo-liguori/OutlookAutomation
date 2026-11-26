@@ -107,7 +107,7 @@ def run_tick(ctx: Context, clock: ManualClock) -> None:
 def test_a20_a_failed_scan_commit_keeps_the_frontier_and_leaves_no_refs(
     ctx: Context, fake: FakeProvider, seed_sources: None, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    assert watermark.scan(ctx, SOURCE, HealthState.OK, Suggester(ctx)).complete
+    assert watermark.scan(ctx, SOURCE, HealthState.OK, Suggester(ctx))
     before = repo.watermark(ctx.db, SOURCE)
     fake.mail.add_message(SOURCE, internet_message_id="<scan-rollback@x>")
 
@@ -122,7 +122,7 @@ def test_a20_a_failed_scan_commit_keeps_the_frontier_and_leaves_no_refs(
     assert keys_seen(ctx) == {}
     assert ctx.db.execute("SELECT count(*) FROM refs").fetchone()[0] == 0
 
-    assert watermark.scan(ctx, SOURCE, HealthState.OK, Suggester(ctx)).complete
+    assert watermark.scan(ctx, SOURCE, HealthState.OK, Suggester(ctx))
     assert keys_seen(ctx) == {"scan-rollback@x": False}
 
 

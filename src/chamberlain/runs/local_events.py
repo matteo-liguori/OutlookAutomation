@@ -16,11 +16,11 @@ from chamberlain.domain.canonical import sha256_text
 from chamberlain.domain.timefmt import ts
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs.report_repo import LocalEventRow
+from chamberlain.runs.tuning import VIEWER_ACTOR
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
 
-ACTOR = "human:viewer"
 TITLE_MAX = 180
 LOCATION_MAX = 600
 KEEP_DAYS = 365
@@ -66,10 +66,6 @@ def _day(value: str, field: str) -> date:
         raise _invalid("A date is YYYY-MM-DD.", field) from None
 
 
-def _stored(moment: datetime) -> str:
-    return ts(moment)
-
-
 def build(payload: dict[str, Any], zone: ZoneInfo) -> LocalEventRow:
     """Check a request and make the row. All-day events give the first day and the day after the
     last (end exclusive); timed events give wall times in the owner's zone."""
@@ -99,8 +95,8 @@ def build(payload: dict[str, Any], zone: ZoneInfo) -> LocalEventRow:
         title,
         location,
         all_day,
-        _stored(start),
-        _stored(end),
+        ts(start),
+        ts(end),
         start_day.isoformat(),
         end_day.isoformat(),
     )
@@ -122,7 +118,7 @@ def add(ctx: Context, payload: dict[str, Any], zone_name: str) -> LocalEventRow:
             return existing
         repo.insert_local_event(ctx.db, event, stamp(ctx.clock))
         ctx.services.audit.append(
-            actor=ACTOR,
+            actor=VIEWER_ACTOR,
             kind="local_event.added",
             subject=event.id,
             summary="The owner added a local calendar event.",
@@ -136,7 +132,7 @@ def remove(ctx: Context, event_id: str) -> None:
         if repo.delete_local_event(ctx.db, event_id) == 0:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "There is no such event.")
         ctx.services.audit.append(
-            actor=ACTOR,
+            actor=VIEWER_ACTOR,
             kind="local_event.removed",
             subject=event_id,
             summary="The owner removed a local calendar event.",
