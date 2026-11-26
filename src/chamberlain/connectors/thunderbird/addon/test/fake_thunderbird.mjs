@@ -408,7 +408,12 @@ export function createWorld() {
     if (!c || c.disabled) throw new Error("not_found");
     return c;
   };
-  const rawItem = (id, text, recurrenceId = null) => ({ id, recurrence_id: recurrenceId, icalendar: text, invited: invitedText(text) });
+  const rawItem = (c, id, text, recurrenceId = null) => {
+    const own = c.type === "owl" && c.organizerId && field(text, "CLASS") === "PRIVATE" &&
+      field(text, "ORGANIZER")?.toLowerCase() === c.organizerId.toLowerCase() && !field(text, "ATTENDEE");
+    return { id, recurrence_id: recurrenceId, icalendar: text, invited: invitedText(text) && !own,
+      own_appointment: !!own };
+  };
   world.addCalendar = (id, { name = "Calendar", type = "owl", readOnly = false, disabled = false } = {}) => {
     const c = { id, name, type, readOnly, disabled, items: new Map(), occurrences: [] };
     world.calendars.set(id, c);
@@ -427,30 +432,33 @@ export function createWorld() {
       const c = calendarOf(calendarId);
       const inside = (text) => stamp(field(text, "DTSTART")) <= endMs && (stamp(field(text, "DTEND")) || stamp(field(text, "DTSTART"))) >= startMs;
       const found = [];
-      for (const [id, text] of c.items) if (!c.occurrences.some((o) => o.id === id) && inside(text)) found.push(rawItem(id, text));
-      for (const o of c.occurrences) if (inside(o.icalendar)) found.push(rawItem(o.id, o.icalendar, o.recurrence_id));
+      for (const [id, text] of c.items) if (!c.occurrences.some((o) => o.id === id) && inside(text)) found.push(rawItem(c, id, text));
+      for (const o of c.occurrences) if (inside(o.icalendar)) found.push(rawItem(c, o.id, o.icalendar, o.recurrence_id));
       found.sort((a, b) => stamp(field(a.icalendar, "DTSTART")) - stamp(field(b.icalendar, "DTSTART")) || a.id.localeCompare(b.id));
       return { items: found.slice(0, limit), truncated: found.length > limit };
     },
     getEvent: async (calendarId, eventId) => {
-      const text = calendarOf(calendarId).items.get(eventId);
-      return text === undefined ? null : rawItem(eventId, text);
+      const c = calendarOf(calendarId);
+      const text = c.items.get(eventId);
+      return text === undefined ? null : rawItem(c, eventId, text);
     },
-    inspectEvent: async (text) => {
+    inspectEvent: async (text, calendarId) => {
       const events = (unfold(text).match(/^BEGIN:VEVENT/gim) ?? []).length;
       if (events !== 1) return { ok: false, error: "one_master_event_required" };
       if (field(text, "RECURRENCE-ID")) return { ok: false, error: "master_event_required" };
       const start = stamp(field(text, "DTSTART"));
       const end = stamp(field(text, "DTEND"));
       if (!field(text, "UID") || !(start < end)) return { ok: false, error: "invalid_event_range" };
-      return { ok: true, id: field(text, "UID"), invited: invitedText(text) };
+      return { ok: true, ...rawItem(calendarOf(calendarId), field(text, "UID"), text) };
     },
     addEvent: async (calendarId, text) => {
       const c = calendarOf(calendarId);
       world.calendarLog.push("add");
       await holdCalendar();
-      c.items.set(field(text, "UID"), text);
-      return {};
+      const id = world.faults.generatedCalendarId ?? field(text, "UID");
+      const saved = text.replace(/^UID:.*$/m, `UID:${id}`);
+      c.items.set(id, saved);
+      return rawItem(c, id, saved);
     },
     modifyEvent: async (calendarId, eventId, text) => {
       const c = calendarOf(calendarId);

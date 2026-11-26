@@ -28,7 +28,10 @@
         "name": "inspectEvent",
         "type": "function",
         "async": true,
-        "parameters": [{ "name": "icalendar", "type": "string" }]
+        "parameters": [
+          { "name": "icalendar", "type": "string" },
+          { "name": "calendarId", "type": "string" }
+        ]
       },
       {
         "name": "addEvent",

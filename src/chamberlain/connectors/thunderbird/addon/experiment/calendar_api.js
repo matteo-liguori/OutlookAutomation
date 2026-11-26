@@ -31,12 +31,23 @@ function recurrenceText(rid) {
   return `${pad(d.getUTCFullYear(), 4)}${pad(d.getUTCMonth() + 1)}${pad(d.getUTCDate())}T${pad(d.getUTCHours())}${pad(d.getUTCMinutes())}${pad(d.getUTCSeconds())}Z`;
 }
 
-function itemOf(e) {
+function inviteStatus(e, calendar) {
+  const attendees = e.getAttendees().length > 0;
+  if (attendees || !e.organizer) return { invited: attendees, own_appointment: false };
+  const organizer = e.organizer?.id?.toLowerCase();
+  const ownId = String(calendar.getProperty("organizerId") ?? "").toLowerCase();
+  const own = calendar.type === "owl" && !!organizer && organizer === ownId &&
+    String(e.getProperty("CLASS") ?? "").toUpperCase() === "PRIVATE" && !e.getProperty("X-MOZ-INVITED-ATTENDEE") &&
+    !cal.itip.isInvitation(e);
+  return { invited: !own, own_appointment: own };
+}
+
+function itemOf(e, calendar) {
   return {
     id: e.id,
     recurrence_id: recurrenceText(e.recurrenceId),
     icalendar: e.icalString,
-    invited: e.getAttendees().length > 0 || !!e.organizer,
+    ...inviteStatus(e, calendar),
   };
 }
 
@@ -77,23 +88,25 @@ var chamberlainCalendar = class extends ExtensionCommon.ExtensionAPI {
             calendar.getItems(Ci.calICalendar.ITEM_FILTER_TYPE_EVENT | Ci.calICalendar.ITEM_FILTER_CLASS_OCCURRENCES, limit + 1, start, end)
           );
           found.sort((a, b) => a.startDate.compare(b.startDate) || a.id.localeCompare(b.id));
-          return { items: found.slice(0, limit).map(itemOf), truncated: found.length > limit };
+          return { items: found.slice(0, limit).map((e) => itemOf(e, calendar)), truncated: found.length > limit };
         },
         async getEvent(calendarId, eventId) {
-          const found = await calendarOf(calendarId).getItem(eventId);
-          return found ? itemOf(found) : null;
+          const calendar = calendarOf(calendarId);
+          const found = await calendar.getItem(eventId);
+          return found ? itemOf(found, calendar) : null;
         },
-        async inspectEvent(icalendar) {
+        async inspectEvent(icalendar, calendarId) {
           const parsed = parseOne(icalendar);
           if (parsed.error) return { ok: false, error: parsed.error };
           const e = parsed.event;
-          return { ok: true, id: e.id, invited: e.getAttendees().length > 0 || !!e.organizer };
+          return { ok: true, id: e.id, ...inviteStatus(e, calendarOf(calendarId)) };
         },
         async addEvent(calendarId, icalendar) {
           const parsed = parseOne(icalendar);
           need(parsed.event, "bad_request");
-          await calendarOf(calendarId).addItem(parsed.event);
-          return {};
+          const calendar = calendarOf(calendarId);
+          const created = await calendar.addItem(parsed.event);
+          return created ? itemOf(created, calendar) : null;
         },
         async modifyEvent(calendarId, eventId, icalendar) {
           const calendar = calendarOf(calendarId);

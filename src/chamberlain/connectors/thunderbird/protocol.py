@@ -1,4 +1,4 @@
-"""Bridge protocol v2: every message as a Pydantic model.
+"""Bridge protocol v3: every message as a Pydantic model.
 
 Contract: docs/contracts/12-bridge-v2.md. The JSON Schema these models emit
 is the source of the add-on's generated TypeScript types (`typegen.py`).
@@ -24,7 +24,7 @@ from pydantic import (
 from chamberlain.schema.base import Model
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 3
 
 Id = Annotated[str, StringConstraints(pattern=r"^[A-Za-z0-9_-]{8,64}$")]
 """A request or handshake ID, unique per message (contract section 3)."""
@@ -33,89 +33,32 @@ Text = Annotated[str, Field(max_length=200_000)]
 Short = Annotated[str, Field(max_length=2_000)]
 
 
-class Capability(StrEnum):
-    """What the add-on says it can do; the client requires all of them."""
-
-    READ = "read"
-    SEARCH = "search"
-    ATTACHMENTS = "attachments"
-    SEND = "send"
-    DRAFT = "draft"
-    MOVE = "move"
-    TRASH = "trash"
-    MARK_READ = "mark_read"
-    CONTACTS = "contacts"
-    REFRESH = "refresh"
-    CALENDAR = "calendar"
-    """Optional: only a client that uses the calendar commands requires it."""
-
-
-OPTIONAL_CAPABILITIES: frozenset[Capability] = frozenset({Capability.CALENDAR})
-REQUIRED_CAPABILITIES: frozenset[Capability] = frozenset(Capability) - OPTIONAL_CAPABILITIES
-
-
 class Command(StrEnum):
     """The closed command list. Nothing else is ever executed (section 5)."""
 
     STATUS = "status"
-    ACCOUNTS = "accounts"
     FOLDERS = "folders"
     QUERY = "query"
     READ = "read"
     ATTACHMENT = "attachment"
-    RESOLVE = "resolve"
     REFRESH = "refresh"
     CONTACTS = "contacts"
     CONTACT_READ = "contact_read"
-    SEND = "send"
-    DRAFT_SAVE = "draft_save"
-    DRAFT_UPDATE = "draft_update"
+    COMPOSE = "compose"
+    CHANGE = "change"
     DRAFT_DISCARD = "draft_discard"
-    MOVE = "move"
-    TRASH = "trash"
-    MOVE_MANY = "move_many"
-    MARK_READ = "mark_read"
-    RECONCILE_SEND = "reconcile_send"
-    RECONCILE_DRAFT_SAVE = "reconcile_draft_save"
-    RECONCILE_DRAFT_UPDATE = "reconcile_draft_update"
-    RECONCILE_DRAFT_DISCARD = "reconcile_draft_discard"
-    RECONCILE_MOVE = "reconcile_move"
-    RECONCILE_TRASH = "reconcile_trash"
-    RECONCILE_MOVE_MANY = "reconcile_move_many"
-    RECONCILE_MARK_READ = "reconcile_mark_read"
+    COPIES = "copies"
     CALENDAR_LIST = "calendar_list"
     CALENDAR_QUERY = "calendar_query"
     CALENDAR_READ = "calendar_read"
-    CALENDAR_CREATE = "calendar_create"
-    CALENDAR_UPDATE = "calendar_update"
-    CALENDAR_DELETE = "calendar_delete"
+    CALENDAR_WRITE = "calendar_write"
 
 
-CALENDAR_COMMANDS: frozenset[Command] = frozenset(
-    {
-        Command.CALENDAR_LIST,
-        Command.CALENDAR_QUERY,
-        Command.CALENDAR_READ,
-        Command.CALENDAR_CREATE,
-        Command.CALENDAR_UPDATE,
-        Command.CALENDAR_DELETE,
-    }
+CALENDAR_COMMANDS = frozenset(
+    {Command.CALENDAR_LIST, Command.CALENDAR_QUERY, Command.CALENDAR_READ, Command.CALENDAR_WRITE}
 )
-
-WRITE_COMMANDS: frozenset[Command] = frozenset(
-    {
-        Command.SEND,
-        Command.DRAFT_SAVE,
-        Command.DRAFT_UPDATE,
-        Command.DRAFT_DISCARD,
-        Command.MOVE,
-        Command.TRASH,
-        Command.MOVE_MANY,
-        Command.MARK_READ,
-        Command.CALENDAR_CREATE,
-        Command.CALENDAR_UPDATE,
-        Command.CALENDAR_DELETE,
-    }
+WRITE_COMMANDS = frozenset(
+    {Command.COMPOSE, Command.CHANGE, Command.DRAFT_DISCARD, Command.CALENDAR_WRITE}
 )
 
 
@@ -149,7 +92,7 @@ class AddonHello(Model):
     id: Id
     addon_version: Annotated[str, Field(max_length=40)]
     browser_version: Annotated[str, Field(max_length=40)] = ""
-    capabilities: tuple[str, ...] = ()
+    calendar_available: bool
 
 
 class ClientHello(Model):
@@ -160,7 +103,6 @@ class ClientHello(Model):
     id: Id
     token: Annotated[str, Field(max_length=200)]
     client_version: Annotated[str, Field(max_length=40)] = ""
-    require: tuple[str, ...] = ()
 
 
 class Welcome(Model):
@@ -171,13 +113,12 @@ class Welcome(Model):
     id: Id
     host_version: Annotated[str, Field(max_length=40)]
     addon_version: Annotated[str, Field(max_length=40)]
-    capabilities: tuple[str, ...]
+    calendar_available: bool
 
 
 class RefusalCode(StrEnum):
     UNAUTHENTICATED = "unauthenticated"
     VERSION_MISMATCH = "version_mismatch"
-    CAPABILITY_MISSING = "capability_missing"
     ADDON_NOT_CONNECTED = "addon_not_connected"
     BAD_HELLO = "bad_hello"
     DUPLICATE_ID = "duplicate_id"
@@ -221,7 +162,6 @@ class BridgeError(Model):
     message: Annotated[str, Field(max_length=500)] = ""
     mutation: Literal["none", "possible"] = "none"
     """`none` only when the add-on proves no mutating call was issued."""
-    retryable: bool = False
 
 
 class ResponseFrame(Model):
@@ -348,33 +288,7 @@ class StatusResult(Model):
     addon_version: str
     browser_version: str
     write_busy: bool
-    capabilities: tuple[str, ...]
-
-
-class AccountsArgs(Model):
-    pass
-
-
-class IdentityInfo(Model):
-    id: str
-    email: str
-    name: str = ""
-
-
-class AccountInfo(Model):
-    id: str
-    type: str
-    name: str
-    identities: tuple[IdentityInfo, ...] = ()
-
-
-class AccountsResult(Model):
-    accounts: tuple[AccountInfo, ...]
-
-
-class FoldersArgs(AccountArgs):
-    include_outbox: bool = False
-    """Also list the local Outbox folders (they belong to the local account)."""
+    calendar_available: bool
 
 
 class FoldersResult(Model):
@@ -384,9 +298,7 @@ class FoldersResult(Model):
 class QueryArgs(AccountArgs):
     folder_id: str | None = None
     internet_message_id: str | None = None
-    text: Annotated[str, Field(max_length=500)] | None = None
     subject: Annotated[str, Field(max_length=500)] | None = None
-    subject_contains: bool = False
     words: Annotated[str, Field(max_length=500)] | None = None
     """Every word must appear in the subject, the sender or the recipients (any case)."""
     unread: bool | None = None
@@ -395,8 +307,6 @@ class QueryArgs(AccountArgs):
     limit: Annotated[int, Field(ge=1, le=200)] = 25
     after: QueryCursor | None = None
     max_scan: Annotated[int, Field(ge=1, le=5000)] = 2000
-    own_only: bool = False
-    """Only messages whose author is `mailbox`; required for a local Outbox."""
 
 
 class QueryResult(Model):
@@ -439,20 +349,11 @@ class AttachmentArgs(AccountArgs):
 
 class AttachmentResult(Model):
     name: str
+    media_type: str
     size: int
     sha256: Hex64
     chunks: int
     read_state_preserved: bool
-
-
-class ResolveArgs(AccountArgs):
-    folder_id: str
-    internet_message_id: str
-
-
-class ResolveResult(Model):
-    messages: tuple[Header, ...]
-    complete: bool
 
 
 class RefreshArgs(AccountArgs):
@@ -506,6 +407,7 @@ class ContactReadResult(Model):
 
 
 class ComposeArgs(AccountArgs):
+    mode: Literal["send", "draft_save", "draft_update"]
     to: tuple[str, ...] = ()
     cc: tuple[str, ...] = ()
     bcc: tuple[str, ...] = ()
@@ -521,34 +423,24 @@ class ComposeArgs(AccountArgs):
     display_only: bool = False
     """Leave the saved draft's composer open (drafts only)."""
 
+    draft: MessageRef | None = None
+    expected_raw_sha256: Hex64 | None = None
 
-class SendArgs(ComposeArgs):
-    pass
-
-
-class DraftSaveArgs(ComposeArgs):
-    pass
-
-
-class DraftUpdateArgs(ComposeArgs):
-    draft: MessageRef
-    expected_raw_sha256: Hex64
+    @model_validator(mode="after")
+    def _draft_fields(self) -> Self:
+        updating = self.mode == "draft_update"
+        if (self.draft is not None) != updating or (
+            self.expected_raw_sha256 is not None
+        ) != updating:
+            raise ValueError("draft and its expected hash are required only for a draft update")
+        if self.mode == "send" and self.display_only:
+            raise ValueError("a send cannot be display only")
+        return self
 
 
 class DraftDiscardArgs(AccountArgs):
     draft: MessageRef
     expected_raw_sha256: Hex64
-
-
-class MoveArgs(AccountArgs):
-    ref: MessageRef
-    destination_folder_id: str
-    mark_read: bool = False
-
-
-class TrashArgs(AccountArgs):
-    ref: MessageRef
-    destination_folder_id: str
 
 
 MessageIds = Annotated[
@@ -557,80 +449,65 @@ MessageIds = Annotated[
 ]
 
 
-class MoveManyArgs(AccountArgs):
-    """Move many messages of one folder in one Thunderbird move: filing or Trash."""
-
+class ChangeGroup(Model):
     folder_id: str
-    internet_message_ids: MessageIds
-    destination_folder_id: str
+    ids: MessageIds
+
+
+class ChangeArgs(AccountArgs):
+    items: Annotated[tuple[ChangeGroup, ...], Field(min_length=1, max_length=200)]
+    move_to: str | None = None
     trash: bool = False
-    """Trash: a copy already there is fine (Gmail merges labels). Filing: it is `ambiguous`."""
-    mark_read: bool = False
+    set_read: bool | None = None
+
+    @model_validator(mode="after")
+    def _operation(self) -> Self:
+        if len({group.folder_id for group in self.items}) != len(self.items):
+            raise ValueError("a folder occurs more than once")
+        if any(
+            len({item.removeprefix("<").removesuffix(">") for item in group.ids}) != len(group.ids)
+            for group in self.items
+        ):
+            raise ValueError("a message ID occurs more than once in a folder")
+        if self.move_to is not None:
+            if len(self.items) != 1 or self.items[0].folder_id == self.move_to:
+                raise ValueError("move needs one source folder distinct from the destination")
+            if self.trash and self.set_read is not None:
+                raise ValueError("trash preserves the existing read state")
+        elif (
+            self.trash or self.set_read is None or sum(len(group.ids) for group in self.items) > 200
+        ):
+            raise ValueError("marking needs a read flag and accepts up to 200 messages")
+        return self
 
 
-class MarkReadArgs(AccountArgs):
-    refs: Annotated[tuple[MessageRef, ...], Field(min_length=1, max_length=200)]
-    read: bool = True
-
-
-class SendResult(Model):
-    submitted: Literal[True] = True
+class ComposeResult(Model):
     attachment_bytes_verified: bool
     dialogs: tuple[Annotated[str, Field(max_length=500)], ...] = ()
-    """Thunderbird prompts on the composer the add-on answered at once (never left waiting)."""
-
-
-class DraftResult(Model):
-    header: Header
-    raw_sha256: Hex64
-    attachment_bytes_verified: bool
+    header: Header | None = None
+    raw_sha256: Hex64 | None = None
     old_copies_remaining: int = 0
-    """Draft update: copies of the replaced draft still present after the save."""
-    dialogs: tuple[Annotated[str, Field(max_length=500)], ...] = ()
 
 
-class MoveResult(Model):
-    message: Header
-    read_state_preserved: bool
-    merged_existing_copy: bool = False
-    marked_read: bool = False
-    original_read: bool
-
-
-class MarkReadItem(Model):
+class ChangeItem(Model):
     ref: MessageRef
     ok: bool
+    code: str = ""
     was_read: bool | None = None
-    code: str = ""
 
 
-class MarkReadResult(Model):
-    items: tuple[MarkReadItem, ...]
-
-
-class MoveManyItem(Model):
-    internet_message_id: str
-    ok: bool
-    code: str = ""
-    """`not_found` or `ambiguous` when it was not moved (checked before the move)."""
-
-
-class MoveManyResult(Model):
-    items: tuple[MoveManyItem, ...]
+class ChangeResult(Model):
+    items: tuple[ChangeItem, ...]
     verified: bool
-    """Every moved message left the folder, reached the destination and (when asked) is read."""
     read_state_preserved: bool | None
-    """Whether moved messages have the requested read state, or None if unverified."""
     merged_existing_copy: bool
-    """At least one trashed message was observed to merge into an existing copy."""
 
 
 class DiscardResult(Model):
     closed: int
-    saved_mail_deleted: Literal[False] = False
 
 
-# --- reconcile twins (read-only) --------------------------------------------------------------
+# --- copy observations (read-only) -----------------------------------------------------------
 
 
 class Fingerprint(Model):
@@ -649,124 +526,63 @@ class Fingerprint(Model):
     token: str
 
 
-class ReconcileComposeArgs(AccountArgs):
-    fingerprint: Fingerprint
-    sent_folder_id: str
-    draft_folder_id: str
-    inbox_folder_id: str | None = None
-    since_ms: int
-    refresh: bool = True
+class CopyScope(Model):
+    folder_id: str | None
+    """None scans the sender's own messages in discovered local Outboxes."""
+    ids: MessageIds | None = None
+    subject: Annotated[str, Field(max_length=500)] | None = None
+    since_ms: int | None = None
+    inspect_draft: bool = False
+    include_attachment_hashes: bool = False
+
+    @model_validator(mode="after")
+    def _selector(self) -> Self:
+        if (self.ids is None) == (self.subject is None):
+            raise ValueError("each copy scope needs IDs or a subject")
+        if self.ids is not None:
+            if (
+                self.folder_id is None
+                or self.since_ms is not None
+                or self.include_attachment_hashes
+            ):
+                raise ValueError("ID lookups require a bound folder and no content scan")
+        elif self.since_ms is None or (self.folder_id is None and self.inspect_draft):
+            raise ValueError("subject scans require a lower date bound and a folder for Drafts")
+        return self
 
 
-class ReconcileSendArgs(ReconcileComposeArgs):
-    pass
+class CopiesArgs(AccountArgs):
+    where: Annotated[tuple[CopyScope, ...], Field(min_length=1, max_length=200)]
+    refresh: bool = False
 
 
-class ReconcileDraftSaveArgs(ReconcileComposeArgs):
-    pass
-
-
-class ReconcileDraftUpdateArgs(ReconcileComposeArgs):
-    old: MessageRef
-    old_raw_sha256: Hex64
-
-
-class Match(Model):
+class CopyFact(Model):
     header: Header
-    where: Literal["sent", "outbox", "drafts", "inbox", "other"]
-    exact: bool
-    """Envelope, body hash, attachments and priority all equal the fingerprint."""
-    token_match: bool
+    subject: str | None = None
+    body_sha256: Hex64 | None = None
+    to: tuple[str, ...] = ()
+    cc: tuple[str, ...] = ()
+    bcc: tuple[str, ...] = ()
+    attachment_sha256: tuple[Hex64, ...] = ()
+    high_importance: bool | None = None
+    in_reply_to: str = ""
+    token: str = ""
     raw_sha256: Hex64 | None = None
-    internet_message_id_matches_token: bool = False
+    composers_open: int | None = None
 
 
-class ReconcileComposeResult(Model):
-    matches: tuple[Match, ...]
-    complete: bool
-    refreshed: bool
-    errors: tuple[str, ...] = ()
-    old_copies: int | None = None
-
-
-class ReconcileDraftDiscardArgs(AccountArgs):
-    draft: MessageRef
-    expected_raw_sha256: Hex64
-
-
-class ReconcileDiscardResult(Model):
-    copies: int
-    raw_sha256: Hex64 | None = None
-    composers_open: int
-
-
-class ReconcileMoveArgs(AccountArgs):
-    ref: MessageRef
-    destination_folder_id: str
-    refresh: bool = True
-
-
-class FolderCopies(Model):
-    folder_id: str
-    messages: tuple[Header, ...]
+class CopyScopeResult(Model):
+    copies: tuple[CopyFact, ...]
     complete: bool
 
 
-class ReconcileMoveResult(Model):
-    source: FolderCopies
-    destination: FolderCopies
-    refreshed: bool
+class CopiesResult(Model):
+    scopes: tuple[CopyScopeResult, ...]
     refresh_verified: bool
-
-
-class ReconcileTrashArgs(ReconcileMoveArgs):
-    pass
-
-
-class ReconcileMoveManyArgs(AccountArgs):
-    folder_id: str
-    internet_message_ids: MessageIds
-    destination_folder_id: str
-    refresh: bool = True
-
-
-class MoveCopies(Model):
-    internet_message_id: str
-    source: int
-    destination: int
-    unread: int = 0
-    """Copies at the destination still unread."""
-
-
-class ReconcileMoveManyResult(Model):
-    items: tuple[MoveCopies, ...]
-    complete: bool
-    refreshed: bool
-    refresh_verified: bool
-
-
-class ReconcileMarkReadArgs(AccountArgs):
-    refs: Annotated[tuple[MessageRef, ...], Field(min_length=1, max_length=200)]
-    refresh: bool = True
-
-
-class ReconcileReadItem(Model):
-    ref: MessageRef
-    copies: int
-    read: bool | None = None
-
-
-class ReconcileMarkReadResult(Model):
-    items: tuple[ReconcileReadItem, ...]
-    refreshed: bool
-    refresh_verified: bool
+    errors: tuple[Short, ...] = ()
 
 
 # --- calendar (optional capability `calendar`) ----------------------------------------------
-
-
-class CalendarListArgs(Model):
-    pass
 
 
 class CalendarInfo(Model):
@@ -789,6 +605,8 @@ class CalendarItem(Model):
     id: Annotated[str, Field(min_length=1, max_length=1000)]
     recurrence_id: Annotated[str, Field(max_length=40)] | None = None
     icalendar: Text
+    own_appointment: Literal[True] | None = None
+    """Thunderbird verified that its private, guestless item uses the calendar's own organizer."""
 
 
 class CalendarRef(Model):
@@ -815,94 +633,62 @@ class CalendarReadResult(Model):
     item: CalendarItem | None = None
 
 
-class CalendarCreateArgs(CalendarReadArgs):
-    icalendar: Text
-
-
-class CalendarUpdateArgs(CalendarCreateArgs):
-    expected_icalendar: Text
+class CalendarWriteArgs(CalendarReadArgs):
+    kind: Literal["create", "update", "delete"]
+    icalendar: Text | None = None
+    expected_icalendar: Text | None = None
     """The exact stored text the caller read; the version check (its hash is the etag)."""
 
-
-class CalendarDeleteArgs(CalendarReadArgs):
-    expected_icalendar: Text
+    @model_validator(mode="after")
+    def _write_fields(self) -> Self:
+        if (self.icalendar is not None) != (self.kind != "delete"):
+            raise ValueError("new event text is required only for create or update")
+        if (self.expected_icalendar is not None) != (self.kind != "create"):
+            raise ValueError("the expected event text is required only for update or delete")
+        return self
 
 
 class CalendarWriteResult(Model):
-    item: CalendarItem | None = None
-    """The read-back; `None` after a delete."""
-    timing_ms: dict[str, int] = Field(default_factory=lambda: {})
-    """Milliseconds since the command began, per stage."""
+    item: CalendarItem | None
+    """The read-back; None after a delete."""
 
 
 ARGS_MODELS: dict[Command, type[Model]] = {
     Command.STATUS: StatusArgs,
-    Command.ACCOUNTS: AccountsArgs,
-    Command.FOLDERS: FoldersArgs,
+    Command.FOLDERS: AccountArgs,
     Command.QUERY: QueryArgs,
     Command.READ: ReadArgs,
     Command.ATTACHMENT: AttachmentArgs,
-    Command.RESOLVE: ResolveArgs,
     Command.REFRESH: RefreshArgs,
     Command.CONTACTS: ContactsArgs,
     Command.CONTACT_READ: ContactReadArgs,
-    Command.SEND: SendArgs,
-    Command.DRAFT_SAVE: DraftSaveArgs,
-    Command.DRAFT_UPDATE: DraftUpdateArgs,
+    Command.COMPOSE: ComposeArgs,
+    Command.CHANGE: ChangeArgs,
     Command.DRAFT_DISCARD: DraftDiscardArgs,
-    Command.MOVE: MoveArgs,
-    Command.TRASH: TrashArgs,
-    Command.MOVE_MANY: MoveManyArgs,
-    Command.MARK_READ: MarkReadArgs,
-    Command.RECONCILE_SEND: ReconcileSendArgs,
-    Command.RECONCILE_DRAFT_SAVE: ReconcileDraftSaveArgs,
-    Command.RECONCILE_DRAFT_UPDATE: ReconcileDraftUpdateArgs,
-    Command.RECONCILE_DRAFT_DISCARD: ReconcileDraftDiscardArgs,
-    Command.RECONCILE_MOVE: ReconcileMoveArgs,
-    Command.RECONCILE_TRASH: ReconcileTrashArgs,
-    Command.RECONCILE_MOVE_MANY: ReconcileMoveManyArgs,
-    Command.RECONCILE_MARK_READ: ReconcileMarkReadArgs,
-    Command.CALENDAR_LIST: CalendarListArgs,
+    Command.COPIES: CopiesArgs,
+    Command.CALENDAR_LIST: StatusArgs,
     Command.CALENDAR_QUERY: CalendarQueryArgs,
     Command.CALENDAR_READ: CalendarReadArgs,
-    Command.CALENDAR_CREATE: CalendarCreateArgs,
-    Command.CALENDAR_UPDATE: CalendarUpdateArgs,
-    Command.CALENDAR_DELETE: CalendarDeleteArgs,
+    Command.CALENDAR_WRITE: CalendarWriteArgs,
 }
 
 RESULT_MODELS: dict[Command, type[Model]] = {
     Command.STATUS: StatusResult,
-    Command.ACCOUNTS: AccountsResult,
     Command.FOLDERS: FoldersResult,
     Command.QUERY: QueryResult,
     Command.READ: ReadResult,
     Command.ATTACHMENT: AttachmentResult,
-    Command.RESOLVE: ResolveResult,
     Command.REFRESH: RefreshResult,
     Command.CONTACTS: ContactsResult,
     Command.CONTACT_READ: ContactReadResult,
-    Command.SEND: SendResult,
-    Command.DRAFT_SAVE: DraftResult,
-    Command.DRAFT_UPDATE: DraftResult,
+    Command.COMPOSE: ComposeResult,
+    Command.CHANGE: ChangeResult,
     Command.DRAFT_DISCARD: DiscardResult,
-    Command.MOVE: MoveResult,
-    Command.TRASH: MoveResult,
-    Command.MOVE_MANY: MoveManyResult,
-    Command.MARK_READ: MarkReadResult,
-    Command.RECONCILE_SEND: ReconcileComposeResult,
-    Command.RECONCILE_DRAFT_SAVE: ReconcileComposeResult,
-    Command.RECONCILE_DRAFT_UPDATE: ReconcileComposeResult,
-    Command.RECONCILE_DRAFT_DISCARD: ReconcileDiscardResult,
-    Command.RECONCILE_MOVE: ReconcileMoveResult,
-    Command.RECONCILE_TRASH: ReconcileMoveResult,
-    Command.RECONCILE_MOVE_MANY: ReconcileMoveManyResult,
-    Command.RECONCILE_MARK_READ: ReconcileMarkReadResult,
+    Command.COPIES: CopiesResult,
     Command.CALENDAR_LIST: CalendarListResult,
     Command.CALENDAR_QUERY: CalendarQueryResult,
     Command.CALENDAR_READ: CalendarReadResult,
-    Command.CALENDAR_CREATE: CalendarWriteResult,
-    Command.CALENDAR_UPDATE: CalendarWriteResult,
-    Command.CALENDAR_DELETE: CalendarWriteResult,
+    Command.CALENDAR_WRITE: CalendarWriteResult,
 }
 
 

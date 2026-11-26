@@ -19,7 +19,7 @@ def _file(rig: WriteRig, message_id: str) -> tuple[str, str]:
     """Propose filing one message; return its locator and whether the stored move marks read."""
     handle = rig.seed_message(message_id)
     proposal = rig.engine().propose_intent(
-        MailMove(source=MAIL, message=handle, to_folder="f-archive")
+        MailMove(source=MAIL, messages=(handle,), to_folder="f-archive")
     )
     assert proposal.operation is not None
     stored = rig.engine().intent_of(proposal.operation)
@@ -55,7 +55,7 @@ def test_filing_marks_read_only_with_the_option_and_a_confirmed_grant(rig: Write
     assert _file(rig, "<d@x>")[1] == "True"
     handle = rig.seed_message("<e@x>")
     proposal = rig.engine().propose_intent(
-        MailMove(source=MAIL, message=handle, to_folder="f-archive")
+        MailMove(source=MAIL, messages=(handle,), to_folder="f-archive")
     )
     approved = rig.agent_approves(proposal, "Yes, file it.")
     assert approved.operation is not None

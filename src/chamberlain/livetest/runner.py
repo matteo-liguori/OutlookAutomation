@@ -10,6 +10,7 @@ import secrets
 import threading
 import time
 from collections.abc import Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 
 from chamberlain.app.core import App
@@ -35,6 +36,7 @@ from chamberlain.livetest.model import (
 from chamberlain.livetest.registry import Planned, Scope
 from chamberlain.livetest.scenarios_harness import doctor_states
 from chamberlain.livetest.timeutil import iso
+from chamberlain.ports.health import passive_health_checks
 from chamberlain.schema.errors import ChamberlainError
 
 DEFAULT_WORKERS = 8
@@ -306,7 +308,8 @@ def _second_chance(lab: Lab, plan: Sequence[Planned]) -> None:
 def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOptions) -> RunReport:
     """Plan, check authority, run, clean up and score one run."""
     sources = app.context.sources
-    plan = build_plan(config, sources, only=options.only, skip=options.skip)
+    with passive_health_checks() if options.dry_run else nullcontext():
+        plan = build_plan(config, sources, only=options.only, skip=options.skip)
     if options.retry_ids:
         plan = [p for p in plan if p.id in options.retry_ids]
     run_id = make_run_id(env, options)

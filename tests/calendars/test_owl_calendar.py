@@ -10,6 +10,7 @@ from cal_owl_rig import OwlRig
 from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.fake.world import Fault
 from chamberlain.connectors.thunderbird.calendar import (
+    CalendarBridgeFailure,
     OwlBinding,
     OwlCalendarConfig,
     ThunderbirdCalendar,
@@ -60,7 +61,7 @@ def test_p5_p16_the_capability_set_is_narrow_and_honest_and_3_related_checks() -
     assert not write.absence_provable
 
     # the_version_handshake_withholds_capabilities_from_a_bridge_without_calendar
-    for args in ({"version": 1}, {"capabilities": frozenset({"read"})}):
+    for args in ({"version": 1}, {"calendar_available": False}):
         port, _, _ = build(**args)
         assert port.capabilities(SOURCE).names() == []
         assert port.health(SOURCE).state.value == "unavailable"
@@ -129,6 +130,41 @@ def test_p12_an_absent_create_is_never_claimed_as_proven() -> None:
     assert (settled.status, settled.proof) == (ReconcileStatus.ABSENT, False)
 
 
+def test_p16_private_appointment_has_no_guests_and_keeps_its_class_on_update() -> None:
+    port, bridge, _ = build()
+    created = port.prepare(
+        CalendarCreate(source=SOURCE, event=fields(visibility="private"), uid="private"), {}
+    )
+    assert port.dispatch(created, "create").outcome is DispatchOutcome.APPLIED
+    current = port.read(SOURCE, "private")
+    assert current.fields.visibility == "private"
+    assert not current.fields.attendees
+    assert "CLASS:PRIVATE\r\n" in bridge.items["private"]
+    assert "ATTENDEE" not in bridge.items["private"]
+    assert "ORGANIZER" not in bridge.items["private"]
+
+    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, "private")
+    updated = port.prepare(
+        CalendarUpdate(
+            source=SOURCE, event_ref=handle, expected_etag=current.etag, event=fields("New")
+        ),
+        {handle: "private"},
+    )
+    assert port.dispatch(updated, "update").outcome is DispatchOutcome.APPLIED
+    assert port.read(SOURCE, "private").fields.visibility == "private"
+
+
+def test_p11_private_create_stays_unknown_if_the_provider_drops_classification() -> None:
+    port, bridge, _ = build()
+    prepared = port.prepare(
+        CalendarCreate(source=SOURCE, event=fields(visibility="private"), uid="private"), {}
+    )
+    bridge.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
+    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
+    bridge.items["private"] = bridge.items["private"].replace("CLASS:PRIVATE\r\n", "")
+    assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
+
+
 def test_p16_an_edit_by_the_user_after_prepare_stops_the_update() -> None:
     port, bridge, _ = build()
     created = port.prepare(CalendarCreate(source=SOURCE, event=fields("Mine"), uid="e1"), {})
@@ -143,6 +179,63 @@ def test_p16_an_edit_by_the_user_after_prepare_stops_the_update() -> None:
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.NOT_APPLIED
     assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
     assert port.read(SOURCE, "e1").fields.title == "Theirs"
+
+
+def test_p16_provider_created_id_is_the_locator_for_update_and_delete() -> None:
+    port, bridge, _ = build()
+    bridge.generated_uid = "provider-uid"
+    created = port.prepare(
+        CalendarCreate(source=SOURCE, event=fields(visibility="private"), uid="submitted-uid"), {}
+    )
+    outcome = port.dispatch(created, "create")
+    assert outcome.outcome is DispatchOutcome.APPLIED
+    assert outcome.receipt
+    assert outcome.receipt.locator == "provider-uid"
+    assert "submitted-uid" not in bridge.items
+
+    bridge.items["provider-uid"] = bridge.items["provider-uid"].replace(
+        "CLASS:PRIVATE\r\n", "CLASS:PRIVATE\r\nORGANIZER:mailto:owner@example.test\r\n"
+    )
+    current = port.read(SOURCE, "provider-uid")
+    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, current.locator)
+    intent = CalendarUpdate(
+        source=SOURCE, event_ref=handle, expected_etag=current.etag, event=fields("Updated")
+    )
+    refs = {handle: current.locator}
+    with pytest.raises(ChamberlainError) as refused:
+        port.prepare(intent, refs)
+    assert refused.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
+    bridge.own_appointments.add(current.locator)
+    updated = port.prepare(intent, refs)
+    assert updated.data["expected_icalendar"] == bridge.items[current.locator]
+    assert port.dispatch(updated, "update").outcome is DispatchOutcome.APPLIED
+    after = port.read(SOURCE, current.locator)
+    assert after.fields.title == "Updated"
+    assert after.fields.visibility == "private"
+    deleted = port.prepare(
+        CalendarDelete(source=SOURCE, event_ref=handle, expected_etag=after.etag), refs
+    )
+    assert port.dispatch(deleted, "delete").outcome is DispatchOutcome.APPLIED
+    assert not bridge.items
+
+
+def test_p11_lost_provider_uid_is_not_recovered_from_an_unrelated_event() -> None:
+    port, bridge, clock = build()
+    bridge.generated_uid = "provider-uid"
+    wanted = fields("Same title", visibility="private", description="Expected detail")
+    created = port.prepare(CalendarCreate(source=SOURCE, event=wanted, uid="submitted-uid"), {})
+    bridge.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
+    assert port.dispatch(created, "create").outcome is DispatchOutcome.UNKNOWN
+    assert "provider-uid" in bridge.items
+    observed = port.reconcile(created, "create")
+    assert observed.status is not ReconcileStatus.PRESENT
+    assert not observed.proof
+
+    bridge.items["submitted-uid"] = ics.build_new(
+        "submitted-uid", fields("Same title", visibility="private"), clock.now()
+    )
+    assert port.reconcile(created, "create").status is ReconcileStatus.UNKNOWN
+    assert set(bridge.items) == {"provider-uid", "submitted-uid"}
 
 
 def test_p6_a_series_is_read_by_date_and_never_written() -> None:
@@ -212,3 +305,25 @@ def test_p4_paging_through_the_limit_is_not_reported_as_a_coverage_gap() -> None
     assert titles == [f"E{i}" for i in range(5)]
     bridge.arm(Fault.STALE)
     assert port.events(SOURCE, query).gaps
+
+
+def test_private_freshness_probe_and_lost_create_recovery() -> None:
+    port, bridge, _ = build()
+    token = "a" * 32
+    assert port.probe(SOURCE, token)
+    assert [cmd for cmd, write in bridge.requests if write] == ["calendar_write"] * 2
+    bridge.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
+    with pytest.raises(CalendarBridgeFailure):
+        port.probe(SOURCE, token)
+    uid = f"chamberlain-freshness-{token}@chamberlain.local"
+    recovered = port.read(SOURCE, uid)
+    assert recovered.fields.visibility == "private"
+    assert not recovered.fields.attendees
+    # Exchange may have assigned a new UID before the create reply was lost.
+    del bridge.items[uid]
+    bridge.items["exchange-uid"] = ics.build_new("exchange-uid", recovered.fields, START)
+    assert port.probe(SOURCE, token, cleanup_only=True)
+    assert not bridge.items
+    written = sum(write for _, write in bridge.requests)
+    assert port.probe(SOURCE, token, cleanup_only=True)
+    assert sum(write for _, write in bridge.requests) == written

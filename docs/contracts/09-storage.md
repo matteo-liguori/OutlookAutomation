@@ -35,6 +35,7 @@ Binding for every track that touches SQLite. Code:
 | `system_state` | System | any, own keys only | Closed set of keys (`store.schema.SYSTEM_KEYS`) |
 | `sources` | Records | app | Enabled sources and their bindings |
 | `source_health` | Ephemeral | attention | Last health per source |
+| `owl_freshness` | Working set | app (Owl freshness adapter) | Probe ownership, recovery and last verified freshness per calendar binding |
 | `sessions` | Ephemeral | attention | Agent sessions |
 | `events` | Ephemeral | attention | The event inbox |
 | `guidance_deliveries` | Ephemeral | attention | Per-session delivery ledger |

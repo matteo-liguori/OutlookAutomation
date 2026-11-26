@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Protocol, cast
 
 from chamberlain.app.context import Context
-from chamberlain.domain.calendar import CalendarQuery
+from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
 from chamberlain.domain.mail import Folder, FolderRole, MailQuery
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.sync import FolderSync
@@ -85,6 +85,8 @@ class Probe(Protocol):
     def events(self, source: str, text: str, start: datetime, end: datetime) -> list[CalendarCopy]:
         """Every event (cancelled too) whose title contains `text`, in the window."""
         ...
+
+    def read_event(self, source: str, locator: str) -> CalendarEvent: ...
 
     def answers(self, source: str, locator: str) -> dict[str, str]:
         """`{address: answer}` the calendar holds for an event's guests (empty if unknown)."""
@@ -211,7 +213,10 @@ class PortProbe:
         return self._ctx.sources.mail_port(source).read(source, copy.locator).in_reply_to
 
     def answers(self, source: str, locator: str) -> dict[str, str]:
-        return _answers_of(self._ctx.sources.calendar_port(source).read(source, locator))
+        return _answers_of(self.read_event(source, locator))
+
+    def read_event(self, source: str, locator: str) -> CalendarEvent:
+        return self._ctx.sources.calendar_port(source).read(source, locator)
 
     def events(self, source: str, text: str, start: datetime, end: datetime) -> list[CalendarCopy]:
         port = self._ctx.sources.calendar_port(source)

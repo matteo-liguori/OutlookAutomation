@@ -93,38 +93,32 @@ class MailDraftDiscard(Model):
     expected_sha256: Sha256
 
 
-class _OneOrMany(Model):
-    """A move of one message (`message`), or of a batch from one folder (`messages`): one
-    write, one client call, one check, however many messages (never one write each)."""
+class _MailBatch(Model):
+    """One batch from one folder, including a batch of one."""
 
     source: SourceId
-    message: MessageHandle | None = None
-    messages: tuple[MessageHandle, ...] = Field(default=(), max_length=MOVE_BATCH_MAX)
-    internet_message_id: str | None = None
-    """Completed by the harness for a single message (W-1)."""
+    messages: tuple[MessageHandle, ...] = Field(min_length=1, max_length=MOVE_BATCH_MAX)
     from_folder: str | None = None
     """Completed by the harness; every message of a batch must be in this one folder."""
 
     @model_validator(mode="after")
-    def _one_or_many(self) -> Self:
-        if (self.message is None) == (not self.messages):
-            raise ValueError("give either message or messages")
+    def _unique_messages(self) -> Self:
         if len(set(self.messages)) != len(self.messages):
             raise ValueError("messages repeats a handle")
         return self
 
     @property
     def handles(self) -> tuple[str, ...]:
-        return (self.message,) if self.message is not None else self.messages
+        return self.messages
 
 
-class MailMove(_OneOrMany):
+class MailMove(_MailBatch):
     kind: Literal[IntentKind.MAIL_MOVE] = IntentKind.MAIL_MOVE
     to_folder: str = Field(min_length=1)
     mark_read: bool = False
 
 
-class MailTrash(_OneOrMany):
+class MailTrash(_MailBatch):
     kind: Literal[IntentKind.MAIL_TRASH] = IntentKind.MAIL_TRASH
 
 
@@ -221,7 +215,5 @@ MailIntent = (
 CalendarIntent = CalendarCreate | CalendarUpdate | CalendarDelete | CalendarRespond
 WriteIntent = Annotated[MailIntent | CalendarIntent | OutsideAction, Field(discriminator="kind")]
 
-HARNESS_COMPLETED_FIELDS = frozenset(
-    {"message_id", "uid", "internet_message_id", "from_folder", "organiser"}
-)
+HARNESS_COMPLETED_FIELDS = frozenset({"message_id", "uid", "from_folder", "organiser"})
 """Fields the agent leaves empty; the harness fills them before hashing (W-1, W-2)."""

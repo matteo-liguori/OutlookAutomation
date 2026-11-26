@@ -145,3 +145,8 @@ live_test:
 Unknown keys are rejected. A `mail` entry for a Thunderbird source must carry that source's
 own mailbox address. `pairs`, `invitee_mail` and `invitee_calendar` may only name sources
 listed here.
+
+Run `chamberlain config add-test-calendar calendar:work` to add an existing calendar
+source to `live_test.calendars`. The command validates the updated profile and prints the path
+to a byte-for-byte backup when it makes a change. Enrollment leaves the live-test and calendar
+edit approval settings as configured.

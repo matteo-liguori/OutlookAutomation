@@ -30,12 +30,11 @@ Fields marked * are left empty by the agent and completed by the harness
 at `propose`, before hashing (`intents.HARNESS_COMPLETED_FIELDS`). A value
 the agent supplies for one of them is ignored and replaced.
 
-The target move and trash shape uses `messages[]`, including a batch of one.
+Move and trash use `messages[]`, including a batch of one.
 The harness resolves each handle to its stable Message-ID and fills the common
 source folder before hashing. For many
 items the connector finds all, acts once and checks once; it must not loop over
-single-message writes. This is the target contract; implementation and tests must
-be brought into line before the legacy single-message shape is removed.
+single-message writes.
 
 - **W-1** An intent MUST be complete at `propose` time: the harness fills
   the starred fields from the ref (`internet_message_id`, `from_folder`) and

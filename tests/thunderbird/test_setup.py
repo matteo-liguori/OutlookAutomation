@@ -2,6 +2,7 @@
 
 import json
 import re
+import shutil
 import zipfile
 from pathlib import Path
 
@@ -25,7 +26,16 @@ def no_acl_changes(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(native_host, "_restrict_to_user", lambda path: None)
 
 
-def test_b10_the_package_is_reproducible_and_complete(tmp_path: Path) -> None:
+def test_b10_the_package_is_reproducible_and_complete_from_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    sources = tmp_path / "addon"
+    shutil.copytree(
+        ADDON_DIR,
+        sources,
+        ignore=shutil.ignore_patterns("build", "node_modules", "protocol.generated.ts"),
+    )
+    monkeypatch.setattr(setup, "ADDON_DIR", sources)
     first = build_package(tmp_path / "one").read_bytes()
     second = build_package(tmp_path / "two").read_bytes()
     assert first == second
@@ -39,9 +49,12 @@ def test_b10_the_package_is_reproducible_and_complete(tmp_path: Path) -> None:
         assert "experiment/calendar_api.js" in archive.namelist()
         assert "experiment/calendar_schema.json" in archive.namelist()
         script = archive.read("background.js").decode()
-    assert "function cmdMove" in script
+    assert "const COMMANDS" in script
+    assert "SCHEMA_DEFS" not in script
+    assert "validateArgs" not in script
     assert ": string" not in script  # types were stripped
     assert not (tmp_path / "one" / "build").exists()
+    assert not list(sources.rglob("protocol.generated.ts"))
 
 
 def test_b10_the_manifest_version_and_extension_id_agree_with_the_code() -> None:

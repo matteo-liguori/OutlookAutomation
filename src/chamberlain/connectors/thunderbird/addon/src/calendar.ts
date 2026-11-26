@@ -1,7 +1,7 @@
 // Calendar commands (optional capability `calendar`). Reads never change anything. A write
 // is checked against the stored text first, issues exactly one provider call, reads the
 // event back, and says `mutation: possible` only once that call has begun (section 7).
-// Events with attendees or an organiser are never written: the harness sends no invitations.
+// Guest lists and invitations are never written. Owl can supply the owner's organiser on a private appointment.
 
 const CALENDAR_SCAN_CAP = 5000;
 
@@ -25,7 +25,7 @@ function calendarSupported(): boolean {
 }
 
 function calendarItem(found: RawCalendarItem): CalendarItem {
-  return { id: found.id, recurrence_id: found.recurrence_id, icalendar: clip(found.icalendar, 200_000) };
+  return { id: found.id, recurrence_id: found.recurrence_id, icalendar: clip(found.icalendar, 200_000), own_appointment: found.own_appointment ? true : undefined };
 }
 
 async function usableCalendar(api: HarnessCalendarApi, id: string, forWrite: boolean): Promise<RawCalendar> {
@@ -66,38 +66,40 @@ async function cmdCalendarRead(a: CalendarReadArgs): Promise<CalendarReadResult>
   return { item: found ? calendarItem(found) : null };
 }
 
-async function cmdCalendarWrite(a: CalendarCreateArgs | CalendarUpdateArgs | CalendarDeleteArgs, ctx: Ctx, kind: "create" | "update" | "delete"): Promise<CalendarWriteResult> {
-  const started = Date.now();
-  const timing: { [stage: string]: number } = {};
-  const mark = (stage: string): void => {
-    timing[stage] = Date.now() - started;
-  };
+async function cmdCalendarWrite(a: CalendarWriteArgs, ctx: Ctx): Promise<CalendarWriteResult> {
   const api = calendarApi();
   await usableCalendar(api, a.calendar_id, true);
-  mark("calendar");
   const before = await api.getEvent(a.calendar_id, a.event_id);
-  mark("read_before");
-  if (kind === "create") {
+  if (a.kind === "create") {
     check(!before, "changed", "An event with that ID already exists.");
   } else {
     check(before, "not_found", "That event is not in the calendar.");
-    check(before.icalendar === (a as CalendarUpdateArgs | CalendarDeleteArgs).expected_icalendar, "changed", "The event changed since it was read.");
+    check(before.icalendar === a.expected_icalendar, "changed", "The event changed since it was read.");
     check(!before.invited, "unsupported", "Events with attendees or an organiser are not written.");
   }
-  if (kind !== "delete") {
-    const wanted = await api.inspectEvent((a as CalendarCreateArgs | CalendarUpdateArgs).icalendar);
+  let eventId = a.event_id;
+  if (a.kind === "delete") {
+    markMutation(ctx);
+    await api.deleteEvent(a.calendar_id, a.event_id);
+  } else {
+    check(a.icalendar != null, "bad_request", "Event text is required.");
+    const wanted = await api.inspectEvent(a.icalendar, a.calendar_id);
     check(wanted.ok, "bad_request", "The event is not a single valid event: " + clip(wanted.error, 80));
-    check(!wanted.invited, "unsupported", "Events with attendees or an organiser are not written.");
+    check(!wanted.invited && (!wanted.own_appointment || (a.kind === "update" && before?.own_appointment)),
+      "unsupported", "Only an existing private appointment may keep its own organiser.");
     check(wanted.id === a.event_id, "bad_request", "The event's UID is not the one named.");
+    markMutation(ctx);
+    if (a.kind === "create") {
+      const created = await api.addEvent(a.calendar_id, a.icalendar);
+      check(created?.id && !created.recurrence_id, "not_verified", "The provider did not return the created event ID.", "possible");
+      eventId = created.id;
+    } else {
+      await api.modifyEvent(a.calendar_id, a.event_id, a.icalendar);
+    }
   }
-  markMutation(ctx);
-  if (kind === "create") await api.addEvent(a.calendar_id, (a as CalendarCreateArgs).icalendar);
-  else if (kind === "update") await api.modifyEvent(a.calendar_id, a.event_id, (a as CalendarUpdateArgs).icalendar);
-  else await api.deleteEvent(a.calendar_id, a.event_id);
-  mark("provider");
-  const after = await api.getEvent(a.calendar_id, a.event_id);
-  mark("read_after");
-  if (kind === "delete") check(!after, "not_verified", "The event is still in the calendar.", "possible");
-  else check(after, "not_verified", "The event could not be read back.", "possible");
-  return { item: after ? calendarItem(after) : null, timing_ms: timing };
+  const after = await api.getEvent(a.calendar_id, eventId);
+  if (a.kind === "delete") check(!after, "not_verified", "The event is still in the calendar.", "possible");
+  else check(after?.id === eventId && !after.recurrence_id && !after.invited,
+    "not_verified", "The event could not be read back as a guestless appointment.", "possible");
+  return { item: after ? calendarItem(after) : null };
 }

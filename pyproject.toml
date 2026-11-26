@@ -34,7 +34,18 @@ chamberlain = "chamberlain.surface.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-chamberlain = ["py.typed", "store/migrations/*.sql", "guidance/*.yaml", "runs/*.yaml", "surface/viewer/static/*"]
+chamberlain = [
+  "py.typed",
+  "store/migrations/*.sql",
+  "guidance/*.yaml",
+  "runs/*.yaml",
+  "surface/viewer/static/*",
+  "connectors/thunderbird/addon/build.mjs",
+  "connectors/thunderbird/addon/manifest.json",
+  "connectors/thunderbird/addon/experiment/*.js",
+  "connectors/thunderbird/addon/experiment/*.json",
+  "connectors/thunderbird/addon/src/*.ts",
+]
 
 # --- ruff: formatter and linter -------------------------------------------
 [tool.ruff]

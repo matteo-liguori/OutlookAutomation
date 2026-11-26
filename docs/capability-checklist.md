@@ -2,7 +2,13 @@
 
 Use this checklist after each rewrite. Entries map the capabilities in section 1 of the architect's plan to regression tests, targeted live scenarios and walkthroughs. Check off a promise for the step under review when the named checks pass. Where coverage is partial, the entry identifies the remaining proof.
 
-The permanent v1 importer, agent-use review, update check, local calendar events and fake provider stay. The owner approved removing the Claude file guard, demo mode and viewer settle buttons. Open decisions concern standing send limits, the repeat rule for move/trash, and Owl calendar freshness.
+The permanent v1 importer, agent-use review, update check, local calendar events and fake provider stay. The owner approved removing the Claude file guard, demo mode and viewer settle buttons. Open decisions concern standing send limits and the repeat rule for move/trash.
+
+## Decisions for final review
+
+| Decision | Current choice | Where to revisit and how to verify |
+| --- | --- | --- |
+| Owl calendar freshness | On 2026-11-26 the owner accepted a successful private create, read-back, delete and absence check as ordinary Owl freshness. | Thunderbird calendar adapter, behind CalendarPort.health. |
 
 ## Step 0 verification, 2026-11-25
 
@@ -128,7 +134,7 @@ Regression tests include `tests/contract/test_fake_contracts.py::test_the_fakes_
 
 Regression tests include `tests/runs/test_mail_sync.py::test_folders_synced_too_long_ago_are_synced_again_when_the_agent_starts`, `tests/runs/test_mail_sync.py::test_a_folder_that_will_not_sync_is_reported_waited_for_once_and_retried`, `tests/attention/test_scenarios.py::test_e3_incomplete_coverage_brings_the_coverage_rule`.
 
-- [ ] Sync before read; ten-minute freshness, five-minute limit, stuck folders reported/retried, health and disclosed coverage gaps: `tests/runs/test_mail_sync.py`, `tests/runs/test_sync_overall_limit.py`, `tests/runs/test_stuck_folder_older_mail.py`; verify sync-before-every-read and coverage disclosure. Owl freshness remains unresolved.
+- [ ] Sync before read; ten-minute freshness, five-minute limit, stuck folders reported/retried, health and disclosed coverage gaps: `tests/runs/test_mail_sync.py`, `tests/runs/test_sync_overall_limit.py`, `tests/runs/test_stuck_folder_older_mail.py`; verify sync-before-every-read and coverage disclosure.
 
 ## C15 — Review
 

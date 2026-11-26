@@ -19,6 +19,7 @@ from chamberlain.connections.model import (
     ThunderbirdContactsSource,
     ThunderbirdMailSource,
 )
+from chamberlain.connections.owl_freshness import OwlFreshnessStore
 from chamberlain.connectors.caldav.calendar import CalDavCalendar
 from chamberlain.connectors.caldav.config import CalDavBinding, CalDavConfig
 from chamberlain.connectors.caldav.credentials import password_source
@@ -40,6 +41,7 @@ from chamberlain.ports.calendar import CalendarPort
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.contacts import ContactsPort
 from chamberlain.ports.mail import MailPort
+from chamberlain.store.db import DB_NAME
 from chamberlain.writes.models import WritePolicy
 
 BRIDGE_DIR_NAME = "bridge"
@@ -114,6 +116,7 @@ def build_router(
             ),
             ClientCalendarBridge(client),
             clock,
+            freshness_store=OwlFreshnessStore(data_root / DB_NAME, clock),
         )
         calendar.update(dict.fromkeys(owl_sources, owl))
 

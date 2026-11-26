@@ -10,6 +10,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
                                         serve the local viewer on 127.0.0.1 (never prints the token)
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
     chamberlain config validate|show    check or print config/connections.yaml (no secrets)
+    chamberlain config add-test-calendar <source>  enroll a configured calendar for live tests
     chamberlain demo init <data root>   write a demo-only profile into an empty data root
     chamberlain import <old data root>  one-shot, read-only import of the old harness
     chamberlain recipients seed [--months N]
@@ -43,7 +44,7 @@ from chamberlain.connections import (
     render_redacted,
 )
 from chamberlain.connections.demo import demo_document
-from chamberlain.connections.load import profile_path
+from chamberlain.connections.load import add_test_calendar, profile_path
 from chamberlain.connectors.caldav.setup import verify as icloud_verify
 from chamberlain.connectors.thunderbird.update import SystemDesktop, thunderbird_home, update_addon
 from chamberlain.dataroot import refuse_inside_checkout
@@ -96,8 +97,14 @@ def _parser() -> argparse.ArgumentParser:
     schema = commands.add_parser("schema", help="print a tool's schema")
     schema.add_argument("tool", choices=sorted(BY_NAME))
     commands.add_parser("prompt", help="print the standing prompt")
-    config = commands.add_parser("config", help="check or print the connection profile")
-    config.add_argument("action", choices=["validate", "show"])
+    config = commands.add_parser("config", help="check or manage the connection profile")
+    config_actions = config.add_subparsers(dest="action", required=True)
+    config_actions.add_parser("validate", help="check the connection profile")
+    config_actions.add_parser("show", help="print the connection profile")
+    enroll = config_actions.add_parser(
+        "add-test-calendar", help="enroll an existing calendar for live tests"
+    )
+    enroll.add_argument("source", help="configured calendar source ID, such as calendar:work")
     demo = commands.add_parser("demo", help="try Chamberlain without real accounts")
     demo.add_argument("action", choices=["init"])
     demo.add_argument("root", help="an empty (or new) folder to use as the demo data root")
@@ -298,11 +305,19 @@ def _config(args: argparse.Namespace, out: TextIO) -> int:
                 "No data root is set.",
                 fix=f"Set {DATA_ENV} or pass --data before the tool name.",
             )
-        connections = load_connections(Path(data))
+        data_root = Path(data)
+        if args.action == "add-test-calendar":
+            backup = add_test_calendar(data_root, args.source)
+            result = {"ok": True, "source": args.source, "changed": backup is not None}
+            if backup is not None:
+                result["backup"] = str(backup)
+            _print(out, result)
+            return EXIT_OK
+        connections = load_connections(data_root)
         if args.action == "show":
             _print(out, render_redacted(connections))
             return EXIT_OK
-        runtime = build_runtime(connections, Path(data), SystemClock(), secrets=_NoSecrets())
+        runtime = build_runtime(connections, data_root, SystemClock(), secrets=_NoSecrets())
         _print(
             out,
             {

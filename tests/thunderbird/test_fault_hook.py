@@ -14,8 +14,8 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
+import pytest
 from test_bridge import (
-    ALL_CAPS,
     FAST,
     ID,
     TOKEN,
@@ -28,6 +28,7 @@ from test_bridge import (
 )
 
 from chamberlain.connectors.thunderbird import native_host, protocol
+from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, RuntimeConnector
 from chamberlain.connectors.thunderbird.native_host import (
     FAULT_DROP_RESPONSE,
     LiveFault,
@@ -59,15 +60,17 @@ class Env:
 def echo(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
     """The add-on does the write and answers."""
     if isinstance(frame, RequestFrame):
-        addon.ok(
-            frame,
-            protocol.StatusResult(
+        result = (
+            protocol.ComposeResult(attachment_bytes_verified=True)
+            if frame.cmd == "compose"
+            else protocol.StatusResult(
                 addon_version="2.0.0",
                 browser_version="159.0",
                 write_busy=False,
-                capabilities=ALL_CAPS,
-            ),
+                calendar_available=False,
+            )
         )
+        addon.ok(frame, result)
 
 
 @contextmanager
@@ -104,13 +107,23 @@ def arm(env: Env, run_id: str = RUN, fault: str = FAULT_DROP_RESPONSE) -> None:
     env.fault_file.write_text(json.dumps({"run_id": run_id, "fault": fault}), encoding="utf-8")
 
 
-def send_request(subject: str, cmd: str = "send", request_id: str = ID) -> RequestFrame:
-    return RequestFrame(
-        v=2,
-        id=request_id,
-        cmd=cmd,
-        args={"subject": subject, "account_id": "a"},
+def send_request(subject: str, cmd: str = "compose", request_id: str = ID) -> RequestFrame:
+    args = (
+        protocol.ComposeArgs(
+            mode="send",
+            account_id="a",
+            mailbox="owner@example.org",
+            to=("owner@example.org",),
+            subject=subject,
+            body="body",
+            sent_folder_id="sent",
+            draft_folder_id="drafts",
+            token="<id@example.org>",
+        ).model_dump(mode="json")
+        if cmd == "compose"
+        else {}
     )
+    return RequestFrame(v=protocol.PROTOCOL_VERSION, id=request_id, cmd=cmd, args=args)
 
 
 def ask(env: Env, request: RequestFrame) -> object:
@@ -128,10 +141,30 @@ def test_a_marked_send_loses_its_response_once_but_still_runs(tmp_path: Path) ->
     with hosted(tmp_path) as env:
         arm(env)
         assert ask(env, send_request(SUBJECT)) is None
-        assert [f.cmd for f in env.addon.received if isinstance(f, RequestFrame)] == ["send"]
+        assert [f.cmd for f in env.addon.received if isinstance(f, RequestFrame)] == ["compose"]
         assert list(env.fault_file.parent.iterdir()) == []  # consumed, nothing left behind
         second = ask(env, send_request(SUBJECT, request_id="req_second0001"))
         assert isinstance(second, protocol.ResponseFrame)
+
+
+def test_lost_response_is_uncertain_and_not_replayed_on_a_fresh_connection(tmp_path: Path) -> None:
+    with hosted(tmp_path) as env:
+        arm(env)
+        client = BridgeClient(RuntimeConnector(tmp_path), FAST)
+        args = protocol.parse_args("compose", send_request(SUBJECT).args)
+        with pytest.raises(BridgeFailure) as raised:
+            client.call(protocol.Command.COMPOSE, args)
+        assert raised.value.sent
+        assert raised.value.mutation == "possible"
+        assert [f.cmd for f in env.addon.received if isinstance(f, RequestFrame)] == ["compose"]
+        assert isinstance(
+            client.call(protocol.Command.STATUS, protocol.StatusArgs()).result,
+            protocol.StatusResult,
+        )
+        assert [f.cmd for f in env.addon.received if isinstance(f, RequestFrame)] == [
+            "compose",
+            "status",
+        ]
 
 
 def test_nothing_else_is_ever_touched(tmp_path: Path) -> None:
@@ -142,7 +175,7 @@ def test_nothing_else_is_ever_touched(tmp_path: Path) -> None:
 
 
 def _nothing_else_is_touched(tmp_path: Path, case: str) -> None:
-    subject, cmd = SUBJECT, "send"
+    subject, cmd = SUBJECT, "compose"
     with hosted(tmp_path) as env:
         if case == "broken":
             env.fault_file.write_text("not json", encoding="utf-8")
@@ -169,6 +202,11 @@ def test_one_claim_wins_and_the_host_looks_only_in_the_default_layout(tmp_path: 
     path.write_text(json.dumps({"run_id": RUN, "fault": FAULT_DROP_RESPONSE}), encoding="utf-8")
     hook = LiveFault(path)
     request = send_request(SUBJECT)
+    draft_args = protocol.ComposeArgs.model_validate(request.args).model_copy(
+        update={"mode": "draft_save"}
+    )
+    draft = request.model_copy(update={"args": draft_args.model_dump(mode="json")})
+    assert not hook.claim(draft)
     assert (hook.claim(request), hook.claim(request)) == (True, False)
     default = native_host.fault_file_for(Path("data/bridge"))
     assert default is not None

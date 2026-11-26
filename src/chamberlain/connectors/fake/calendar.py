@@ -363,8 +363,8 @@ class FakeCalendar:
             return absent
         wanted = EventFields.model_validate(data["fields"])
         if occurrence is not None:
-            same = stored.overrides.get(occurrence) == wanted.model_copy(
-                update={"recurrence": None}
+            same = stored.overrides.get(occurrence) == _occurrence_fields(
+                stored, occurrence, wanted
             )
         else:
             same = stored.fields == _series_fields(stored, wanted)
@@ -396,7 +396,7 @@ class FakeCalendar:
                 stored.overrides[occurrence] = None
             else:
                 wanted = EventFields.model_validate(data["fields"])
-                stored.overrides[occurrence] = wanted.model_copy(update={"recurrence": None})
+                stored.overrides[occurrence] = _occurrence_fields(stored, occurrence, wanted)
         elif prepared.intent_kind is _K.CALENDAR_DELETE:
             stored.status = EventStatus.CANCELLED
             self._cancel_copies(source, stored, stored.participants)
@@ -676,10 +676,20 @@ def _split(locator: str) -> tuple[str, str | None]:
 
 
 def _series_fields(stored: StoredEvent, wanted: EventFields) -> EventFields:
-    """A series update that gives no rule keeps the one the series has (P-25)."""
-    if wanted.recurrence is None and stored.fields.recurrence is not None:
-        return wanted.model_copy(update={"recurrence": stored.fields.recurrence})
-    return wanted
+    """An update keeps recurrence and visibility when omitted (P-25)."""
+    return wanted.model_copy(
+        update={
+            "recurrence": wanted.recurrence or stored.fields.recurrence,
+            "visibility": wanted.visibility or stored.fields.visibility,
+        }
+    )
+
+
+def _occurrence_fields(stored: StoredEvent, occurrence: str, wanted: EventFields) -> EventFields:
+    before = stored.overrides.get(occurrence) or stored.fields
+    return wanted.model_copy(
+        update={"recurrence": None, "visibility": wanted.visibility or before.visibility}
+    )
 
 
 def _matches(event: CalendarEvent, query: CalendarQuery) -> bool:

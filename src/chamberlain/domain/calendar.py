@@ -4,7 +4,7 @@ Contract: docs/contracts/08-ports.md (P-16).
 """
 
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import Field, field_validator, model_validator
@@ -105,6 +105,8 @@ class EventFields(Model):
     location: str = Field(default="", max_length=300)
     description: str = Field(default="", max_length=4000)
     attendees: tuple[EmailAddress, ...] = ()
+    visibility: Literal["private"] | None = None
+    """Explicit private classification. Omit to keep the current or provider-default visibility."""
     recurrence: Recurrence | None = None
     """Set on a series (P-23). On a read it is the series' rule when it is a plain one."""
 

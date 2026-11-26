@@ -452,8 +452,15 @@ class CalDavCalendar:
 
     def _reconcile_create(self, binding: CalDavBinding, prepared: Prepared) -> ReconcileResult:
         name = _text(prepared.data, "name")
+        wanted = EventFields.model_validate(prepared.data["fields"])
         fetched = self._fetch(binding, name)
         if fetched is not None:
+            if wanted.visibility is not None and not _same(
+                ics.master_of(fetched[0]), wanted, binding
+            ):
+                return ReconcileResult(
+                    status=ReconcileStatus.UNKNOWN, detail="private event differs from the request"
+                )
             return ReconcileResult(
                 status=ReconcileStatus.PRESENT, receipt=_receipt(name, fetched[1])
             )
@@ -461,7 +468,13 @@ class CalDavCalendar:
         for other, etag, text in self._report(
             binding, self._collection(binding), dav.query_uid(uid)
         ):
-            if any(p.uid == uid for p in ics.parse_events(text)):
+            match = next((p for p in ics.parse_events(text) if p.uid == uid), None)
+            if match is not None:
+                if wanted.visibility is not None and not _same(match, wanted, binding):
+                    return ReconcileResult(
+                        status=ReconcileStatus.UNKNOWN,
+                        detail="private event differs from the request",
+                    )
                 return ReconcileResult(
                     status=ReconcileStatus.PRESENT, receipt=_receipt(other, etag)
                 )

@@ -34,7 +34,9 @@ def _send(fake: FakeProvider, message_id: str = "<out1@example.org>") -> Prepare
 
 def _move(fake: FakeProvider, locator: str) -> Prepared:
     handle = ref_handle(HandleKind.MESSAGE, MAIL, locator)
-    intent = MailMove.model_validate({"source": MAIL, "message": handle, "to_folder": "f-archive"})
+    intent = MailMove.model_validate(
+        {"source": MAIL, "messages": [handle], "to_folder": "f-archive"}
+    )
     return fake.mail.prepare(intent, {handle: locator})
 
 

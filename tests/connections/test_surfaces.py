@@ -2,12 +2,14 @@
 
 import io
 import json
+from codecs import BOM_UTF8
 from pathlib import Path
 from typing import Any
 
 import pytest
 from conn_support import full_profile, write_profile
 
+from chamberlain.connections.load import load_connections
 from chamberlain.surface import cli, mcp_server
 
 
@@ -61,6 +63,79 @@ def test_s16_config_commands_need_a_data_root(monkeypatch: pytest.MonkeyPatch) -
     code, reply = run_cli("config", "show")
     assert code == cli.EXIT_FAILED
     assert reply["error"]["code"] == "config.invalid"
+
+
+@pytest.mark.parametrize(
+    ("before_section", "after_section"),
+    [
+        ("", 'live_test:\n  calendars:\n    "calendar:work": {}\n'),
+        (
+            "live_test: {enabled: false, calendars: {}} # preserve this comment\n",
+            'live_test: {enabled: false, calendars: {"calendar:work": {}}} '
+            "# preserve this comment\n",
+        ),
+        (
+            "live_test:\n  enabled: false\n  calendars:\n    calendar:primary: {} # keep\n",
+            "live_test:\n  enabled: false\n  calendars:\n"
+            '    "calendar:work": {}\n    calendar:primary: {} # keep\n',
+        ),
+    ],
+)
+def test_s16_add_test_calendar_preserves_yaml_and_backs_up_original(
+    data_root: Path, before_section: str, after_section: str
+) -> None:
+    profile = write_profile(data_root, full_profile())
+    sources = profile.read_text(encoding="utf-8")
+    comment = "# Connection profile\n"
+    original = BOM_UTF8 + (comment + before_section + sources).replace("\n", "\r\n").encode()
+    profile.write_bytes(original)
+    command = ("--data", str(data_root), "config", "add-test-calendar", "calendar:work")
+
+    code, reply = run_cli(*command)
+
+    assert code == cli.EXIT_OK
+    assert reply["changed"] is True
+    backup = Path(reply["backup"])
+    assert backup.parent == profile.parent
+    assert backup.read_bytes() == original
+    expected = BOM_UTF8 + (comment + after_section + sources).replace("\n", "\r\n").encode()
+    assert profile.read_bytes() == expected
+    live = load_connections(data_root).live_test
+    assert "calendar:work" in live.calendars
+    assert live.enabled is False
+    assert live.approve_calendar_edits is False
+
+    assert run_cli(*command) == (
+        cli.EXIT_OK,
+        {"ok": True, "source": "calendar:work", "changed": False},
+    )
+    assert profile.read_bytes() == expected
+    assert sorted(profile.parent.glob("connections.yaml.bak-*")) == [backup]
+
+    code, next_reply = run_cli(*command[:-1], "calendar:icloud")
+    assert code == cli.EXIT_OK
+    next_backup = Path(next_reply["backup"])
+    assert next_backup != backup
+    assert next_backup.read_bytes() == expected
+    assert backup.read_bytes() == original
+
+
+@pytest.mark.parametrize("source", ["mail:work", "calendar:missing", "calendar:work"])
+def test_s16_add_test_calendar_refuses_unknown_sources_or_invalid_profiles(
+    data_root: Path, source: str
+) -> None:
+    document = full_profile()
+    if source == "calendar:work":
+        document["timezone"] = "Nowhere/None"
+    profile = write_profile(data_root, document)
+    original = profile.read_bytes()
+
+    code, reply = run_cli("--data", str(data_root), "config", "add-test-calendar", source)
+
+    assert code == cli.EXIT_FAILED
+    assert reply["error"]["code"] == "config.invalid"
+    assert profile.read_bytes() == original
+    assert list(profile.parent.iterdir()) == [profile]
 
 
 def test_t15_the_mcp_server_calls_tools_on_the_configured_app(data_root: Path) -> None:

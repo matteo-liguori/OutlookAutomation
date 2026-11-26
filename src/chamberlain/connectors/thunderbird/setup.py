@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Final
 
 from chamberlain.connectors.thunderbird.native_host import private_directory
+from chamberlain.connectors.thunderbird.typegen import render
 from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -55,7 +56,14 @@ def build_addon_script(output: Path, *, node: str | None = None) -> Path:
         )
     output.mkdir(parents=True, exist_ok=True)
     done = subprocess.run(
-        [executable, "--no-warnings", str(ADDON_DIR / "build.mjs"), str(output)],
+        [
+            executable,
+            "--no-warnings",
+            str(ADDON_DIR / "build.mjs"),
+            str(output),
+            "--protocol-stdin",
+        ],
+        input=render(),
         capture_output=True,
         text=True,
         check=False,

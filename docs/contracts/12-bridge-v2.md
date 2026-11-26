@@ -1,9 +1,9 @@
-# 12 Thunderbird bridge protocol, version 2
+# 12 Thunderbird bridge protocol, version 3
 
 Binding for the Thunderbird connector (`src/chamberlain/connectors/thunderbird/`)
 and its add-on (`.../addon/`). Written by wave-1 track (d). The machine-readable
-form is `protocol.py`; the add-on's TypeScript types and runtime request
-schemas are generated from it (`typegen.py`, section 9). Where this prose and
+form is `protocol.py`. The add-on's TypeScript types and protocol constants
+are generated from it (`typegen.py`, section 9). Where this prose and
 `protocol.py` disagree, post on the board.
 
 The bridge has three parts and a strict division of duty:
@@ -15,15 +15,16 @@ The bridge has three parts and a strict division of duty:
 
 - The **client** (`client.py`, `mail.py`, `contacts.py`) decides what a result
   means. It maps add-on facts to `Page`, `DispatchResult` and `ReconcileResult`.
-- The **host** (`native_host.py`) authenticates clients, checks the handshake
-  and relays frames. It never interprets a command beyond the closed list.
+- The **host** (`native_host.py`) authenticates clients, checks the handshake,
+  validates commands using their Python models, and relays frames with the
+  model defaults applied.
 - The **add-on** executes one command, verifies what it can, and reports facts.
   It never checks grants, keeps no journal, never retries and never decides
   whether absence is proven.
 
 ## 1. Rules
 
-- **B-1** Every message carries the protocol version `v` (2) and a request ID `id`.
+- **B-1** Every message carries the protocol version `v` (3) and a request ID `id`.
 - **B-2** The command list is closed (section 5). The host refuses a command
   outside it and the add-on refuses it again; neither executes anything else.
 - **B-3** The add-on never opens a network listener, never calls `eval`,
@@ -36,8 +37,7 @@ The bridge has three parts and a strict division of duty:
 - **B-5** A write command is executed at most once per request ID. The add-on
   refuses a second in-flight request with the same ID. Nothing retries.
 - **B-6** Messages cross the bridge by stable identity (`folder_id` plus bare
-  `internet_message_id`), never by Thunderbird's session integer (P-6). Header
-  results carry `session_id` for diagnostics only.
+  `internet_message_id`, P-6). Header results include `session_id` for diagnostics.
 
 ## 2. Frames
 
@@ -63,9 +63,9 @@ UTF-8 JSON (one object). `frames.py` is the reference.
 
 | `t` | From | Purpose |
 | --- | --- | --- |
-| `addon_hello` | add-on | First message after connecting: `v`, `addon_version`, `browser_version`, `capabilities[]` |
-| `client_hello` | client | First message of a connection: `v`, `token`, `client_version`, `require[]` |
-| `welcome` | host | Authenticated and compatible: `host_version`, `addon_version`, `capabilities[]` |
+| `addon_hello` | add-on | First message after connecting: `v`, `addon_version`, `browser_version`, `calendar_available` |
+| `client_hello` | client | First message of a connection: `v`, `token`, `client_version` |
+| `welcome` | host | Authenticated and compatible: `host_version`, `addon_version`, `calendar_available` |
 | `refusal` | host or add-on | Refuses to operate: `code`, `message` |
 | `request` | client (relayed) | `cmd`, `args` |
 | `chunk` | either | `name`, `index`, `data` (base64, at most 196,608 raw bytes), `sha256` of the raw chunk |
@@ -79,26 +79,21 @@ UTF-8 JSON (one object). `frames.py` is the reference.
    session token. A wrong token gets `refusal unauthenticated` and the
    connection closes; nothing else is read from it.
 3. The host answers `refusal addon_not_connected` if no add-on has said hello;
-   `refusal version_mismatch` if the add-on's or the client's `v` is not 2;
-   `refusal capability_missing` if the add-on lacks any capability in the
-   client's `require` list. Otherwise it sends `welcome`.
-4. The client checks the `welcome` itself (version, required capabilities) and
-   refuses to operate on any mismatch.
+   `refusal version_mismatch` if the add-on's or the client's `v` is not 3.
+   Otherwise it sends `welcome`.
+4. The client checks the `welcome` version and refuses to operate on a mismatch.
 
 - **B-9** A refusal maps to `source.unavailable` with a `fix` naming the
   add-on update ("Install the current Chamberlain Thunderbird add-on and
   restart Thunderbird"). A request is never sent after a refusal, so a refused
   write is `not_applied`.
-- **B-10** Capabilities are `read search attachments send draft move trash
-  mark_read contacts refresh`. The mail client requires all of them. Other
-  capabilities (for example `calendar`, added by the calendars track) are
-  optional: an add-on may advertise them, a client names in `require` only
-  what it needs, and the host checks `require` against the advertised list
-  without knowing what the strings mean.
+- **B-10** Mail and contacts have the fixed version 3 protocol. Calendar
+  support is optional. The add-on reports `calendar_available` in its hello
+  and status, and the host relays it in `welcome`.
 
 ## 4. Chunked binary transfer
 
-- **Upload** (`send`, `draft_save`, `draft_update`): the request's
+- **Upload** (`compose`): the request's
   `args.attachments[]` lists each `AttachmentSpec` `{key, name, size, sha256,
   content_type, chunks}`. The request frame is followed on the same connection
   by exactly `chunks` `chunk` frames per attachment with `name` equal to the
@@ -109,7 +104,7 @@ UTF-8 JSON (one object). `frames.py` is the reference.
   dropped.
 - **Download** (`attachment`): the add-on sends `chunks` `chunk` frames with
   the request's ID and `name` equal to the part name, then the `response`
-  whose `result` carries `size`, `sha256` and `chunks`. The client assembles,
+  whose `result` carries `media_type`, `size`, `sha256` and `chunks`. The client assembles,
   verifies each chunk hash, the byte count and the whole hash, and returns
   nothing on any mismatch (P-8). No partial file is ever created: bytes stay
   in memory until verified.
@@ -117,7 +112,7 @@ UTF-8 JSON (one object). `frames.py` is the reference.
 
 ## 5. Commands (closed list)
 
-All mail commands carry `account_id` and `mailbox`; the add-on verifies the
+Account-bound mail commands carry `account_id` and `mailbox`. The add-on verifies the
 account exists and one of its identities equals `mailbox`
 (`account_mismatch` otherwise) and that every folder named belongs to that
 account (the local Outbox excepted, section 8). Argument and result shapes are
@@ -125,38 +120,42 @@ the models of `protocol.py`.
 
 **Reads** (never change remote state, including the read flag; the add-on
 captures the flag before and after and fails with `changed` if it moved):
-`status`, `accounts`, `folders`, `query`, `read`, `attachment`, `resolve`,
-`refresh`, `contacts`, `contact_read`.
+`status`, `folders`, `query`, `read`, `attachment`, `refresh`, `contacts`,
+`contact_read`, `copies`.
 
-- `query` filters by folder, bare Message-ID, text, subject (normalised:
-  reply prefixes and case ignored), unread, window. Results are ordered newest
+- `query` filters by folder, bare Message-ID, header words, subject
+  (normalised with reply prefixes and case ignored), unread, and date window. Results are ordered newest
   first by `(date_ms, folder_id + NUL + message_id)` and paged by an explicit
   keyset cursor (`after`), so a cursor stays valid when mail arrives. When the
-  scan stops at `max_scan` the result says `complete: false`.
+  scan stops at `max_scan` the result says `complete: false`. Attachment
+  flags come from Thunderbird's stored headers in batches.
 - `read` returns `authentication_results`: every `Authentication-Results`
   header of the message, topmost first, each clipped to 2000 characters (at
   most 8). The receiving provider adds the topmost; the sender can add the
   others, so only the topmost is evidence (`domain/sender_auth.py`).
-- `resolve` returns every physical copy of one Message-ID in one folder.
+- `attachment` checks the selected part's reported size and the returned
+  file size against the request limit before reading the bytes.
 - `refresh` asks the provider to synchronise exactly the named folders (at
   most 8) and reports the provider callback per folder. It is a read: it
-  pulls remote state and changes none. The harness sends 3 folders a call with
-  `timeout_ms` 8000, so a call answers inside the add-on's 30-second read deadline even when
-  every folder is stuck (08-ports P-20). An account root, a container with no mail (Gmail's
+  pulls remote state and changes none. The add-on starts the folder syncs
+  concurrently, with an 8000 ms default timeout per folder. An account root, a container with no mail (Gmail's
   `[Gmail]`) and a saved search answer `success: false, code: "not-selectable"` at once; the
-  harness counts that as in sync. Add-on 2.0.1 added this answer; with 2.0.0 such a folder
-  times out and is reported as not synced, so the add-on needs reinstalling.
+  harness counts that as in sync.
+- `copies` returns observations for each requested scope. An ID scope
+  reports physical copies of the requested IDs in a bound folder. A subject
+  scope searches the folder or the local Outbox since the requested date and
+  can collect content facts. With `refresh: true`, the add-on first refreshes
+  the named folders and reports whether provider callbacks verified that refresh.
 
-**Writes**: `send`, `draft_save`, `draft_update`, `draft_discard`, `move`,
-`trash`, `mark_read`. Each performs exactly one logical mutation.
+**Writes**: `compose`, `change`, `draft_discard`. Each performs one logical mutation.
 
-- `send` composes with the bound Sent folder applied explicitly (also on
+- `compose` with mode `send` applies the bound Sent folder explicitly (also on
   replies), verifies the composer against the request (sender, subject, body,
   recipients, Sent folder, priority, attachment bytes), then submits. It adds
   the header `X-Chamberlain-Write-Token: <token>`. Thunderbird does not let an
   add-on choose `Message-ID` (R1): the connector declares
   `message_id_honoured: 0` and reconciles by content (section 6).
-- `draft_save` / `draft_update` save into the bound draft folder with
+- `compose` with mode `draft_save` or `draft_update` saves into the bound draft folder with
   autosave paused in the managed composer; a manual edit by the user fails the
   composer verification (`changed`). `draft_update` first checks the existing
   draft's raw hash equals `expected_raw_sha256`, reopens it through the
@@ -165,46 +164,31 @@ captures the flag before and after and fails with `changed` if it moved):
 - `draft_discard` closes a managed composer for the draft if the draft's raw
   hash still equals `expected_raw_sha256` and the composer is unmodified. It
   NEVER deletes saved mail (R8).
-- `move` and `trash` locate the one copy at `ref`, refuse if the destination
-  already holds one (move) or the source holds several (`ambiguous`), move it,
-  then poll up to 20 times at 250 ms until exactly one more copy is at the
-  destination and one fewer at the source; otherwise `not_verified`
-  (`mutation: possible`). The flag is restored to its prior value unless
-  `mark_read`. `trash` accepts a provider that merges the moved copy into an
-  existing Trash copy (Gmail labels): the result then has
-  `merged_existing_copy: true` and `read_state_preserved: false` when the flags
-  differed; existing Trash flags are never altered (R7).
-- `move_many` locates the requested Message-IDs in one source folder, files or
-  trashes the eligible subset together, and checks source and destination.
-  Each moved message keeps its read state unless filing explicitly marks it
-  read. The add-on groups flag corrections by desired value and verifies the
-  result. A merged Trash copy keeps its existing flag. The receipt records a
-  merge or a flag that could not be preserved.
-- `mark_read` sets the flag (`read: true` or `false`) on each located copy and
-  reports every item; partial success is a normal `ok` result (W-24).
+- `change` with `move_to` takes one source folder and its Message-IDs, finds
+  their unambiguous copies, moves eligible messages together, and verifies the
+  source and destination. It preserves read state unless filing explicitly
+  supplies `set_read`. A provider may merge a moved message into an existing
+  Trash copy when `trash` is set. The existing Trash copy keeps its read flag.
+  The receipt records a merge or a flag that could not be preserved (R7).
+- `change` without `move_to` groups messages by folder and applies `set_read`
+  in bulk. The result reports each requested item (W-24).
 
-**Reconcile twins** (read-only; they may `refresh` the exact folders involved
-first): `reconcile_send`, `reconcile_draft_save`, `reconcile_draft_update`,
-`reconcile_draft_discard`, `reconcile_move`, `reconcile_trash`,
-`reconcile_move_many`, `reconcile_mark_read`. The batch result supplies per-ID
-source and destination counts so confirmed handles follow moved messages.
-They take the write's arguments minus bytes, return
-observations (copies found, per-folder completeness, whether the refresh was
-verified) and never a verdict.
+The Python client reconciles mail writes using `copies` observations, with
+per-scope completeness and provider refresh results, and decides whether the
+evidence proves presence or absence.
 
-**Calendar commands** (optional capability `calendar`): `calendar_list`,
-`calendar_query`, `calendar_read` (reads) and `calendar_create`,
-`calendar_update`, `calendar_delete` (writes, sharing the one write slot with
+**Calendar commands** (when `calendar_available`): `calendar_list`,
+`calendar_query`, `calendar_read` (reads) and `calendar_write` (writes, sharing the one write slot with
 mail). They take a Thunderbird `calendar_id` and no account fields. The add-on
-advertises `calendar` only when its privileged calendar helper
-(`experiment/calendar_api.js`, eight named functions, no generic execute) loads;
-only a client that uses these commands lists `calendar` in `require`, so mail
-works unchanged without it. Events cross the bridge as iCalendar text.
+sets `calendar_available` when its privileged calendar helper
+(`experiment/calendar_api.js`, eight named functions) loads. Events cross the
+bridge as iCalendar text.
 
 - `calendar_list {}` returns `{calendars: [{id, name, type, read_only, disabled,
   fresh_as_of?}]}`. `fresh_as_of` is sent only when the client can say when the
-  calendar last synchronised; the Owl helper cannot today, so the connector's
-  health is `stale` until a live check finds a source for it.
+  calendar last synchronised. For Owl the adapter establishes freshness by creating a
+  private appointment, reading it, deleting it and verifying removal. A completed check
+  supplies the standard health timestamp.
 - `calendar_query {calendar_id, start, end, limit}` (ISO times, `limit` 1 to
   5000) returns `{items: [{id, recurrence_id|null, icalendar}], complete, gaps}`:
   the occurrences inside the window (a series appears as its occurrences, each
@@ -214,9 +198,9 @@ works unchanged without it. Events cross the bridge as iCalendar text.
   incomplete.
 - `calendar_read {calendar_id, event_id}` returns `{item: {...} | null}`: the
   exact stored text, or null when the id is not there.
-- `calendar_create {calendar_id, event_id, icalendar}` refuses with `changed`
-  when the id exists. `calendar_update {..., expected_icalendar, icalendar}` and
-  `calendar_delete {..., expected_icalendar}` refuse with `changed` unless the
+- `calendar_write` with `kind: create` requires `calendar_id`, `event_id` and
+  `icalendar` and refuses with `changed` when the ID exists. `kind: update`
+  and `kind: delete` require `expected_icalendar` and refuse with `changed` unless the
   stored text equals `expected_icalendar` exactly (the connector's etag is its
   hash), and with `not_found` when the event is gone. Delete is a real
   `deleteItem`.
@@ -229,9 +213,7 @@ works unchanged without it. Events cross the bridge as iCalendar text.
   from then on, including a deadline, is `mutation: possible`. After the call it
   reads the event back: a create or update the provider did not keep, or a
   delete that left the event, is `not_verified` with `mutation: possible`. A
-  success returns `{item, timing_ms}` where `item` is the read-back (null after
-  a delete) and `timing_ms` maps each stage (`calendar`, `read_before`,
-  `provider`, `read_after`) to milliseconds since the command began.
+  success returns `{item}`, the read-back (null after a delete).
 - There is no calendar reconcile twin: reconcile is `calendar_read` or a bounded
   `calendar_query`. Absence through a client cache is never proof.
 
@@ -259,8 +241,8 @@ works unchanged without it. Events cross the bridge as iCalendar text.
 
 ## 7. Errors
 
-An error response carries `code`, `message`, `mutation` (`none` or `possible`)
-and `retryable`. The add-on sets `mutation: none` only when it proves no
+An error response carries `code`, `message` and `mutation` (`none` or `possible`).
+The add-on sets `mutation: none` only when it proves no
 mutating `messenger` call was issued for the request; the flag is an in-memory
 marker set immediately before that call.
 
@@ -292,10 +274,9 @@ Dispatch outcome rules (P-10):
 
 ## 8. Scope of reads
 
-- The local **Outbox** belongs to the local-folders account. The add-on
-  reads it only through `folders` with `include_outbox` and `query` with
-  `own_only` (messages authored by `mailbox`), because the queue is shared
-  across accounts.
+- The local **Outbox** belongs to the local-folders account. A `copies`
+  subject scope with `folder_id: null` searches the sender's own messages
+  there, because the queue is shared across accounts.
 - The connector scans Sent, Drafts and Outbox (R3) before a send and again for
   send reconcile. Coverage is reported per folder; an incomplete scan fails the
   send at `prepare` with `remote.changed` unless the grant allows duplicates
@@ -304,10 +285,11 @@ Dispatch outcome rules (P-10):
 ## 9. Generated types
 
 `python -m chamberlain.connectors.thunderbird.typegen` writes
-`addon/src/protocol.generated.ts`: one TypeScript interface per model, the
-`CommandArgs` and `CommandResults` maps, the constants, and the JSON Schema of
-every request (`SCHEMA_DEFS`) which the add-on interprets at run time to
-validate each request before executing it. A test regenerates and compares.
+`addon/build/protocol.generated.ts`, an ignored build artifact with the model
+types, `CommandArgs` and `CommandResults` maps, and protocol constants. Add-on
+builds, installs and tests generate these definitions from Python. The native
+host validates and fills request arguments using the Python models before
+sending them to the add-on's closed, typed command dispatch.
 
 ## 10. Transport and timing
 

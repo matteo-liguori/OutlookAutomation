@@ -11,5 +11,5 @@
     "skipLibCheck": true,
     "types": []
   },
-  "include": ["src/**/*.ts", "types/**/*.d.ts"]
+  "include": ["build/protocol.generated.ts", "src/**/*.ts", "types/**/*.d.ts"]
 }

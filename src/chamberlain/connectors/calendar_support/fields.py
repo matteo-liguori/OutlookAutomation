@@ -8,6 +8,7 @@ values are clipped to the field limits instead.
 import re
 from collections.abc import Iterable
 from datetime import datetime
+from typing import Literal
 
 from chamberlain.domain.calendar import EventFields
 
@@ -54,6 +55,7 @@ def clip_fields(
     location: str = "",
     description: str = "",
     attendees: Iterable[str] = (),
+    visibility: Literal["private"] | None = None,
 ) -> EventFields:
     return EventFields(
         title=(title.strip() or UNTITLED)[:TITLE_MAX],
@@ -63,6 +65,7 @@ def clip_fields(
         location=location[:LOCATION_MAX],
         description=description[:DESCRIPTION_MAX],
         attendees=clean_addresses(attendees),
+        visibility=visibility,
     )
 
 
@@ -75,4 +78,5 @@ def same_content(left: EventFields, right: EventFields) -> bool:
         and left.all_day == right.all_day
         and left.location == right.location
         and left.description == right.description
+        and (right.visibility is None or left.visibility == right.visibility)
     )

@@ -291,7 +291,7 @@ def move_back(lab: Lab, t: Target) -> None:
         )
     lab.confirmed(
         lab.write(
-            {"kind": "mail.move", "source": t.source, "message": handle, "to_folder": scratch.id}
+            {"kind": "mail.move", "source": t.source, "messages": [handle], "to_folder": scratch.id}
         ),
         "move to the scratch folder",
     )
@@ -307,7 +307,9 @@ def move_back(lab: Lab, t: Target) -> None:
         lab.call("open", handle=handle).ok, "the message handle did not survive the move (R4)"
     )
     lab.confirmed(
-        lab.write({"kind": "mail.move", "source": t.source, "message": handle, "to_folder": inbox}),
+        lab.write(
+            {"kind": "mail.move", "source": t.source, "messages": [handle], "to_folder": inbox}
+        ),
         "move back to the inbox",
     )
     back = lab.copies(t.source, subject)
@@ -376,10 +378,20 @@ def trash_restore(lab: Lab, t: Target) -> None:
     lab.check(
         not any(c.folder_id == inbox for c in after), "a copy is still in the inbox after trashing"
     )
-    lab.confirmed(
-        lab.write({"kind": "mail.move", "source": t.source, "message": handle, "to_folder": inbox}),
-        "restore from the trash",
+    restored = lab.write(
+        {"kind": "mail.move", "source": t.source, "messages": [handle], "to_folder": inbox}
     )
+    if restored.code == "operation.uncertain":
+        # Cleanup moves the marked copies again. Capture the evidence while it still exists.
+        copies = lab.copies(t.source, subject)
+        facts: list[str] = []
+        for label, group in (
+            ("Inbox", [c for c in copies if c.folder_id == inbox]),
+            ("Trash", [c for c in copies if c.folder_role is FolderRole.TRASH]),
+        ):
+            facts.append(f"{label} {len(group)} copies ({sum(c.unread for c in group)} unread)")
+        raise ScenarioFailure("restore uncertain before cleanup: " + ", ".join(facts))
+    lab.confirmed(restored, "restore from the trash")
     back = lab.copies(t.source, subject)
     lab.check(any(c.folder_id == inbox for c in back), "the message is not back in the inbox")
 

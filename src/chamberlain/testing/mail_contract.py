@@ -54,7 +54,7 @@ class MailPortContract:
         intent = MailMove.model_validate(
             {
                 "source": rig.source,
-                "message": handle,
+                "messages": [handle],
                 "to_folder": rig.filing_folder_id(),
                 "mark_read": mark_read,
             }
@@ -163,24 +163,24 @@ class MailPortContract:
         result = rig.port.dispatch(self._prepare_move(rig, locator), "k-move", {})
         assert result.outcome is DispatchOutcome.APPLIED
         assert result.receipt is not None
-        assert result.receipt.locator is not None
+        assert result.receipt.items[0].moved_to is not None
         assert rig.copies(message_id, rig.folder_id(FolderRole.INBOX)) == 0
         assert rig.copies(message_id, rig.filing_folder_id()) == 1
-        assert rig.is_unread(result.receipt.locator)
+        assert rig.is_unread(result.receipt.items[0].moved_to)
 
     def test_w23_move_marks_read_only_when_told_to(self, rig: MailRig) -> None:
         locator = rig.seed(internet_message_id=rig.new_message_id())
         prepared = self._prepare_move(rig, locator, mark_read=True)
         result = rig.port.dispatch(prepared, "k-move-read", {})
         assert result.receipt is not None
-        assert result.receipt.locator is not None
-        assert not rig.is_unread(result.receipt.locator)
+        assert result.receipt.items[0].moved_to is not None
+        assert not rig.is_unread(result.receipt.items[0].moved_to)
 
     def test_p14_trash_goes_to_the_recoverable_folder(self, rig: MailRig) -> None:
         message_id = rig.new_message_id()
         locator = rig.seed(internet_message_id=message_id)
         handle = _handle(rig, locator)
-        intent = MailTrash.model_validate({"source": rig.source, "message": handle})
+        intent = MailTrash.model_validate({"source": rig.source, "messages": [handle]})
         result = rig.port.dispatch(rig.port.prepare(intent, {handle: locator}), "k-trash", {})
         assert result.outcome is DispatchOutcome.APPLIED
         assert rig.copies(message_id, rig.folder_id(FolderRole.TRASH)) == 1
@@ -238,7 +238,11 @@ class MailPortContract:
             assert rig.copies(message_id, inbox) == 0
             assert item.moved_to is not None
             assert not rig.is_unread(item.moved_to)
-        assert rig.port.reconcile(prepared, "k-file-batch").status is ReconcileStatus.PRESENT
+        settled = rig.port.reconcile(prepared, "k-file-batch")
+        assert settled.status is ReconcileStatus.PRESENT
+        assert settled.receipt is not None
+        assert [item.locator for item in settled.receipt.items] == locators
+        assert all(item.ok and item.moved_to for item in settled.receipt.items)
 
     def test_w24_marking_many_read_reads_each_folder_once(self, rig: MailRig) -> None:
         locators = [rig.seed(internet_message_id=rig.new_message_id()) for _ in range(12)]
@@ -260,9 +264,9 @@ class MailPortContract:
         intent = MailMove.model_validate(
             {
                 "source": rig.source,
-                "message": handle,
+                "messages": [handle],
                 "to_folder": rig.filing_folder_id(),
-                "internet_message_id": "<a-different-message@example.org>",
+                "from_folder": "a-different-folder",
             }
         )
         with pytest.raises(ChamberlainError) as raised:

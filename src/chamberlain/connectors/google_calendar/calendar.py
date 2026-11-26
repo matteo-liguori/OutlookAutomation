@@ -365,16 +365,20 @@ class GoogleCalendar:
         kind = prepared.intent_kind
         now = self._clock.now()
         if kind is IntentKind.CALENDAR_CREATE:
-            if "event_id" in prepared.data:
-                by_id = self._get_by_id(binding, _text(prepared.data, "event_id"))
-                if by_id is None:
-                    return ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
-                if by_id.get("status") == "cancelled":
-                    return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="was cancelled")
-                return _present(by_id)
-            found = self._find_by_uid(binding, prepared.reconcile_token or "")
+            found = (
+                self._get_by_id(binding, _text(prepared.data, "event_id"))
+                if "event_id" in prepared.data
+                else self._find_by_uid(binding, prepared.reconcile_token or "")
+            )
             if found is None:
                 return ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)
+            if found.get("status") == "cancelled":
+                return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="was cancelled")
+            wanted = EventFields.model_validate(prepared.data["fields"])
+            if wanted.visibility is not None and not mapping.fields_match(found, wanted, now):
+                return ReconcileResult(
+                    status=ReconcileStatus.UNKNOWN, detail="private event differs from the request"
+                )
             return _present(found)
         current = self._get_by_id(binding, _text(prepared.data, "locator"))
         if current is None:

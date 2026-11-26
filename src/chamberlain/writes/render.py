@@ -121,7 +121,7 @@ def describe_intent(
         for attachment in intent.attachments:
             lines.append(f"Attachment: {attachment.filename} sha256 {attachment.sha256}")
         body = intent.body
-    if isinstance(intent, MailMove | MailTrash) and intent.messages:
+    if isinstance(intent, MailMove | MailTrash):
         lines.append(f"Messages: {len(intent.messages)} from one folder")
     if isinstance(intent, MailMove):
         lines.append(f"To folder: {intent.to_folder}; mark read: {intent.mark_read}")

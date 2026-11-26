@@ -8,12 +8,14 @@ stdio pipes -> add-on. Faults are injected at the add-on or at its frame edge;
 
 import base64
 import json
+import os
 import shutil
 import socket
 import subprocess
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
+from functools import cache
 from pathlib import Path
 from typing import Any, Final
 
@@ -37,6 +39,7 @@ from chamberlain.connectors.thunderbird.native_host import (
     NativeHost,
     write_runtime,
 )
+from chamberlain.connectors.thunderbird.typegen import write_generated
 from chamberlain.domain.calendar import EventFields, EventStatus
 from chamberlain.domain.mail import FolderRole
 from chamberlain.ports.calendar import CalendarPort
@@ -104,6 +107,12 @@ def node_available() -> bool:
     return shutil.which("node") is not None
 
 
+@cache
+def generated_types() -> Path:
+    """Generate once before the first Node harness in this pytest process."""
+    return write_generated()
+
+
 class Stack:
     """Everything wired together for one test."""
 
@@ -111,6 +120,7 @@ class Stack:
         node = shutil.which("node")
         if node is None:
             raise RuntimeError("node is required for the Thunderbird rig")
+        types = generated_types()
         self.clock = ManualClock()
         self._control_listener = socket.socket()
         self._control_listener.bind(("127.0.0.1", 0))
@@ -130,6 +140,7 @@ class Stack:
             stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL,
             bufsize=0,
+            env={**os.environ, "CHAMBERLAIN_ADDON_TYPES": str(types)},
         )
         assert self._proc.stdin is not None
         assert self._proc.stdout is not None

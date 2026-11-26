@@ -87,6 +87,7 @@ interface RawCalendarItem {
   recurrence_id: string | null;
   icalendar: string;
   invited: boolean;
+  own_appointment?: boolean;
 }
 
 interface HarnessCalendarApi {
@@ -94,8 +95,8 @@ interface HarnessCalendarApi {
   listCalendars(): Promise<RawCalendar[]>;
   queryEvents(calendarId: string, startMs: number, endMs: number, limit: number): Promise<{ items: RawCalendarItem[]; truncated: boolean }>;
   getEvent(calendarId: string, eventId: string): Promise<RawCalendarItem | null>;
-  inspectEvent(icalendar: string): Promise<{ ok: boolean; error?: string; id?: string; invited?: boolean }>;
-  addEvent(calendarId: string, icalendar: string): Promise<unknown>;
+  inspectEvent(icalendar: string, calendarId: string): Promise<{ ok: boolean; error?: string; id?: string; invited?: boolean; own_appointment?: boolean }>;
+  addEvent(calendarId: string, icalendar: string): Promise<RawCalendarItem | null>;
   modifyEvent(calendarId: string, eventId: string, icalendar: string): Promise<unknown>;
   deleteEvent(calendarId: string, eventId: string): Promise<unknown>;
 }

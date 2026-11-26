@@ -26,7 +26,7 @@ UNAVAILABLE: Final = "unavailable"
 
 FOLDER_SECONDS: Final = 8
 """How long one folder is given in one attempt."""
-BATCH_FOLDERS: Final = 3
+BATCH_FOLDERS: Final = 8
 """Folders asked in one client call. The client answers one call within its read deadline
 (30 seconds at the add-on), so a batch times out only when every folder in it is stuck."""
 MAX_ROUNDS: Final = 12

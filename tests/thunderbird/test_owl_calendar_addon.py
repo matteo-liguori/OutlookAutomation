@@ -13,7 +13,8 @@ from chamberlain.connectors.calendar_support import ics
 from chamberlain.domain.calendar import CalendarQuery, EventFields
 from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.handles import HandleKind, ref_handle
-from chamberlain.domain.intents import CalendarCreate, CalendarUpdate
+from chamberlain.domain.intents import CalendarCreate, CalendarDelete, CalendarUpdate
+from chamberlain.domain.operations import DispatchOutcome
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 SOURCE = "calendar:test"
@@ -31,6 +32,35 @@ def test_the_connector_sees_the_add_ons_calendar_capability(stack: Stack) -> Non
     declared = stack.calendar.capabilities(SOURCE)
     assert declared.get(CapabilityName.CALENDAR_WRITE) is not None
     assert declared.get(CapabilityName.CALENDAR_READ) is not None
+
+
+def test_calendar_write_creates_updates_and_deletes_through_the_v3_bridge(stack: Stack) -> None:
+    create = CalendarCreate(source=SOURCE, event=fields("First"), uid="v3-event")
+    assert (
+        stack.calendar.dispatch(stack.calendar.prepare(create, {}), "create").outcome
+        is DispatchOutcome.APPLIED
+    )
+    current = stack.calendar.read(SOURCE, "v3-event")
+    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, "v3-event")
+    update = CalendarUpdate(
+        source=SOURCE, event_ref=handle, expected_etag=current.etag, event=fields("Second")
+    )
+    assert (
+        stack.calendar.dispatch(
+            stack.calendar.prepare(update, {handle: "v3-event"}), "update"
+        ).outcome
+        is DispatchOutcome.APPLIED
+    )
+    current = stack.calendar.read(SOURCE, "v3-event")
+    assert current.fields.title == "Second"
+    delete = CalendarDelete(source=SOURCE, event_ref=handle, expected_etag=current.etag)
+    assert (
+        stack.calendar.dispatch(
+            stack.calendar.prepare(delete, {handle: "v3-event"}), "delete"
+        ).outcome
+        is DispatchOutcome.APPLIED
+    )
+    assert stack.event_count("v3-event") == 0
 
 
 def test_p5_health_is_stale_because_the_client_cannot_say_when_it_synchronised(

@@ -105,7 +105,7 @@ def test_p5_a_bridge_that_is_down_is_unavailable_never_guessed(stack: Stack) -> 
 def test_p17_a_dispatch_to_a_bridge_that_is_down_is_not_applied(stack: Stack) -> None:
     _, locator = seed(stack)
     intent = MailMove.model_validate(
-        {"source": SOURCE, "message": handle(locator), "to_folder": stack.filing_folder_id()}
+        {"source": SOURCE, "messages": [handle(locator)], "to_folder": stack.filing_folder_id()}
     )
     prepared = stack.mail.prepare(intent, {handle(locator): locator})
     stack.host.stop()
@@ -153,9 +153,9 @@ def test_p9_prepare_issues_no_write_of_any_kind(stack: Stack) -> None:
     refs = {handle(locator): locator}
     intents = [
         MailMove.model_validate(
-            {"source": SOURCE, "message": handle(locator), "to_folder": stack.filing_folder_id()}
+            {"source": SOURCE, "messages": [handle(locator)], "to_folder": stack.filing_folder_id()}
         ),
-        MailTrash.model_validate({"source": SOURCE, "message": handle(locator)}),
+        MailTrash.model_validate({"source": SOURCE, "messages": [handle(locator)]}),
         MailMarkRead.model_validate({"source": SOURCE, "messages": [handle(locator)]}),
         send_intent(stack),
         MailDraftSave.model_validate(
@@ -179,23 +179,23 @@ def test_p9_prepare_issues_no_write_of_any_kind(stack: Stack) -> None:
 def test_r4_move_and_trash_receipts_return_the_new_locator(stack: Stack) -> None:
     _, locator = seed(stack)
     move = MailMove.model_validate(
-        {"source": SOURCE, "message": handle(locator), "to_folder": stack.filing_folder_id()}
+        {"source": SOURCE, "messages": [handle(locator)], "to_folder": stack.filing_folder_id()}
     )
     moved = applied(
         stack.mail.dispatch(stack.mail.prepare(move, {handle(locator): locator}), "k1", {})
     )
     assert moved.receipt is not None
-    new = moved.receipt.locator
+    new = moved.receipt.items[0].moved_to
     assert new is not None
     assert new != locator
     assert stack.mail.resolve(SOURCE, new).folder_id == stack.filing_folder_id()
-    trash = MailTrash.model_validate({"source": SOURCE, "message": handle(new)})
+    trash = MailTrash.model_validate({"source": SOURCE, "messages": [handle(new)]})
     trashed = applied(stack.mail.dispatch(stack.mail.prepare(trash, {handle(new): new}), "k2", {}))
     assert trashed.receipt is not None
-    assert trashed.receipt.locator is not None
-    assert stack.mail.resolve(SOURCE, trashed.receipt.locator).folder_id == stack.folder_id(
-        FolderRole.TRASH
-    )
+    assert trashed.receipt.items[0].moved_to is not None
+    assert stack.mail.resolve(
+        SOURCE, trashed.receipt.items[0].moved_to
+    ).folder_id == stack.folder_id(FolderRole.TRASH)
 
 
 def test_r7_trash_that_merges_into_an_existing_copy_is_applied_with_a_warning(
@@ -205,12 +205,12 @@ def test_r7_trash_that_merges_into_an_existing_copy_is_applied_with_a_warning(
     inbox = stack.seed(internet_message_id=message_id, unread=False)
     stack.seed(internet_message_id=message_id, folder=FolderRole.TRASH, unread=True)
     stack.control("inject", fault="merge")
-    intent = MailTrash.model_validate({"source": SOURCE, "message": handle(inbox)})
+    intent = MailTrash.model_validate({"source": SOURCE, "messages": [handle(inbox)]})
     result = applied(
         stack.mail.dispatch(stack.mail.prepare(intent, {handle(inbox): inbox}), "k", {})
     )
     assert result.receipt is not None
-    assert result.receipt.warnings == ("merged_existing_copy",)
+    assert result.receipt.warnings == ("merged_existing_copy", "read_state_not_preserved")
     assert result.receipt.read_state_preserved is False
     assert stack.copies(message_id, stack.folder_id(FolderRole.TRASH)) == 1
 
@@ -243,7 +243,7 @@ def test_p6_a_source_with_two_copies_makes_trash_ambiguous_old_behaviour_dropped
     message_id = stack.new_message_id()
     locator = stack.seed(internet_message_id=message_id)
     stack.seed(internet_message_id=message_id)
-    intent = MailTrash.model_validate({"source": SOURCE, "message": handle(locator)})
+    intent = MailTrash.model_validate({"source": SOURCE, "messages": [handle(locator)]})
     with pytest.raises(ChamberlainError) as raised:
         stack.mail.prepare(intent, {handle(locator): locator})
     assert raised.value.code is ErrorCode.REMOTE_AMBIGUOUS
@@ -252,7 +252,7 @@ def test_p6_a_source_with_two_copies_makes_trash_ambiguous_old_behaviour_dropped
 def test_p6_a_prepared_write_survives_a_client_restart(stack: Stack) -> None:
     message_id, locator = seed(stack)
     intent = MailMove.model_validate(
-        {"source": SOURCE, "message": handle(locator), "to_folder": stack.filing_folder_id()}
+        {"source": SOURCE, "messages": [handle(locator)], "to_folder": stack.filing_folder_id()}
     )
     prepared = stack.mail.prepare(intent, {handle(locator): locator})
     assert stack.restart()
@@ -405,6 +405,21 @@ def test_r3_a_related_message_in_sent_blocks_a_second_send_unless_the_grant_allo
     assert not raised.value.may_have_happened
     allowed = stack.mail.prepare(send_intent(stack), {ALLOW_DUPLICATE_REF: "1"})
     assert allowed.intent_kind.value == "mail.send"
+
+
+def test_w27_related_mail_blocks_a_send_but_does_not_prove_it_was_delivered(stack: Stack) -> None:
+    first = send_intent(stack)
+    applied(stack.mail.dispatch(stack.mail.prepare(first, {}), "first", {}))
+    related = first.model_copy(
+        update={"cc": ("different@example.org",), "message_id": stack.new_message_id()}
+    )
+    with pytest.raises(ChamberlainError) as blocked:
+        stack.mail.prepare(related, {})
+    assert blocked.value.code is ErrorCode.REMOTE_CHANGED
+    prepared = stack.mail.prepare(related, {ALLOW_DUPLICATE_REF: "1"})
+    settled = stack.mail.reconcile(prepared, "unsubmitted")
+    assert settled.status is ReconcileStatus.ABSENT
+    assert not settled.proof
 
 
 def test_r3_a_saved_draft_with_the_same_content_blocks_a_send(stack: Stack) -> None:

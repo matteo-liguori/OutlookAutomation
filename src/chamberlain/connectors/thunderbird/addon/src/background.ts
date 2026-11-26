@@ -1,7 +1,7 @@
-// Command bridge (protocol v2). Credentials stay in Thunderbird. No journal, no retry,
+// Command bridge (protocol v3). Credentials stay in Thunderbird. No journal, no retry,
 // no command outside the generated closed list (bridge contract B-2 to B-5).
 
-const ADDON_VERSION = "2.0.10";
+const ADDON_VERSION = "3.0.3";
 const HOST_NAME = "chamberlain_thunderbird_bridge";
 const READ_DEADLINE_MS = 30_000;
 const WRITE_DEADLINE_MS = 45_000;
@@ -20,24 +20,6 @@ interface Assembly {
 }
 const assemblies = new Map<string, Assembly>();
 
-function advertisedCapabilities(): string[] {
-  const m: any = messenger;
-  const have: { [name: string]: boolean } = {
-    read: !!m.messages?.getFull,
-    search: !!m.messages?.query,
-    attachments: !!m.messages?.getAttachmentFile,
-    send: !!m.compose?.sendMessage && !!m.chamberlainMail,
-    draft: !!m.compose?.saveMessage && !!m.chamberlainMail,
-    move: !!m.messages?.move,
-    trash: !!m.messages?.move,
-    mark_read: !!m.messages?.update,
-    contacts: !!m.addressBooks,
-    refresh: !!m.chamberlainMail?.syncFolders,
-    calendar: calendarSupported(),
-  };
-  return ADVERTISED_CAPABILITIES.filter((name) => have[name]);
-}
-
 function post(frame: unknown): void {
   port?.postMessage(frame);
 }
@@ -53,92 +35,49 @@ function respondError(id: string, cmd: string, error: BridgeError): void {
 function toBridgeError(error: unknown, ctx: Ctx | null): BridgeError {
   const issued = ctx?.mutationIssued === true;
   if (error instanceof BridgeFailure) {
-    return { code: error.code, message: clip(error.message, 500), mutation: issued || error.mutation === "possible" ? "possible" : "none", retryable: error.code === "busy" };
+    return { code: error.code, message: clip(error.message, 500), mutation: issued || error.mutation === "possible" ? "possible" : "none" };
   }
   const text = clip((error as Error)?.message ?? error, 500);
   const helper = helperFailure(text);
   if (helper) {
-    return { code: helper.code, message: helper.message, mutation: issued ? "possible" : "none", retryable: helper.code === "busy" };
+    return { code: helper.code, message: helper.message, mutation: issued ? "possible" : "none" };
   }
-  return { code: /offline/i.test(text) ? "client_offline" : "internal", message: text, mutation: issued ? "possible" : "none", retryable: false };
+  return { code: /offline/i.test(text) ? "client_offline" : "internal", message: text, mutation: issued ? "possible" : "none" };
 }
 
-async function runCommand(frame: RequestFrame, ctx: Ctx): Promise<{ result: unknown; chunks: ChunkFrame[] }> {
-  const args: any = frame.args;
-  const plain = async (value: Promise<unknown>) => ({ result: await value, chunks: [] as ChunkFrame[] });
-  switch (frame.cmd) {
-    case "status":
-      return plain(cmdStatus());
-    case "accounts":
-      return plain(cmdAccounts());
-    case "folders":
-      return plain(cmdFolders(args));
-    case "query":
-      return plain(cmdQuery(args));
-    case "read":
-      return plain(cmdRead(args));
-    case "attachment":
-      return cmdAttachment(args, frame.id);
-    case "resolve":
-      return plain(cmdResolve(args));
-    case "refresh":
-      return plain(cmdRefresh(args));
-    case "contacts":
-      return plain(cmdContacts(args));
-    case "contact_read":
-      return plain(cmdContactRead(args));
-    case "send":
-      return plain(cmdCompose(args, ctx, "send"));
-    case "draft_save":
-      return plain(cmdCompose(args, ctx, "draft_save"));
-    case "draft_update":
-      return plain(cmdCompose(args, ctx, "draft_update"));
-    case "draft_discard":
-      return plain(cmdDraftDiscard(args));
-    case "move":
-      return plain(cmdMove(args, ctx, false));
-    case "trash":
-      return plain(cmdMove(args, ctx, true));
-    case "move_many":
-      return plain(cmdMoveMany(args, ctx));
-    case "mark_read":
-      return plain(cmdMarkRead(args, ctx));
-    case "reconcile_send":
-      return plain(cmdReconcileCompose(args, "send"));
-    case "reconcile_draft_save":
-      return plain(cmdReconcileCompose(args, "draft_save"));
-    case "reconcile_draft_update":
-      return plain(cmdReconcileCompose(args, "draft_update"));
-    case "reconcile_draft_discard":
-      return plain(cmdReconcileDiscard(args));
-    case "reconcile_move":
-    case "reconcile_trash":
-      return plain(cmdReconcileMove(args));
-    case "reconcile_move_many":
-      return plain(cmdReconcileMoveMany(args));
-    case "reconcile_mark_read":
-      return plain(cmdReconcileMarkRead(args));
-    case "calendar_list":
-      return plain(cmdCalendarList());
-    case "calendar_query":
-      return plain(cmdCalendarQuery(args));
-    case "calendar_read":
-      return plain(cmdCalendarRead(args));
-    case "calendar_create":
-      return plain(cmdCalendarWrite(args, ctx, "create"));
-    case "calendar_update":
-      return plain(cmdCalendarWrite(args, ctx, "update"));
-    case "calendar_delete":
-      return plain(cmdCalendarWrite(args, ctx, "delete"));
-    default:
-      return fail("unknown_command", "No such command.");
-  }
+type CommandReply<K extends keyof CommandResults> = { result: CommandResults[K]; chunks: ChunkFrame[] };
+
+function plain<T>(handler: Promise<T>): Promise<{ result: T; chunks: ChunkFrame[] }> {
+  return handler.then((result) => ({ result, chunks: [] }));
+}
+
+const HANDLERS: { [K in keyof CommandArgs]: (args: CommandArgs[K], ctx: Ctx) => Promise<CommandReply<K>> } = {
+  status: () => plain(cmdStatus()),
+  folders: (args) => plain(cmdFolders(args)),
+  query: (args) => plain(cmdQuery(args)),
+  read: (args) => plain(cmdRead(args)),
+  attachment: (args, ctx) => cmdAttachment(args, ctx.id),
+  refresh: (args) => plain(cmdRefresh(args)),
+  contacts: (args) => plain(cmdContacts(args)),
+  contact_read: (args) => plain(cmdContactRead(args)),
+  compose: (args, ctx) => plain(cmdCompose(args, ctx)),
+  change: (args, ctx) => plain(cmdChange(args, ctx)),
+  draft_discard: (args, ctx) => plain(cmdDraftDiscard(args, ctx)),
+  copies: (args) => plain(cmdCopies(args)),
+  calendar_list: () => plain(cmdCalendarList()),
+  calendar_query: (args) => plain(cmdCalendarQuery(args)),
+  calendar_read: (args) => plain(cmdCalendarRead(args)),
+  calendar_write: (args, ctx) => plain(cmdCalendarWrite(args, ctx)),
+};
+
+function runCommand<K extends keyof CommandArgs>(cmd: K, args: CommandArgs[K], ctx: Ctx): Promise<CommandReply<K>> {
+  return HANDLERS[cmd](args, ctx);
 }
 
 function execute(frame: RequestFrame, files: Map<string, File>): void {
   const isWrite = WRITE_COMMANDS.includes(frame.cmd);
   if (isWrite && writeBusy) {
-    respondError(frame.id, frame.cmd, { code: "busy", message: "Another write is in progress.", mutation: "none", retryable: true });
+    respondError(frame.id, frame.cmd, { code: "busy", message: "Another write is in progress.", mutation: "none" });
     inFlight.delete(frame.id);
     return;
   }
@@ -146,7 +85,10 @@ function execute(frame: RequestFrame, files: Map<string, File>): void {
   const ctx: Ctx = { id: frame.id, cancelled: false, mutationIssued: false, files };
   // Keep write-busy until the task really settles, even after its deadline passed:
   // a timed-out operation may still finish inside the client.
-  const task = runCommand(frame, ctx).finally(() => {
+  // The native host validates/defaults arguments before forwarding them. onRequest has
+  // checked the command key and the frame shape, so this is the sole wire-to-types cast.
+  const cmd = frame.cmd as keyof CommandArgs;
+  const task = Promise.resolve().then(() => runCommand(cmd, frame.args as CommandArgs[typeof cmd], ctx)).finally(() => {
     if (isWrite) writeBusy = false;
   });
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -177,37 +119,39 @@ function execute(frame: RequestFrame, files: Map<string, File>): void {
 
 function onRequest(frame: RequestFrame): void {
   if (inFlight.has(frame.id)) {
-    respondError(frame.id, frame.cmd, { code: "bad_request", message: "That request ID is already in flight.", mutation: "none", retryable: false });
+    respondError(frame.id, frame.cmd, { code: "bad_request", message: "That request ID is already in flight.", mutation: "none" });
     return;
   }
   if (!COMMANDS.includes(frame.cmd)) {
-    respondError(frame.id, frame.cmd, { code: "unknown_command", message: "No such command.", mutation: "none", retryable: false });
+    respondError(frame.id, frame.cmd, { code: "unknown_command", message: "No such command.", mutation: "none" });
     return;
   }
-  let filled: RequestFrame;
-  try {
-    filled = { ...frame, args: validateArgs(frame.cmd, frame.args) };
-  } catch (error) {
-    respondError(frame.id, frame.cmd, toBridgeError(error, null));
+  if (!frame.args || typeof frame.args !== "object" || Array.isArray(frame.args)) {
+    respondError(frame.id, frame.cmd, { code: "bad_request", message: "Arguments must be an object.", mutation: "none" });
     return;
   }
-  frame = filled;
   inFlight.add(frame.id);
-  const specs: AttachmentSpec[] = Array.isArray((frame.args as any).attachments) ? (frame.args as any).attachments : [];
+  const specs = frame.cmd === "compose"
+    ? (frame.args as unknown as ComposeArgs).attachments : [];
+  if (!Array.isArray(specs)) {
+    respondError(frame.id, frame.cmd, { code: "bad_request", message: "Attachments must be an array.", mutation: "none" });
+    inFlight.delete(frame.id);
+    return;
+  }
   if (!specs.length) {
     execute(frame, new Map());
     return;
   }
   const keys = new Set(specs.map((s) => s.key));
-  if (keys.size !== specs.length || !WRITE_COMMANDS.includes(frame.cmd)) {
-    respondError(frame.id, frame.cmd, { code: "bad_request", message: "Attachment keys must be unique and only writes carry attachments.", mutation: "none", retryable: false });
+  if (keys.size !== specs.length) {
+    respondError(frame.id, frame.cmd, { code: "bad_request", message: "Attachment keys must be unique.", mutation: "none" });
     inFlight.delete(frame.id);
     return;
   }
   const timer = setTimeout(() => {
     assemblies.delete(frame.id);
     inFlight.delete(frame.id);
-    respondError(frame.id, frame.cmd, { code: "timeout", message: "The attachment transfer did not finish.", mutation: "none", retryable: false });
+    respondError(frame.id, frame.cmd, { code: "timeout", message: "The attachment transfer did not finish.", mutation: "none" });
   }, ASSEMBLY_DEADLINE_MS);
   assemblies.set(frame.id, { request: frame, specs, received: new Map(specs.map((s) => [s.key, { next: 0, parts: [] }])), timer });
   void finishAssembly(frame.id);
@@ -219,7 +163,7 @@ async function abortAssembly(id: string, message: string, code: BridgeErrorCode)
   clearTimeout(assembly.timer);
   assemblies.delete(id);
   inFlight.delete(id);
-  respondError(id, assembly.request.cmd, { code, message, mutation: "none", retryable: false });
+  respondError(id, assembly.request.cmd, { code, message, mutation: "none" });
 }
 
 async function onChunk(frame: ChunkFrame): Promise<void> {
@@ -260,7 +204,7 @@ async function finishAssembly(id: string): Promise<void> {
     const file = new File(assembly.received.get(spec.key)!.parts as BlobPart[], spec.name, { type: spec.content_type });
     if (file.size !== spec.size || (await sha256Hex(await file.arrayBuffer())) !== spec.sha256) {
       inFlight.delete(id);
-      respondError(id, assembly.request.cmd, { code: "hash_mismatch", message: "An attachment does not match its announced hash.", mutation: "none", retryable: false });
+      respondError(id, assembly.request.cmd, { code: "hash_mismatch", message: "An attachment does not match its announced hash.", mutation: "none" });
       return;
     }
     files.set(spec.key, file);
@@ -293,7 +237,7 @@ function connect(): void {
     setTimeout(connect, RECONNECT_MS);
   });
   messenger.runtime.getBrowserInfo().then(
-    (info) => post({ t: "addon_hello", v: PROTOCOL_VERSION, id: "hello" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), addon_version: ADDON_VERSION, browser_version: info.version, capabilities: advertisedCapabilities() }),
+    (info) => post({ t: "addon_hello", v: PROTOCOL_VERSION, id: "hello" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), addon_version: ADDON_VERSION, browser_version: info.version, calendar_available: calendarSupported() }),
     () => undefined,
   );
 }

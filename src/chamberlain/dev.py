@@ -49,7 +49,12 @@ def run_addon_step() -> int:
         )
         if installed.returncode != 0:
             return installed.returncode
-    return subprocess.run([npm, "run", "typecheck"], cwd=ADDON_DIR, check=False).returncode
+    return subprocess.run(
+        [npm, "run", "typecheck"],
+        cwd=ADDON_DIR,
+        env={**os.environ, "CHAMBERLAIN_PYTHON": sys.executable},
+        check=False,
+    ).returncode
 
 
 def run_steps(steps: Sequence[tuple[str, tuple[str, ...]]], keep_going: bool) -> int:

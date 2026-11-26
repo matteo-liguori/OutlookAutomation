@@ -130,7 +130,7 @@ def test_w10_w11_busy_before_dispatch_frees_the_grant_and_a_retry_works(rig: Wri
 
 def test_w11_a_failed_prepare_releases_and_never_burns_the_grant(rig: WriteRig) -> None:
     handle = rig.seed_message()
-    intent = MailMove(source=MAIL, message=handle, to_folder="f-archive")
+    intent = MailMove(source=MAIL, messages=(handle,), to_folder="f-archive")
     eng = rig.engine()
     proposal = eng.propose_intent(intent)
     approved = rig.agent_approves(proposal)
@@ -149,7 +149,7 @@ def test_w4_p14_trash_goes_to_the_recoverable_folder_and_the_handle_survives(
     """Old: test_trash_uses_only_approved_configured_recoverable_destination (R4 repoint)."""
     handle = rig.seed_message("<keep@example.org>")
     before = rig.refs.locate(handle)[1]
-    proposal = rig.engine().propose_intent(MailTrash(source=MAIL, message=handle))
+    proposal = rig.engine().propose_intent(MailTrash(source=MAIL, messages=(handle,)))
     approved = rig.agent_approves(proposal)
     assert approved.operation is not None
     done = rig.engine().do(approved.operation.handle)
@@ -163,7 +163,7 @@ def test_w4_p14_trash_goes_to_the_recoverable_folder_and_the_handle_survives(
 def test_p11_an_uncertain_move_reconciles_without_a_second_mutation(rig: WriteRig) -> None:
     """Old: test_uncertain_move_reconciles_without_a_second_mutation."""
     handle = rig.seed_message("<mv@example.org>")
-    move = MailMove(source=MAIL, message=handle, to_folder="f-archive")
+    move = MailMove(source=MAIL, messages=(handle,), to_folder="f-archive")
     proposal = rig.engine().propose_intent(move)
     approved = rig.agent_approves(proposal)
     assert approved.operation is not None

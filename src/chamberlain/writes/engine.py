@@ -541,7 +541,7 @@ class Engine:
     def _locate(self, intent: WriteIntent) -> dict[str, str]:
         """Stable locators for every handle the intent names (D-5, P-9)."""
         handles: list[str] = []
-        for name in ("reply_to", "message", "draft", "event_ref"):
+        for name in ("reply_to", "draft", "event_ref"):
             value = getattr(intent, name, None)
             if isinstance(value, str):
                 handles.append(value)
@@ -690,7 +690,7 @@ class Engine:
         for name in ("message_id", "uid"):
             if name in type(intent).model_fields:
                 blank[name] = None
-        if isinstance(intent, MailMove | MailTrash) and intent.messages:
+        if isinstance(intent, MailMove | MailTrash):
             # A batch: the folder comes from the locators alone, never one call per message.
             port = self.ctx.sources.mail_port(intent.source)
             folders = {port.folder_of(intent.source, refs[h]) for h in intent.messages}
@@ -701,13 +701,6 @@ class Engine:
                     field="messages",
                 )
             blank["from_folder"] = folders.pop()
-        elif isinstance(intent, MailMove | MailTrash):
-            assert intent.message is not None  # a single message: the validator ensures it
-            seen = self.ctx.sources.mail_port(intent.source).resolve(
-                intent.source, refs[intent.message]
-            )
-            blank["internet_message_id"] = seen.internet_message_id
-            blank["from_folder"] = seen.folder_id
         if isinstance(intent, MailMove) and not intent.mark_read:
             blank["mark_read"] = self._filing_marks_read(intent.source)
         if isinstance(intent, CalendarRespond):
@@ -1349,9 +1342,7 @@ class Engine:
     ) -> None:
         """Keep handles alive after filing (R4) and release the attachment holds."""
         old: str | None = None
-        if isinstance(intent, MailMove | MailTrash) and intent.message is not None:
-            old = self._refs(op).get(intent.message)
-        elif isinstance(intent, MailDraftUpdate):
+        if isinstance(intent, MailDraftUpdate):
             old = self._refs(op).get(intent.draft)
         moves: list[tuple[str, str]] = [
             (item.locator, item.moved_to) for item in receipt.items if item.moved_to is not None

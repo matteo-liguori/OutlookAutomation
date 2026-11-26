@@ -7,6 +7,7 @@ never a session integer (P-6).
 
 import base64
 import json
+import re
 from dataclasses import dataclass
 from email.utils import parseaddr
 from typing import cast
@@ -99,6 +100,11 @@ def _unknown_contact(detail: str) -> ChamberlainError:
     return ChamberlainError(
         ErrorCode.REQUEST_UNKNOWN_HANDLE, "That contact locator is not recognised.", detail=detail
     )
+
+
+def normalise_subject(text: str) -> str:
+    text = re.sub(r"^(?:(?:re|fw|fwd)\s*:\s*)+", "", text, flags=re.IGNORECASE)
+    return " ".join(text.split()).lower()
 
 
 def normalise_body(text: str) -> str:

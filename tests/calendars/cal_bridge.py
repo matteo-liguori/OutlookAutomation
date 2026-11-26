@@ -17,14 +17,16 @@ class FakeCalendarBridge:
         clock: ManualClock,
         calendar_id: str = "cal-1",
         *,
-        version: int = 2,
-        capabilities: frozenset[str] = frozenset({"calendar", "read"}),
+        version: int = 3,
+        calendar_available: bool = True,
     ) -> None:
         self.clock = clock
         self.calendar_id = calendar_id
         self.version = version
-        self.capabilities = capabilities
+        self.calendar_available = calendar_available
         self.items: dict[str, str] = {}
+        self.generated_uid: str | None = None
+        self.own_appointments: set[str] = set()
         self.occurrences: list[tuple[str, str, str]] = []
         """`(event id, recurrence id, icalendar)` for series: the query answers with these."""
         self.requests: list[tuple[str, bool]] = []
@@ -52,7 +54,7 @@ class FakeCalendarBridge:
     def hello(self) -> BridgeHello:
         if self.offline:
             raise CalendarBridgeFailure("not_connected", sent=False)
-        return BridgeHello(self.version, self.capabilities)
+        return BridgeHello(self.version, self.calendar_available)
 
     def request(self, cmd: str, args: Mapping[str, JsonValue], *, write: bool = False) -> Json:
         self.requests.append((cmd, write))
@@ -60,8 +62,16 @@ class FakeCalendarBridge:
             raise CalendarBridgeFailure("not_connected", sent=False)
         if args.get("calendar_id", self.calendar_id) != self.calendar_id:
             raise CalendarBridgeFailure("not_found", "no such calendar", sent=True)
+        if cmd == "status":
+            return {"write_busy": bool(self._late)}
         if cmd == "calendar_list":
-            entry: Json = {"id": self.calendar_id, "name": "Calendar", "disabled": False}
+            entry: Json = {
+                "id": self.calendar_id,
+                "name": "Calendar",
+                "type": "owl",
+                "disabled": False,
+                "read_only": False,
+            }
             if self.fresh_as_of:
                 entry["fresh_as_of"] = self.fresh_as_of
             return {"calendars": [entry]}
@@ -70,13 +80,18 @@ class FakeCalendarBridge:
         event_id = str(args["event_id"])
         if cmd == "calendar_read":
             return {"item": self._item(event_id)}
-        return self._write(cmd, event_id, args)
+        return self._write(str(args["kind"]), event_id, args)
 
     # --- internals ------------------------------------------------------------
 
     def _item(self, event_id: str) -> Json | None:
         text = self.items.get(event_id)
-        return None if text is None else {"id": event_id, "recurrence_id": None, "icalendar": text}
+        if text is None:
+            return None
+        item: Json = {"id": event_id, "recurrence_id": None, "icalendar": text}
+        if event_id in self.own_appointments:
+            item["own_appointment"] = True
+        return item
 
     def _query(self, args: Mapping[str, JsonValue]) -> Json:
         """Like the add-on: `complete` is false when the limit or staleness cut the scan."""
@@ -103,14 +118,18 @@ class FakeCalendarBridge:
 
     def _write(self, cmd: str, event_id: str, args: Mapping[str, JsonValue]) -> Json:
         def apply() -> Json:
-            if cmd == "calendar_create":
+            if cmd == "create":
                 if event_id in self.items:
                     raise CalendarBridgeFailure("changed", "exists", sent=True)
-                self.items[event_id] = str(args["icalendar"])
+                actual = self.generated_uid or event_id
+                self.items[actual] = str(args["icalendar"]).replace(
+                    f"UID:{event_id}\r\n", f"UID:{actual}\r\n", 1
+                )
+                return {"item": self._item(actual)}
             else:
                 if self.items.get(event_id) != args["expected_icalendar"]:
                     raise CalendarBridgeFailure("changed", "edited", sent=True)
-                if cmd == "calendar_update":
+                if cmd == "update":
                     self.items[event_id] = str(args["icalendar"])
                 else:
                     del self.items[event_id]

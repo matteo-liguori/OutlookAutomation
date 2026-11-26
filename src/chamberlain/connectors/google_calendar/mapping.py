@@ -118,6 +118,7 @@ def fields_of(item: Resource, fallback: datetime) -> EventFields:
         location=str(item.get("location", "")),
         description=str(item.get("description", "")),
         attendees=(str(a.get("email", "")) for a in item.get("attendees", []) if not a.get("self")),
+        visibility="private" if item.get("visibility") == "private" else None,
     )
     rule = series_rule(item)
     return fields.model_copy(update={"recurrence": rule}) if rule is not None else fields
@@ -246,6 +247,14 @@ def wanted_body(fields: EventFields, before: Resource | None = None) -> Resource
         body["location"] = fields.location
     if fields.description:
         body["description"] = fields.description
+    if fields.visibility is not None:
+        if (
+            before
+            and before.get("recurringEventId")
+            and before.get("visibility") != fields.visibility
+        ):
+            raise _unsupported("changing an occurrence's visibility can change the series")
+        body["visibility"] = fields.visibility
     attendees = guest_entries(fields, before)
     if attendees:
         body["attendees"] = attendees
@@ -315,6 +324,7 @@ def fields_match(item: Resource, wanted: EventFields, fallback: datetime) -> boo
         and actual.all_day == wanted.all_day
         and actual.location == wanted.location
         and actual.description == wanted.description
+        and (wanted.visibility is None or actual.visibility == wanted.visibility)
         and attendees_match(
             actual.attendees,
             wanted.attendees,

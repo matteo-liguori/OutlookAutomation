@@ -39,6 +39,7 @@ TABLES: dict[str, tuple[DataClass, Track]] = {
     "system_state": (_D.SYSTEM, _T.ANY),
     "sources": (_D.RECORDS, _T.APP),
     "source_health": (_D.EPHEMERAL, _T.ATTENTION),
+    "owl_freshness": (_D.WORKING_SET, _T.APP),
     "sessions": (_D.EPHEMERAL, _T.ATTENTION),
     "events": (_D.EPHEMERAL, _T.ATTENTION),
     "guidance_deliveries": (_D.EPHEMERAL, _T.ATTENTION),

@@ -144,6 +144,20 @@ def test_p16_create_read_update_round_trip_and_3_related_checks(world: World) ->
     assert port.read(SOURCE, guest).fields.attendees == ("other@example.test",)
 
 
+def test_p16_private_appointment_round_trips_without_guests_or_notifications(world: World) -> None:
+    port, api, _ = world
+    _, created = create(port, "private@t", fields("Private", visibility="private"))
+    assert created.outcome is DispatchOutcome.APPLIED
+    locator = locator_of(created)
+    current = port.read(SOURCE, locator)
+    updated = port.dispatch(edit(port, locator, current.etag, fields("Updated")), "private-k2")
+    assert updated.outcome is DispatchOutcome.APPLIED
+    assert port.read(SOURCE, locator).fields.visibility == "private"
+    assert len(api.bodies) == 2
+    assert all(body["visibility"] == "private" and "attendees" not in body for body in api.bodies)
+    assert all("sendUpdates" not in params for method, _, params in api.params if method != "GET")
+
+
 def test_w10_server_errors_may_have_landed_client_errors_and_1_related_checks(
     world: World,
 ) -> None:

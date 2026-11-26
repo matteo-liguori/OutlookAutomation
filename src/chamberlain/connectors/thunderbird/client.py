@@ -13,7 +13,7 @@ import json
 import secrets
 import socket
 import time
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Protocol, cast
@@ -24,7 +24,6 @@ from chamberlain.connectors.thunderbird import frames, protocol
 from chamberlain.connectors.thunderbird.native_host import RUNTIME_FILE, Deadlines
 from chamberlain.connectors.thunderbird.protocol import (
     PROTOCOL_VERSION,
-    REQUIRED_CAPABILITIES,
     BridgeErrorCode,
     ChunkFrame,
     ClientHello,
@@ -237,15 +236,13 @@ class BridgeClient:
         finally:
             connection.close()
 
-    def _handshake(self, connection: Connection, require: Iterable[str] = ()) -> Welcome:
-        needed = {c.value for c in REQUIRED_CAPABILITIES} | set(require)
+    def _handshake(self, connection: Connection) -> Welcome:
         try:
             hello = ClientHello(
                 v=PROTOCOL_VERSION,
                 id=self._new_id(),
                 token=self._connector.token(),
                 client_version=CLIENT_VERSION,
-                require=tuple(sorted(needed)),
             )
             connection.settimeout(10)
             frames.write_frame(connection, protocol.dump_frame(hello), frames.LOCAL_LIMIT)
@@ -284,14 +281,13 @@ class BridgeClient:
             raise BridgeFailure(
                 ErrorCode.SOURCE_UNAVAILABLE, "The bridge answered unexpectedly.", sent=False
             )
-        missing = needed - set(answer.capabilities)
-        if answer.v != PROTOCOL_VERSION or missing:
+        if answer.v != PROTOCOL_VERSION:
             raise BridgeFailure(
                 ErrorCode.SOURCE_UNAVAILABLE,
                 "The Thunderbird add-on is out of date.",
                 sent=False,
                 fix=UPDATE_FIX,
-                detail=f"version {answer.v}, missing {sorted(missing)}",
+                detail=f"version {answer.v}",
             )
         return answer
 
@@ -303,25 +299,30 @@ class BridgeClient:
         args: Model,
         *,
         payloads: Mapping[str, bytes] | None = None,
-        require: Iterable[str] = (),
+        calendar: bool = False,
     ) -> Reply:
         """Send one request. `payloads` maps each attachment key to its bytes.
 
-        `require` names optional add-on capabilities this request needs (the host refuses
-        the connection when the add-on lacks one).
+        Calendar commands require the add-on's calendar helper to be available.
         """
         is_write = cmd in protocol.WRITE_COMMANDS
         limit = self.deadlines.client_write if is_write else self.deadlines.client_read
         connection = self._connector.open(timeout=5)
         try:
-            self._handshake(connection, require)
+            welcome = self._handshake(connection)
+            if calendar and not welcome.calendar_available:
+                raise BridgeFailure(
+                    ErrorCode.SOURCE_UNAVAILABLE,
+                    "The Thunderbird calendar helper is unavailable.",
+                    sent=False,
+                )
             started = self._monotonic()
             request_id = self._new_id()
             request = RequestFrame(
                 v=PROTOCOL_VERSION,
                 id=request_id,
                 cmd=cmd.value,
-                args=args.model_dump(mode="json", exclude_none=True),
+                args=args.model_dump(mode="json"),
             )
             body = protocol.dump_frame(request)
             outgoing = [body]

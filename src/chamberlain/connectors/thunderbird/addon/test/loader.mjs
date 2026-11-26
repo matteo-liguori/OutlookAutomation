@@ -1,9 +1,11 @@
 // Run the real add-on source (type-stripped TypeScript) against a fake Thunderbird.
 import { File } from "node:buffer";
+import { readFileSync } from "node:fs";
 import vm from "node:vm";
 import { bundle } from "../build.mjs";
 
-const addonSource = bundle;
+const generated = process.env.CHAMBERLAIN_ADDON_TYPES;
+const addonSource = bundle(generated ? readFileSync(generated, "utf8") : undefined);
 
 /** Boot the add-on. `sink` receives every frame the add-on posts to the native host. */
 export function startAddon(world, { sink, readMs = 30000, writeMs = 45000, assemblyMs = 60000, tuning = {} } = {}) {
@@ -37,11 +39,12 @@ export function startAddon(world, { sink, readMs = 30000, writeMs = 45000, assem
     setTimeout: (f, ms) => setTimeout(f, scale.get(ms) ?? ms),
     clearTimeout,
   });
-  new vm.Script(addonSource(), { filename: "addon.js" }).runInContext(context);
+  new vm.Script(addonSource, { filename: "addon.js" }).runInContext(context);
   vm.runInContext(`Object.assign(TUNING, ${JSON.stringify({ movePollMs: 5, savePollMs: 5, ...tuning })})`, context);
   return {
     context,
     posted,
+    protocolVersion: vm.runInContext("PROTOCOL_VERSION", context),
     deliver: (frame) => listeners.forEach((l) => l(frame)),
     setBusy: (value) => vm.runInContext(`writeBusy = ${value}`, context),
     eval: (code) => vm.runInContext(code, context),
@@ -68,7 +71,8 @@ export const BASE = { account_id: "account1", mailbox: "owner@example.org" };
 
 /** Send a request and wait for its response frame. */
 export async function call(addon, cmd, args, { id = requestId(), chunks = [] } = {}) {
-  addon.deliver({ t: "request", v: 2, id, cmd, args });
-  for (const chunk of chunks) addon.deliver({ t: "chunk", v: 2, id, ...chunk });
+  const v = addon.protocolVersion;
+  addon.deliver({ t: "request", v, id, cmd, args });
+  for (const chunk of chunks) addon.deliver({ t: "chunk", v, id, ...chunk });
   return untilResponse(addon, id);
 }

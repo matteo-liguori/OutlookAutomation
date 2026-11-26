@@ -166,7 +166,7 @@ def test_w22_kind_card_folder_and_read_state_are_each_exact() -> None:
     assert scope_mismatch(scope(intent_kinds=frozenset({IntentKind.MAIL_DRAFT_SAVE})), SEND, None)
     assert scope_mismatch(scope(card="card_0123456789abcdef"), SEND, None)
     assert not scope_mismatch(scope(card="card_0123456789abcdef"), SEND, "card_0123456789abcdef")
-    move = MailMove(source=MAIL, message="msg_0123456789abcdef", to_folder="f-archive")
+    move = MailMove(source=MAIL, messages=("msg_0123456789abcdef",), to_folder="f-archive")
     mover = scope(intent_kinds=frozenset({IntentKind.MAIL_MOVE}), recipients=frozenset())
     assert scope_mismatch(mover, move, None)
     filing = scope(
@@ -179,7 +179,7 @@ def test_w22_kind_card_folder_and_read_state_are_each_exact() -> None:
     assert scope_mismatch(filing, reading, None)
     allowed = filing.model_copy(update={"allow_mark_read": True})
     assert not scope_mismatch(allowed, reading, None)
-    trash = MailTrash(source=MAIL, message="msg_0123456789abcdef", from_folder="f-inbox")
+    trash = MailTrash(source=MAIL, messages=("msg_0123456789abcdef",), from_folder="f-inbox")
     trashing = scope(
         intent_kinds=frozenset({IntentKind.MAIL_TRASH}),
         recipients=frozenset(),

@@ -1,13 +1,15 @@
-"""Generate the add-on's TypeScript types and runtime schemas from `protocol.py`.
+"""Generate the add-on's TypeScript types and constants from `protocol.py`.
 
 Contract: docs/contracts/12-bridge-v2.md section 9. `python -m
 chamberlain.connectors.thunderbird.typegen` rewrites
-`addon/src/protocol.generated.ts`; a test regenerates it and compares.
+`addon/build/protocol.generated.ts`. The bundle can use `--stdout` instead.
 Only the JSON Schema subset Pydantic emits for these models is handled.
 """
 
+import argparse
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Final
 
@@ -21,7 +23,7 @@ _JSON_VALUE: Final = (
     "type JsonValue = string | number | boolean | null | JsonValue[]"
     " | { [key: string]: JsonValue };\n"
 )
-GENERATED: Final = Path(__file__).parent / "addon" / "src" / "protocol.generated.ts"
+GENERATED: Final = Path(__file__).parent / "addon" / "build" / "protocol.generated.ts"
 _HEADER: Final = (
     "// GENERATED from protocol.py by typegen.py. Do not edit; run\n"
     "//   python -m chamberlain.connectors.thunderbird.typegen\n"
@@ -134,33 +136,29 @@ def render() -> str:
         + json.dumps(sorted(c.value for c in protocol.WRITE_COMMANDS))
         + ";"
     )
-    out.append(
-        "const REQUIRED_CAPABILITIES: readonly string[] = "
-        + json.dumps(sorted(c.value for c in protocol.REQUIRED_CAPABILITIES))
-        + ";"
-    )
-    out.append(
-        "const ADVERTISED_CAPABILITIES: readonly string[] = "
-        + json.dumps(sorted(c.value for c in protocol.Capability))
-        + ";"
-    )
-    out.append(
-        "const ARGS_SCHEMA_NAME: { [cmd: string]: string } = "
-        + json.dumps({cmd: model.__name__ for cmd, model in commands.items()}, indent=1)
-        + ";"
-    )
-    out.append(
-        "const SCHEMA_DEFS: { [name: string]: JsonValue } = "
-        + json.dumps(defs, indent=1, sort_keys=True)
-        + ";\n"
-    )
+    out.append("")
     return "\n".join(out)
 
 
+def write_generated(output: Path = GENERATED) -> Path:
+    """Write the generated types atomically for concurrent test and build processes."""
+    output.parent.mkdir(parents=True, exist_ok=True)
+    text = render()
+    with tempfile.TemporaryDirectory(dir=output.parent) as pending:
+        generated = Path(pending) / output.name
+        generated.write_text(text, encoding="utf-8", newline="\n")
+        generated.replace(output)
+    return output
+
+
 def main() -> int:
-    GENERATED.parent.mkdir(parents=True, exist_ok=True)
-    GENERATED.write_text(render(), encoding="utf-8", newline="\n")
-    sys.stdout.write(f"wrote {GENERATED}\n")
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--stdout", action="store_true", help="print the types and constants")
+    args = parser.parse_args()
+    if args.stdout:
+        sys.stdout.write(render())
+    else:
+        sys.stdout.write(f"wrote {write_generated()}\n")
     return 0
 
 

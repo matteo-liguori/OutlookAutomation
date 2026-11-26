@@ -94,7 +94,7 @@ class LiveFault:
 
     def claim(self, request: RequestFrame) -> bool:
         """True when this request must have its response dropped. Consumes the file."""
-        if request.cmd != Command.SEND.value:
+        if request.cmd != Command.COMPOSE.value or request.args.get("mode") != "send":
             return False
         try:
             if self._now() - self._path.stat().st_mtime > FAULT_MAX_AGE_SECONDS:
@@ -380,9 +380,6 @@ class NativeHost:
         if addon.v != PROTOCOL_VERSION:
             self._refuse(stream, hello.id, RefusalCode.VERSION_MISMATCH, "Add-on version differs.")
             return
-        if not set(hello.require) <= set(addon.capabilities):
-            self._refuse(stream, hello.id, RefusalCode.CAPABILITY_MISSING, "Add-on lacks features.")
-            return
         self._send(
             stream,
             Welcome(
@@ -390,7 +387,7 @@ class NativeHost:
                 id=hello.id,
                 host_version=HOST_VERSION,
                 addon_version=addon.addon_version,
-                capabilities=addon.capabilities,
+                calendar_available=addon.calendar_available,
             ),
         )
         connection.settimeout(self._deadlines.client_write)
@@ -412,6 +409,12 @@ class NativeHost:
                 stream, request, BridgeErrorCode.UNKNOWN_COMMAND, "No such command.", "none"
             )
             return
+        try:
+            args = protocol.parse_args(request.cmd, request.args)
+        except ChamberlainError as error:
+            self._answer_error(stream, request, BridgeErrorCode.BAD_REQUEST, error.message, "none")
+            return
+        request = request.model_copy(update={"args": args.model_dump(mode="json")})
         pending: _Pending = queue.Queue()
         with self._state_lock:
             if request.id in self._pending:

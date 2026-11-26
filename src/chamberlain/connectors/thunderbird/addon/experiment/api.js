@@ -118,8 +118,7 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           ownerAccount(accountId, mailbox);
           need(!Services.io.offline, "client_offline");
           need(Array.isArray(folderIds) && folderIds.length > 0 && folderIds.length <= 8, "bad_request");
-          const folders = [];
-          for (const id of folderIds) folders.push(await syncOne(id, accountId, timeoutMs));
+          const folders = await Promise.all(folderIds.map((id) => syncOne(id, accountId, timeoutMs)));
           return { folders };
         },
         async headerAttachmentFlags(accountId, mailbox, messageIds, allowOutbox) {

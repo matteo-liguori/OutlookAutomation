@@ -1,8 +1,8 @@
-// Write commands and their read-only reconcile twins.
+// Write commands and read-only copy observations.
 // Each write performs one logical mutation, never retries, keeps no journal. The add-on
 // reports facts; deciding what absence proves is the Python connector's job.
 
-const TUNING = { movePollMs: 250, moveAttempts: 20, savePollMs: 250, saveAttempts: 24, batchCheckMs: 25_000, bulkReadFrom: 10 };
+const TUNING = { movePollMs: 250, savePollMs: 250, saveAttempts: 24, batchCheckMs: 25_000 };
 
 interface Ctx {
   id: string;
@@ -22,50 +22,6 @@ function escapeHtml(text: string): string {
 }
 
 // --- move, trash, mark read -----------------------------------------------------------------
-
-async function cmdMove(a: MoveArgs | TrashArgs, ctx: Ctx, trash: boolean): Promise<MoveResult> {
-  await accountOf(a);
-  const h = await locateOne(a, a.ref);
-  const dest = await folderOf(a, a.destination_folder_id);
-  const id = bare(a.ref.internet_message_id);
-  check(h.folder?.id !== dest.id, "changed", "The message is already in that folder.");
-  const before = await copiesIn(a, dest.id, id);
-  check(before.complete, "ambiguous", "The destination could not be scanned completely.");
-  if (!trash) check(before.messages.length === 0, "ambiguous", "The destination already holds this message.");
-  const markRead = !trash && (a as MoveArgs).mark_read === true;
-  const targetRead = markRead ? true : h.read;
-  const beforeIds = before.messages.map((m) => m.id);
-  const sourceId = h.folder?.id ?? a.ref.folder_id;
-  markMutation(ctx);
-  await messenger.messages.move([h.id], dest.id);
-  for (let attempt = 0; attempt < TUNING.moveAttempts; attempt++) {
-    const moved = await copiesIn(a, dest.id, id);
-    const source = await copiesIn(a, sourceId, id);
-    const candidates = moved.messages.filter((m) => !beforeIds.includes(m.id));
-    const added = moved.messages.length === beforeIds.length + 1 && candidates.length === 1;
-    // Gmail can show one logical message in Inbox and Sent, then merge those labels into an
-    // existing Trash copy: no extra physical copy is needed for a recoverable delete.
-    const merged = trash && !added && moved.messages.length > 0;
-    if (moved.complete && (added || merged) && source.complete && source.messages.length === 0) {
-      let after = added ? candidates[0] : moved.messages[0];
-      if (added && after.read !== targetRead) {
-        await messenger.messages.update(after.id, { read: targetRead });
-        after = await messenger.messages.get(after.id);
-      }
-      const preserved = added ? after.read === targetRead : moved.messages.every((m) => m.read === h.read);
-      if (!added && !merged) fail("not_verified", "The move could not be verified.", "possible");
-      return {
-        message: header(after),
-        read_state_preserved: preserved,
-        merged_existing_copy: merged,
-        marked_read: markRead,
-        original_read: h.read,
-      };
-    }
-    await sleep(TUNING.movePollMs);
-  }
-  return fail("not_verified", "Exactly one copy at the destination and none at the source was not seen.", "possible");
-}
 
 interface DateWindow {
   sinceMs?: number;
@@ -93,29 +49,45 @@ function spanOf(headers: TbHeader[]): DateWindow {
   return { sinceMs: Math.min(...dates) - 2 * day, untilMs: Math.max(...dates) + 2 * day };
 }
 
+async function refreshMoveFolders(a: Bound, folderIds: string[], deadline: number): Promise<boolean> {
+  const timeout = Math.min(8_000, deadline - Date.now());
+  if (timeout < 500) return false;
+  try {
+    await cmdRefresh({ account_id: a.account_id, mailbox: a.mailbox, folder_ids: folderIds, timeout_ms: timeout });
+  } catch {
+    // A folder may not support provider refresh. The complete local scans still decide the result.
+  }
+  return true;
+}
+
 /** Many messages of one folder, filed or to Trash: find, move and verify them together.
  *  Folder reads cover only the dates the batch spans: a few hundred headers, never the whole
  *  Inbox and Trash on every round (found live, 2026-11-25: full reads overran the deadline). */
-async function cmdMoveMany(a: MoveManyArgs, ctx: Ctx): Promise<MoveManyResult> {
-  await accountOf(a);
-  await folderOf(a, a.destination_folder_id);
-  check(a.folder_id !== a.destination_folder_id, "changed", "The messages are already in that folder.");
-  const source = await byMessageId(a, a.folder_id);
+async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string, ctx: Ctx): Promise<ChangeResult> {
+  await folderOf(a, destination);
+  check(group.folder_id !== destination, "changed", "The messages are already in that folder.");
+  const source = await readIdGroup(a, group);
   check(source.complete, "ambiguous", "The folder could not be scanned completely.");
-  const located = a.internet_message_ids.map((raw) => ({ raw, id: bare(raw), found: source.map.get(bare(raw)) ?? [] }));
+  const located = group.ids.map((raw) => ({ raw, id: bare(raw), found: source.map.get(bare(raw)) ?? [] }));
   check(new Set(located.map((m) => m.id)).size === located.length, "bad_request", "The batch repeats a message.");
   const present = located.filter((m) => m.found.length === 1).map((m) => m.found[0]);
-  if (present.length === 0) return fail("not_found", "None of the messages is in that folder.");
+  if (present.length === 0) {
+    if (located.some((m) => m.found.length > 1)) return fail("ambiguous", "The folder contains duplicate copies.");
+    return fail("not_found", "None of the messages is in that folder.");
+  }
   const window = spanOf(present);
+  const scanFolder = (folderId: string) => group.ids.length === 1
+    ? readIdGroup(a, { folder_id: folderId, ids: group.ids })
+    : byMessageId(a, folderId, window);
   // Filing leaves existing copies alone; Trash may merge into one without changing its flag.
-  const before = await byMessageId(a, a.destination_folder_id, window);
+  const before = await scanFolder(destination);
   check(before.complete, "ambiguous", "The destination could not be scanned completely.");
-  const items: MoveManyItem[] = [];
+  const items: ChangeItem[] = [];
   const moving = new Map<string, TbHeader>();
   for (const m of located) {
     let code = m.found.length === 1 ? "" : m.found.length ? "ambiguous" : "not_found";
     if (!code && !a.trash && before.map.has(m.id)) code = "ambiguous";
-    items.push({ internet_message_id: m.raw, ok: !code, code });
+    items.push({ ref: { folder_id: group.folder_id, internet_message_id: m.raw }, ok: !code, code, was_read: m.found.length === 1 ? m.found[0].read : null });
     if (!code) moving.set(m.id, m.found[0]);
   }
   const ids = [...moving.values()].map((h) => h.id);
@@ -123,13 +95,15 @@ async function cmdMoveMany(a: MoveManyArgs, ctx: Ctx): Promise<MoveManyResult> {
   const helper = messenger.chamberlainMail;
   check(typeof helper?.setReadFlags === "function", "unsupported", "The bulk read flag helper is not installed.");
   markMutation(ctx);
-  await messenger.messages.move(ids, a.destination_folder_id);
+  await messenger.messages.move(ids, destination);
   const giveUpAt = Date.now() + TUNING.batchCheckMs;
-  let flagsUpdated = false;
-  const markRead = !a.trash && a.mark_read;
-  while (Date.now() < giveUpAt) {
-    const left = await byMessageId(a, a.folder_id, window);
-    const there = await byMessageId(a, a.destination_folder_id, window);
+  let syncedArrival = false;
+  let staleRefRetried = false;
+  const updatedStates = new Set<boolean>();
+  while (!ctx.cancelled && Date.now() < giveUpAt) {
+    const left = await scanFolder(group.folder_id);
+    const there = await scanFolder(destination);
+    if (ctx.cancelled || Date.now() >= giveUpAt) break;
     const changedRead: BulkReadRef[] = [];
     const changedUnread: BulkReadRef[] = [];
     let merged = false;
@@ -147,28 +121,41 @@ async function cmdMoveMany(a: MoveManyArgs, ctx: Ctx): Promise<MoveManyResult> {
         return true;
       }
       if (added.length !== 1) return false;
-      const targetRead = markRead || original.read;
+      const targetRead = a.set_read ?? original.read;
       if (added[0].read !== targetRead) {
         (targetRead ? changedRead : changedUnread).push({ id: added[0].id, internetMessageId: id });
       }
       return true;
     });
+    const needsUpdate = changedRead.length > 0 || changedUnread.length > 0;
+    if (!syncedArrival && (!arrived || needsUpdate || a.set_read != null)) {
+      // The move callback can precede a stable IMAP destination header.
+      syncedArrival = true;
+      if (await refreshMoveFolders(a, [group.folder_id, destination], giveUpAt)) continue;
+    }
     if (arrived) {
-      const needsUpdate = changedRead.length > 0 || changedUnread.length > 0;
       if (!needsUpdate) return { items, verified: true, read_state_preserved: preserved, merged_existing_copy: merged };
-      if (!flagsUpdated) {
-        if (changedRead.length) {
-          markMutation(ctx);
-          await helper.setReadFlags(a.account_id, a.mailbox, a.destination_folder_id, changedRead, true);
+      let rescan = false;
+      for (const [read, refs] of [[true, changedRead], [false, changedUnread]] as const) {
+        if (!refs.length || updatedStates.has(read)) continue;
+        markMutation(ctx);
+        try {
+          await helper.setReadFlags(a.account_id, a.mailbox, destination, refs, read);
+          updatedStates.add(read);
+        } catch (error) {
+          const code = helperFailure(String((error as Error)?.message ?? error))?.code;
+          // setReadFlags validates all refs before mutation. A stale ref can be resolved once.
+          if (code !== "changed" || staleRefRetried) throw error;
+          staleRefRetried = true;
         }
-        if (changedUnread.length) {
-          markMutation(ctx);
-          await helper.setReadFlags(a.account_id, a.mailbox, a.destination_folder_id, changedUnread, false);
-        }
-        flagsUpdated = true;
+        rescan = true;
+      }
+      if (rescan) {
+        // The native call starts the IMAP flag update, then the folder scan checks its result.
+        await refreshMoveFolders(a, [destination], giveUpAt);
         continue;
       }
-      if (!markRead) return { items, verified: true, read_state_preserved: false, merged_existing_copy: merged };
+      if (a.set_read == null) return { items, verified: true, read_state_preserved: false, merged_existing_copy: merged };
     }
     await sleep(TUNING.movePollMs * 4);
   }
@@ -176,48 +163,56 @@ async function cmdMoveMany(a: MoveManyArgs, ctx: Ctx): Promise<MoveManyResult> {
   return { items, verified: false, read_state_preserved: null, merged_existing_copy: false };
 }
 
-/** One read per folder that holds many of the refs; a handful are found one by one. */
-async function foldersRead(r: Bound, refs: readonly MessageRef[]): Promise<Map<string, Map<string, TbHeader[]>>> {
-  const counts = new Map<string, number>();
-  for (const ref of refs) counts.set(ref.folder_id, (counts.get(ref.folder_id) ?? 0) + 1);
-  const read = new Map<string, Map<string, TbHeader[]>>();
-  for (const [folderId, n] of counts) {
-    if (n < TUNING.bulkReadFrom) continue;
-    const scan = await byMessageId(r, folderId);
-    if (scan.complete) read.set(folderId, scan.map);
-  }
-  return read;
+/** One scan per folder, with Thunderbird's exact Message-ID filter for a one-item group. */
+async function readIdGroup(r: Bound, group: ChangeGroup): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
+  if (group.ids.length > 1) return byMessageId(r, group.folder_id);
+  const id = bare(group.ids[0]);
+  const found = await copiesIn(r, group.folder_id, id);
+  return { map: new Map(found.messages.length ? [[id, found.messages]] : []), complete: found.complete };
 }
 
-async function findOne(r: Bound, ref: MessageRef, read: Map<string, Map<string, TbHeader[]>>): Promise<TbHeader> {
-  const folder = read.get(ref.folder_id);
-  if (!folder) return locateOne(r, ref);
-  const found = folder.get(bare(ref.internet_message_id)) ?? [];
-  if (found.length === 0) fail("not_found", "The message is not in that folder.");
-  if (found.length > 1) fail("ambiguous", "More than one copy of that message is in the folder.");
-  return found[0];
-}
-
-async function cmdMarkRead(a: MarkReadArgs, ctx: Ctx): Promise<MarkReadResult> {
-  await accountOf(a);
-  const items: MarkReadItem[] = [];
-  const read = await foldersRead(a, a.refs);
-  for (const ref of a.refs) {
-    try {
-      const h = await findOne(a, ref, read);
-      if (h.read !== a.read) {
-        markMutation(ctx);
-        await messenger.messages.update(h.id, { read: a.read });
-        const after = await messenger.messages.get(h.id);
-        if (after.read !== a.read) fail("not_verified", "The flag change was not verified.", "possible");
+async function markGroups(a: ChangeArgs, read: boolean, ctx: Ctx): Promise<ChangeResult> {
+  const helper = messenger.chamberlainMail;
+  check(typeof helper?.setReadFlags === "function", "unsupported", "The bulk read flag helper is not installed.");
+  const items: ChangeItem[] = [];
+  for (const group of a.items) {
+    const before = await readIdGroup(a, group);
+    const changed: BulkReadRef[] = [];
+    const first = items.length;
+    for (const id of group.ids) {
+      const found = before.map.get(bare(id)) ?? [];
+      const code = !before.complete || found.length > 1 ? "ambiguous" : found.length === 0 ? "not_found" : "";
+      const ref = { folder_id: group.folder_id, internet_message_id: id };
+      const wasRead = code ? null : found[0].read;
+      items.push({ ref, ok: !code, was_read: wasRead, code });
+      if (wasRead !== null && wasRead !== read) changed.push({ id: found[0].id, internetMessageId: bare(id) });
+    }
+    if (!changed.length) continue;
+    markMutation(ctx);
+    await helper.setReadFlags(a.account_id, a.mailbox, group.folder_id, changed, read);
+    const after = await readIdGroup(a, group);
+    for (const item of items.slice(first)) {
+      if (!item.ok) continue;
+      const copies = after.map.get(bare(item.ref.internet_message_id)) ?? [];
+      if (!after.complete || copies.length !== 1 || copies[0].read !== read) {
+        item.ok = false;
+        item.code = "not_verified";
       }
-      items.push({ ref, ok: true, was_read: h.read, code: "" });
-    } catch (error) {
-      const code = error instanceof BridgeFailure ? error.code : "internal";
-      items.push({ ref, ok: false, code });
     }
   }
-  return { items };
+  return {
+    items, verified: items.every((item) => item.code !== "not_verified"),
+    read_state_preserved: null, merged_existing_copy: false,
+  };
+}
+
+async function cmdChange(a: ChangeArgs, ctx: Ctx): Promise<ChangeResult> {
+  await accountOf(a);
+  // Bind every folder before issuing any changes, even when marking across several folders.
+  for (const group of a.items) await folderOf(a, group.folder_id);
+  if (a.move_to != null) return moveBatch(a, a.items[0], a.move_to, ctx);
+  check(a.set_read != null, "bad_request", "The change needs a read flag.");
+  return markGroups(a, a.set_read, ctx);
 }
 
 // --- composing ------------------------------------------------------------------------------
@@ -295,23 +290,19 @@ async function closeQuietly(tabId: number, a: Bound): Promise<void> {
   }
 }
 
-async function mailRaw(id: number): Promise<string> {
-  return rawHash(id);
-}
-
-async function cmdCompose(a: ComposeArgs, ctx: Ctx, kind: "send" | "draft_save" | "draft_update"): Promise<SendResult | DraftResult> {
+async function cmdCompose(a: ComposeArgs, ctx: Ctx): Promise<ComposeResult> {
   const account = await accountOf(a);
   const identity = uniqueIdentity(account, a.mailbox);
   const helper = messenger.chamberlainMail;
   check(helper, "unsupported", "The composer helper is not installed.");
   const sentFolder = await folderOf(a, a.sent_folder_id);
   await folderOf(a, a.draft_folder_id);
-  const update = kind === "draft_update" ? (a as DraftUpdateArgs) : null;
   let existing: TbHeader | null = null;
-  if (update) {
-    existing = await locateOne(a, update.draft);
+  if (a.mode === "draft_update") {
+    check(a.draft && a.expected_raw_sha256, "bad_request", "A draft update needs its current hash.");
+    existing = await locateOne(a, a.draft);
     check(existing.folder?.id === a.draft_folder_id, "changed", "That message is not in the bound draft folder.");
-    check((await mailRaw(existing.id)) === update.expected_raw_sha256, "changed", "The draft changed since it was read.");
+    check((await rawHash(existing.id)) === a.expected_raw_sha256, "changed", "The draft changed since it was read.");
   }
   const files: File[] = [];
   for (const spec of a.attachments) {
@@ -325,10 +316,11 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx, kind: "send" | "draft_save" 
   let tabId: number | null = null;
   try {
     if (existing) {
-      const openingHash = await mailRaw(existing.id);
+      const openingHash = await rawHash(existing.id);
+      check(openingHash === a.expected_raw_sha256, "changed", "The draft changed before it was opened.");
       const opened = await helper.openDraft(a.account_id, a.mailbox, existing.id, existing.headerMessageId);
       tabId = opened.tab_id;
-      check((await mailRaw(existing.id)) === openingHash, "changed", "The draft changed while it was opened.");
+      check((await rawHash(existing.id)) === openingHash, "changed", "The draft changed while it was opened.");
       if ((await messenger.messages.get(existing.id)).read !== existing.read) {
         markMutation(ctx);
         await messenger.messages.update(existing.id, { read: existing.read });
@@ -350,48 +342,60 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx, kind: "send" | "draft_save" 
     const open: number = tabId as number;
     // Autosave off and the bound Sent folder re-applied on every composer, reopened drafts and replies included.
     // A send never saves a draft, so its Drafts setting does not matter ("" skips that check).
-    await helper.holdComposer(open, a.account_id, a.mailbox, kind === "send" ? "" : a.draft_folder_id, a.sent_folder_id);
+    await helper.holdComposer(open, a.account_id, a.mailbox, a.mode === "send" ? "" : a.draft_folder_id, a.sent_folder_id);
     for (const file of files) await messenger.compose.addAttachment(open, { file });
     await verifyComposer(open, a, identity.id, files);
-    if (kind === "send") {
+    if (a.mode === "send") {
       markMutation(ctx);
       await messenger.compose.sendMessage(open, { mode: "sendNow" });
-      return { submitted: true, attachment_bytes_verified: true, dialogs: await answered(open) };
+      return { attachment_bytes_verified: true, dialogs: await answered(open), old_copies_remaining: 0 };
     }
     markMutation(ctx);
     const saved = await messenger.compose.saveMessage(open, { mode: "draft" });
     const dialogs = await answered(open);
-    return { ...(await finishDraft(a, ctx, open, saved, update, existing)), dialogs };
+    return { ...(await finishDraft(a, open, saved)), dialogs };
   } catch (error) {
     if (tabId !== null && !ctx.mutationIssued) await closeQuietly(tabId, a);
     throw error;
   }
 }
 
-async function finishDraft(a: ComposeArgs, ctx: Ctx, tabId: number, saved: any, update: DraftUpdateArgs | null, existing: TbHeader | null): Promise<DraftResult> {
+async function finishDraft(a: ComposeArgs, tabId: number, saved: { messages?: TbHeader[] }): Promise<ComposeResult> {
   const fail2 = (message: string): never => fail("not_verified", message, "possible");
-  if (saved?.messages?.length !== 1) fail2("The draft save was not verified.");
-  const returned: TbHeader = saved.messages[0];
+  if (saved?.messages?.length !== 1) return fail2("The draft save was not verified.");
+  const returned = saved.messages[0];
   if (returned.folder?.accountId !== a.account_id || returned.folder?.id !== a.draft_folder_id) fail2("The draft was saved in the wrong folder.");
-  const fp = await fingerprintOf(a);
-  let found: { header: TbHeader; match: Match } | null = null;
+  const expectedBody = await bodyDigest(a.body);
+  let found: TbHeader | undefined;
   for (let attempt = 0; attempt < TUNING.saveAttempts && !found; attempt++) {
     try {
       const h: TbHeader = await messenger.messages.get(returned.id);
-      const match = await inspectCopy(a, h, fp, "drafts", a.sent_folder_id);
-      if (match.exact) found = { header: h, match };
+      const copy = await inspectContent(h, true);
+      const replyId = a.reply_to?.internet_message_id;
+      const attachments = a.attachments.map((spec) => spec.sha256).sort();
+      if (h.folder?.id === a.draft_folder_id && await isOwn(h, a.mailbox)
+          && normaliseSubject(copy.subject ?? "") === normaliseSubject(a.subject)
+          && copy.body_sha256 === expectedBody
+          && sortedJson(copy.to) === sortedJson(a.to.map((addr) => addr.toLowerCase()).sort())
+          && sortedJson(copy.cc) === sortedJson(a.cc.map((addr) => addr.toLowerCase()).sort())
+          && sortedJson(copy.bcc) === sortedJson(a.bcc.map((addr) => addr.toLowerCase()).sort())
+          && sortedJson(copy.attachment_sha256) === sortedJson(attachments)
+          && copy.high_importance === a.high_importance
+          && (!replyId || copy.in_reply_to.includes(replyId))) found = h;
     } catch (error) {
       if (!(error instanceof BridgeFailure) && !/not found/i.test(String((error as Error)?.message))) throw error;
     }
     if (!found && attempt < TUNING.saveAttempts - 1) await sleep(TUNING.savePollMs);
   }
-  if (!found) fail2("The saved draft does not match what was requested.");
-  const ok = await indexedDraft(a, (found as { header: TbHeader; match: Match }).header, fail2);
+  if (!found) return fail2("The saved draft does not match what was requested.");
+  const ok = await indexedDraft(a, found, fail2);
   const raw = await rawHash(ok.header.id);
   let remaining = 0;
-  if (update && existing) {
+  if (a.draft) {
     for (let attempt = 0; attempt < TUNING.saveAttempts; attempt++) {
-      remaining = (await copiesIn(a, update.draft.folder_id, update.draft.internet_message_id)).messages.length;
+      const old = await copiesIn(a, a.draft.folder_id, a.draft.internet_message_id);
+      if (!old.complete) return fail2("The prior draft could not be checked completely.");
+      remaining = old.messages.length;
       if (remaining === 0) break;
       await sleep(TUNING.savePollMs);
     }
@@ -414,202 +418,152 @@ async function indexedDraft(a: ComposeArgs, saved: TbHeader, fail2: (message: st
   }
   if (!mid) fail2("The saved draft has no Message-ID.");
   for (let attempt = 0; attempt < TUNING.saveAttempts; attempt++) {
-    const copies = (await copiesIn(a, a.draft_folder_id, mid)).messages;
-    if (copies.length === 1) return { header: copies[0] };
-    if (copies.length > 1) fail2("More than one copy of the saved draft is in the draft folder.");
+    const copies = await copiesIn(a, a.draft_folder_id, mid);
+    if (copies.complete && copies.messages.length === 1) return { header: copies.messages[0] };
+    if (copies.messages.length > 1) fail2("More than one copy of the saved draft is in the draft folder.");
     await sleep(TUNING.savePollMs);
   }
   return fail2("The saved draft could not be found by its Message-ID.");
 }
 
-async function cmdDraftDiscard(a: DraftDiscardArgs): Promise<DiscardResult> {
+async function cmdDraftDiscard(a: DraftDiscardArgs, ctx: Ctx): Promise<DiscardResult> {
   await accountOf(a);
   const helper = messenger.chamberlainMail;
   check(helper, "unsupported", "The composer helper is not installed.");
   const draft = await locateOne(a, a.draft);
-  check((await mailRaw(draft.id)) === a.expected_raw_sha256, "changed", "The draft changed since it was read.");
+  check((await rawHash(draft.id)) === a.expected_raw_sha256, "changed", "The draft changed since it was read.");
   const found = await helper.findComposers(a.account_id, a.mailbox, draft.id, draft.headerMessageId);
-  let closed = 0;
-  for (const tabId of found.tab_ids as number[]) {
+  const tabs: number[] = found.tab_ids;
+  for (const tabId of tabs) {
     const details = await messenger.compose.getComposeDetails(tabId);
     check(details.isModified === false, "changed", "The composer has unsaved edits by the user.");
+  }
+  for (const tabId of tabs) {
+    markMutation(ctx);
     await helper.closeComposer(tabId, a.account_id, a.mailbox);
-    closed++;
   }
-  // Closing a composer never deletes saved mail (R8): there is no mutation of the mailbox itself.
-  return { closed, saved_mail_deleted: false };
+  return { closed: tabs.length };
 }
 
-// --- reconcile (read-only) -------------------------------------------------------------------
+// --- copy observations (read-only) -----------------------------------------------------------
 
-async function fingerprintOf(a: ComposeArgs): Promise<Fingerprint> {
-  const bodyDigestSync = await bodyDigest(a.body);
-  return {
-    sender: a.mailbox,
-    to: [...a.to],
-    cc: [...a.cc],
-    bcc: [...a.bcc],
-    subject: a.subject,
-    body_sha256: bodyDigestSync,
-    attachment_sha256: a.attachments.map((x) => x.sha256),
-    high_importance: a.high_importance,
-    in_reply_to: a.reply_to ? a.reply_to.internet_message_id : "",
-    token: a.token,
-  };
+type ContentFacts = Pick<CopyFact, "subject" | "body_sha256" | "to" | "cc" | "bcc" |
+  "attachment_sha256" | "high_importance" | "in_reply_to" | "token">;
+
+function checkCopy(before: TbHeader, after: TbHeader): void {
+  check(before.id === after.id && before.headerMessageId === after.headerMessageId &&
+    before.folder?.id === after.folder?.id && before.read === after.read,
+    "changed", "The message or its read flag changed during inspection.");
 }
 
-/** Compare one physical copy with a fingerprint. The flag is sampled before and after. */
-async function inspectCopy(r: Bound, h: TbHeader, fp: Fingerprint, where: Match["where"], sentFolderId: string): Promise<Match> {
-  const baseline: TbHeader = await messenger.messages.get(h.id);
+/** Both duplicate policies use these observations. Only exact verification hashes attachments. */
+async function inspectContent(h: TbHeader, includeHashes: boolean): Promise<ContentFacts> {
+  const before: TbHeader = await messenger.messages.get(h.id);
+  checkCopy(h, before);
   const full: TbPart = await messenger.messages.getFull(h.id);
-  const after: TbHeader = await messenger.messages.get(h.id);
-  if (baseline.read !== after.read) fail("changed", "The unread flag changed during a read.");
   const headers = full.headers ?? {};
-  const decoded = await messenger.messengerUtilities.decodeMimeHeader("subject", headers.subject ?? [after.subject]);
-  const subjectOk = normaliseSubject(decoded[0] ?? after.subject) === normaliseSubject(fp.subject);
-  const body = await bodyText(full);
-  const bodyOk = (await bodyDigest(body)) === fp.body_sha256;
-  const to = await emailList(after.recipients ?? []);
-  const cc = await emailList(after.ccList ?? []);
-  const bcc = await emailList(after.bccList?.length ? after.bccList : (headers.bcc ?? []));
-  const want = (v: readonly string[]) => sortedJson(v.map((x) => x.toLowerCase()).sort());
-  const envelopeOk = sortedJson(to) === want(fp.to) && sortedJson(cc) === want(fp.cc) && (where === "inbox" || sortedJson(bcc) === want(fp.bcc));
-  const infos = await messenger.messages.listAttachments(after.id);
+  const subject = await messenger.messengerUtilities.decodeMimeHeader("subject", headers.subject ?? [before.subject]);
+  const body = await bodyDigest(await bodyText(full));
+  const to = await emailList(before.recipients ?? []);
+  const cc = await emailList(before.ccList ?? []);
+  const bcc = await emailList(before.bccList?.length ? before.bccList : (headers.bcc ?? []));
   const hashes: string[] = [];
-  for (const info of infos) {
-    const file: File = await messenger.messages.getAttachmentFile(after.id, info.partName);
-    hashes.push(await sha256Hex(await file.arrayBuffer()));
-  }
-  const attachmentsOk = sortedJson(hashes.sort()) === sortedJson([...fp.attachment_sha256].sort());
-  const priorityOk = ["high", "highest"].includes(after.priority ?? "") === fp.high_importance;
-  const replyHeader = (headers["in-reply-to"] ?? []).join(" ");
-  const replyOk = !fp.in_reply_to || replyHeader.includes(fp.in_reply_to);
-  const own = await isOwn(after, r.mailbox);
-  const tokenHeader = (headers["x-chamberlain-write-token"] ?? []).join(" ").trim();
-  const draftsOrSent = where === "drafts" || where === "sent";
-  return {
-    header: header(after),
-    where,
-    exact: own && subjectOk && bodyOk && envelopeOk && attachmentsOk && priorityOk && replyOk,
-    token_match: tokenHeader !== "" && tokenHeader === fp.token,
-    raw_sha256: where === "drafts" ? await rawHash(after.id) : undefined,
-    internet_message_id_matches_token: bare(after.headerMessageId) === bare(fp.token) && draftsOrSent && sentFolderId !== "",
-  };
-}
-
-async function scanCompose(a: ReconcileComposeArgs, includeInbox: boolean): Promise<{ matches: Match[]; complete: boolean; errors: string[] }> {
-  const folders: { id: string; where: Match["where"]; foreign: boolean }[] = [
-    { id: a.sent_folder_id, where: "sent", foreign: false },
-    { id: a.draft_folder_id, where: "drafts", foreign: false },
-  ];
-  if (includeInbox && a.inbox_folder_id) folders.push({ id: a.inbox_folder_id, where: "inbox", foreign: false });
-  if (includeInbox) for (const f of await localOutboxes()) folders.push({ id: f.id, where: "outbox", foreign: true });
-  const matches: Match[] = [];
-  const errors: string[] = [];
-  let complete = true;
-  for (const folder of folders) {
-    try {
-      await folderOf(a, folder.id, folder.foreign);
-      const scan = await scanQuery(a, { folderId: folder.id, foreign: folder.foreign, sinceMs: a.since_ms, subject: a.fingerprint.subject, subjectContains: true, ownOnly: true, maxScan: 500 });
-      if (!scan.complete) {
-        complete = false;
-        errors.push("scan limit: " + folder.id);
-      }
-      for (const h of scan.messages) matches.push(await inspectCopy(a, h, a.fingerprint, folder.where, a.sent_folder_id));
-    } catch (error) {
-      complete = false;
-      errors.push(folder.where + ": " + String((error as Error)?.message ?? error).slice(0, 120));
+  if (includeHashes) {
+    for (const info of await messenger.messages.listAttachments(h.id)) {
+      check(info.size <= MAX_ATTACHMENT_BYTES, "too_large", "An attachment is too large to verify.");
+      const file: File = await messenger.messages.getAttachmentFile(h.id, info.partName);
+      check(file.size <= MAX_ATTACHMENT_BYTES, "too_large", "An attachment is too large to verify.");
+      hashes.push(await sha256Hex(await file.arrayBuffer()));
     }
   }
-  return { matches, complete, errors };
-}
-
-async function maybeRefresh(a: Bound, wanted: boolean, ids: string[]): Promise<{ refreshed: boolean; verified: boolean; error?: string }> {
-  if (!wanted) return { refreshed: false, verified: false };
-  try {
-    const done = await cmdRefresh({ account_id: a.account_id, mailbox: a.mailbox, folder_ids: ids, timeout_ms: 8000 });
-    return { refreshed: true, verified: done.provider_callback_verified };
-  } catch (error) {
-    return { refreshed: true, verified: false, error: String((error as Error)?.message ?? error).slice(0, 120) };
-  }
-}
-
-async function cmdReconcileCompose(a: ReconcileComposeArgs, kind: "send" | "draft_save" | "draft_update"): Promise<ReconcileComposeResult> {
-  await accountOf(a);
-  const ids = [a.sent_folder_id, a.draft_folder_id];
-  if (kind === "send" && a.inbox_folder_id) ids.push(a.inbox_folder_id);
-  const refresh = await maybeRefresh(a, a.refresh, ids);
-  const scan = await scanCompose(a, kind === "send");
-  const errors = refresh.error ? [refresh.error, ...scan.errors] : scan.errors;
-  let oldCopies: number | undefined;
-  if (kind === "draft_update") {
-    const u = a as ReconcileDraftUpdateArgs;
-    oldCopies = (await copiesIn(a, u.old.folder_id, u.old.internet_message_id)).messages.length;
-  }
-  return { matches: scan.matches, complete: scan.complete, refreshed: refresh.verified, errors, old_copies: oldCopies };
-}
-
-async function cmdReconcileDiscard(a: ReconcileDraftDiscardArgs): Promise<ReconcileDiscardResult> {
-  await accountOf(a);
-  const found = await copiesIn(a, a.draft.folder_id, a.draft.internet_message_id);
-  let hash: string | undefined;
-  let composers = 0;
-  if (found.messages.length === 1) {
-    hash = await rawHash(found.messages[0].id);
-    const open = await messenger.chamberlainMail?.findComposers(a.account_id, a.mailbox, found.messages[0].id, found.messages[0].headerMessageId);
-    composers = open ? open.tab_ids.length : 0;
-  }
-  return { copies: found.messages.length, raw_sha256: hash, composers_open: composers };
-}
-
-async function cmdReconcileMove(a: ReconcileMoveArgs): Promise<ReconcileMoveResult> {
-  await accountOf(a);
-  const refresh = await maybeRefresh(a, a.refresh, [...new Set([a.ref.folder_id, a.destination_folder_id])]);
-  const id = bare(a.ref.internet_message_id);
-  const source = await copiesIn(a, a.ref.folder_id, id);
-  const destination = await copiesIn(a, a.destination_folder_id, id);
+  checkCopy(before, await messenger.messages.get(h.id));
   return {
-    source: { folder_id: a.ref.folder_id, messages: source.messages.map((h) => header(h)), complete: source.complete },
-    destination: { folder_id: a.destination_folder_id, messages: destination.messages.map((h) => header(h)), complete: destination.complete },
-    refreshed: refresh.refreshed,
-    refresh_verified: refresh.verified,
+    subject: clip(subject[0] ?? before.subject, MAX_BODY_CHARS),
+    body_sha256: body,
+    to, cc, bcc,
+    attachment_sha256: hashes.sort(),
+    high_importance: ["high", "highest"].includes(before.priority ?? ""),
+    in_reply_to: (headers["in-reply-to"] ?? []).join(" ").trim(),
+    token: (headers["x-chamberlain-write-token"] ?? []).join(" ").trim(),
   };
 }
 
-async function cmdReconcileMoveMany(a: ReconcileMoveManyArgs): Promise<ReconcileMoveManyResult> {
-  await accountOf(a);
-  const refresh = await maybeRefresh(a, a.refresh, [a.folder_id, a.destination_folder_id]);
-  const source = await byMessageId(a, a.folder_id);
-  const destination = await byMessageId(a, a.destination_folder_id);
-  const items = a.internet_message_ids.map((raw) => {
-    const id = bare(raw);
-    const there = destination.map.get(id) ?? [];
-    return {
-      internet_message_id: raw,
-      source: (source.map.get(id) ?? []).length,
-      destination: there.length,
-      unread: there.filter((h) => !h.read).length,
-    };
+async function copyFact(a: Bound, scope: CopyScope, h: TbHeader, head: Header): Promise<CopyFact> {
+  let content: ContentFacts = { to: [], cc: [], bcc: [], attachment_sha256: [], in_reply_to: "", token: "" };
+  if (scope.ids == null) {
+    check(await isOwn(h, a.mailbox), "changed", "The sender no longer matches the bound identity.");
+    content = await inspectContent(h, scope.include_attachment_hashes);
+  }
+  if (!scope.inspect_draft) return { header: head, ...content };
+  const raw = await rawHash(h.id);
+  let composersOpen: number | undefined;
+  if (scope.ids != null) {
+    const helper = messenger.chamberlainMail;
+    check(helper, "unsupported", "The composer helper is not installed.");
+    const open = await helper.findComposers(a.account_id, a.mailbox, h.id, h.headerMessageId);
+    composersOpen = open.tab_ids.length;
+  }
+  checkCopy(h, await messenger.messages.get(h.id));
+  return { header: head, ...content, raw_sha256: raw, composers_open: composersOpen };
+}
+
+async function scanCopyScope(a: Bound, scope: CopyScope, folderId: string, outbox: boolean): Promise<{ messages: TbHeader[]; complete: boolean }> {
+  if (scope.ids != null) {
+    const scan = await readIdGroup(a, { folder_id: folderId, ids: scope.ids });
+    const ids = new Set(scope.ids.map(bare));
+    return { messages: [...ids].flatMap((id) => scan.map.get(id) ?? []), complete: scan.complete };
+  }
+  check(scope.subject != null && scope.since_ms != null, "bad_request", "The scan needs a subject and lower time bound.");
+  await folderOf(a, folderId, outbox);
+  const scan = await scanQuery(a, {
+    folderId, foreign: outbox, sinceMs: scope.since_ms,
+    subject: scope.subject, subjectContains: true, ownOnly: true, maxScan: 500,
   });
-  return {
-    items,
-    complete: source.complete && destination.complete,
-    refreshed: refresh.refreshed,
-    refresh_verified: refresh.verified,
-  };
+  const limit = 200;
+  return { messages: scan.messages.slice(0, limit), complete: scan.complete && scan.messages.length <= limit };
 }
 
-async function cmdReconcileMarkRead(a: ReconcileMarkReadArgs): Promise<ReconcileMarkReadResult> {
+async function cmdCopies(a: CopiesArgs): Promise<CopiesResult> {
   await accountOf(a);
-  const refresh = await maybeRefresh(a, a.refresh, [...new Set(a.refs.map((r) => r.folder_id))].slice(0, 8));
-  const items: ReconcileReadItem[] = [];
-  const read = await foldersRead(a, a.refs);
-  for (const ref of a.refs) {
-    const folder = read.get(ref.folder_id);
-    const messages = folder
-      ? (folder.get(bare(ref.internet_message_id)) ?? [])
-      : (await copiesIn(a, ref.folder_id, ref.internet_message_id)).messages;
-    items.push({ ref, copies: messages.length, read: messages.length === 1 ? messages[0].read : undefined });
+  // Explicit folders always belong to the bound account. A separate selector discovers only
+  // local Outboxes, whose headers and contents are filtered to the bound sender.
+  const boundFolders = [...new Set(a.where.flatMap((scope) => scope.folder_id == null ? [] : [scope.folder_id]))];
+  for (const folderId of boundFolders) await folderOf(a, folderId);
+  const errors: string[] = [];
+  let refreshVerified = a.refresh && boundFolders.length > 0;
+  if (a.refresh) {
+    for (let offset = 0; offset < boundFolders.length; offset += 8) {
+      const folderIds = boundFolders.slice(offset, offset + 8);
+      try {
+        const result = await cmdRefresh({ account_id: a.account_id, mailbox: a.mailbox, folder_ids: folderIds, timeout_ms: 8000 });
+        refreshVerified &&= result.provider_callback_verified;
+        for (const f of result.folders) if (!f.success) errors.push(clip(f.folder_id + ": " + f.code, 120));
+      } catch (error) {
+        refreshVerified = false;
+        errors.push("refresh: " + clip((error as Error)?.message ?? error, 120));
+      }
+    }
   }
-  return { items, refreshed: refresh.refreshed, refresh_verified: refresh.verified };
+
+  const scopes: CopyScopeResult[] = [];
+  for (const scope of a.where) {
+    const outbox = scope.folder_id == null;
+    const copies: CopyFact[] = [];
+    let complete = true;
+    try {
+      const folders = scope.folder_id == null ? (await localOutboxes()).map((f) => f.id) : [scope.folder_id];
+      for (const folderId of folders) {
+        const scan = await scanCopyScope(a, scope, folderId, outbox);
+        complete &&= scan.complete;
+        if (!scan.complete) errors.push("scan limit: " + clip(folderId, 120));
+        const headers = await scanHeaders(a, scan.messages, outbox);
+        for (let i = 0; i < headers.length; i++) copies.push(await copyFact(a, scope, scan.messages[i], headers[i]));
+      }
+    } catch (error) {
+      complete = false;
+      errors.push("copy inspection: " + clip((error as Error)?.message ?? error, 120));
+    }
+    scopes.push({ copies, complete });
+  }
+  return { scopes, refresh_verified: refreshVerified, errors };
 }

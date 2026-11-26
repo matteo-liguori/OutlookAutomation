@@ -118,7 +118,6 @@ interface ScanFilter {
   folderId?: string;
   foreign?: boolean;
   internetId?: string;
-  text?: string;
   unread?: boolean;
   sinceMs?: number;
   untilMs?: number;
@@ -129,7 +128,7 @@ interface ScanFilter {
   maxScan: number;
 }
 
-/** Thunderbird's full-text search is too slow on big mailboxes: words match the headers. */
+/** Search words match the headers without opening message bodies. */
 function hasEveryWord(h: TbHeader, words: string[]): boolean {
   const people = [h.author, ...(h.recipients ?? []), ...(h.ccList ?? [])].join(" ");
   const haystack = (String(h.subject ?? "") + " " + people).toLowerCase();
@@ -142,7 +141,6 @@ async function scanQuery(r: Bound, filter: ScanFilter): Promise<Scan> {
   if (!filter.foreign) q.accountId = r.account_id;
   if (filter.folderId) q.folderId = filter.folderId;
   if (filter.internetId) q.headerMessageId = filter.internetId;
-  if (filter.text) q.fullText = filter.text;
   if (filter.unread !== undefined) q.unread = filter.unread;
   if (filter.sinceMs !== undefined) q.fromDate = new Date(filter.sinceMs);
   if (filter.untilMs !== undefined) q.toDate = new Date(filter.untilMs);
@@ -186,43 +184,46 @@ function newestFirst(a: TbHeader, b: TbHeader): number {
 
 async function cmdQuery(a: QueryArgs): Promise<QueryResult> {
   await accountOf(a);
-  let foreign = false;
-  if (a.folder_id) {
-    const folder = await folderOf(a, a.folder_id, a.own_only);
-    foreign = folder.accountId !== a.account_id;
-    if (foreign) check(a.own_only, "account_mismatch", "A foreign folder may be read only for the sender's own mail.");
-  }
-  const scan = await scanQuery(a, {
+  if (a.folder_id) await folderOf(a, a.folder_id);
+  const filter: ScanFilter = {
     folderId: a.folder_id ?? undefined,
-    foreign,
     internetId: a.internet_message_id ? bare(a.internet_message_id) : undefined,
-    text: a.text ?? undefined,
     unread: a.unread ?? undefined,
     sinceMs: a.since_ms ?? undefined,
     untilMs: a.until_ms ?? undefined,
     subject: a.subject ?? undefined,
-    subjectContains: a.subject_contains,
     // Reply and forward prefixes are not words to match: Thunderbird reports a reply's subject
     // without its "Re:" (found live, 2026-11-25), so "Re: X" must find it by X.
     words: a.words ? a.words.toLowerCase().split(/\s+/).filter((w) => w.length > 0 && !/^(re|fw|fwd|aw|sv):?$/.test(w)) : undefined,
-    ownOnly: a.own_only,
     maxScan: a.max_scan,
-  });
-  let ordered = scan.messages.sort(newestFirst);
-  if (a.after) {
-    const after = a.after;
-    ordered = ordered.filter((h) => whenMs(h) < after.date_ms || (whenMs(h) === after.date_ms && sortKey(h) < after.key));
-  }
-  const page = ordered.slice(0, a.limit);
-  const last = page[page.length - 1];
-  const more = ordered.length > a.limit;
-  return {
-    messages: await scanHeaders(a, page, foreign),
-    more,
-    complete: scan.complete,
-    scanned: scan.scanned,
-    next: more && last ? { date_ms: whenMs(last), key: sortKey(last) } : undefined,
   };
+  for (let retried = false; ; retried = true) {
+    const scan = await scanQuery(a, filter);
+    let ordered = scan.messages.sort(newestFirst);
+    if (a.after) {
+      const after = a.after;
+      ordered = ordered.filter((h) => whenMs(h) < after.date_ms || (whenMs(h) === after.date_ms && sortKey(h) < after.key));
+    }
+    const page = ordered.slice(0, a.limit);
+    let messages: Header[];
+    try {
+      messages = await scanHeaders(a, page);
+    } catch (error) {
+      // IMAP can replace a temporary session ID between the query and the attachment flag lookup.
+      const code = helperFailure(String((error as Error)?.message ?? error))?.code;
+      if (retried || code !== "not_found") throw error;
+      continue;
+    }
+    const more = ordered.length > a.limit;
+    const last = page[page.length - 1];
+    return {
+      messages,
+      more,
+      complete: scan.complete,
+      scanned: scan.scanned,
+      next: more && last ? { date_ms: whenMs(last), key: sortKey(last) } : undefined,
+    };
+  }
 }
 
 /** The messages of one folder with one Message-ID; stable identity, never a session integer. */
@@ -239,12 +240,6 @@ async function locateOne(r: Bound, ref: MessageRef): Promise<TbHeader> {
   if (found.messages.length > 1) fail("ambiguous", "More than one copy of that message is in the folder.");
   if (!found.complete) fail("ambiguous", "The folder could not be scanned completely.");
   return found.messages[0];
-}
-
-async function cmdResolve(a: ResolveArgs): Promise<ResolveResult> {
-  await accountOf(a);
-  const found = await copiesIn(a, a.folder_id, a.internet_message_id);
-  return { messages: await scanHeaders(a, found.messages), complete: found.complete };
 }
 
 async function htmlToText(html: string[]): Promise<string> {
@@ -310,10 +305,12 @@ async function cmdRead(a: ReadArgs): Promise<ReadResult> {
 async function cmdAttachment(a: AttachmentArgs, id: string): Promise<{ result: AttachmentResult; chunks: ChunkFrame[] }> {
   const ref = { folder_id: a.folder_id, internet_message_id: a.internet_message_id };
   const before = await locateOne(a, ref);
-  const known = await attachmentInfo(before.id);
-  check(known.some((x) => x.part_name === a.part_name), "not_found", "That attachment is not on the message.");
+  const attachment = (await attachmentInfo(before.id)).find((part) => part.part_name === a.part_name);
+  check(attachment, "not_found", "That attachment is not on the message.");
+  const maxBytes = Math.min(a.max_bytes, MAX_ATTACHMENT_BYTES);
+  check(attachment.size <= maxBytes, "too_large", "The attachment is over the size limit.");
   const file: File = await messenger.messages.getAttachmentFile(before.id, a.part_name);
-  check(file.size <= a.max_bytes && file.size <= MAX_ATTACHMENT_BYTES, "too_large", "The attachment is over the size limit.");
+  check(file.size <= maxBytes, "too_large", "The attachment is over the size limit.");
   const bytes = new Uint8Array(await file.arrayBuffer());
   const after = await locateOne(a, ref);
   if (after.read !== before.read) fail("changed", "The unread flag changed during an attachment read.");
@@ -322,27 +319,24 @@ async function cmdAttachment(a: AttachmentArgs, id: string): Promise<{ result: A
     const piece = bytes.subarray(offset, offset + CHUNK_BYTES);
     chunks.push({ t: "chunk", v: PROTOCOL_VERSION, id, name: a.part_name.slice(0, 64), index, data: bytesToBase64(piece), sha256: await sha256Hex(piece) });
   }
-  return { result: { name: clip(file.name, 500), size: bytes.length, sha256: await sha256Hex(bytes), chunks: chunks.length, read_state_preserved: true }, chunks };
+  return {
+    result: {
+      name: clip(file.name, 500),
+      media_type: attachment.content_type || file.type || "application/octet-stream",
+      size: bytes.length,
+      sha256: await sha256Hex(bytes),
+      chunks: chunks.length,
+      read_state_preserved: true,
+    },
+    chunks,
+  };
 }
 
-async function cmdFolders(a: FoldersArgs): Promise<FoldersResult> {
+async function cmdFolders(a: AccountArgs): Promise<FoldersResult> {
   const account = await accountOf(a, true);
   const out: FolderInfo[] = [];
   walkFolders(account.rootFolder, (f) => out.push(folderInfo(f)));
-  if (a.include_outbox) for (const f of await localOutboxes()) out.push(folderInfo(f));
   return { folders: out };
-}
-
-async function cmdAccounts(): Promise<AccountsResult> {
-  const list = await messenger.accounts.list(false);
-  return {
-    accounts: list.map((acc) => ({
-      id: acc.id,
-      type: acc.type,
-      name: clip(acc.name, 500),
-      identities: acc.identities.map((i) => ({ id: i.id, email: i.email, name: clip(i.name, 500) })),
-    })),
-  };
 }
 
 async function cmdRefresh(a: RefreshArgs): Promise<RefreshResult> {
@@ -397,5 +391,5 @@ async function cmdContactRead(a: ContactReadArgs): Promise<ContactReadResult> {
 
 async function cmdStatus(): Promise<StatusResult> {
   const info = await messenger.runtime.getBrowserInfo();
-  return { addon_version: ADDON_VERSION, browser_version: info.version, write_busy: writeBusy, capabilities: advertisedCapabilities() };
+  return { addon_version: ADDON_VERSION, browser_version: info.version, write_busy: writeBusy, calendar_available: calendarSupported() };
 }

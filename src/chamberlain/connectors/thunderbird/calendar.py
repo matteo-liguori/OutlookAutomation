@@ -52,8 +52,7 @@ from chamberlain.ports.page import Gap, Page
 from chamberlain.schema.base import Model, SourceId
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
-PROTOCOL_VERSION: Final = 2
-CAPABILITY: Final = "calendar"
+PROTOCOL_VERSION: Final = 3
 _CLIENT_ONLY = Verification(client_verified=True, server_verified=False)
 _SCAN_CAP = 5000
 
@@ -63,7 +62,7 @@ Json = dict[str, JsonValue]
 @dataclass(frozen=True)
 class BridgeHello:
     version: int
-    capabilities: frozenset[str]
+    calendar_available: bool
 
 
 class CalendarBridgeFailure(Exception):
@@ -91,6 +90,16 @@ class CalendarBridge(Protocol):
         ...
 
 
+class FreshnessProbe(Protocol):
+    def __call__(self, source: str, token: str, *, cleanup_only: bool = False) -> bool: ...
+
+
+class FreshnessStore(Protocol):
+    def __call__(
+        self, source: str, binding: str, health: SourceHealth, probe: FreshnessProbe
+    ) -> SourceHealth: ...
+
+
 class OwlBinding(Model):
     calendar_id: str = Field(min_length=1)
     """The Thunderbird calendar id."""
@@ -103,10 +112,18 @@ class OwlCalendarConfig(Model):
 class ThunderbirdCalendar:
     """Implements `chamberlain.ports.CalendarPort` over the Thunderbird calendar bridge."""
 
-    def __init__(self, config: OwlCalendarConfig, bridge: CalendarBridge, clock: Clock) -> None:
+    def __init__(
+        self,
+        config: OwlCalendarConfig,
+        bridge: CalendarBridge,
+        clock: Clock,
+        *,
+        freshness_store: FreshnessStore | None = None,
+    ) -> None:
         self._config = config
         self._bridge = bridge
         self._clock = clock
+        self._freshness_store = freshness_store
 
     # --- description ----------------------------------------------------------
 
@@ -145,6 +162,13 @@ class ThunderbirdCalendar:
         if mine is None or mine.get("disabled"):
             return SourceHealth(source=source, state=HealthState.UNAVAILABLE, checked_at=now)
         fresh = mine.get("fresh_as_of")
+        if (
+            self._freshness_store is not None
+            and mine.get("type") == "owl"
+            and mine.get("read_only") is False
+        ):
+            stale = SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
+            return self._freshness_store(source, binding.calendar_id, stale, self.probe)
         if not isinstance(fresh, str):
             # A client cache that cannot say when it last synchronised cannot be vouched for (P-5).
             return SourceHealth(source=source, state=HealthState.STALE, checked_at=now)
@@ -284,12 +308,15 @@ class ThunderbirdCalendar:
                 event_id, text = self._current(
                     binding, refs, intent.event_ref, intent.expected_etag, intent.event
                 )
+                wanted = intent.event
+                if wanted.visibility is None and ics.master_of(text).fields.visibility == "private":
+                    wanted = wanted.model_copy(update={"visibility": "private"})
                 data = {
                     "event_id": event_id,
                     "expected_icalendar": text,
                     "expected_etag": intent.expected_etag,
-                    "icalendar": ics.apply_fields(text, intent.event, now),
-                    "fields": intent.event.model_dump(mode="json"),
+                    "icalendar": ics.apply_fields(text, wanted, now),
+                    "fields": wanted.model_dump(mode="json"),
                 }
             case CalendarDelete():
                 event_id, text = self._current(
@@ -345,19 +372,23 @@ class ThunderbirdCalendar:
         event_id = _text(prepared.data, "event_id")
         item = result.get("item")
         if kind is IntentKind.CALENDAR_DELETE:
-            if item is None:
+            if "item" in result and item is None:
                 receipt = ProviderReceipt(locator=event_id, verification=_CLIENT_ONLY)
                 return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="still present")
-        wanted = EventFields.model_validate(prepared.data["fields"])
-        text = item.get("icalendar") if isinstance(item, dict) else None
-        if not isinstance(text, str):
+        if not isinstance(item, dict):
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="no read-back")
+        if kind is IntentKind.CALENDAR_CREATE:
+            actual_id = item.get("id")
+            if not isinstance(actual_id, str) or not actual_id or "#" in actual_id:
+                return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="no usable event ID")
+            event_id = actual_id
+        wanted = EventFields.model_validate(prepared.data["fields"])
         try:
-            matches = same_content(ics.master_of(text).fields, wanted)
+            text = _verified_text(item, event_id, wanted)
         except ChamberlainError:
-            matches = False
-        if not matches:
+            text = None
+        if text is None:
             return DispatchResult(
                 outcome=DispatchOutcome.UNKNOWN, detail="read-back differs from the request"
             )
@@ -370,8 +401,17 @@ class ThunderbirdCalendar:
         item = self._item(binding, event_id)
         text = str(item["icalendar"]) if item is not None else None
         if kind is IntentKind.CALENDAR_CREATE:
+            if item is None:
+                # Owl may have replaced the submitted UID. No ID or title search proves absence.
+                return ReconcileResult(
+                    status=ReconcileStatus.ABSENT, detail="submitted event ID not seen"
+                )
+            wanted = EventFields.model_validate(data["fields"])
+            text = _verified_text(item, event_id, wanted)
             if text is None:
-                return ReconcileResult(status=ReconcileStatus.ABSENT, detail="not seen")
+                return ReconcileResult(
+                    status=ReconcileStatus.UNKNOWN, detail="read-back differs from the request"
+                )
             return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=_receipt(event_id, text))
         if kind is IntentKind.CALENDAR_DELETE:
             if text is None:
@@ -380,16 +420,107 @@ class ThunderbirdCalendar:
             if ics.text_etag(text) == _text(data, "expected_etag"):
                 return ReconcileResult(status=ReconcileStatus.ABSENT, detail="unchanged")
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")
-        if text is None:
+        if item is None or text is None:
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="event not found")
         if ics.text_etag(text) == _text(data, "expected_etag"):
             return ReconcileResult(status=ReconcileStatus.ABSENT, detail="unchanged")
         wanted = EventFields.model_validate(data["fields"])
-        if same_content(ics.master_of(text).fields, wanted):
+        if _verified_text(item, event_id, wanted) is not None:
             return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=_receipt(event_id, text))
         return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")
 
     # --- bridge ---------------------------------------------------------------
+
+    def probe(self, source: str, token: str, *, cleanup_only: bool = False) -> bool:
+        """Check the bound Owl calendar with one private appointment owned by this probe."""
+        if len(token) != 32 or any(char not in "0123456789abcdef" for char in token):
+            raise ValueError("Invalid Owl freshness token")
+        binding = self._binding(source)
+        calendars = self._read("calendar_list", {})
+        calendar = next(
+            (c for c in _items(calendars, "calendars") if c.get("id") == binding.calendar_id), None
+        )
+        if (
+            calendar is None
+            or calendar.get("type") != "owl"
+            or calendar.get("disabled")
+            or calendar.get("read_only")
+        ):
+            return False
+        uid = f"chamberlain-freshness-{token}@chamberlain.local"
+        title = f"Chamberlain calendar check {token}"
+        base: Json = {"calendar_id": binding.calendar_id, "event_id": uid}
+        if cleanup_only and self._read("status", {}).get("write_busy") is not False:
+            return False
+        start = datetime.fromtimestamp(int(token[:8], 16), UTC).replace(second=0)
+        fields = EventFields(
+            title=title,
+            description=f"Automatic calendar check {token}",
+            start=start,
+            end=start + timedelta(minutes=1),
+            visibility="private",
+        )
+        if cleanup_only:
+            # Exchange may replace the submitted UID. Recover only our uniquely marked event.
+            window = self._read(
+                "calendar_query",
+                {
+                    "calendar_id": binding.calendar_id,
+                    "start": start.isoformat(),
+                    "end": fields.end.isoformat(),
+                    "limit": 250,
+                },
+            )
+            if window.get("complete") is not True or window.get("gaps"):
+                return False
+            matches = [
+                item
+                for item in _items(window, "items")
+                if title == ics.master_of(str(item["icalendar"])).fields.title
+            ]
+            if not matches:
+                return True
+            if len(matches) != 1 or not isinstance(matches[0].get("id"), str):
+                return False
+            actual_uid = str(matches[0]["id"])
+        else:
+            if self._item(binding, uid) is not None:
+                return False
+            created = self._bridge.request(
+                "calendar_write",
+                {
+                    **base,
+                    "kind": "create",
+                    "icalendar": ics.build_new(uid, fields, self._clock.now()),
+                },
+                write=True,
+            )
+            item = created.get("item")
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                return False
+            actual_uid = str(item["id"])
+        existing = self._item(binding, actual_uid)
+        if existing is None or existing.get("id") != actual_uid:
+            return False
+        text = str(existing["icalendar"])
+        event = ics.master_of(text)
+        if (
+            event.uid != actual_uid
+            or event.fields.title != title
+            or event.fields.description != fields.description
+            or event.fields.start != start
+            or event.fields.end != fields.end
+            or event.recurring
+            or event.fields.attendees
+        ):
+            return False
+        self._bridge.request(
+            "calendar_write",
+            {**base, "event_id": actual_uid, "kind": "delete", "expected_icalendar": text},
+            write=True,
+        )
+        removed = self._item(binding, actual_uid) is None
+        return removed and (cleanup_only or event.fields.visibility == "private")
 
     def _binding(self, source: str) -> OwlBinding:
         binding = self._config.bindings.get(source)
@@ -399,7 +530,7 @@ class ThunderbirdCalendar:
 
     @staticmethod
     def _compatible(hello: BridgeHello) -> bool:
-        return hello.version == PROTOCOL_VERSION and CAPABILITY in hello.capabilities
+        return hello.version == PROTOCOL_VERSION and hello.calendar_available
 
     def _read(self, command: str, args: Mapping[str, JsonValue]) -> Json:
         """A read; failures become `source.*` errors (P-17, P-18)."""
@@ -436,9 +567,11 @@ class ThunderbirdCalendar:
         if ics.text_etag(text) != expected_etag:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event changed since it was read.")
         master = ics.master_of(text)
+        if item.get("id") != event_id or master.uid != event_id:
+            raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event identity changed.")
         if master.recurring:
             raise _no_series()
-        ics.refuse_invitations(master, wanted)
+        ics.refuse_invitations(None if _own_appointment(item, master) else master, wanted)
         return event_id, text
 
 
@@ -447,15 +580,21 @@ def _write_command(binding: OwlBinding, prepared: Prepared) -> tuple[str, Json]:
     base: Json = {"calendar_id": binding.calendar_id, "event_id": _text(data, "event_id")}
     match prepared.intent_kind:
         case IntentKind.CALENDAR_CREATE:
-            return "calendar_create", {**base, "icalendar": _text(data, "icalendar")}
+            return "calendar_write", {
+                **base,
+                "kind": "create",
+                "icalendar": _text(data, "icalendar"),
+            }
         case IntentKind.CALENDAR_UPDATE:
-            return "calendar_update", {
+            return "calendar_write", {
+                "kind": "update",
                 **base,
                 "expected_icalendar": _text(data, "expected_icalendar"),
                 "icalendar": _text(data, "icalendar"),
             }
         case _:
-            return "calendar_delete", {
+            return "calendar_write", {
+                "kind": "delete",
                 **base,
                 "expected_icalendar": _text(data, "expected_icalendar"),
             }
@@ -497,6 +636,32 @@ def _event_of(source: str, locator: str, text: str, parsed: ics.ParsedEvent) -> 
         fields=fields,
         updated=parsed.updated,
     )
+
+
+def _own_appointment(item: Json, parsed: ics.ParsedEvent) -> bool:
+    return (
+        item.get("own_appointment") is True
+        and parsed.organiser
+        and not parsed.fields.attendees
+        and parsed.fields.visibility == "private"
+    )
+
+
+def _verified_text(item: Json, event_id: str, wanted: EventFields) -> str | None:
+    text = item.get("icalendar")
+    if item.get("id") != event_id or item.get("recurrence_id") or not isinstance(text, str):
+        return None
+    actual = ics.master_of(text)
+    if (
+        actual.uid != event_id
+        or actual.recurring
+        or actual.status.value == "cancelled"
+        or actual.fields.attendees
+        or (actual.organiser and not _own_appointment(item, actual))
+        or not same_content(actual.fields, wanted)
+    ):
+        return None
+    return text
 
 
 def _receipt(event_id: str, text: str) -> ProviderReceipt:

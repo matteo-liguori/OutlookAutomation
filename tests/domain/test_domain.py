@@ -97,12 +97,26 @@ def test_w18_d15_w5_w1_any_change_to_an_intent_changes_its_hash_and_3_related_ch
         {
             "kind": "mail.move",
             "source": "mail:work",
-            "message": "msg_0123456789abcdef",
+            "messages": ["msg_0123456789abcdef"],
             "to_folder": "f-filed",
         }
     )
     assert isinstance(move, MailMove)
     assert not move.mark_read
+    for bad_messages in ([], ["msg_0123456789abcdef"] * 2):
+        with pytest.raises(ValidationError):
+            INTENT.validate_python(
+                {
+                    "kind": "mail.move",
+                    "source": "mail:work",
+                    "messages": bad_messages,
+                    "to_folder": "f-filed",
+                }
+            )
+    with pytest.raises(ValidationError):
+        INTENT.validate_python(
+            {"kind": "mail.trash", "source": "mail:work", "message": "msg_0123456789abcdef"}
+        )
     with pytest.raises(ValidationError):
         INTENT.validate_python({"kind": "mail.delete_forever", "source": "mail:work"})
     with pytest.raises(ValidationError):

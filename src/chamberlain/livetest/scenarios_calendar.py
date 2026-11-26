@@ -104,10 +104,21 @@ def _gone(lab: Lab, source: str, title: str, start: datetime) -> None:
     lab.check(not left, "the deleted event still shows as live")
 
 
+def _check_private(lab: Lab, handle: str) -> None:
+    lab.used_probe("private calendar event with no guests")
+    source, locator = lab.app.context.services.refs.locate(handle)
+    event = lab.env.probe.read_event(source, locator)
+    lab.check(event.fields.visibility == "private", "the calendar did not keep private visibility")
+    lab.check(
+        not (event.fields.attendees or event.participants or event.organiser),
+        "the test event has guests or is an invitation",
+    )
+
+
 @scenario(
     "calendar.create_update_delete",
     "calendar",
-    "Create, update and delete an event",
+    "Create, update and delete a private event without guests",
     Scope.CALENDAR,
     needs=_NEEDS,
 )
@@ -115,7 +126,8 @@ def create_update_delete(lab: Lab, t: Target) -> None:
     _require_approval(lab)
     title = lab.subject(f"crud {t.tag}")
     start = _soon(lab, 2)
-    handle = _create(lab, t.source, _event(title, start))
+    handle = _create(lab, t.source, _event(title, start, visibility="private"))
+    _check_private(lab, handle)
     before = _view(lab, handle)
     lab.check(before["status"] == "confirmed", "a new event is not confirmed")
     lab.confirmed(
@@ -125,11 +137,12 @@ def create_update_delete(lab: Lab, t: Target) -> None:
                 "source": t.source,
                 "event_ref": handle,
                 "expected_etag": before["etag"],
-                "event": _event(title, start, 60, location="Live test room"),
+                "event": _event(title, start, 60, location="Live test room", visibility="private"),
             }
         ),
         "update event",
     )
+    _check_private(lab, handle)
     after = _view(lab, handle)
     lab.check(after["etag"] != before["etag"], "the etag did not change after an update")
     text = text_of(lab.ok("open", handle=handle, part="body"))

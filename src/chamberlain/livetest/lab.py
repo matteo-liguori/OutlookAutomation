@@ -349,13 +349,13 @@ class Lab:
         trashed, restored and trashed again), so that case files it into the trash folder."""
         source = _source_of(self, handle)
         try:
-            done = self.write({"kind": "mail.trash", "source": source, "message": handle})
+            done = self.write({"kind": "mail.trash", "source": source, "messages": [handle]})
         except RepeatRefused:
             done = self.write(
                 {
                     "kind": "mail.move",
                     "source": source,
-                    "message": handle,
+                    "messages": [handle],
                     "to_folder": self.folder_id(source, FolderRole.TRASH),
                 }
             )

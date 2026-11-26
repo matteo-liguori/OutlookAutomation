@@ -12,6 +12,7 @@ from chamberlain.app.context import SourceRouter
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.livetest.config import LiveTestConfig
 from chamberlain.livetest.registry import SPECS, Planned, ScenarioSpec, Scope, Target
+from chamberlain.ports.health import passive_health_checks
 from chamberlain.schema.errors import ChamberlainError
 
 SCENARIO_MODULES = (
@@ -129,9 +130,14 @@ def build_plan(
             continue
         for target in targets:
             scenario_id = f"{spec.id}{target.suffix}"
-            reason = _skip_reason(spec, target, sources, cache)
-            if not reason and any(matches(p, scenario_id) for p in skip):
-                reason = "skipped by --skip"
+            if only and not any(matches(pattern, scenario_id) for pattern in only):
+                continue
+            if any(matches(p, scenario_id) for p in skip):
+                # Preserve the existing reason priority without activating a skipped source.
+                with passive_health_checks():
+                    reason = _skip_reason(spec, target, sources, {}) or "skipped by --skip"
+            else:
+                reason = _skip_reason(spec, target, sources, cache)
             planned.append(Planned(scenario_id, spec, target, reason))
     if only:
         planned = [p for p in planned if any(matches(pattern, p.id) for pattern in only)]

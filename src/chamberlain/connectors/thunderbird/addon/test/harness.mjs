@@ -6,7 +6,7 @@ import { ACCOUNT, createWorld, OWNER } from "./fake_thunderbird.mjs";
 import { startAddon } from "./loader.mjs";
 
 const [controlPort, readMs, writeMs, assemblyMs] = process.argv.slice(2).map(Number);
-const WRITES = new Set(["send", "draft_save", "draft_update", "draft_discard", "move", "trash", "mark_read", "calendar_create", "calendar_update", "calendar_delete"]);
+const WRITES = new Set(["compose", "change", "draft_discard", "calendar_write"]);
 const ROLES = {
   inbox: ACCOUNT + "://INBOX",
   sent: ACCOUNT + "://Sent",

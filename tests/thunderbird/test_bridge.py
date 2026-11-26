@@ -61,7 +61,6 @@ FAST = Deadlines(
     client_read=1.5,
     client_write=1.5,
 )
-ALL_CAPS = tuple(sorted(c.value for c in protocol.REQUIRED_CAPABILITIES))
 ID = "req_0123456789"
 
 Handler = Callable[[RequestFrame | ChunkFrame, "Addon"], None]
@@ -74,6 +73,7 @@ class Addon:
         self.to_host_r, self.to_host_w = os.pipe()
         self.from_host_r, self.from_host_w = os.pipe()
         self.received: list[RequestFrame | ChunkFrame] = []
+        self.calendar_available = False
         self._handler = handler
         self._write_lock = threading.Lock()
         self._thread = threading.Thread(target=self._pump, daemon=True)
@@ -102,8 +102,16 @@ class Addon:
                 FdWriter(self.to_host_w), protocol.dump_frame(frame), frames.FROM_ADDON_LIMIT
             )
 
-    def hello(self, *, v: int = PROTOCOL_VERSION, caps: tuple[str, ...] = ALL_CAPS) -> None:
-        self.say(AddonHello(v=v, id="hello-00000001", addon_version="2.0.0", capabilities=caps))
+    def hello(self, *, v: int = PROTOCOL_VERSION, calendar_available: bool = False) -> None:
+        self.calendar_available = calendar_available
+        self.say(
+            AddonHello(
+                v=v,
+                id="hello-00000001",
+                addon_version="2.0.0",
+                calendar_available=calendar_available,
+            )
+        )
 
     def ok(self, request: RequestFrame, result: Model, chunks: int = 0) -> None:
         self.say(
@@ -173,7 +181,7 @@ def hear(connection: socket.socket) -> object:
 
 
 def hello_frame(token: str = TOKEN, v: int = PROTOCOL_VERSION) -> ClientHello:
-    return ClientHello(v=v, id="client-hello-1", token=token, require=ALL_CAPS)
+    return ClientHello(v=v, id="client-hello-1", token=token)
 
 
 @contextmanager
@@ -182,7 +190,7 @@ def bridge(
     handler: Handler | None = None,
     *,
     addon_hello: bool = True,
-    caps: tuple[str, ...] = ALL_CAPS,
+    calendar_available: bool = False,
     addon_version: int = PROTOCOL_VERSION,
     deadlines: Deadlines = FAST,
 ) -> Iterator[Env]:
@@ -200,7 +208,7 @@ def bridge(
     addon.start()
     write_runtime(tmp_path, port=host.port, token=TOKEN, pid=0)
     if addon_hello:
-        addon.hello(v=addon_version, caps=caps)
+        addon.hello(v=addon_version, calendar_available=calendar_available)
         for _ in range(200):
             if host.addon_connected:
                 break
@@ -215,7 +223,10 @@ def bridge(
 def status_handler(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
     if isinstance(frame, RequestFrame):
         result = protocol.StatusResult(
-            addon_version="2.0.0", browser_version="159.0", write_busy=False, capabilities=ALL_CAPS
+            addon_version="2.0.0",
+            browser_version="159.0",
+            write_busy=False,
+            calendar_available=addon.calendar_available,
         )
         addon.ok(frame, result)
 
@@ -234,25 +245,16 @@ def test_b9_an_unauthenticated_client_is_refused_and_nothing_is_relayed(tmp_path
         assert isinstance(answer, Refusal)
         assert answer.code is RefusalCode.UNAUTHENTICATED
         with contextlib.suppress(ChamberlainError, OSError):
-            say(connection, RequestFrame(v=2, id=ID, cmd="status", args={}))
+            say(connection, RequestFrame(v=PROTOCOL_VERSION, id=ID, cmd="status", args={}))
         assert env.addon.received == []
 
 
 def test_b9_a_version_mismatch_refuses_and_names_the_addon_update(tmp_path: Path) -> None:
-    with bridge(tmp_path, status_handler, addon_version=3) as env:
+    with bridge(tmp_path, status_handler, addon_version=2) as env:
         with pytest.raises(BridgeFailure) as raised:
             a_status_call(env)
         assert raised.value.code is ErrorCode.SOURCE_UNAVAILABLE
         assert not raised.value.sent
-        assert "add-on" in raised.value.fix.lower()
-        assert env.addon.received == []
-
-
-def test_b9_a_missing_capability_refuses_to_operate(tmp_path: Path) -> None:
-    with bridge(tmp_path, status_handler, caps=("read", "search")) as env:
-        with pytest.raises(BridgeFailure) as raised:
-            a_status_call(env)
-        assert raised.value.code is ErrorCode.SOURCE_UNAVAILABLE
         assert "add-on" in raised.value.fix.lower()
         assert env.addon.received == []
 
@@ -269,12 +271,47 @@ def test_b2_a_command_outside_the_list_is_refused_by_the_host(tmp_path: Path) ->
     with bridge(tmp_path, status_handler) as env, env.raw() as connection:
         say(connection, hello_frame())
         assert isinstance(hear(connection), protocol.Welcome)
-        say(connection, RequestFrame(v=2, id=ID, cmd="eval", args={"code": "1"}))
+        say(connection, RequestFrame(v=PROTOCOL_VERSION, id=ID, cmd="eval", args={"code": "1"}))
         answer = hear(connection)
         assert isinstance(answer, ResponseFrame)
         assert answer.error is not None
         assert answer.error.code is BridgeErrorCode.UNKNOWN_COMMAND
         assert env.addon.received == []
+
+
+def test_b2_malformed_write_args_are_refused_before_relay(tmp_path: Path) -> None:
+    with bridge(tmp_path, status_handler) as env, env.raw() as connection:
+        say(connection, hello_frame())
+        assert isinstance(hear(connection), protocol.Welcome)
+        say(
+            connection,
+            RequestFrame(v=PROTOCOL_VERSION, id=ID, cmd="compose", args={"mode": "send"}),
+        )
+        answer = hear(connection)
+        assert isinstance(answer, ResponseFrame)
+        assert answer.error is not None
+        assert answer.error.code is BridgeErrorCode.BAD_REQUEST
+        assert env.addon.received == []
+
+
+def test_nested_required_nullable_field_survives_the_client_frame(tmp_path: Path) -> None:
+    def answer(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
+        if isinstance(frame, RequestFrame):
+            addon.ok(frame, protocol.CopiesResult(scopes=(), refresh_verified=True))
+
+    args = protocol.CopiesArgs(
+        account_id="account1",
+        mailbox="owner@example.org",
+        where=(protocol.CopyScope(folder_id=None, subject="subject", since_ms=0),),
+    )
+    with bridge(tmp_path, answer) as env:
+        env.client.call(Command.COPIES, args)
+        request = env.addon.received[0]
+        assert isinstance(request, RequestFrame)
+        scopes = request.args["where"]
+        assert isinstance(scopes, list)
+        assert isinstance(scopes[0], dict)
+        assert scopes[0]["folder_id"] is None
 
 
 def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
@@ -300,9 +337,9 @@ def test_b5_a_request_id_already_in_flight_is_refused(tmp_path: Path) -> None:
             for connection in (first, second):
                 say(connection, hello_frame())
                 assert isinstance(hear(connection), protocol.Welcome)
-            say(first, RequestFrame(v=2, id=ID, cmd="status", args={}))
+            say(first, RequestFrame(v=PROTOCOL_VERSION, id=ID, cmd="status", args={}))
             assert arrived.wait(10), "the first request never reached the add-on"
-            say(second, RequestFrame(v=2, id=ID, cmd="status", args={}))
+            say(second, RequestFrame(v=PROTOCOL_VERSION, id=ID, cmd="status", args={}))
             answer = hear(second)
             assert isinstance(answer, Refusal)
             assert answer.code is RefusalCode.DUPLICATE_ID
@@ -330,7 +367,7 @@ def test_b7_dropped_and_malformed_clients_never_crash_the_host(tmp_path: Path) -
         with env.raw() as connection:
             say(connection, hello_frame())
             hear(connection)
-            say(connection, RequestFrame(v=2, id=ID, cmd="status", args={}))
+            say(connection, RequestFrame(v=PROTOCOL_VERSION, id=ID, cmd="status", args={}))
         assert isinstance(a_status_call(env), protocol.StatusResult)
         assert env.host.addon_connected
 
@@ -357,12 +394,13 @@ def test_b8_uploaded_attachments_travel_as_hashed_chunks_after_the_request(tmp_p
         if isinstance(frame, ChunkFrame) and len(sent_chunks) == spec.chunks:
             addon.ok(
                 next(f for f in addon.received if isinstance(f, RequestFrame)),
-                protocol.SendResult(attachment_bytes_verified=True),
+                protocol.ComposeResult(attachment_bytes_verified=True),
             )
 
-    args = protocol.SendArgs(
+    args = protocol.ComposeArgs(
         account_id="account1",
         mailbox="owner@example.org",
+        mode="send",
         to=("a@example.org",),
         subject="s",
         body="b",
@@ -372,8 +410,8 @@ def test_b8_uploaded_attachments_travel_as_hashed_chunks_after_the_request(tmp_p
         attachments=(spec,),
     )
     with bridge(tmp_path, collect) as env:
-        reply = env.client.call(Command.SEND, args, payloads={"a1": data})
-        assert isinstance(reply.result, protocol.SendResult)
+        reply = env.client.call(Command.COMPOSE, args, payloads={"a1": data})
+        assert isinstance(reply.result, protocol.ComposeResult)
         first = env.addon.received[0]
         assert isinstance(first, RequestFrame)
         got = [f for f in env.addon.received if isinstance(f, ChunkFrame)]
@@ -393,7 +431,7 @@ def test_p8_a_download_is_assembled_from_chunks_and_verified(tmp_path: Path) -> 
         for index, piece in enumerate(pieces):
             addon.say(
                 ChunkFrame(
-                    v=2,
+                    v=PROTOCOL_VERSION,
                     id=frame.id,
                     name="1.2",
                     index=index,
@@ -403,6 +441,7 @@ def test_p8_a_download_is_assembled_from_chunks_and_verified(tmp_path: Path) -> 
             )
         result = protocol.AttachmentResult(
             name="a.bin",
+            media_type="application/octet-stream",
             size=len(data),
             sha256=sha256_bytes(data),
             chunks=len(pieces),
@@ -429,7 +468,7 @@ def test_p8_a_chunk_that_does_not_match_its_hash_yields_nothing(tmp_path: Path) 
             return
         addon.say(
             ChunkFrame(
-                v=2,
+                v=PROTOCOL_VERSION,
                 id=frame.id,
                 name="1.2",
                 index=0,
@@ -438,7 +477,12 @@ def test_p8_a_chunk_that_does_not_match_its_hash_yields_nothing(tmp_path: Path) 
             )
         )
         result = protocol.AttachmentResult(
-            name="a", size=3, sha256="0" * 64, chunks=1, read_state_preserved=True
+            name="a",
+            media_type="application/octet-stream",
+            size=3,
+            sha256="0" * 64,
+            chunks=1,
+            read_state_preserved=True,
         )
         addon.ok(frame, result, chunks=1)
 
@@ -461,7 +505,12 @@ def test_p8_a_response_that_lost_a_chunk_is_unavailable(tmp_path: Path) -> None:
     def serve(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
         if isinstance(frame, RequestFrame):
             result = protocol.AttachmentResult(
-                name="a", size=3, sha256="0" * 64, chunks=2, read_state_preserved=True
+                name="a",
+                media_type="application/octet-stream",
+                size=3,
+                sha256="0" * 64,
+                chunks=2,
+                read_state_preserved=True,
             )
             addon.ok(frame, result, chunks=2)
 
@@ -478,18 +527,18 @@ def test_p8_a_response_that_lost_a_chunk_is_unavailable(tmp_path: Path) -> None:
     assert raised.value.code is ErrorCode.SOURCE_UNAVAILABLE
 
 
-def move_args() -> protocol.MoveArgs:
-    return protocol.MoveArgs(
+def move_args() -> protocol.ChangeArgs:
+    return protocol.ChangeArgs(
         account_id="account1",
         mailbox="owner@example.org",
-        ref=protocol.MessageRef(folder_id="f1", internet_message_id="m@x"),
-        destination_folder_id="f2",
+        items=(protocol.ChangeGroup(folder_id="f1", ids=("m@x",)),),
+        move_to="f2",
     )
 
 
 def test_p17_a_write_that_never_answers_is_possible_not_proven_absent(tmp_path: Path) -> None:
     with bridge(tmp_path, None) as env, pytest.raises(BridgeFailure) as raised:
-        env.client.call(Command.MOVE, move_args())
+        env.client.call(Command.CHANGE, move_args())
     assert raised.value.sent
     assert raised.value.mutation == "possible"
     assert not raised.value.proven_not_applied
@@ -507,7 +556,7 @@ def test_p10_an_addon_error_proves_not_applied_only_when_it_says_so(tmp_path: Pa
             addon.error(frame, BridgeErrorCode.BUSY, "none")
 
     with bridge(tmp_path, refuse) as env, pytest.raises(BridgeFailure) as raised:
-        env.client.call(Command.MOVE, move_args())
+        env.client.call(Command.CHANGE, move_args())
     assert raised.value.proven_not_applied
     assert raised.value.code is ErrorCode.SOURCE_BUSY
 
@@ -516,7 +565,7 @@ def test_p10_an_addon_error_proves_not_applied_only_when_it_says_so(tmp_path: Pa
             addon.error(frame, BridgeErrorCode.NOT_VERIFIED, "possible")
 
     with bridge(tmp_path, possible) as env, pytest.raises(BridgeFailure) as raised:
-        env.client.call(Command.MOVE, move_args())
+        env.client.call(Command.CHANGE, move_args())
     assert not raised.value.proven_not_applied
 
 
@@ -526,14 +575,15 @@ def test_p10_the_addon_disappearing_mid_request_is_possible(tmp_path: Path) -> N
             os.close(addon.to_host_w)
 
     with bridge(tmp_path, vanish) as env, pytest.raises(BridgeFailure) as raised:
-        env.client.call(Command.MOVE, move_args())
+        env.client.call(Command.CHANGE, move_args())
     assert not raised.value.proven_not_applied
 
 
 def test_b7_an_outgoing_frame_over_the_host_limit_is_refused_before_sending(tmp_path: Path) -> None:
-    args = protocol.SendArgs(
+    args = protocol.ComposeArgs(
         account_id="account1",
         mailbox="owner@example.org",
+        mode="send",
         to=("a@example.org",),
         subject="s",
         body="\x00" * 190_000,  # each escapes to six bytes: over 900,000
@@ -542,7 +592,7 @@ def test_b7_an_outgoing_frame_over_the_host_limit_is_refused_before_sending(tmp_
         token="<t@x>",
     )
     with bridge(tmp_path, status_handler) as env, pytest.raises(ChamberlainError) as raised:
-        env.client.call(Command.SEND, args)
+        env.client.call(Command.COMPOSE, args)
     assert raised.value.code is ErrorCode.REQUEST_TOO_LARGE
     assert env.addon.received == []
 
@@ -602,26 +652,17 @@ def test_b10_the_bridge_directory_is_restricted_to_the_current_user(
     assert "LAB\\tester:(OI)(CI)F" in calls[0]
 
 
-def test_b10_an_optional_capability_does_not_disturb_the_mail_handshake(tmp_path: Path) -> None:
-    """The calendars track may require `calendar`; mail requires only its own set."""
-    with bridge(tmp_path, status_handler, caps=(*ALL_CAPS, "calendar")) as env:
-        assert isinstance(a_status_call(env), protocol.StatusResult)
-        with env.raw() as connection:
-            say(
-                connection,
-                ClientHello(v=2, id="client-hello-2", token=TOKEN, require=("calendar",)),
-            )
-            assert isinstance(hear(connection), protocol.Welcome)
-    with bridge(tmp_path, status_handler) as env, env.raw() as connection:
-        say(connection, ClientHello(v=2, id="client-hello-3", token=TOKEN, require=("calendar",)))
-        answer = hear(connection)
-        assert isinstance(answer, Refusal)
-        assert answer.code is RefusalCode.CAPABILITY_MISSING
+def test_b10_calendar_availability_does_not_disturb_mail_handshake(tmp_path: Path) -> None:
+    for available in (False, True):
+        with bridge(tmp_path, status_handler, calendar_available=available) as env:
+            assert env.client.hello().calendar_available is available
+            assert isinstance(a_status_call(env), protocol.StatusResult)
 
 
 # --- the calendar adapter over the client (CalendarBridge protocol) --------------------------
 
 UPDATE_ARGS = {
+    "kind": "update",
     "calendar_id": "cal1",
     "event_id": "e1",
     "expected_icalendar": "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n",
@@ -634,7 +675,7 @@ def test_b10_the_calendar_adapter_needs_the_capability_and_sends_nothing_without
 ) -> None:
     with bridge(tmp_path, status_handler) as env:
         adapter = ClientCalendarBridge(env.client)
-        assert "calendar" not in adapter.hello().capabilities
+        assert not adapter.hello().calendar_available
         with pytest.raises(CalendarBridgeFailure) as raised:
             adapter.request("calendar_list", {})
         assert raised.value.proven_not_applied
@@ -648,11 +689,11 @@ def test_b10_the_calendar_adapter_keeps_the_bridges_words_about_mutation(tmp_pat
             possible = frame.args.get("event_id") == "e2"
             addon.error(frame, BridgeErrorCode.CHANGED, "possible" if possible else "none")
 
-    with bridge(tmp_path, refuse, caps=(*ALL_CAPS, "calendar")) as env:
+    with bridge(tmp_path, refuse, calendar_available=True) as env:
         adapter = ClientCalendarBridge(env.client)
-        assert "calendar" in adapter.hello().capabilities
+        assert adapter.hello().calendar_available
         with pytest.raises(CalendarBridgeFailure) as clean:
-            adapter.request("calendar_update", UPDATE_ARGS, write=True)
+            adapter.request("calendar_write", UPDATE_ARGS, write=True)
         assert (clean.value.code, clean.value.sent, clean.value.mutation) == (
             "changed",
             True,
@@ -660,11 +701,11 @@ def test_b10_the_calendar_adapter_keeps_the_bridges_words_about_mutation(tmp_pat
         )
         assert clean.value.proven_not_applied
         with pytest.raises(CalendarBridgeFailure) as unsure:
-            adapter.request("calendar_update", UPDATE_ARGS | {"event_id": "e2"}, write=True)
+            adapter.request("calendar_write", UPDATE_ARGS | {"event_id": "e2"}, write=True)
         assert unsure.value.mutation == "possible"
         assert not unsure.value.proven_not_applied
         with pytest.raises(CalendarBridgeFailure) as malformed:
-            adapter.request("calendar_update", {"calendar_id": "cal1"}, write=True)
+            adapter.request("calendar_write", {"calendar_id": "cal1"}, write=True)
         assert not malformed.value.sent
 
 

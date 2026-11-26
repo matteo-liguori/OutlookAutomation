@@ -151,6 +151,7 @@ def _parse_component(component: Any) -> ParsedEvent:
         location=str(component.get("LOCATION", "")),
         description=str(component.get("DESCRIPTION", "")),
         attendees=(cal_address(a) for a in _list(component, "ATTENDEE")),
+        visibility="private" if str(_prop(component, "CLASS")).upper() == "PRIVATE" else None,
     )
     try:
         sequence = int(component.get("SEQUENCE", 0))
@@ -307,6 +308,8 @@ def build_new(uid: str, fields: EventFields, now: datetime, organiser: str | Non
     _set_rule(event, rule, all_day=fields.all_day)
     _set_text(event, "location", fields.location)
     _set_text(event, "description", fields.description)
+    if fields.visibility == "private":
+        _set_text(event, "class", "PRIVATE")
     event.add("sequence", 0)
     if fields.attendees and organiser is not None:
         _set_invitation(event, fields.attendees, organiser, {})
@@ -353,6 +356,8 @@ def apply_fields(
         _set_invitation(event, fields.attendees, organiser, kept)
     _set_text(event, "location", fields.location)
     _set_text(event, "description", fields.description)
+    if fields.visibility == "private":
+        _set_text(event, "class", "PRIVATE")
     for name in ("DTSTAMP", "LAST-MODIFIED", "SEQUENCE"):
         event.pop(name, None)
     event.add("dtstamp", now.astimezone(UTC))
@@ -416,7 +421,7 @@ def apply_occurrence(text: str, occurrence: str, fields: EventFields, now: datet
         event.add("recurrence-id", _in_form_of(master, occurrence))
         # A date of a series with guests keeps them: an override without ATTENDEE would tell
         # the server that date has no guests, and it would send them a cancellation.
-        for name in ("ORGANIZER", "ATTENDEE"):
+        for name in ("ORGANIZER", "ATTENDEE", "CLASS"):
             for value in _list(master, name):
                 event.add(name.lower(), value)
         calendar.add_component(event)
@@ -427,6 +432,8 @@ def apply_occurrence(text: str, occurrence: str, fields: EventFields, now: datet
     _set_times(event, fields)
     _set_text(event, "location", fields.location)
     _set_text(event, "description", fields.description)
+    if fields.visibility == "private":
+        _set_text(event, "class", "PRIVATE")
     _stamp(event, now, sequence)
     return _with_zones(calendar)
 

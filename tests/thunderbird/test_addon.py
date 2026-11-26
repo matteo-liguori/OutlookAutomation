@@ -1,12 +1,13 @@
 """The add-on's own gate: Node tests, TypeScript type-check and static B-3/B-4 rules."""
 
+import os
 import re
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
-from thunderbird_rig import ADDON_DIR
+from thunderbird_rig import ADDON_DIR, generated_types
 
 from chamberlain.connectors.thunderbird.protocol import Command
 
@@ -14,7 +15,15 @@ NODE = shutil.which("node")
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(command, cwd=ADDON_DIR, capture_output=True, text=True, check=False)
+    types = generated_types()
+    return subprocess.run(
+        command,
+        cwd=ADDON_DIR,
+        env={**os.environ, "CHAMBERLAIN_ADDON_TYPES": str(types)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_addon_node_tests_pass() -> None:
@@ -55,7 +64,7 @@ FORBIDDEN = [
 
 
 def test_b3_b4_the_addon_has_no_eval_listener_network_or_journal() -> None:
-    for source in SOURCES:
+    for source in (*SOURCES, generated_types()):
         text = source.read_text(encoding="utf-8")
         code = re.sub(r"//.*", "", text)
         for pattern in FORBIDDEN:
@@ -64,8 +73,8 @@ def test_b3_b4_the_addon_has_no_eval_listener_network_or_journal() -> None:
 
 def test_b2_the_addon_dispatch_covers_exactly_the_closed_command_list() -> None:
     text = (ADDON_DIR / "src" / "background.ts").read_text(encoding="utf-8")
-    block = text[text.index("async function runCommand") : text.index("function execute")]
-    handled = set(re.findall(r'case "([a-z_]+)":', block))
+    block = text[text.index("const HANDLERS:") : text.index("function runCommand")]
+    handled = set(re.findall(r"^  ([a-z_]+):", block, re.MULTILINE))
     assert handled == {command.value for command in Command}
 
 
