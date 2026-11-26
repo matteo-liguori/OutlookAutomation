@@ -127,6 +127,8 @@ def test_the_calendar_page_lists_days_and_sources_asks_a_sane_window_and_needs_t
 
 def test_reports_are_listed_by_day_and_read_below_the_calendar(rig: Rig) -> None:
     set_schedule(rig.ctx, ScheduleSpec("morning", PassKind.MAIL, "08:00", "UTC"))
+    rig.ctx.db.execute("UPDATE schedules SET created_at = '2026-01-01T00:00:00Z'")
+    # an older schedule: its 08:00 pass today is owed (a new one would not be)
     run_tick(rig.app)
     run = runs_repo.recent_runs(rig.ctx.db, 1)[0]
     store_report(rig.ctx, run.handle, "# Morning\n- Three messages filed.")

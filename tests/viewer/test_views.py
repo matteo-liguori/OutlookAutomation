@@ -86,6 +86,8 @@ def test_w41_uncertain_history_is_read_only_and_outside_needs_you(rig: Rig) -> N
 
 def test_a_run_report_is_shown_and_then_gone_when_it_expires(rig: Rig) -> None:
     set_schedule(rig.ctx, ScheduleSpec("morning", PassKind.MAIL, "08:00", "UTC"))
+    rig.ctx.db.execute("UPDATE schedules SET created_at = '2026-01-01T00:00:00Z'")
+    # an older schedule: its 08:00 pass today is owed (a new one would not be)
     run_tick(rig.app)
     run = runs_repo.recent_runs(rig.ctx.db, 1)[0]
     store_report(rig.ctx, run.handle, "Three messages filed. Nothing needs you.")

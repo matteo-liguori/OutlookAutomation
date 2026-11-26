@@ -114,15 +114,17 @@ Python; on macOS or Linux use `.venv/bin/python`.
    ```
 
 2. Thunderbird add-on. The setup command builds the add-on and writes the native host
-   manifest into the folders you name. It registers nothing system-wide.
+   manifest. With `--register` it shows how it would point Thunderbird at the manifest (the
+   Windows registry value, or the Mac manifest folder); add `--apply` to do it.
 
    ```
-   .venv/Scripts/python -m chamberlain.connectors.thunderbird.setup --bridge-dir <data root>/bridge --manifest-dir <manifest folder>
+   chamberlain --data <data root> setup thunderbird --register
+   chamberlain --data <data root> setup thunderbird --register --apply
    ```
 
-   Then, with your approval, register that manifest for your platform and install the
-   built package in Thunderbird (Add-ons Manager, Install Add-on From File). It has its
-   own ID, so the old add-on can keep running beside it.
+   Then install the built package in Thunderbird (Add-ons Manager, Install Add-on From File).
+   It has its own ID, so the old add-on can keep running beside it. Setup steps can close and
+   start Thunderbird with `chamberlain thunderbird close|start|status`.
 
    To update the add-on later, never use the Add-ons Manager: run
    `chamberlain addon update --restart`. It builds the package, closes Thunderbird normally,
@@ -163,8 +165,10 @@ Python; on macOS or Linux use `.venv/bin/python`.
    front page (see [The report](#the-report)). The page keeps
    its token for the tab, so a reload works; a new browser session needs the token link again.
 
-6. Scheduling. See [docs/scheduling.md](docs/scheduling.md) for the five-minute tick and
-   the passes in `connections.yaml`.
+6. Scheduling. `chamberlain schedule install --apply` registers the five-minute tick, and
+   `chamberlain schedule prompts` prints the agent automations for the passes in
+   `connections.yaml`. Connect your agent with `chamberlain setup agent codex|claude --apply`.
+   See [docs/scheduling.md](docs/scheduling.md) and [docs/agents.md](docs/agents.md).
 
 Check the result with `chamberlain doctor --metrics`. Real-account checks before cutover
 are in [docs/live-validation.md](docs/live-validation.md).

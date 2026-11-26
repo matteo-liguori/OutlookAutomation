@@ -230,3 +230,21 @@ def test_there_is_one_run_per_schedule_and_day(rig: Rig) -> None:
     rig.clock.advance(hours=24)
     plan_runs(rig.ctx)
     assert len(repo.recent_runs(rig.ctx.db, 10)) == 2
+
+
+def test_a_schedule_applied_mid_day_records_no_pass_for_times_already_gone(rig: Rig) -> None:
+    passes = [
+        ScheduleSpec(name=name, kind=PassKind.MAIL, at_local=at, zone="UTC")
+        for name, at in (("p0900", "09:00"), ("p1400", "14:00"), ("p1900", "19:00"))
+    ]
+    rig.clock.advance(hours=11)  # 17:00 on Monday 2026-01-05
+    apply_schedules(rig.ctx, passes)
+    run_tick(rig.app)
+    assert states(rig) == []
+    assert due_passes(rig.ctx) == []
+    rig.clock.advance(hours=2)  # 19:00
+    run_tick(rig.app)
+    assert [(run.schedule, run.state.value) for run in repo.recent_runs(rig.ctx.db, 10)] == [
+        ("p1900", "due")
+    ]
+    assert [p["schedule"] for p in due_passes(rig.ctx)] == ["p1900"]

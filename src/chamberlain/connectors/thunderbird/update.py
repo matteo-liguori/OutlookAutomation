@@ -10,6 +10,7 @@ through the Add-ons Manager once (Thunderbird would hold a dropped-in new add-on
 import configparser
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import time
@@ -22,6 +23,8 @@ from chamberlain.connectors.thunderbird.setup import EXTENSION_ID, addon_version
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 CLOSE_WAIT_SECONDS: Final = 60
+CLOSE_RETRY_SECONDS: Final = 10
+"""A graceful close sometimes needs a second request; it is repeated this often while waiting."""
 
 
 class Desktop(Protocol):
@@ -33,6 +36,48 @@ class Desktop(Protocol):
         ...
 
     def start(self) -> None: ...
+
+
+def close_and_wait(
+    desktop: Desktop,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+    wait_seconds: int = CLOSE_WAIT_SECONDS,
+) -> bool:
+    """Ask Thunderbird to quit normally, asking again every few seconds, and wait for it.
+
+    Returns True once it is no longer running, False when it is still there after the wait.
+    Never a forced kill.
+    """
+    if not desktop.running():
+        return True
+    desktop.close()
+    waited = 0
+    while desktop.running():
+        if waited >= wait_seconds:
+            return False
+        sleep(1)
+        waited += 1
+        if waited % CLOSE_RETRY_SECONDS == 0 and desktop.running():
+            desktop.close()
+    return True
+
+
+def control(
+    action: str, desktop: Desktop, *, sleep: Callable[[float], None] = time.sleep
+) -> tuple[int, str]:
+    """`thunderbird close|start|status` for setup steps: (exit status, one line to print)."""
+    running = desktop.running()
+    if action == "status":
+        return 0, "Thunderbird is running." if running else "Thunderbird is not running."
+    if action == "close":
+        if close_and_wait(desktop, sleep=sleep):
+            return 0, "Thunderbird is closed."
+        return 1, "Thunderbird did not close within a minute; answer any question it shows."
+    if running:
+        return 0, "Thunderbird is already running."
+    desktop.start()
+    return 0, "Thunderbird started."
 
 
 def thunderbird_home() -> Path:
@@ -103,17 +148,12 @@ def update_addon(
                 "Thunderbird is running: the add-on file can be replaced only while it is closed.",
                 fix="Quit Thunderbird, or pass --restart to have it closed and started again.",
             )
-        desktop.close()
-        waited = 0.0
-        while desktop.running():
-            if waited >= CLOSE_WAIT_SECONDS:
-                raise ChamberlainError(
-                    ErrorCode.SOURCE_BUSY,
-                    "Thunderbird did not close within a minute; nothing was replaced.",
-                    fix="Answer any question Thunderbird is showing, quit it, and run this again.",
-                )
-            sleep(1)
-            waited += 1
+        if not close_and_wait(desktop, sleep=sleep):
+            raise ChamberlainError(
+                ErrorCode.SOURCE_BUSY,
+                "Thunderbird did not close within a minute; nothing was replaced.",
+                fix="Answer any question Thunderbird is showing, quit it, and run this again.",
+            )
     data = package.read_bytes()
     for target in targets:
         staging = target.with_suffix(".xpi.new")
@@ -154,10 +194,20 @@ class SystemDesktop:
         else:
             _run(["pkill", "-TERM", "-x", "thunderbird"])
 
+    def _windows_executable(self) -> str:
+        if self._executable:
+            return self._executable
+        for variable in ("ProgramFiles", "ProgramFiles(x86)"):
+            base = os.environ.get(variable)
+            if base and (found := Path(base) / "Mozilla Thunderbird" / "thunderbird.exe").is_file():
+                return str(found)
+        return shutil.which("thunderbird") or str(
+            Path(r"C:\Program Files\Mozilla Thunderbird") / "thunderbird.exe"
+        )
+
     def start(self) -> None:
         if sys.platform == "win32":
-            executable = self._executable or r"C:\Program Files\Mozilla Thunderbird\thunderbird.exe"
-            subprocess.Popen([executable], close_fds=True)
+            subprocess.Popen([self._windows_executable()], close_fds=True)
         elif sys.platform == "darwin":
             subprocess.Popen(["open", "-a", "Thunderbird"])
         else:
@@ -177,6 +227,8 @@ __all__ = [
     "Desktop",
     "SystemDesktop",
     "UpdateReport",
+    "close_and_wait",
+    "control",
     "profiles",
     "thunderbird_home",
     "update_addon",

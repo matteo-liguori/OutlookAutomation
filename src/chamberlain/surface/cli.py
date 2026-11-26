@@ -5,7 +5,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain tools [--json]          list the twelve tools
     chamberlain schema <tool>           print a tool's request and response schema
     chamberlain prompt                  print the standing prompt
-    chamberlain tick                    run one tick for the operating system scheduler
+    chamberlain tick [--quiet]          run one tick for the operating system scheduler
     chamberlain viewer [--port N] [--no-open | --print-url | --browser]
                                         serve the local viewer on 127.0.0.1 (never prints the token)
     chamberlain doctor [--metrics]      health checks, and the figures of 10-targets.md
@@ -18,6 +18,13 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
     chamberlain export thread ID... [--file F] [--title T]
                                         one conversation as clean text + attachments (zip)
     chamberlain addon update [--restart] update the Thunderbird add-on by replacing its file
+    chamberlain thunderbird close|start|status
+                                        close it normally and wait (never a kill), or start it
+    chamberlain schedule install|uninstall [--apply] [--every-minutes N]
+                                        the hidden operating system tick (dry run without --apply)
+    chamberlain schedule prompts        the agent-app automation text for each schedule
+    chamberlain setup agent codex|claude [--apply] [--project DIR]
+                                        connect the agent app to the MCP server
     chamberlain live-test [run|grant|sweep|report] [--only P] [--skip P] [--keep] [--dry-run]
                           [--retry RUN] [--workers N]
                                         exercise the harness against the real accounts
@@ -27,6 +34,7 @@ Contract: docs/contracts/02-tools.md (T-14, T-16). No business logic here.
 
 import argparse
 import functools
+import io
 import json
 import os
 import sys
@@ -47,7 +55,12 @@ from chamberlain.connections import (
 from chamberlain.connections.load import add_test_calendar
 from chamberlain.connections.setup import provider_setup
 from chamberlain.connectors.caldav.setup import verify as icloud_verify
-from chamberlain.connectors.thunderbird.update import SystemDesktop, thunderbird_home, update_addon
+from chamberlain.connectors.thunderbird.update import (
+    SystemDesktop,
+    control,
+    thunderbird_home,
+    update_addon,
+)
 from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.export.thread import export_thread, parse_ids
 from chamberlain.importer.run import run_import
@@ -63,6 +76,13 @@ from chamberlain.schema.tools import DoctorCheck
 from chamberlain.surface.config_updates import config_migrate, updates
 from chamberlain.surface.migration import migration_command, migration_parser
 from chamberlain.surface.runner import DATA_ENV, configured_caller, data_root
+from chamberlain.surface.schedule_install import (
+    DEFAULT_EVERY_MINUTES,
+    automation_prompts,
+    default_target,
+    install,
+    uninstall,
+)
 from chamberlain.surface.viewer.server import launch
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
@@ -102,7 +122,9 @@ def _parser() -> argparse.ArgumentParser:
     commands.add_parser("prompt", help="print the standing prompt")
     setup = commands.add_parser("setup", help="configure a calendar or Thunderbird connection")
     setup.add_argument(
-        "provider", nargs="?", choices=["select", "status", "thunderbird", "google", "icloud"]
+        "provider",
+        nargs="?",
+        choices=["select", "status", "agent", "thunderbird", "google", "icloud"],
     )
     setup.add_argument("options", nargs=argparse.REMAINDER, help="provider setup options")
     config = commands.add_parser("config", help="check or manage the connection profile")
@@ -188,8 +210,21 @@ def _parser() -> argparse.ArgumentParser:
     )
     live.add_argument("--json", action="store_true", dest="as_json", help="also print the report")
     live.add_argument("--run", dest="report_run", help="report: the run id (default: the latest)")
-    commands.add_parser(
+    tick = commands.add_parser(
         "tick", help="run one tick (exit status 10: events wait and no session is active)"
+    )
+    tick.add_argument(
+        "--quiet", action="store_true", help="print nothing (for pythonw, which has no console)"
+    )
+    box = commands.add_parser("thunderbird", help="close, start or check Thunderbird")
+    box.add_argument("action", choices=["close", "start", "status"])
+    sched = commands.add_parser(
+        "schedule", help="install the operating system tick, or print the agent automations"
+    )
+    sched.add_argument("action", choices=["install", "uninstall", "prompts"])
+    sched.add_argument("--apply", action="store_true", help="do it (default: show the plan)")
+    sched.add_argument(
+        "--every-minutes", type=int, default=DEFAULT_EVERY_MINUTES, help="tick interval (default 5)"
     )
     viewer = commands.add_parser(
         "viewer", help="serve the local viewer on 127.0.0.1 and open it in the browser"
@@ -294,8 +329,32 @@ def _tick(root: Path, args: argparse.Namespace, out: TextIO) -> int:
         due = due_passes(app.context)
     finally:
         app.close()
-    _print(out, {"ran": ran, "wake": wake != 0, "due": due})
+    if not args.quiet:
+        _print(out, {"ran": ran, "wake": wake != 0, "due": due})
     return wake
+
+
+def _thunderbird(args: argparse.Namespace, out: TextIO) -> int:
+    status, line = control(args.action, SystemDesktop())
+    out.write(line + "\n")
+    return status
+
+
+@_rooted(plain=True)
+def _schedule(root: Path, args: argparse.Namespace, out: TextIO) -> int:
+    try:
+        if args.action == "prompts":
+            lines = automation_prompts(root)
+        elif args.action == "install":
+            lines = install(
+                default_target(root), every_minutes=args.every_minutes, apply=args.apply
+            )
+        else:
+            lines = uninstall(default_target(root), apply=args.apply)
+    except ChamberlainError as error:
+        return _plain_fail(out, error)
+    out.write(("\n\n" if args.action == "prompts" else "\n").join(lines) + "\n")
+    return EXIT_OK
 
 
 class _NoSecrets:
@@ -514,6 +573,8 @@ _COMMANDS = {
     "updates": updates,
     "setup": _setup,
     "tick": _tick,
+    "thunderbird": _thunderbird,
+    "schedule": _schedule,
     "config": _config,
     "import": _import,
     "recipients": _recipients,
@@ -526,7 +587,7 @@ _COMMANDS = {
 
 
 def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
-    console: TextIO = sys.stdout
+    console: TextIO = sys.stdout if sys.stdout is not None else io.StringIO()  # pythonw: none
     reconfigure: Any = getattr(console, "reconfigure", None)
     if out is None and callable(reconfigure):
         # Windows consoles default to a legacy code page; mail subjects carry emoji.
@@ -554,6 +615,8 @@ def main(argv: Sequence[str] | None = None, out: TextIO | None = None) -> int:
         except ChamberlainError as error:
             return _fail(stream, error)
     command = _COMMANDS.get(args.command, _call_tool)
+    if args.command == "tick" and args.quiet:
+        stream = io.StringIO()
     return command(args, stream)
 
 

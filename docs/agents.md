@@ -11,6 +11,19 @@ The server runs as a local process and talks over stdio. Point it at your data
 root with `--data` or the `CHAMBERLAIN_DATA` environment variable. Use the
 Python from this project's virtual environment.
 
+Let the command write the entry:
+
+```text
+chamberlain --data <data-root> setup agent codex [--apply]
+chamberlain --data <data-root> setup agent claude --project <folder> [--apply]
+chamberlain --data <data-root> setup agent claude          prints the `claude mcp add` command
+```
+
+Without `--apply` it only shows what it would write. With it, the file is saved as
+`<name>.bak-<time>` first, only the `chamberlain` entry is replaced (in `~/.codex/config.toml`
+or `<folder>/.mcp.json`), and the server is started and asked to `initialize` to check it
+answers. The entry uses this checkout's Python and your `--data` root. To do it by hand:
+
 Claude Code, in a project `.mcp.json` (or `claude mcp add`):
 
 ```json

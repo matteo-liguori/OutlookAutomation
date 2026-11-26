@@ -77,6 +77,8 @@ def important_reminder(
 def test_a_scheduled_pass_ends_with_the_owners_report_as_the_front_page(rig: Rig) -> None:
     add_sources(rig)
     set_schedule(rig.ctx, MORNING)
+    rig.ctx.db.execute("UPDATE schedules SET created_at = '2026-01-01T00:00:00Z'")
+    # an older schedule: its 08:00 pass today is owed (a new one would not be)
     rig.fake.world.health_override[CALENDAR] = HealthState.SIGN_IN_NEEDED
     rig.ctx.db.execute(
         "INSERT INTO grants (handle, kind, state, source_id, title, requirement, content_sha256, "
