@@ -56,13 +56,8 @@ class Collected:
 
 def source_health(ctx: Context, source: str) -> SourceHealth | None:
     """Ask the owning port; None when the port raises (A-7)."""
-    kind = source.split(":", 1)[0]
     try:
-        if kind == "mail":
-            return ctx.sources.mail_port(source).health(source)
-        if kind == "calendar":
-            return ctx.sources.calendar_port(source).health(source)
-        return ctx.sources.contacts_port(source).health(source)
+        return ctx.sources.port(source).health(source)
     except Exception:
         log_failure(log, "health check failed for %s", source)
         return None
