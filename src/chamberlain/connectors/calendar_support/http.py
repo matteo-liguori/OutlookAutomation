@@ -8,11 +8,13 @@ refused, name not found); a timeout or reset after connecting is `sent=True`.
 import socket
 import urllib.error
 import urllib.request
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Protocol
 from urllib.parse import urlsplit
 
+from chamberlain.domain.capabilities import HealthState, SourceHealth
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1", "[::1]"})
@@ -38,6 +40,52 @@ class TransportFailure(Exception):
     def __init__(self, message: str, *, sent: bool) -> None:
         super().__init__(message)
         self.sent = sent
+
+
+def read_http(
+    send: Callable[[], HttpReply], unavailable: Callable[[str], ChamberlainError]
+) -> HttpReply:
+    try:
+        return send()
+    except TransportFailure as error:
+        raise unavailable(str(error)) from None
+
+
+def check_read_status(
+    reply: HttpReply,
+    accepted: int,
+    unavailable: Callable[[str], ChamberlainError],
+    sign_in_message: str,
+) -> None:
+    if reply.status == accepted:
+        return
+    detail = f"http {reply.status}"
+    if reply.status in (401, 403):
+        raise ChamberlainError(ErrorCode.SOURCE_SIGN_IN_NEEDED, sign_in_message, detail=detail)
+    raise unavailable(detail)
+
+
+def http_health(
+    source: str, now: datetime, send: Callable[[], HttpReply], accepted: int
+) -> SourceHealth:
+    state = HealthState.UNAVAILABLE
+    try:
+        status = send().status
+        if status == accepted:
+            state = HealthState.OK
+        elif status in (401, 403):
+            state = HealthState.SIGN_IN_NEEDED
+    except ChamberlainError as error:
+        if error.code is ErrorCode.SOURCE_SIGN_IN_NEEDED:
+            state = HealthState.SIGN_IN_NEEDED
+    except TransportFailure:
+        pass
+    return SourceHealth(
+        source=source,
+        state=state,
+        checked_at=now,
+        fresh_as_of=now if state is HealthState.OK else None,
+    )
 
 
 class HttpTransport(Protocol):

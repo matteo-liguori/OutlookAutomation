@@ -5,14 +5,24 @@ provider facts and one mutation; this port owns the decisions. Reconcile reads o
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Self
 
 from pydantic import JsonValue
 
-from chamberlain.connectors.calendar_support.http import write_may_have_landed
+from chamberlain.connectors.calendar_support.http import (
+    HttpReply,
+    TransportFailure,
+    write_may_have_landed,
+)
 from chamberlain.domain.calendar import EventFields
+from chamberlain.domain.capabilities import (
+    Capability,
+    CapabilityName,
+    CapabilitySet,
+    VerificationLevel,
+)
 from chamberlain.domain.intents import (
     CalendarCreate,
     CalendarDelete,
@@ -27,6 +37,7 @@ from chamberlain.domain.operations import (
     ProviderReceipt,
     ReconcileResult,
     ReconcileStatus,
+    Verification,
 )
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -60,6 +71,36 @@ class Observation:
     unchanged: bool = False
     absence_provable: bool = False
     receipt: ProviderReceipt | None = None
+
+    @classmethod
+    def missing(
+        cls, *, deleted: str | None = None, server: bool = True, proof: bool = False
+    ) -> Self:
+        receipt = (
+            ProviderReceipt(
+                locator=deleted,
+                verification=Verification(
+                    client_verified=True,
+                    server_verified=server,
+                ),
+            )
+            if deleted is not None
+            else None
+        )
+        return cls(
+            present=False,
+            delete_confirmed=receipt is not None,
+            absence_provable=proof,
+            receipt=receipt,
+        )
+
+    def verified(self, kind: IntentKind, *, recovery: bool = False) -> ProviderReceipt | None:
+        if not self.complete:
+            return None
+        if kind is IntentKind.CALENDAR_DELETE:
+            return self.receipt if self.delete_confirmed else None
+        by_identity = recovery and kind is IntentKind.CALENDAR_CREATE and self.identity_suffices
+        return self.receipt if self.present and (self.matches or by_identity) else None
 
 
 class WriteFailure(Exception):
@@ -102,8 +143,83 @@ def expected_etag(prepared: Prepared) -> str:
     return prepared_text(prepared.data, "expected_etag")
 
 
+def conditional_headers(prepared: Prepared, *, exclusive_create: bool = False) -> dict[str, str]:
+    if prepared.intent_kind is IntentKind.CALENDAR_CREATE:
+        return {"If-None-Match": "*"} if exclusive_create else {}
+    return {"If-Match": expected_etag(prepared)}
+
+
 def fields(prepared: Prepared) -> EventFields:
     return EventFields.model_validate(prepared.data.get("fields"))
+
+
+def binding_for[T](bindings: Mapping[str, T], source: str) -> T:
+    binding = bindings.get(source)
+    if binding is None:
+        raise ChamberlainError(ErrorCode.SOURCE_NOT_CONFIGURED, "That source is not set up.")
+    return binding
+
+
+def require_event[T](event: T | None, *, occurrence: bool = False) -> T:
+    if event is None:
+        item = "occurrence" if occurrence else "event"
+        raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, f"That {item} is not there.")
+    return event
+
+
+def select_unique[T](records: Iterable[T]) -> tuple[T | None, bool]:
+    """Take the first candidate and establish whether a second one makes it ambiguous."""
+    entries = iter(records)
+    return next(entries, None), next(entries, None) is None
+
+
+def calendar_capabilities(
+    source: str, *, server: bool = False, invitations: bool = False
+) -> CapabilitySet:
+    level = VerificationLevel.IMPLEMENTED
+    proof = (
+        frozenset(
+            kind.value
+            for kind in (
+                IntentKind.CALENDAR_CREATE,
+                IntentKind.CALENDAR_UPDATE,
+                IntentKind.CALENDAR_DELETE,
+                IntentKind.CALENDAR_RESPOND,
+            )
+        )
+        if server
+        else frozenset[str]()
+    )
+    items = [
+        Capability(name=CapabilityName.CALENDAR_READ, level=level, limits={"page_size": 250}),
+        Capability(name=CapabilityName.CALENDAR_WRITE, level=level, absence_provable=proof),
+    ]
+    if invitations:
+        items.append(Capability(name=CapabilityName.CALENDAR_INVITE, level=level))
+    if server:
+        items.extend(
+            Capability(name=name, level=level, absence_provable=proof)
+            for name in (CapabilityName.CALENDAR_RECURRENCE, CapabilityName.CALENDAR_OCCURRENCE)
+        )
+    return CapabilitySet(source=source, capabilities=tuple(items))
+
+
+def commit_http(
+    send: Callable[[], HttpReply],
+    provider: str,
+    accepted: tuple[int, ...],
+) -> WriteReply:
+    """Classify the one mutation's transport and response before reading back."""
+    try:
+        reply = send()
+    except TransportFailure as error:
+        raise WriteFailure(f"transport: {error}", sent=error.sent) from None
+    except ChamberlainError as error:
+        # The HTTP adapters acquire credentials before passing the request to the transport.
+        raise WriteFailure(str(error), sent=False) from None
+    if reply.status not in accepted:
+        raise WriteFailure(f"{provider} http {reply.status}", sent=True, status=reply.status)
+    return WriteReply()
 
 
 class CalendarWritePort(ABC):
@@ -113,10 +229,9 @@ class CalendarWritePort(ABC):
     def resolve(self, source: str, locator: str) -> Current: ...
 
     @abstractmethod
-    def validate(self, intent: CalendarIntent, current: Current | None) -> None: ...
-
-    @abstractmethod
-    def encode(self, intent: CalendarIntent, current: Current | None) -> dict[str, JsonValue]: ...
+    def encode(self, intent: CalendarIntent, current: Current | None) -> dict[str, JsonValue]:
+        """Check provider permissions and prepare the payload from the resolved event."""
+        ...
 
     def preflight(self, prepared: Prepared) -> None:
         """Optional provider-side check before dispatch, using reads only."""
@@ -151,7 +266,6 @@ class CalendarWritePort(ABC):
                     ErrorCode.CAPABILITY_UNSUPPORTED,
                     "A repeating event is written only with the scope that names it.",
                 )
-        self.validate(intent, current)
         encoded = self.encode(intent, current)
         data: dict[str, JsonValue] = {
             "payload": encoded,
@@ -187,13 +301,8 @@ class CalendarWritePort(ABC):
             observation = self.observe(prepared, reply)
         except Exception as error:
             return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail=type(error).__name__)
-        done = (
-            observation.delete_confirmed
-            if prepared.intent_kind is IntentKind.CALENDAR_DELETE
-            else observation.present and observation.matches
-        )
-        if observation.complete and done and observation.receipt is not None:
-            return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=observation.receipt)
+        if (receipt := observation.verified(prepared.intent_kind)) is not None:
+            return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
         return DispatchResult(
             outcome=DispatchOutcome.UNKNOWN, detail="read-back differs or is incomplete"
         )
@@ -206,19 +315,10 @@ class CalendarWritePort(ABC):
         if not observed.complete:
             return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="read-back incomplete")
         kind = prepared.intent_kind
-        if kind is IntentKind.CALENDAR_CREATE:
-            if not observed.present:
-                return ReconcileResult(
-                    status=ReconcileStatus.ABSENT, proof=observed.absence_provable
-                )
-            if (observed.matches or observed.identity_suffices) and observed.receipt is not None:
-                return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=observed.receipt)
-        elif observed.unchanged:
-            # A cancelled entry or excluded occurrence can predate this write.
+        create = kind is IntentKind.CALENDAR_CREATE
+        # A cancelled entry or excluded occurrence can predate this write.
+        if (create and not observed.present) or (not create and observed.unchanged):
             return ReconcileResult(status=ReconcileStatus.ABSENT, proof=observed.absence_provable)
-        elif kind is IntentKind.CALENDAR_DELETE:
-            if observed.delete_confirmed and observed.receipt is not None:
-                return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=observed.receipt)
-        elif observed.present and observed.matches and observed.receipt is not None:
-            return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=observed.receipt)
+        if (receipt := observed.verified(kind, recovery=True)) is not None:
+            return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=receipt)
         return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")

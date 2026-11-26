@@ -10,13 +10,27 @@ from collections.abc import Iterable
 from datetime import datetime
 from typing import Literal
 
-from chamberlain.domain.calendar import EventFields
+from chamberlain.domain.calendar import EventFields, EventStatus, Response
 
 TITLE_MAX = 300
 LOCATION_MAX = 300
 DESCRIPTION_MAX = 4000
 UNTITLED = "(no title)"
 _ADDRESS = re.compile(r"^[^\s<>@,;]+@[^\s<>@,;]+\.[^\s<>@,;]+$")
+
+
+def event_status(text: str) -> EventStatus:
+    try:
+        return EventStatus(text)
+    except ValueError:
+        return EventStatus.CONFIRMED
+
+
+def invite_response(text: str) -> Response:
+    try:
+        return Response(text)
+    except ValueError:
+        return Response.NEEDS_ACTION
 
 
 def clean_addresses(values: Iterable[str]) -> tuple[str, ...]:
@@ -70,7 +84,7 @@ def clip_fields(
 
 
 def same_content(left: EventFields, right: EventFields) -> bool:
-    """Equal as a write would leave them (attendees are never written, so ignored)."""
+    """Compare the core fields of a write. Guests and recurrence are checked separately."""
     return (
         left.title == right.title
         and left.start == right.start

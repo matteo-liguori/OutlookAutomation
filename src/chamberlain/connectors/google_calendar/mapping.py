@@ -5,6 +5,7 @@ Contract: docs/contracts/08-ports.md (P-16). A PUT replaces the whole resource, 
 colour, the recurrence rules and their EXDATE/RDATE lines, guest settings).
 """
 
+from collections.abc import Iterator
 from datetime import UTC, date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -13,12 +14,14 @@ from chamberlain.connectors.calendar_support.fields import (
     attendees_match,
     clean_one,
     clip_fields,
+    event_status,
+    invite_response,
+    same_content,
 )
 from chamberlain.connectors.calendar_support.rrule import format_rrule, parse_rrule, same_rule
 from chamberlain.domain.calendar import (
     CalendarEvent,
     EventFields,
-    EventStatus,
     Participant,
     Recurrence,
     Response,
@@ -117,22 +120,23 @@ def fields_of(item: Resource, fallback: datetime) -> EventFields:
         all_day=all_day,
         location=str(item.get("location", "")),
         description=str(item.get("description", "")),
-        attendees=(str(a.get("email", "")) for a in item.get("attendees", []) if not a.get("self")),
+        attendees=(str(guest.get("email", "")) for guest in guests(item)),
         visibility="private" if item.get("visibility") == "private" else None,
     )
     rule = series_rule(item)
     return fields.model_copy(update={"recurrence": rule}) if rule is not None else fields
 
 
-_RESPONSES = {
-    "accepted": Response.ACCEPTED,
-    "tentative": Response.TENTATIVE,
-    "declined": Response.DECLINED,
-}
-
-
 def _answer(entry: Resource) -> Response:
-    return _RESPONSES.get(str(entry.get("responseStatus", "")), Response.NEEDS_ACTION)
+    return invite_response(str(entry.get("responseStatus", "")))
+
+
+def guests(item: Resource) -> Iterator[Resource]:
+    return (entry for entry in item.get("attendees", []) if not entry.get("self"))
+
+
+def has_guests(item: Resource) -> bool:
+    return next(guests(item), None) is not None
 
 
 def is_invitee_copy(item: Resource) -> bool:
@@ -144,7 +148,7 @@ def is_invitee_copy(item: Resource) -> bool:
     organiser: Resource = item.get("organizer") or {}
     if organiser.get("email"):
         return not organiser.get("self")
-    return any(not a.get("self") for a in item.get("attendees", []))
+    return has_guests(item)
 
 
 def own_entry(item: Resource) -> Resource | None:
@@ -155,24 +159,20 @@ def event_of(source: str, item: Resource, fallback: datetime) -> CalendarEvent:
     invitee = is_invitee_copy(item)
     mine = own_entry(item)
     organiser = clean_one(str(item.get("organizer", {}).get("email", "")))
-    status = {
-        "cancelled": EventStatus.CANCELLED,
-        "tentative": EventStatus.TENTATIVE,
-    }.get(str(item.get("status", "confirmed")), EventStatus.CONFIRMED)
     return CalendarEvent(
         source=source,
         locator=str(item["id"]),
         uid=str(item.get("iCalUID") or item["id"]),
         etag=str(item.get("etag") or item.get("updated") or item["id"]),
-        status=status,
+        status=event_status(str(item.get("status", "confirmed"))),
         fields=fields_of(item, fallback),
         updated=parse_stamp(item.get("updated"), fallback),
         organiser=organiser if invitee and organiser else None,
         my_response=_answer(mine) if invitee and mine is not None else None,
         participants=tuple(
             Participant(address=address, response=_answer(a))
-            for a in item.get("attendees", [])
-            if not a.get("self") and (address := clean_one(str(a.get("email", ""))))
+            for a in guests(item)
+            if (address := clean_one(str(a.get("email", ""))))
         ),
         series_locator=series_locator(item),
     )
@@ -307,19 +307,10 @@ def fields_match(item: Resource, wanted: EventFields, fallback: datetime) -> boo
         actual.recurrence, wanted.recurrence, actual.start.date(), all_day=wanted.all_day
     ):
         return False  # a series that lost its rule is not what was asked (P-27)
-    return (
-        actual.title == wanted.title
-        and actual.start == wanted.start
-        and actual.end == wanted.end
-        and actual.all_day == wanted.all_day
-        and actual.location == wanted.location
-        and actual.description == wanted.description
-        and (wanted.visibility is None or actual.visibility == wanted.visibility)
-        and attendees_match(
-            actual.attendees,
-            wanted.attendees,
-            ignore=[str(a.get("email", "")) for a in item.get("attendees", []) if a.get("self")],
-        )
+    return same_content(actual, wanted) and attendees_match(
+        actual.attendees,
+        wanted.attendees,
+        ignore=[str(a.get("email", "")) for a in item.get("attendees", []) if a.get("self")],
     )
 
 

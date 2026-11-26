@@ -6,12 +6,10 @@ happened; any other 4xx and a connection that never opened mean nothing happened
 The connector never retries a write and never reports `not_applied` on a timeout.
 """
 
-import base64
-import hashlib
 import json
 from collections.abc import Callable, Mapping
 from functools import partial
-from typing import Any, Final, cast
+from typing import Final, cast
 from urllib.parse import quote, urlencode
 
 from pydantic import JsonValue
@@ -19,33 +17,39 @@ from pydantic import JsonValue
 from chamberlain.connectors.calendar_support.http import (
     HttpReply,
     HttpTransport,
-    TransportFailure,
     UrllibTransport,
     calendar_unavailable,
+    check_read_status,
+    http_health,
+    read_http,
 )
-from chamberlain.connectors.calendar_support.paging import bad_cursor, cursor_value
+from chamberlain.connectors.calendar_support.paging import decode_token, encode_token
 from chamberlain.connectors.calendar_support.port import (
     CalendarWritePort,
     Current,
     Observation,
     WriteFailure,
     WriteReply,
+    binding_for,
+    calendar_capabilities,
+    commit_http,
+    conditional_headers,
     expected_etag,
     fields,
     locator,
     payload,
     prepared_text,
+    require_event,
+    select_unique,
 )
 from chamberlain.connectors.google_calendar import mapping
 from chamberlain.connectors.google_calendar.config import GoogleBinding, GoogleCalendarConfig
+from chamberlain.connectors.google_calendar.mapping import Resource
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
+from chamberlain.domain.canonical import sha256_text
 from chamberlain.domain.capabilities import (
-    Capability,
-    CapabilityName,
     CapabilitySet,
-    HealthState,
     SourceHealth,
-    VerificationLevel,
 )
 from chamberlain.domain.intents import (
     CalendarCreate,
@@ -61,15 +65,6 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 BASE: Final = "https://www.googleapis.com/calendar/v3"
 _VERIFIED = Verification(client_verified=True, server_verified=True)
-_PROVABLE = frozenset(
-    {
-        IntentKind.CALENDAR_CREATE.value,
-        IntentKind.CALENDAR_UPDATE.value,
-        IntentKind.CALENDAR_DELETE.value,
-        IntentKind.CALENDAR_RESPOND.value,
-    }
-)
-
 _EDIT_METHODS = {
     IntentKind.CALENDAR_UPDATE: "PUT",
     IntentKind.CALENDAR_DELETE: "DELETE",
@@ -77,7 +72,6 @@ _EDIT_METHODS = {
 }
 
 TokenSource = Callable[[str], str]
-Json = dict[str, Any]
 
 _unavailable = partial(calendar_unavailable, message="Google Calendar did not answer.")
 
@@ -105,58 +99,16 @@ class GoogleCalendar(CalendarWritePort):
 
     def capabilities(self, source: str) -> CapabilitySet:
         self._binding(source)
-        return CapabilitySet(
-            source=source,
-            capabilities=(
-                Capability(
-                    name=CapabilityName.CALENDAR_READ,
-                    level=VerificationLevel.IMPLEMENTED,
-                    limits={"page_size": 250},
-                ),
-                Capability(
-                    name=CapabilityName.CALENDAR_WRITE,
-                    level=VerificationLevel.IMPLEMENTED,
-                    absence_provable=_PROVABLE,
-                ),
-                Capability(
-                    name=CapabilityName.CALENDAR_INVITE, level=VerificationLevel.IMPLEMENTED
-                ),
-                Capability(
-                    name=CapabilityName.CALENDAR_RECURRENCE,
-                    level=VerificationLevel.IMPLEMENTED,
-                    absence_provable=_PROVABLE,
-                ),
-                Capability(
-                    name=CapabilityName.CALENDAR_OCCURRENCE,
-                    level=VerificationLevel.IMPLEMENTED,
-                    absence_provable=_PROVABLE,
-                ),
-            ),
-        )
+        return calendar_capabilities(source, server=True, invitations=True)
 
     def health(self, source: str) -> SourceHealth:
         binding = self._binding(source)
-        now = self._clock.now()
-        try:
-            reply = self._send(binding, "GET", f"/calendars/{_quote(binding.calendar_id)}")
-        except ChamberlainError as error:
-            state = (
-                HealthState.SIGN_IN_NEEDED
-                if error.code is ErrorCode.SOURCE_SIGN_IN_NEEDED
-                else HealthState.UNAVAILABLE
-            )
-            return SourceHealth(source=source, state=state, checked_at=now)
-        except TransportFailure:
-            return SourceHealth(source=source, state=HealthState.UNAVAILABLE, checked_at=now)
-        if reply.status == 200:
-            return SourceHealth(
-                source=source, state=HealthState.OK, checked_at=now, fresh_as_of=now
-            )
-        sign_in = reply.status in (401, 403)
-        state = HealthState.SIGN_IN_NEEDED if sign_in else HealthState.UNAVAILABLE
-        return SourceHealth(source=source, state=state, checked_at=now)
-
-    # --- reading --------------------------------------------------------------
+        return http_health(
+            source,
+            self._clock.now(),
+            lambda: self._send(binding, "GET", f"/calendars/{_quote(binding.calendar_id)}"),
+            200,
+        )
 
     def events(
         self, source: str, query: CalendarQuery, cursor: str | None = None
@@ -172,7 +124,7 @@ class GoogleCalendar(CalendarWritePort):
         if query.text:
             params["q"] = query.text
         if cursor is not None:
-            params["pageToken"] = _decode_cursor(cursor)
+            params["pageToken"] = decode_token(cursor, "g1")
         body = self._read(binding, self._events_path(binding), params)
         now = self._clock.now()
         items = [
@@ -184,23 +136,18 @@ class GoogleCalendar(CalendarWritePort):
         token = body.get("nextPageToken")
         return Page[CalendarEvent](
             items=tuple(items),
-            cursor=_encode_cursor(str(token)) if token else None,
+            cursor=encode_token(str(token), "g1") if token else None,
             complete=not token,
         )
 
     def read(self, source: str, locator: str) -> CalendarEvent:
-        binding = self._binding(source)
-        item = self._get_by_id(binding, locator)
-        if item is None:
-            raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
+        item = require_event(self._get_by_id(self._binding(source), locator))
         return mapping.event_of(source, item, self._clock.now())
 
     # --- writing --------------------------------------------------------------
 
     def resolve(self, source: str, locator: str) -> Current:
-        item = self._get_by_id(self._binding(source), locator)
-        if item is None:
-            raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
+        item = require_event(self._get_by_id(self._binding(source), locator))
         part = (
             "occurrence"
             if item.get("recurringEventId")
@@ -213,47 +160,43 @@ class GoogleCalendar(CalendarWritePort):
         etag = raw_etag if isinstance(raw_etag, str) and item.get("status") != "cancelled" else ""
         return Current(locator=locator, etag=etag, part=part, raw=item)
 
-    def validate(self, intent: CalendarIntent, current: Current | None) -> None:
-        if current is None:
-            self._binding(intent.source)
-            return
-        item = cast(Json, current.raw)
-        if isinstance(intent, CalendarRespond):
-            if not mapping.is_invitee_copy(item) or mapping.own_entry(item) is None:
-                raise ChamberlainError(
-                    ErrorCode.REQUEST_INVALID, "That event is not an invitation to this calendar."
-                )
-        else:
-            mapping.refuse_if_unwritable(item)
-
     def encode(self, intent: CalendarIntent, current: Current | None) -> dict[str, JsonValue]:
         if isinstance(intent, CalendarCreate):
-            uid = intent.uid
-            assert uid is not None  # The port requires a UID before encoding.
+            self._binding(intent.source)
+            assert intent.uid is not None
             if intent.event.attendees:
-                event_id = event_id_for(uid)
+                event_id = event_id_for(intent.uid)
                 return {
                     "body": mapping.insert_body(event_id, intent.event),
                     "event_id": event_id,
                     "notify": True,
                 }
             # Import preserves the iCalUID of a guestless appointment and sends nothing.
-            return {"body": mapping.import_body(uid, intent.event)}
+            return {"body": mapping.import_body(intent.uid, intent.event)}
         assert current is not None
-        before = cast(Json, current.raw)
-        if isinstance(intent, CalendarUpdate):
-            return {
-                "body": mapping.merge_update(before, mapping.wanted_body(intent.event, before)),
-                "notify": bool(intent.event.attendees) or _has_guests(before),
-            }
+        before = cast(Resource, current.raw)
         if isinstance(intent, CalendarRespond):
-            attendees = cast("list[JsonValue]", mapping.answer_entries(before, intent.response))
+            if not mapping.is_invitee_copy(before) or mapping.own_entry(before) is None:
+                raise ChamberlainError(
+                    ErrorCode.REQUEST_INVALID, "That event is not an invitation to this calendar."
+                )
             return {
-                "body": {"attendees": attendees},
+                "body": {
+                    "attendees": cast(
+                        "list[JsonValue]", mapping.answer_entries(before, intent.response)
+                    )
+                },
                 "response": intent.response,
                 "notify": True,
             }
-        return {"notify": _has_guests(before)}
+        mapping.refuse_if_unwritable(before)
+        notify = mapping.has_guests(before)
+        if isinstance(intent, CalendarUpdate):
+            return {
+                "body": mapping.merge_update(before, mapping.wanted_body(intent.event, before)),
+                "notify": bool(intent.event.attendees) or notify,
+            }
+        return {"notify": notify}
 
     def preflight(self, prepared: Prepared) -> None:
         binding = self._binding(prepared.source)
@@ -272,7 +215,7 @@ class GoogleCalendar(CalendarWritePort):
             kind = prepared.intent_kind
             notify = values.get("notify") is True
             params = {"sendUpdates": "all"} if notify else {}
-            headers: dict[str, str] = {}
+            headers = conditional_headers(prepared)
             raw_body = values.get("body")
             body = dict(raw_body) if isinstance(raw_body, dict) else None
             if kind is IntentKind.CALENDAR_CREATE:
@@ -280,20 +223,14 @@ class GoogleCalendar(CalendarWritePort):
                 path = events if "event_id" in values else events + "/import"
             else:
                 path = f"{events}/{_quote(locator(prepared))}"
-                headers["If-Match"] = expected_etag(prepared)
                 method = _EDIT_METHODS[kind]
         except Exception as error:
             raise WriteFailure(type(error).__name__, sent=False) from error
-        try:
-            reply = self._send(binding, method, path, params=params, body=body, headers=headers)
-        except ChamberlainError as error:
-            # Credential acquisition happens before the transport is called.
-            raise WriteFailure(str(error), sent=False) from None
-        except TransportFailure as error:
-            raise WriteFailure(f"transport: {error}", sent=error.sent) from None
-        if reply.status not in (200, 204) and not (reply.status == 410 and method == "DELETE"):
-            raise WriteFailure(f"google http {reply.status}", sent=True, status=reply.status)
-        return WriteReply()
+        return commit_http(
+            lambda: self._send(binding, method, path, params=params, body=body, headers=headers),
+            "google",
+            (200, 204, 410) if method == "DELETE" else (200, 204),
+        )
 
     def observe(self, prepared: Prepared, reply: WriteReply | None) -> Observation:
         binding = self._binding(prepared.source)
@@ -304,13 +241,8 @@ class GoogleCalendar(CalendarWritePort):
             self._created(binding, prepared) if target is None else self._get_by_id(binding, target)
         )
         if item is None:
-            if kind is IntentKind.CALENDAR_DELETE and reply is not None:
-                return Observation(
-                    present=False,
-                    delete_confirmed=True,
-                    receipt=ProviderReceipt(locator=target, verification=_VERIFIED),
-                )
-            return Observation(present=False, absence_provable=create)
+            deleted = target if kind is IntentKind.CALENDAR_DELETE and reply is not None else None
+            return Observation.missing(deleted=deleted, proof=create)
         unchanged = not create and item.get("etag") == expected_etag(prepared)
         receipt = _receipt(item)
         if item.get("status") == "cancelled":
@@ -356,10 +288,7 @@ class GoogleCalendar(CalendarWritePort):
     # --- transport ------------------------------------------------------------
 
     def _binding(self, source: str) -> GoogleBinding:
-        binding = self._config.bindings.get(source)
-        if binding is None:
-            raise ChamberlainError(ErrorCode.SOURCE_NOT_CONFIGURED, "That source is not set up.")
-        return binding
+        return binding_for(self._config.bindings, source)
 
     def _send(
         self,
@@ -368,7 +297,7 @@ class GoogleCalendar(CalendarWritePort):
         path: str,
         *,
         params: Mapping[str, str] | None = None,
-        body: Json | None = None,
+        body: Resource | None = None,
         headers: Mapping[str, str] | None = None,
     ) -> HttpReply:
         url = BASE + path + (("?" + urlencode(params)) if params else "")
@@ -385,38 +314,25 @@ class GoogleCalendar(CalendarWritePort):
             method, url, headers=sent, body=payload, timeout=self._config.deadline_seconds
         )
 
-    def _read(self, binding: GoogleBinding, path: str, params: Mapping[str, str]) -> Json:
+    def _read(self, binding: GoogleBinding, path: str, params: Mapping[str, str]) -> Resource:
         """A read that must succeed; failures become `source.*` errors (P-17, P-18)."""
-        try:
-            reply = self._send(binding, "GET", path, params=params)
-        except TransportFailure as error:
-            raise _unavailable(str(error)) from None
+        reply = read_http(lambda: self._send(binding, "GET", path, params=params), _unavailable)
         return self._json(reply)
 
-    def _json(self, reply: HttpReply) -> Json:
-        if reply.status in (401, 403):
-            raise ChamberlainError(
-                ErrorCode.SOURCE_SIGN_IN_NEEDED,
-                "Google did not accept the saved sign-in.",
-                detail=f"http {reply.status}",
-            )
+    def _json(self, reply: HttpReply) -> Resource:
         if reply.status == 400 and b"pageToken" in reply.body:
             raise ChamberlainError(ErrorCode.CURSOR_EXPIRED, "That page is no longer available.")
-        if reply.status != 200:
-            raise _unavailable(f"http {reply.status}")
+        check_read_status(reply, 200, _unavailable, "Google did not accept the saved sign-in.")
         try:
             data: object = json.loads(reply.body)
         except ValueError:
             raise _unavailable("unreadable body") from None
-        return cast(Json, data) if isinstance(data, dict) else {}
+        return cast(Resource, data) if isinstance(data, dict) else {}
 
-    def _get_by_id(self, binding: GoogleBinding, locator: str) -> Json | None:
+    def _get_by_id(self, binding: GoogleBinding, locator: str) -> Resource | None:
         """The event, a cancelled one as cancelled, or None when Google has no such event."""
         path = f"{self._events_path(binding)}/{_quote(locator)}"
-        try:
-            reply = self._send(binding, "GET", path)
-        except TransportFailure as error:
-            raise _unavailable(str(error)) from None
+        reply = read_http(lambda: self._send(binding, "GET", path), _unavailable)
         if reply.status in (404, 410):
             return None
         item = self._json(reply)
@@ -424,24 +340,24 @@ class GoogleCalendar(CalendarWritePort):
             raise _unavailable("event returned a different ID")
         return item
 
-    def _find_by_uid(self, binding: GoogleBinding, uid: str) -> Json | None:
+    def _find_by_uid(self, binding: GoogleBinding, uid: str) -> Resource | None:
         body = self._read(
             binding,
             self._events_path(binding),
             {"iCalUID": uid, "showDeleted": "false", "maxResults": "10"},
         )
-        masters = [
+        master, unique = select_unique(
             i
             for i in body.get("items", [])
             if i.get("iCalUID") == uid
             and not i.get("recurringEventId")
             and i.get("status") != "cancelled"
-        ]
-        if len(masters) > 1 or body.get("nextPageToken"):
+        )
+        if not unique or body.get("nextPageToken"):
             raise ChamberlainError(ErrorCode.REMOTE_AMBIGUOUS, "The calendar UID is not unique.")
-        return masters[0] if masters else None
+        return master
 
-    def _created(self, binding: GoogleBinding, prepared: Prepared) -> Json | None:
+    def _created(self, binding: GoogleBinding, prepared: Prepared) -> Resource | None:
         values = payload(prepared)
         if "event_id" in values:
             return self._get_by_id(binding, prepared_text(values, "event_id"))
@@ -453,31 +369,15 @@ class GoogleCalendar(CalendarWritePort):
 
 def event_id_for(uid: str) -> str:
     """The client-chosen id of an invitation: Google ids are 5 to 1024 characters of a-v, 0-9."""
-    return hashlib.sha256(uid.encode()).hexdigest()[:32]
+    return sha256_text(uid)[:32]
 
 
-def _has_guests(item: Json) -> bool:
-    return any(not a.get("self") for a in item.get("attendees", []))
-
-
-def _own_answer(item: Json) -> str | None:
+def _own_answer(item: Resource) -> str | None:
     entry = mapping.own_entry(item)
     return None if entry is None else str(entry.get("responseStatus", ""))
 
 
-def _receipt(item: Json) -> ProviderReceipt:
+def _receipt(item: Resource) -> ProviderReceipt:
     return ProviderReceipt(
         locator=str(item["id"]), etag=str(item.get("etag") or ""), verification=_VERIFIED
     )
-
-
-def _encode_cursor(token: str) -> str:
-    return "g1." + base64.urlsafe_b64encode(token.encode()).decode()
-
-
-def _decode_cursor(cursor: str) -> str:
-    token = cursor_value(cursor, "g1")
-    try:
-        return base64.b64decode(token, altchars=b"-_", validate=True).decode()
-    except ValueError:
-        raise bad_cursor() from None

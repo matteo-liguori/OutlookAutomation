@@ -12,7 +12,7 @@ proven (the client calendar is a cache, so `server_verified` is always False).
 """
 
 from datetime import UTC, datetime, timedelta
-from typing import Protocol
+from typing import Protocol, cast
 
 from pydantic import Field, JsonValue
 
@@ -30,18 +30,18 @@ from chamberlain.connectors.calendar_support.port import (
     Observation,
     WriteFailure,
     WriteReply,
+    binding_for,
+    calendar_capabilities,
     payload,
+    require_event,
 )
 from chamberlain.connectors.thunderbird import protocol as wire
 from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, typed
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, EventFields
 from chamberlain.domain.capabilities import (
-    Capability,
-    CapabilityName,
     CapabilitySet,
     HealthState,
     SourceHealth,
-    VerificationLevel,
 )
 from chamberlain.domain.intents import (
     CalendarCreate,
@@ -54,6 +54,7 @@ from chamberlain.domain.operations import (
     ProviderReceipt,
     Verification,
 )
+from chamberlain.domain.recurrence import parse_occurrence_id
 from chamberlain.ports.clock import Clock
 from chamberlain.ports.page import Gap, Page
 from chamberlain.schema.base import Model, SourceId
@@ -114,17 +115,7 @@ class ThunderbirdCalendar(CalendarWritePort):
             ) from None
         if not usable:
             return CapabilitySet(source=source, capabilities=())
-        return CapabilitySet(
-            source=source,
-            capabilities=(
-                Capability(
-                    name=CapabilityName.CALENDAR_READ,
-                    level=VerificationLevel.IMPLEMENTED,
-                    limits={"page_size": 250},
-                ),
-                Capability(name=CapabilityName.CALENDAR_WRITE, level=VerificationLevel.IMPLEMENTED),
-            ),
-        )
+        return calendar_capabilities(source)
 
     def health(self, source: str) -> SourceHealth:
         binding = self._binding(source)
@@ -194,19 +185,12 @@ class ThunderbirdCalendar(CalendarWritePort):
     def read(self, source: str, locator: str) -> CalendarEvent:
         binding = self._binding(source)
         event_id, recurrence = ics.split_locator(locator)
-        try:
-            item = self._item(binding, event_id)
-        except BridgeFailure as error:
-            raise _read_unavailable(error) from error
-        if item is None:
-            raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
+        item = self._read_item(binding, event_id)
         text = item.icalendar
         if recurrence is None:
-            parsed = ics.master_of(text)
-            return _event_of(source, event_id, text, parsed)
-        for parsed in ics.parse_events(text):
-            if parsed.recurrence_id == recurrence:
-                return _event_of(source, locator, text, parsed)
+            return ics.event_view(ics.master_of(text), source, event_id, ics.text_etag(text))
+        if (parsed := ics.occurrence_of(text, recurrence)) is not None:
+            return ics.event_view(parsed, source, locator, ics.text_etag(text))
         try:
             return self._occurrence(source, binding, event_id, recurrence)
         except BridgeFailure as error:
@@ -216,10 +200,10 @@ class ThunderbirdCalendar(CalendarWritePort):
         self, source: str, binding: OwlBinding, event_id: str, recurrence: str
     ) -> CalendarEvent:
         """An occurrence the connector handed out: found by a one-second query at its start."""
-        try:
-            moment = datetime.strptime(recurrence, "%Y%m%dT%H%M%SZ").replace(tzinfo=UTC)
-        except ValueError:
-            moment = datetime.strptime(recurrence, "%Y%m%d").replace(tzinfo=UTC)
+        named = parse_occurrence_id(recurrence)
+        if named is None:
+            raise ValueError("Invalid occurrence identity.")
+        moment, _ = named
         result = self._query(binding, moment, moment + timedelta(seconds=1), 50)
         for item in result.items:
             text = item.icalendar
@@ -236,69 +220,49 @@ class ThunderbirdCalendar(CalendarWritePort):
         uid, occurrence = ics.split_locator(locator)
         if occurrence:
             raise _no_series()
-        try:
-            item = self._item(self._binding(source), uid)
-        except BridgeFailure as error:
-            raise _read_unavailable(error) from error
-        if item is None:
-            raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
+        item = self._read_item(self._binding(source), uid)
         text = item.icalendar
         master = ics.master_of(text)
         if item.id != uid or master.uid != uid:
             raise ChamberlainError(ErrorCode.REMOTE_CHANGED, "The event identity changed.")
         if master.recurring:
             raise _no_series()
-        return Current(locator, ics.text_etag(text), raw=item)
-
-    def validate(self, intent: CalendarIntent, current: Current | None) -> None:
-        if isinstance(intent, CalendarRespond):
-            raise ics.no_invitations()
-        wanted = intent.event if isinstance(intent, CalendarCreate | CalendarUpdate) else None
-        previous = None
-        if current is not None:
-            item = _stored(current)
-            master = ics.master_of(item.icalendar)
-            if not _own_appointment(item, master):
-                previous = master
-        ics.refuse_invitations(previous, wanted)
-        if wanted and wanted.recurrence is not None:
-            raise _no_series()
+        return Current(locator, ics.text_etag(text), raw=(item, master))
 
     def encode(self, intent: CalendarIntent, current: Current | None) -> Json:
+        if isinstance(intent, CalendarRespond):
+            raise ics.no_invitations()
         calendar = self._binding(intent.source).calendar_id
-        now = self._clock.now()
-        if isinstance(intent, CalendarCreate):
+        wanted = intent.event if isinstance(intent, CalendarCreate | CalendarUpdate) else None
+        if current is None:
+            assert isinstance(intent, CalendarCreate)
             assert intent.uid is not None
+            ics.refuse_invitations(None, wanted)
+            if intent.event.recurrence is not None:
+                raise _no_series()
             args = wire.CalendarWriteArgs(
                 calendar_id=calendar,
                 event_id=intent.uid,
                 kind="create",
-                icalendar=ics.build_new(intent.uid, intent.event, now),
+                icalendar=ics.build_new(intent.uid, intent.event, self._clock.now()),
             )
         else:
-            assert current is not None
-            item = _stored(current)
-            if isinstance(intent, CalendarUpdate):
-                fields = intent.event
-                if (
-                    fields.visibility is None
-                    and ics.master_of(item.icalendar).fields.visibility == "private"
-                ):
-                    fields = fields.model_copy(update={"visibility": "private"})
-                args = wire.CalendarWriteArgs(
-                    calendar_id=calendar,
-                    event_id=item.id,
-                    kind="update",
-                    expected_icalendar=item.icalendar,
-                    icalendar=ics.apply_fields(item.icalendar, fields, now),
-                )
-            else:
-                args = wire.CalendarWriteArgs(
-                    calendar_id=calendar,
-                    event_id=item.id,
-                    kind="delete",
-                    expected_icalendar=item.icalendar,
-                )
+            item, master = cast(tuple[wire.CalendarItem, ics.ParsedEvent], current.raw)
+            ics.refuse_invitations(None if _own_appointment(item, master) else master, wanted)
+            updated_text = None
+            if wanted is not None:
+                if wanted.recurrence is not None:
+                    raise _no_series()
+                if wanted.visibility is None and master.fields.visibility == "private":
+                    wanted = wanted.model_copy(update={"visibility": "private"})
+                updated_text = ics.apply_fields(item.icalendar, wanted, self._clock.now())
+            args = wire.CalendarWriteArgs(
+                calendar_id=calendar,
+                event_id=item.id,
+                kind="update" if wanted is not None else "delete",
+                expected_icalendar=item.icalendar,
+                icalendar=updated_text,
+            )
         return args.model_dump(mode="json", exclude_none=True, exclude={"calendar_id"})
 
     def _wire_args(self, prepared: Prepared) -> wire.CalendarWriteArgs:
@@ -337,14 +301,7 @@ class ThunderbirdCalendar(CalendarWritePort):
                     return Observation(present=False, complete=False)
                 uid = header.id
         if item is None:
-            deleted = args.kind == "delete"
-            return Observation(
-                present=False,
-                delete_confirmed=deleted,
-                receipt=ProviderReceipt(locator=uid, verification=_CLIENT_ONLY)
-                if deleted
-                else None,
-            )
+            return Observation.missing(deleted=uid if args.kind == "delete" else None, server=False)
         text = item.icalendar
         etag = ics.text_etag(text)
         matched = (
@@ -446,10 +403,7 @@ class ThunderbirdCalendar(CalendarWritePort):
         return removed and (cleanup_only or event.fields.visibility == "private")
 
     def _binding(self, source: str) -> OwlBinding:
-        binding = self._config.bindings.get(source)
-        if binding is None:
-            raise ChamberlainError(ErrorCode.SOURCE_NOT_CONFIGURED, "That source is not set up.")
-        return binding
+        return binding_for(self._config.bindings, source)
 
     @staticmethod
     def _compatible(hello: wire.Welcome) -> bool:
@@ -472,6 +426,12 @@ class ThunderbirdCalendar(CalendarWritePort):
             ),
         )
 
+    def _read_item(self, binding: OwlBinding, event_id: str) -> wire.CalendarItem:
+        try:
+            return require_event(self._item(binding, event_id))
+        except BridgeFailure as error:
+            raise _read_unavailable(error) from error
+
     def _item(self, binding: OwlBinding, event_id: str) -> wire.CalendarItem | None:
         result = self._call(
             wire.CalendarReadResult,
@@ -492,12 +452,6 @@ def _read_unavailable(error: BridgeFailure) -> ChamberlainError:
     )
 
 
-def _stored(current: Current) -> wire.CalendarItem:
-    if not isinstance(current.raw, wire.CalendarItem):
-        raise ValueError("Missing Owl calendar item")
-    return current.raw
-
-
 def _event(source: str, item: wire.CalendarItem, text: str) -> CalendarEvent:
     events = ics.parse_events(text)
     if not events:
@@ -507,7 +461,9 @@ def _event(source: str, item: wire.CalendarItem, text: str) -> CalendarEvent:
     parsed = events[0]
     recurrence = item.recurrence_id
     recurrence_id = recurrence if isinstance(recurrence, str) else parsed.recurrence_id
-    return _event_of(source, ics.instance_locator(item.id, recurrence_id), text, parsed)
+    return ics.event_view(
+        parsed, source, ics.instance_locator(item.id, recurrence_id), ics.text_etag(text)
+    )
 
 
 def _no_series() -> ChamberlainError:
@@ -515,24 +471,6 @@ def _no_series() -> ChamberlainError:
         ErrorCode.CAPABILITY_UNSUPPORTED,
         "This calendar cannot write repeating events.",
         detail="recurrence-not-supported",
-    )
-
-
-def _event_of(source: str, locator: str, text: str, parsed: ics.ParsedEvent) -> CalendarEvent:
-    base, occurrence = ics.split_locator(locator)
-    series = base if occurrence is not None or parsed.recurring else None
-    fields = parsed.fields
-    if occurrence is None and parsed.rule is not None:
-        fields = fields.model_copy(update={"recurrence": parsed.rule})
-    return CalendarEvent(
-        series_locator=series,
-        source=source,
-        locator=locator,
-        uid=parsed.uid,
-        etag=ics.text_etag(text),
-        status=parsed.status,
-        fields=fields,
-        updated=parsed.updated,
     )
 
 

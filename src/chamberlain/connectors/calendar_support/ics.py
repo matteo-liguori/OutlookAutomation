@@ -6,7 +6,6 @@ describes and keeps every other property, alarm, recurrence rule and exception
 exactly as the server sent them.
 """
 
-import hashlib
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from typing import Any, cast
@@ -14,10 +13,18 @@ from zoneinfo import ZoneInfo
 
 import icalendar
 
-from chamberlain.connectors.calendar_support.fields import clean_one, clip_fields
+from chamberlain.connectors.calendar_support.fields import clean_one, clip_fields, event_status
 from chamberlain.connectors.calendar_support.rrule import format_rrule, parse_rrule
-from chamberlain.domain.calendar import EventFields, EventStatus, Recurrence
-from chamberlain.domain.recurrence import parse_occurrence_id
+from chamberlain.domain.calendar import (
+    CalendarEvent,
+    EventFields,
+    EventStatus,
+    Participant,
+    Recurrence,
+    Response,
+)
+from chamberlain.domain.canonical import sha256_text
+from chamberlain.domain.recurrence import occurrence_id, parse_occurrence_id
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 Calendar: Any = icalendar.Calendar
@@ -49,9 +56,40 @@ class ParsedEvent:
     """Occurrence ids (`domain.recurrence.occurrence_id`) taken out of the series by EXDATE."""
 
 
+def event_view(
+    parsed: ParsedEvent,
+    source: str,
+    locator: str,
+    etag: str,
+    *,
+    fields: EventFields | None = None,
+    organiser: str | None = None,
+    my_response: Response | None = None,
+    participants: tuple[Participant, ...] = (),
+) -> CalendarEvent:
+    """Map the stored component and its recurrence identity to the shared calendar model."""
+    base, occurrence = split_locator(locator)
+    shown = fields or parsed.fields
+    if occurrence is None and parsed.rule is not None:
+        shown = shown.model_copy(update={"recurrence": parsed.rule})
+    return CalendarEvent(
+        source=source,
+        locator=locator,
+        uid=parsed.uid,
+        etag=etag,
+        status=parsed.status,
+        series_locator=base if occurrence is not None or parsed.recurring else None,
+        fields=shown,
+        updated=parsed.updated,
+        organiser=organiser,
+        my_response=my_response,
+        participants=participants,
+    )
+
+
 def text_etag(text: str) -> str:
     """The version of an event for stores that keep none: a hash of its exact text."""
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return sha256_text(text)
 
 
 def _utc(value: date | datetime) -> tuple[datetime, bool]:
@@ -81,7 +119,7 @@ def _recurrence_text(value: Any) -> str | None:
     if value is None:
         return None
     moment, all_day = _utc(value)
-    return moment.strftime("%Y%m%d") if all_day else moment.strftime("%Y%m%dT%H%M%SZ")
+    return occurrence_id(moment, all_day=all_day)
 
 
 def _zone_of(component: Any) -> str | None:
@@ -138,11 +176,7 @@ def _parse_component(component: Any) -> ParsedEvent:
         end = start + timedelta(days=1) if all_day else start
     stamp = _prop(component, "LAST-MODIFIED") or _prop(component, "DTSTAMP")
     updated = _utc(stamp)[0] if stamp is not None else start
-    status_text = str(component.get("STATUS", "CONFIRMED")).upper()
-    status = {
-        "CANCELLED": EventStatus.CANCELLED,
-        "TENTATIVE": EventStatus.TENTATIVE,
-    }.get(status_text, EventStatus.CONFIRMED)
+    status = event_status(str(component.get("STATUS", "CONFIRMED")).lower())
     fields = clip_fields(
         title=str(component.get("SUMMARY", "")),
         start=start,
@@ -203,14 +237,17 @@ def parse_events(text: str) -> list[ParsedEvent]:
     return [_parse_component(c) for c in _components(text)]
 
 
-def master_of(text: str) -> ParsedEvent:
-    """The one event that is not an override. Raises when there is not exactly one."""
-    masters = [e for e in parse_events(text) if e.recurrence_id is None]
+def _one_master[T](masters: list[T]) -> T:
     if len(masters) != 1:
         raise ChamberlainError(
             ErrorCode.CAPABILITY_UNSUPPORTED, "This calendar item is not a single event."
         )
     return masters[0]
+
+
+def master_of(text: str) -> ParsedEvent:
+    """The one event that is not an override. Raises when there is not exactly one."""
+    return _one_master([e for e in parse_events(text) if e.recurrence_id is None])
 
 
 def no_invitations() -> ChamberlainError:
@@ -293,6 +330,14 @@ def _set_invitation(
             _add_guest(event, address, kept.get(address, "NEEDS-ACTION"))
 
 
+def _set_description(event: Any, fields: EventFields) -> None:
+    _set_text(event, "summary", fields.title)
+    _set_text(event, "location", fields.location)
+    _set_text(event, "description", fields.description)
+    if fields.visibility == "private":
+        _set_text(event, "class", "PRIVATE")
+
+
 def build_new(uid: str, fields: EventFields, now: datetime, organiser: str | None = None) -> str:
     """A fresh single-event resource, or a series when the fields carry a rule. Times are written
     in UTC, or on the rule's clock for a series.
@@ -302,14 +347,10 @@ def build_new(uid: str, fields: EventFields, now: datetime, organiser: str | Non
     event = Event()
     event.add("uid", uid)
     event.add("dtstamp", now.astimezone(UTC))
-    event.add("summary", fields.title)
     rule = fields.recurrence
     _set_times(event, fields, rule.zone if rule is not None else None)
     _set_rule(event, rule, all_day=fields.all_day)
-    _set_text(event, "location", fields.location)
-    _set_text(event, "description", fields.description)
-    if fields.visibility == "private":
-        _set_text(event, "class", "PRIVATE")
+    _set_description(event, fields)
     event.add("sequence", 0)
     if fields.attendees and organiser is not None:
         _set_invitation(event, fields.attendees, organiser, {})
@@ -329,15 +370,8 @@ def apply_fields(
     keep their answers, unless the time changed (RFC 5546: a new time asks everyone again).
     """
     calendar = Calendar.from_ical(text)
-    masters = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None]
-    if len(masters) != 1:
-        raise ChamberlainError(
-            ErrorCode.CAPABILITY_UNSUPPORTED, "This calendar item is not a single event."
-        )
-    event = masters[0]
+    event: Any = _one_master([c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None])
     current = _parse_component(event)
-    event.pop("SUMMARY", None)
-    event.add("summary", fields.title)
     moved = (current.fields.start, current.fields.end, current.fields.all_day) != (
         fields.start,
         fields.end,
@@ -354,26 +388,20 @@ def apply_fields(
     if organiser is not None:
         kept = {} if moved else dict(current.partstats)
         _set_invitation(event, fields.attendees, organiser, kept)
-    _set_text(event, "location", fields.location)
-    _set_text(event, "description", fields.description)
-    if fields.visibility == "private":
-        _set_text(event, "class", "PRIVATE")
-    for name in ("DTSTAMP", "LAST-MODIFIED", "SEQUENCE"):
-        event.pop(name, None)
-    event.add("dtstamp", now.astimezone(UTC))
-    event.add("last-modified", now.astimezone(UTC))
-    event.add("sequence", current.sequence + 1)
+    _set_description(event, fields)
+    _stamp(event, now, current.sequence + 1)
     return _with_zones(calendar)
 
 
 def _series_parts(calendar: Any) -> tuple[Any, list[Any]]:
     """The series' own component and its overrides."""
-    masters = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None]
+    components: list[Any] = calendar.walk("VEVENT")
+    masters = [c for c in components if c.get("RECURRENCE-ID") is None]
     if len(masters) != 1 or (masters[0].get("RRULE") is None and masters[0].get("RDATE") is None):
         raise ChamberlainError(
             ErrorCode.CAPABILITY_UNSUPPORTED, "This calendar item is not a repeating event."
         )
-    overrides = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is not None]
+    overrides = [c for c in components if c.get("RECURRENCE-ID") is not None]
     return masters[0], overrides
 
 
@@ -427,13 +455,8 @@ def apply_occurrence(text: str, occurrence: str, fields: EventFields, now: datet
         calendar.add_component(event)
     else:
         sequence = _parse_component(event).sequence + 1
-    event.pop("SUMMARY", None)
-    event.add("summary", fields.title)
     _set_times(event, fields)
-    _set_text(event, "location", fields.location)
-    _set_text(event, "description", fields.description)
-    if fields.visibility == "private":
-        _set_text(event, "class", "PRIVATE")
+    _set_description(event, fields)
     _stamp(event, now, sequence)
     return _with_zones(calendar)
 
@@ -463,12 +486,7 @@ def apply_answer(text: str, address: str, partstat: str, now: datetime) -> str:
     """The resource with only `address`'s PARTSTAT changed. SEQUENCE stays: it is the
     organiser's counter, and an invitee must never move it."""
     calendar = Calendar.from_ical(text)
-    masters = [c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None]
-    if len(masters) != 1:
-        raise ChamberlainError(
-            ErrorCode.CAPABILITY_UNSUPPORTED, "This calendar item is not a single event."
-        )
-    event = masters[0]
+    event: Any = _one_master([c for c in calendar.walk("VEVENT") if c.get("RECURRENCE-ID") is None])
     changed = False
     for entry in _list(event, "ATTENDEE"):
         if cal_address(entry) == address:

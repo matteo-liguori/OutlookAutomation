@@ -1,5 +1,6 @@
 """Cursor validation and paging for calendar collections."""
 
+import base64
 from collections.abc import Sequence
 
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, EventFields, EventStatus
@@ -16,6 +17,18 @@ def cursor_value(cursor: str, prefix: str) -> str:
     if not separator or tag != prefix:
         raise bad_cursor()
     return value
+
+
+def encode_token(token: str, prefix: str) -> str:
+    return f"{prefix}." + base64.urlsafe_b64encode(token.encode()).decode()
+
+
+def decode_token(cursor: str, prefix: str) -> str:
+    token = cursor_value(cursor, prefix)
+    try:
+        return base64.b64decode(token, altchars=b"-_", validate=True).decode()
+    except ValueError:
+        raise bad_cursor() from None
 
 
 def offset_cursor(cursor: str | None, prefix: str) -> int:
