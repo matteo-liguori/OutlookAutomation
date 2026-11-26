@@ -5,7 +5,7 @@
 > scheduled passes. v1 still works but gets no new features. To move over, give your agent the
 > [v2 agent setup guide](https://github.com/matteo-liguori/chamberlain/blob/main/docs/setup-agent.md):
 > it migrates your cards, actions, permissions and instructions and leaves this installation
-> untouched as the fallback. See [why and what is new](https://github.com/matteo-liguori/chamberlain#why-move-away-from-outlook).
+> untouched as the fallback. See [why version 2](https://github.com/matteo-liguori/chamberlain#why-version-2).
 
 A collection of tools that let AI coding assistants like Codex and Claude work with Outlook emails, calendars and follow-ups.
 
