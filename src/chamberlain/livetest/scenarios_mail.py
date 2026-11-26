@@ -5,9 +5,11 @@ sends only to owned addresses and registers its own cleanup first, so a failure 
 still removes what exists.
 """
 
+from typing import Any
+
 from chamberlain.domain.mail import FolderRole, folded_message_id
 from chamberlain.livetest.authority import scratch_folder
-from chamberlain.livetest.lab import JSON, Lab, ScenarioFailure, ScenarioSkip, hit_line, text_of
+from chamberlain.livetest.lab import JSON, Lab, ScenarioFailure, ScenarioSkip, text_of
 from chamberlain.livetest.registry import Scope, Target, scenario
 
 NOT_OWNED = "someone@example.invalid"
@@ -37,6 +39,43 @@ def _count(lab: Lab, source: str, subject: str, role: FolderRole) -> int:
     return sum(1 for c in lab.copies(source, subject) if c.folder_role is role)
 
 
+def _one_sent(lab: Lab, source: str, subject: str, where: str = "Sent") -> None:
+    sent = _count(lab, source, subject, FolderRole.SENT)
+    lab.check(sent == 1, f"expected exactly one copy in {where}, found {sent}")
+
+
+def _pair(lab: Lab, t: Target, name: str) -> str:
+    """The marked subject of a two-mailbox scenario; both mailboxes are cleaned up."""
+    subject = lab.subject(f"{name} {t.tag}-{t.other_tag}")
+    _own_mail(lab, t.source, subject)
+    _own_mail(lab, t.other, subject)
+    return subject
+
+
+def _scratch(lab: Lab, t: Target) -> str:
+    """The scratch folder id of the mailbox, or a skip when it has none."""
+    folders = lab.env.probe.folders(t.source)
+    scratch = scratch_folder(folders, lab.config.mail[t.source].scratch_folder)
+    if scratch is None:
+        raise ScenarioSkip("no scratch or archive folder is configured or found")
+    return scratch.id
+
+
+def _move(lab: Lab, t: Target, handles: list[str], folder: str, what: str, **more: Any) -> JSON:
+    intent = {"kind": "mail.move", "source": t.source, "messages": handles, "to_folder": folder}
+    return lab.confirmed(lab.write({**intent, **more}), what)
+
+
+def _send_intent(lab: Lab, source: str, to: str, subject: str, text: str) -> JSON:
+    return {
+        "kind": "mail.send",
+        "source": source,
+        "to": [to],
+        "subject": subject,
+        "body": body(lab, text),
+    }
+
+
 @scenario(
     "mail.self_send",
     "mail",
@@ -46,8 +85,7 @@ def _count(lab: Lab, source: str, subject: str, role: FolderRole) -> int:
 )
 def self_send(lab: Lab, t: Target) -> None:
     subject, _, _ = _self_message(lab, t, "self_send")
-    sent = _count(lab, t.source, subject, FolderRole.SENT)
-    lab.check(sent == 1, f"expected exactly one copy in Sent, found {sent}")
+    _one_sent(lab, t.source, subject)
 
 
 @scenario(
@@ -59,13 +97,10 @@ def self_send(lab: Lab, t: Target) -> None:
     needs_other=("mail.search",),
 )
 def cross_send(lab: Lab, t: Target) -> None:
-    subject = lab.subject(f"cross_send {t.tag}-{t.other_tag}")
-    _own_mail(lab, t.source, subject)
-    _own_mail(lab, t.other, subject)
+    subject = _pair(lab, t, "cross_send")
     lab.send(t.source, lab.config.address_of(t.other), subject, body(lab, "cross-account send"))
     lab.arrival(t.other, subject)
-    sent = _count(lab, t.source, subject, FolderRole.SENT)
-    lab.check(sent == 1, f"expected exactly one copy in the sender's Sent, found {sent}")
+    _one_sent(lab, t.source, subject, "the sender's Sent")
 
 
 @scenario(
@@ -77,9 +112,7 @@ def cross_send(lab: Lab, t: Target) -> None:
     needs_other=("mail.send", "mail.search"),
 )
 def reply_thread(lab: Lab, t: Target) -> None:
-    subject = lab.subject(f"reply_thread {t.tag}-{t.other_tag}")
-    _own_mail(lab, t.source, subject)
-    _own_mail(lab, t.other, subject)
+    subject = _pair(lab, t, "reply_thread")
     lab.send(t.source, lab.config.address_of(t.other), subject, body(lab, "the original"))
     received = lab.arrival(t.other, subject)
     original_id = lab.message_id(received["handle"])
@@ -156,8 +189,7 @@ def draft_flow(lab: Lab, t: Target) -> None:
     lab.check(drafts == 1, f"expected exactly one draft after re-saving, found {drafts}")
     lab.send(t.source, address, subject, body(lab, "second version"))
     lab.arrival(t.source, subject)
-    sent = _count(lab, t.source, subject, FolderRole.SENT)
-    lab.check(sent == 1, f"expected exactly one copy in Sent, found {sent}")
+    _one_sent(lab, t.source, subject)
 
 
 @scenario(
@@ -273,27 +305,19 @@ def read_state(lab: Lab, t: Target) -> None:
     needs=("mail.send", "mail.move", "mail.search"),
 )
 def move_back(lab: Lab, t: Target) -> None:
-    folders = lab.env.probe.folders(t.source)
-    scratch = scratch_folder(folders, lab.config.mail[t.source].scratch_folder)
-    if scratch is None:
-        raise ScenarioSkip("no scratch or archive folder is configured or found")
+    scratch = _scratch(lab, t)
     inbox = lab.folder_id(t.source, FolderRole.INBOX)
     subject, _, hit = _self_message(lab, t, "move_back")
     handle = hit["handle"]
-    if any(c.folder_id == scratch.id for c in lab.copies(t.source, subject)):
+    if any(c.folder_id == scratch for c in lab.copies(t.source, subject)):
         raise ScenarioSkip(
             "the scratch folder already holds the message (as All Mail does on Gmail); "
             "set live_test.mail.<source>.scratch_folder to a label that does not"
         )
-    lab.confirmed(
-        lab.write(
-            {"kind": "mail.move", "source": t.source, "messages": [handle], "to_folder": scratch.id}
-        ),
-        "move to the scratch folder",
-    )
+    _move(lab, t, [handle], scratch, "move to the scratch folder")
     after = lab.copies(t.source, subject)
     lab.check(
-        any(c.folder_id == scratch.id for c in after),
+        any(c.folder_id == scratch for c in after),
         "no copy is in the scratch folder after the move",
     )
     lab.check(
@@ -302,12 +326,7 @@ def move_back(lab: Lab, t: Target) -> None:
     lab.check(
         lab.call("open", handle=handle).ok, "the message handle did not survive the move (R4)"
     )
-    lab.confirmed(
-        lab.write(
-            {"kind": "mail.move", "source": t.source, "messages": [handle], "to_folder": inbox}
-        ),
-        "move back to the inbox",
-    )
+    _move(lab, t, [handle], inbox, "move back to the inbox")
     back = lab.copies(t.source, subject)
     lab.check(any(c.folder_id == inbox for c in back), "the message is not back in the inbox")
 
@@ -320,10 +339,7 @@ def move_back(lab: Lab, t: Target) -> None:
     needs=("mail.send", "mail.move", "mail.search"),
 )
 def batch_file(lab: Lab, t: Target) -> None:
-    folders = lab.env.probe.folders(t.source)
-    scratch = scratch_folder(folders, lab.config.mail[t.source].scratch_folder)
-    if scratch is None:
-        raise ScenarioSkip("no scratch or archive folder is configured or found")
+    scratch = _scratch(lab, t)
     inbox = lab.folder_id(t.source, FolderRole.INBOX)
     address = lab.config.address_of(t.source)
     common = lab.subject(f"batch_file {t.tag}")
@@ -338,23 +354,16 @@ def batch_file(lab: Lab, t: Target) -> None:
         return [{c.folder_id for c in copies if c.subject.endswith(s[-2:])} for s in subjects]
 
     def batch(to_folder: str, mark_read: bool) -> JSON:
-        intent = {
-            "kind": "mail.move",
-            "source": t.source,
-            "messages": handles,
-            "to_folder": to_folder,
-            "mark_read": mark_read,
-        }
-        return lab.confirmed(lab.write(intent), f"batch move to {to_folder}")
+        return _move(lab, t, handles, to_folder, f"batch move to {to_folder}", mark_read=mark_read)
 
-    view = batch(scratch.id, mark_read=True)
+    view = batch(scratch, mark_read=True)
     lab.check(view.get("items_ok") == len(handles), f"only {view.get('items_ok')} of 3 moved")
-    lab.check(all(scratch.id in f and inbox not in f for f in where()), "not all were filed")
+    lab.check(all(scratch in f and inbox not in f for f in where()), "not all were filed")
     for handle in handles:
         lab.check(lab.call("open", handle=handle).ok, "a handle did not follow its message (R4)")
         lab.check(not _unread(lab, handle), "a filed message was not marked read")
     batch(inbox, mark_read=False)
-    lab.check(all(inbox in f and scratch.id not in f for f in where()), "not all came back")
+    lab.check(all(inbox in f and scratch not in f for f in where()), "not all came back")
 
 
 @scenario(
@@ -420,7 +429,7 @@ def find_by_message_id(lab: Lab, t: Target) -> None:
         folders = {c.folder_id for c in copies if folded_message_id(c.message_id) == message_id}
         if len(folders) > 1:
             lab.check(
-                any("[" in hit_line(hit) for hit in hits),
+                any("[" in text_of(hit) for hit in hits),
                 "a message in several folders does not list them on its one hit",
             )
 
@@ -437,13 +446,7 @@ def repeat_do(lab: Lab, t: Target) -> None:
     address = lab.config.address_of(t.source)
     subject = lab.subject(f"repeat_do {t.tag}")
     _own_mail(lab, t.source, subject)
-    intent: JSON = {
-        "kind": "mail.send",
-        "source": t.source,
-        "to": [address],
-        "subject": subject,
-        "body": body(lab, "sent once"),
-    }
+    intent = _send_intent(lab, t.source, address, subject, "sent once")
     operation = lab.prepare(intent)
     lab.confirmed(lab.do(operation), "the first do")
     lab.arrival(t.source, subject)
@@ -461,8 +464,7 @@ def repeat_do(lab: Lab, t: Target) -> None:
     lab.do(operation)
     if dispatched is not None:
         lab.check(lab.env.dispatches() == dispatched, "a repeated do reached the provider again")
-    sent = _count(lab, t.source, subject, FolderRole.SENT)
-    lab.check(sent == 1, f"expected exactly one copy in Sent after repeating do, found {sent}")
+    _one_sent(lab, t.source, subject, "Sent after repeating do")
 
 
 @scenario(
@@ -479,13 +481,7 @@ def refuse_non_owned(lab: Lab, t: Target) -> None:
     dispatched = lab.env.dispatches()
     proposed = lab.ok(
         "propose",
-        intent={
-            "kind": "mail.send",
-            "source": t.source,
-            "to": [NOT_OWNED],
-            "subject": subject,
-            "body": body(lab, "must never be sent"),
-        },
+        intent=_send_intent(lab, t.source, NOT_OWNED, subject, "must never be sent"),
         card=lab.card,
     )
     lab.check(proposed["ready"] is False, "a send to a stranger was ready without the owner")
@@ -526,17 +522,11 @@ def fault_lost_response(lab: Lab, t: Target) -> None:
     _own_mail(lab, t.source, subject)
     lab.defer("disarm the fault", lab.env.faults.disarm)
     operation = lab.prepare(
-        {
-            "kind": "mail.send",
-            "source": t.source,
-            "to": [address],
-            "subject": subject,
-            "body": body(lab, "the response to this send is dropped"),
-        }
+        _send_intent(lab, t.source, address, subject, "the response to this send is dropped")
     )
     lab.env.faults.arm_lost_response(lab.run_id)
     first = lab.do(operation)
-    if not lab.env.faults.fired(lab.run_id):
+    if not lab.env.faults.fired():
         raise ScenarioSkip(
             "the lost-response hook did not fire; restart Thunderbird so the native host "
             "reloads, then run again"
@@ -546,8 +536,7 @@ def fault_lost_response(lab: Lab, t: Target) -> None:
         state in {"confirmed", "uncertain", "reconciling"},
         f"after a lost response the operation is {state}",
     )
-    sent = _count(lab, t.source, subject, FolderRole.SENT)
-    lab.check(sent == 1, f"expected exactly one copy in Sent after a lost response, found {sent}")
+    _one_sent(lab, t.source, subject, "Sent after a lost response")
     lab.do(operation)
     after = _count(lab, t.source, subject, FolderRole.SENT)
     lab.check(after == 1, f"a repeated do after the fault left {after} copies in Sent")
@@ -563,7 +552,7 @@ def _state_after(lab: Lab, operation: str) -> str:
         if state == "confirmed":
             return state
         lab.call("reconcile", operation=operation)
-        lab.env.waiter.sleep(5)
+        lab.env.sleep(5)
     return str(lab.ok("open", handle=operation)["view"]["state"])
 
 
@@ -577,9 +566,7 @@ def _state_after(lab: Lab, operation: str) -> str:
     alone=True,  # reads the harness's whole new-mail batch, which other scenarios change
 )
 def watermark_suggestion(lab: Lab, t: Target) -> None:
-    subject = lab.subject(f"watermark {t.tag}-{t.other_tag}")
-    _own_mail(lab, t.source, subject)
-    _own_mail(lab, t.other, subject)
+    subject = _pair(lab, t, "watermark")
     lab.send(t.source, lab.config.address_of(t.other), subject, body(lab, "the first mail"))
     received = lab.arrival(t.other, subject)
     reply_subject = f"Re: {subject}"

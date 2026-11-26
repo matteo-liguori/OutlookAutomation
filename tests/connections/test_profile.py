@@ -13,8 +13,8 @@ from chamberlain.connections import (
     load_connections,
     open_app,
     parse_connections,
-    render_redacted,
     save_connections,
+    to_document,
 )
 from chamberlain.connections.build import build_router, build_runtime
 from chamberlain.connections.load import dump_connections, profile_path
@@ -141,7 +141,7 @@ def test_s17_s16_an_insecure_caldav_url_is_refused_when_building_and_3_related_c
 
     # s17_show_has_no_secret_values
     secrets.set("chamberlain.caldav", "password:me@icloud.example", "app-password-value")
-    shown = str(render_redacted(parse_connections(full_profile())))
+    shown = str(to_document(parse_connections(full_profile())))
     assert "app-password-value" not in shown
     assert "password:me@icloud.example" in shown  # the reference, not the secret
 

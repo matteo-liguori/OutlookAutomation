@@ -147,7 +147,7 @@ def test_the_lost_response_scenario_needs_a_hook_that_fires(lab: FakeLab) -> Non
     assert [d.applied for d in sends] == [True]
     assert not lab.provider.world.armed(Fault.LOSE_RESPONSE_AFTER_APPLY)
 
-    lab.env.faults.fired = lambda run_id: False  # type: ignore[method-assign]
+    lab.env.faults.fired = lambda: False  # type: ignore[method-assign]
     unfired = execute(lab.app, lab.env, lab.config, RunOptions(only=only))
     assert unfired.results[0].status is Status.SKIPPED
     assert "restart Thunderbird" in unfired.results[0].reason
@@ -159,7 +159,7 @@ def test_the_lost_response_scenario_needs_a_hook_that_fires(lab: FakeLab) -> Non
         def arm_lost_response(self, run_id: str) -> None:
             raise AssertionError("must not arm")
 
-        def fired(self, run_id: str) -> bool:
+        def fired(self) -> bool:
             return False
 
         def disarm(self) -> None:

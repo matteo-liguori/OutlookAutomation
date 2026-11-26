@@ -42,7 +42,7 @@ from chamberlain.connections import (
     build_runtime,
     load_connections,
     open_app,
-    render_redacted,
+    to_document,
 )
 from chamberlain.connections.load import add_test_calendar
 from chamberlain.connections.setup import provider_setup
@@ -324,7 +324,7 @@ def _config(root: Path, args: argparse.Namespace, out: TextIO) -> int:
         return EXIT_OK
     connections = load_connections(root)
     if args.action == "show":
-        _print(out, render_redacted(connections))
+        _print(out, to_document(connections))
         return EXIT_OK
     runtime = build_runtime(connections, root, SystemClock(), secrets=_NoSecrets())
     _print(

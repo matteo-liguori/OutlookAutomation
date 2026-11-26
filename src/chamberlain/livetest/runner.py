@@ -178,6 +178,16 @@ def _run_side_by_side(
         thread.join()
 
 
+_INVITING = ("calendar.invite_flow", "calendar.recurring_invite")
+
+
+def _invitee_mail(item: Planned, config: LiveTestConfig) -> str | None:
+    """The mailbox an inviting scenario sends its invitation to, or None."""
+    if item.skip or item.spec.id not in _INVITING:
+        return None
+    return config.calendars[item.target.source].invitee_mail
+
+
 def _used_mail_sources(plan: Sequence[Planned], config: LiveTestConfig) -> list[str]:
     used: dict[str, None] = {}
     for item in plan:
@@ -187,10 +197,8 @@ def _used_mail_sources(plan: Sequence[Planned], config: LiveTestConfig) -> list[
             used[item.target.source] = None
             if item.target.other:
                 used[item.target.other] = None
-        if item.spec.id == "calendar.invite_flow":
-            invitee = config.calendars[item.target.source].invitee_mail
-            if invitee is not None:
-                used[invitee] = None
+        if invitee := _invitee_mail(item, config):
+            used[invitee] = None
     return list(used)
 
 
@@ -248,25 +256,13 @@ def _run_one(lab: Lab, item: Planned, keep: bool) -> ScenarioResult:
     )
 
 
-def _pending(item: Planned) -> ScenarioResult:
-    if item.skip:
-        return _skipped(item, False)
+def _skipped(item: Planned, reason: str = "") -> ScenarioResult:
+    """A scenario that did not run: its own skip reason when it has one, else `reason`."""
     return ScenarioResult(
         id=item.id,
         group=item.spec.group,
         status=Status.SKIPPED,
-        reason=NOT_RUN_YET,
-        manual=item.spec.manual,
-    )
-
-
-def _skipped(item: Planned, dry: bool) -> ScenarioResult:
-    reason = item.skip or ("planned (dry run)" if dry else "")
-    return ScenarioResult(
-        id=item.id,
-        group=item.spec.group,
-        status=Status.SKIPPED,
-        reason=reason,
+        reason=item.skip or reason,
         manual=item.spec.manual,
     )
 
@@ -279,6 +275,7 @@ def leftover_items(lab: Lab, plan: Sequence[Planned]) -> list[str]:
         p.target.source for p in plan if p.spec.scope is not Scope.CALENDAR and p.target.source
     }
     sources |= {p.target.other for p in plan if p.target.other}
+    sources |= {m for p in plan if (m := _invitee_mail(p, lab.config))}
     for source in sorted(sources):
         for copy in lab.copies(source, marker):
             if copy.folder_role.value != "trash":
@@ -303,6 +300,8 @@ def _second_chance(lab: Lab, plan: Sequence[Planned]) -> None:
                         lab.remove_mail(source, lab.marker)
             elif item.spec.scope is Scope.CALENDAR and lab.approve_edits:
                 lab.remove_events(item.target.source, lab.marker)
+                if invitee := _invitee_mail(item, lab.config):
+                    lab.remove_mail(invitee, lab.marker)
         except (ChamberlainError, ScenarioFailure, ScenarioSkip):
             continue
 
@@ -317,17 +316,39 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
     run_id = make_run_id(env, options)
     started_at = ts(env.clock.now())
     names = tuple(sorted({s for p in plan for s in (p.target.source, p.target.other) if s}))
+
+    def report(
+        results: tuple[ScenarioResult, ...],
+        *,
+        mode: str = "",
+        leftovers: Sequence[str] = (),
+        before: JSON | None = None,
+        after: JSON | None = None,
+    ) -> RunReport:
+        return RunReport(
+            run_id=run_id,
+            started_at=started_at,
+            finished_at=ts(env.clock.now()),
+            mode=mode or env.mode,
+            dry_run=options.dry_run,
+            kept=options.keep,
+            sources=names,
+            results=results,
+            score=compute_score(results, len(leftovers)),
+            leftovers=tuple(leftovers),
+            doctor_before=tuple(f"{k}:{v}" for k, v in sorted((before or {}).items())),
+            doctor_after=tuple(f"{k}:{v}" for k, v in sorted((after or {}).items())),
+        )
+
     if options.dry_run:
-        results = tuple(_skipped(p, True) for p in plan)
-        return _report(run_id, started_at, env, "dry-run", options, names, results, [], {}, {})
+        return report(tuple(_skipped(p, "planned (dry run)") for p in plan), mode="dry-run")
     lab = open_lab(app, env, config, run_id, options)
     runnable = [p for p in plan if not p.skip]
     try:
         require_grants(lab, _used_mail_sources(plan, config))
     except RunStopped as stop:
-        results = tuple(_skipped(p, False) for p in plan)
-        report = _report(run_id, started_at, env, env.mode, options, names, results, [], {}, {})
-        return report.model_copy(update={"stopped": str(stop)})
+        stopped = report(tuple(_skipped(p) for p in plan))
+        return stopped.model_copy(update={"stopped": str(stop)})
     lab.action = _start_action(lab)
     lab.baseline = doctor_states(lab)
     done: list[ScenarioResult] = []
@@ -336,10 +357,8 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
         if options.progress is None:
             return
         by_id = {r.id: r for r in done}
-        sofar = tuple(by_id.get(p.id) or _pending(p) for p in plan)
-        partial = _report(
-            run_id, started_at, env, env.mode, options, names, sofar, [], lab.baseline, {}
-        )
+        sofar = tuple(by_id.get(p.id) or _skipped(p, NOT_RUN_YET) for p in plan)
+        partial = report(sofar, before=lab.baseline)
         options.progress(partial.model_copy(update={"finished": False}))
 
     tell()
@@ -364,47 +383,17 @@ def execute(app: App, env: Environment, config: LiveTestConfig, options: RunOpti
             done.append(_run_one(lab, item, options.keep))
             tell()
     by_id = {r.id: r for r in done}
-    ordered = tuple(by_id.get(p.id) or _skipped(p, False) for p in plan)
+    ordered = tuple(by_id.get(p.id) or _skipped(p) for p in plan)
     after = doctor_states(lab)
     outcome = _outcome_line(ordered, len(leftovers))
     lab.ok("card", op="finish_action", action=lab.action, outcome=outcome)
-    return _report(
-        run_id, started_at, env, env.mode, options, names, ordered, leftovers, lab.baseline, after
-    )
+    return report(ordered, leftovers=leftovers, before=lab.baseline, after=after)
 
 
 def _outcome_line(results: Sequence[ScenarioResult], leftovers: int) -> str:
     failed = sum(1 for r in results if r.status is Status.FAIL)
     passed = sum(1 for r in results if r.status is Status.PASS)
     return f"{passed} passed, {failed} failed, {leftovers} left behind."
-
-
-def _report(
-    run_id: str,
-    started_at: str,
-    env: Environment,
-    mode: str,
-    options: RunOptions,
-    names: tuple[str, ...],
-    results: tuple[ScenarioResult, ...],
-    leftovers: list[str],
-    before: JSON,
-    after: JSON,
-) -> RunReport:
-    return RunReport(
-        run_id=run_id,
-        started_at=started_at,
-        finished_at=ts(env.clock.now()),
-        mode=mode,
-        dry_run=options.dry_run,
-        kept=options.keep,
-        sources=names,
-        results=results,
-        score=compute_score(results, len(leftovers)),
-        leftovers=tuple(leftovers),
-        doctor_before=tuple(f"{k}:{v}" for k, v in sorted(before.items())),
-        doctor_after=tuple(f"{k}:{v}" for k, v in sorted(after.items())),
-    )
 
 
 def retry_ids(report: RunReport) -> tuple[str, ...]:

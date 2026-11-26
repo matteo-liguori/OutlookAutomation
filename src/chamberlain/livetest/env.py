@@ -1,19 +1,18 @@
 """What differs between a real installation and the fake world.
 
 Contract: docs/live-test.md. The runner takes an `Environment` and never asks which kind it
-is: the waiter sleeps (or moves a manual clock), the fault injector arms a lost response
+is: `sleep` waits (or moves a manual clock), the fault injector arms a lost response
 (a file the native host reads, or a fake switch), and the probe is a read-only view of the
 ports for the few checks the tools cannot make. The report names every check that used it.
 """
 
 import json
 import os
-import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Protocol
 
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
@@ -52,10 +51,6 @@ class CalendarCopy:
     """The locator of the series this is one date of, when it is one."""
 
 
-class Waiter(Protocol):
-    def sleep(self, seconds: float) -> None: ...
-
-
 class FaultInjector(Protocol):
     def why_unavailable(self) -> str | None:
         """None when a lost response can be armed here, else the reason it cannot."""
@@ -63,7 +58,7 @@ class FaultInjector(Protocol):
 
     def arm_lost_response(self, run_id: str) -> None: ...
 
-    def fired(self, run_id: str) -> bool:
+    def fired(self) -> bool:
         """True once the fault was used (the file is consumed, or the fake switch is spent)."""
         ...
 
@@ -100,21 +95,6 @@ MARKED_MAIL_DAYS = 30
 """How far back the probe looks for marked mail; runs and sweeps are recent."""
 
 
-class RealWaiter:
-    def sleep(self, seconds: float) -> None:
-        time.sleep(seconds)
-
-
-class ClockWaiter:
-    """Moves a manual clock instead of waiting (the fake world)."""
-
-    def __init__(self, advance: Callable[[float], None]) -> None:
-        self._advance = advance
-
-    def sleep(self, seconds: float) -> None:
-        self._advance(seconds)
-
-
 class FileFaultInjector:
     """Arms the native host's lost-response hook by writing `<data root>/run/livetest-fault.json`.
 
@@ -143,7 +123,7 @@ class FileFaultInjector:
         pending.write_text(json.dumps(body), encoding="utf-8")
         os.replace(pending, self._path)
 
-    def fired(self, run_id: str) -> bool:
+    def fired(self) -> bool:
         return not self._path.exists()
 
     def disarm(self) -> None:
@@ -199,7 +179,8 @@ class PortProbe:
         return self._ctx.sources.mail_port(source).read(source, copy.locator).in_reply_to
 
     def answers(self, source: str, locator: str) -> dict[str, str]:
-        return _answers_of(self.read_event(source, locator))
+        event = self.read_event(source, locator)
+        return {str(p.address): p.response.value for p in event.participants}
 
     def read_event(self, source: str, locator: str) -> CalendarEvent:
         return self._ctx.sources.calendar_port(source).read(source, locator)
@@ -227,22 +208,14 @@ class PortProbe:
         ]
 
 
-def _answers_of(event: object) -> dict[str, str]:
-    """Per-guest answers when the calendar port reports them (an older port does not)."""
-    found: dict[str, str] = {}
-    for item in cast("tuple[Any, ...]", getattr(event, "participants", ())):
-        response = getattr(item, "response", None)
-        found[str(getattr(item, "address", ""))] = str(getattr(response, "value", response))
-    return found
-
-
 @dataclass
 class Environment:
     """Everything the runner needs that differs between live and the fake."""
 
     mode: str
     clock: Clock
-    waiter: Waiter
+    sleep: Callable[[float], None]
+    """Waits (the fake world moves its manual clock instead)."""
     faults: FaultInjector
     probe: Probe
     dispatches: Callable[[], int | None] = field(default=lambda: None)

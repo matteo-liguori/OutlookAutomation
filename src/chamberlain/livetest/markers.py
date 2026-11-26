@@ -34,11 +34,6 @@ def run_marker(run_id: str) -> str:
     return f"{MARKER} {run_id}"
 
 
-def subject_for(run_id: str, scenario: str) -> str:
-    """The subject or title of everything a scenario creates."""
-    return f"{run_marker(run_id)} {scenario}"
-
-
 def grant_title(source: str) -> str:
     return f"{GRANT_TITLE_PREFIX} {source}"[:80]
 

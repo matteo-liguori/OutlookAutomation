@@ -7,6 +7,7 @@ that the scenario is skipped with the reason, never approved by the runner.
 
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from chamberlain.livetest.lab import JSON, Lab, ScenarioFailure, ScenarioSkip, text_of
@@ -48,36 +49,39 @@ def _event(title: str, start: datetime, minutes: int = 30, **more: object) -> JS
     return fields
 
 
+def _write(lab: Lab, kind: str, source: str, what: str, **fields: Any) -> JSON:
+    """One confirmed calendar write: `calendar.<kind>` on `source` with these intent fields."""
+    return lab.confirmed(lab.write({"kind": f"calendar.{kind}", "source": source, **fields}), what)
+
+
 def _create(lab: Lab, source: str, fields: JSON) -> str:
     """Create an event and return its `cev_` handle."""
     lab.defer(
         f"remove marked events in {source}", lambda: lab.remove_events(source, fields["title"])
     )
-    view = lab.confirmed(
-        lab.write({"kind": "calendar.create", "source": source, "event": fields}), "create event"
-    )
-    return _handle_of(lab, source, fields, view)
+    view = _write(lab, "create", source, "create event", event=fields)
+    if view.get("result_ref"):
+        return str(view["result_ref"])
+    hits = _find(lab, source, str(fields["title"]), _parse(str(fields["start"])))
+    lab.check(len(hits) == 1, f"expected one new event, found {len(hits)}")
+    return str(hits[0]["handle"])
 
 
-def _find(lab: Lab, source: str, title: str, around: datetime) -> list[JSON]:
+def _find(lab: Lab, source: str, title: str, around: datetime, days: int = 2) -> list[JSON]:
+    """Hits for `title` from a day before `around` to `days` after it."""
     found = lab.ok(
         "find",
         scope="calendar",
         source=source,
         query=title,
         since=_stamp(around - timedelta(days=1)),
-        until=_stamp(around + timedelta(days=2)),
+        until=_stamp(around + timedelta(days=days)),
     )
     return [hit for hit in found.get("hits", []) if title in text_of(hit)]
 
 
-def _handle_of(lab: Lab, source: str, fields: JSON, view: JSON) -> str:
-    if view.get("result_ref"):
-        return str(view["result_ref"])
-    start = datetime.strptime(str(fields["start"]), STAMP).replace(tzinfo=UTC)
-    hits = _find(lab, source, str(fields["title"]), start)
-    lab.check(len(hits) == 1, f"expected one new event, found {len(hits)}")
-    return str(hits[0]["handle"])
+def _live(hits: list[JSON]) -> list[JSON]:
+    return [h for h in hits if not str(h.get("summary", "")).startswith("cancelled")]
 
 
 def _view(lab: Lab, handle: str) -> JSON:
@@ -86,16 +90,13 @@ def _view(lab: Lab, handle: str) -> JSON:
 
 
 def _delete(lab: Lab, source: str, handle: str) -> None:
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.delete",
-                "source": source,
-                "event_ref": handle,
-                "expected_etag": _view(lab, handle)["etag"],
-            }
-        ),
+    _write(
+        lab,
+        "delete",
+        source,
         "delete event",
+        event_ref=handle,
+        expected_etag=_view(lab, handle)["etag"],
     )
 
 
@@ -130,17 +131,14 @@ def create_update_delete(lab: Lab, t: Target) -> None:
     _check_private(lab, handle)
     before = _view(lab, handle)
     lab.check(before["status"] == "confirmed", "a new event is not confirmed")
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.update",
-                "source": t.source,
-                "event_ref": handle,
-                "expected_etag": before["etag"],
-                "event": _event(title, start, 60, location="Live test room", visibility="private"),
-            }
-        ),
+    _write(
+        lab,
+        "update",
+        t.source,
         "update event",
+        event_ref=handle,
+        expected_etag=before["etag"],
+        event=_event(title, start, 60, location="Live test room", visibility="private"),
     )
     _check_private(lab, handle)
     after = _view(lab, handle)
@@ -234,30 +232,13 @@ def recurring(lab: Lab, t: Target) -> None:
     start = _soon(lab, 2)
     lab.defer(f"remove marked events in {t.source}", lambda: lab.remove_events(t.source, title))
     rule: JSON = {"frequency": "daily", "count": 3}
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.create",
-                "source": t.source,
-                "event": _event(title, start, recurrence=rule),
-            }
-        ),
-        "create series",
-    )
+    _write(lab, "create", t.source, "create series", event=_event(title, start, recurrence=rule))
 
     def dates() -> list[JSON]:
-        found = lab.ok(
-            "find",
-            scope="calendar",
-            source=t.source,
-            query=title,
-            since=_stamp(start - timedelta(days=1)),
-            until=_stamp(start + timedelta(days=4)),
-        )
-        return [h for h in found.get("hits", []) if title in text_of(h)]
+        return _find(lab, t.source, title, start, 4)
 
     def live() -> list[JSON]:
-        return [h for h in dates() if not str(h.get("summary", "")).startswith("cancelled")]
+        return _live(dates())
 
     seen = lab.wait_until(
         "the three dates of the series showing", lambda: dates() if len(dates()) == 3 else None
@@ -272,18 +253,15 @@ def recurring(lab: Lab, t: Target) -> None:
 
     # One date changed: its location, nothing else.
     second = _view(lab, str(seen[1]["handle"]))
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.update",
-                "source": t.source,
-                "event_ref": seen[1]["handle"],
-                "expected_etag": second["etag"],
-                "scope": "occurrence",
-                "event": _event(title, _parse(second["start"]), location="Live test room"),
-            }
-        ),
+    _write(
+        lab,
+        "update",
+        t.source,
         "change one date",
+        event_ref=seen[1]["handle"],
+        expected_etag=second["etag"],
+        scope="occurrence",
+        event=_event(title, _parse(second["start"]), location="Live test room"),
     )
     lab.check(
         "Live test room" in text_of(lab.ok("open", handle=seen[1]["handle"], part="body")),
@@ -296,40 +274,34 @@ def recurring(lab: Lab, t: Target) -> None:
 
     # One date cancelled.
     third = _view(lab, str(seen[2]["handle"]))
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.delete",
-                "source": t.source,
-                "event_ref": seen[2]["handle"],
-                "expected_etag": third["etag"],
-                "scope": "occurrence",
-            }
-        ),
+    _write(
+        lab,
+        "delete",
+        t.source,
         "cancel one date",
+        event_ref=seen[2]["handle"],
+        expected_etag=third["etag"],
+        scope="occurrence",
     )
     lab.check(len(live()) == 2, f"{len(live())} dates are live after one was cancelled, not 2")
 
     # The whole series: every date that was not changed on its own.
     master = _view(lab, series)
     lab.check(master.get("repeats") == "series", "the series handle is not the series")
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.update",
-                "source": t.source,
-                "event_ref": series,
-                "expected_etag": master["etag"],
-                "scope": "series",
-                "event": {
-                    "title": title,
-                    "start": master["start"],
-                    "end": master["end"],
-                    "location": "Series room",
-                },
-            }
-        ),
+    _write(
+        lab,
+        "update",
+        t.source,
         "change the series",
+        event_ref=series,
+        expected_etag=master["etag"],
+        scope="series",
+        event={
+            "title": title,
+            "start": master["start"],
+            "end": master["end"],
+            "location": "Series room",
+        },
     )
     lab.check(
         "Series room" in text_of(lab.ok("open", handle=seen[0]["handle"], part="body")),
@@ -337,17 +309,14 @@ def recurring(lab: Lab, t: Target) -> None:
     )
 
     master = _view(lab, series)
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.delete",
-                "source": t.source,
-                "event_ref": series,
-                "expected_etag": master["etag"],
-                "scope": "series",
-            }
-        ),
+    _write(
+        lab,
+        "delete",
+        t.source,
         "delete the series",
+        event_ref=series,
+        expected_etag=master["etag"],
+        scope="series",
     )
     lab.check(not live(), "a date of the series is still live after the series was deleted")
 
@@ -396,7 +365,6 @@ def invite_flow(lab: Lab, t: Target) -> None:
         lambda: lab.remove_mail(str(setting.invitee_mail), title),
     )
     organiser = _create(lab, t.source, _event(title, start, attendees=[invitee]))
-    seen_on = "mailbox"
     invited_copy: JSON | None = None
     if setting.invitee_calendar is not None:
         lab.defer(
@@ -410,27 +378,22 @@ def invite_flow(lab: Lab, t: Target) -> None:
             title,
             lambda: _wait_find(lab, str(setting.invitee_calendar), title, start),
         )
-        seen_on = "calendar"
     else:
         lab.arrival(setting.invitee_mail, title)
-    lab.check(bool(seen_on), "the invitation never arrived")
     if invited_copy is not None and setting.invitee_calendar is not None:
         copy = _view(lab, str(invited_copy["handle"]))
         lab.check(
             copy.get("my_response", "needs_action") == "needs_action",
             f"the invitee's copy starts as {copy.get('my_response')}, not needs_action",
         )
-        lab.confirmed(
-            lab.write(
-                {
-                    "kind": "calendar.respond",
-                    "source": setting.invitee_calendar,
-                    "event_ref": invited_copy["handle"],
-                    "expected_etag": copy["etag"],
-                    "response": "accepted",
-                }
-            ),
+        _write(
+            lab,
+            "respond",
+            setting.invitee_calendar,
             "respond to the invitation",
+            event_ref=invited_copy["handle"],
+            expected_etag=copy["etag"],
+            response="accepted",
         )
 
         def organiser_sees_answer() -> bool | None:
@@ -474,31 +437,16 @@ def recurring_invite(lab: Lab, t: Target) -> None:
     lab.defer("remove invitation mail", lambda: lab.remove_mail(str(setting.invitee_mail), title))
     lab.defer(f"remove marked events in {t.source}", lambda: lab.remove_events(t.source, title))
     rule: JSON = {"frequency": "daily", "count": 3}
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.create",
-                "source": t.source,
-                "event": _event(title, start, attendees=[invitee], recurrence=rule),
-            }
-        ),
+    _write(
+        lab,
+        "create",
+        t.source,
         "create a repeating event with a guest",
+        event=_event(title, start, attendees=[invitee], recurrence=rule),
     )
 
     def dates(source: str) -> list[JSON]:
-        found = lab.ok(
-            "find",
-            scope="calendar",
-            source=source,
-            query=title,
-            since=_stamp(start - timedelta(days=1)),
-            until=_stamp(start + timedelta(days=4)),
-        )
-        return [
-            h
-            for h in found.get("hits", [])
-            if title in text_of(h) and not str(h.get("summary", "")).startswith("cancelled")
-        ]
+        return _live(_find(lab, source, title, start, 4))
 
     mine = lab.wait_until(
         "the three dates showing", lambda: dates(t.source) if len(dates(t.source)) == 3 else None
@@ -521,20 +469,17 @@ def recurring_invite(lab: Lab, t: Target) -> None:
 
     # One date changed: the guest stays invited to it and to the others.
     second = _view(lab, str(mine[1]["handle"]))
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.update",
-                "source": t.source,
-                "event_ref": mine[1]["handle"],
-                "expected_etag": second["etag"],
-                "scope": "occurrence",
-                "event": _event(
-                    title, _parse(second["start"]), location="Live test room", attendees=[invitee]
-                ),
-            }
-        ),
+    _write(
+        lab,
+        "update",
+        t.source,
         "change one date of the invitation",
+        event_ref=mine[1]["handle"],
+        expected_etag=second["etag"],
+        scope="occurrence",
+        event=_event(
+            title, _parse(second["start"]), location="Live test room", attendees=[invitee]
+        ),
     )
     if setting.invitee_calendar is not None:
         invited = str(setting.invitee_calendar)
@@ -545,17 +490,14 @@ def recurring_invite(lab: Lab, t: Target) -> None:
 
     series = str(_view(lab, str(mine[0]["handle"]))["series"])
     master = _view(lab, series)
-    lab.confirmed(
-        lab.write(
-            {
-                "kind": "calendar.delete",
-                "source": t.source,
-                "event_ref": series,
-                "expected_etag": master["etag"],
-                "scope": "series",
-            }
-        ),
+    _write(
+        lab,
+        "delete",
+        t.source,
         "cancel the repeating invitation",
+        event_ref=series,
+        expected_etag=master["etag"],
+        scope="series",
     )
     if setting.invitee_calendar is not None:
         invited = str(setting.invitee_calendar)

@@ -59,7 +59,7 @@ def test_keep_leaves_items_and_sweep_removes_only_marked_mail(lab: FakeLab) -> N
     assert result.mail_removed >= 3
     assert not result.problems
     assert sorted(live_messages(lab, FAKE_MAIL_A)) == sorted(LOOKALIKES)
-    assert lab.env.faults.fired(OLD_RUN)  # a pending fault was disarmed
+    assert lab.env.faults.fired()  # a pending fault was disarmed
 
 
 @pytest.mark.parametrize("already_uncertain", [False, True])
@@ -188,3 +188,30 @@ def test_final_doctor_settles_delayed_trash_only_when_the_provider_can_prove_it(
     doctor_clean(runner, Target())
     assert runner.ok("open", handle=op)["view"]["state"] == "confirmed"
     assert [d.intent_kind.value for d in lab.provider.dispatch_log] == ["mail.trash"]
+
+
+def test_the_invitee_mailbox_of_a_repeating_invite_is_granted_and_audited(lab: FakeLab) -> None:
+    """Both inviting scenarios send mail to the invitee: it needs its grant checked up front,
+    and the leftover and second-chance passes must look in it."""
+    from chamberlain.livetest.catalogue import build_plan
+    from chamberlain.livetest.fakeworld import FAKE_MAIL_B
+    from chamberlain.livetest.runner import _second_chance, _used_mail_sources, leftover_items  # pyright: ignore[reportPrivateUsage]
+
+    plan = build_plan(
+        lab.config, lab.app.context.sources, only=("calendar.recurring_invite[calendar:laba]",)
+    )
+    assert [p.id for p in plan]
+    assert _used_mail_sources(plan, lab.config) == [FAKE_MAIL_B]
+
+    confirm_all(lab)
+    runner = open_lab(
+        lab.app, lab.env, lab.config, OLD_RUN, RunOptions(approve_calendar_edits=True)
+    )
+    lab.provider.mail.add_message(
+        FAKE_MAIL_B,
+        internet_message_id="<invite@example.test>",
+        subject=runner.subject("series invite x"),
+    )
+    assert len(leftover_items(runner, plan)) == 1
+    _second_chance(runner, plan)
+    assert leftover_items(runner, plan) == []

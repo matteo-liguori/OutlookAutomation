@@ -5,6 +5,7 @@ surface (`surface/cli.py`) calls `main` and prints what it returns.
 """
 
 import json
+import time
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -18,7 +19,6 @@ from chamberlain.livetest.env import (
     Environment,
     FileFaultInjector,
     PortProbe,
-    RealWaiter,
 )
 from chamberlain.livetest.model import RunReport
 from chamberlain.livetest.report import read_reports, table, write_report
@@ -43,7 +43,7 @@ def real_environment(app: App, data_root: Path, bridge_dir: str | None) -> Envir
     return Environment(
         mode="live",
         clock=app.context.clock,
-        waiter=RealWaiter(),
+        sleep=time.sleep,
         faults=FileFaultInjector(data_root, None if bridge_dir is None else Path(bridge_dir)),
         probe=PortProbe(app.context),
     )
