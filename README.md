@@ -8,46 +8,70 @@ would be a blind resend.
 
 **Version 2 is a rebuild.** It replaces the first version (Outlook Automation), which now lives
 on the [`v1-legacy`](https://github.com/matteo-liguori/chamberlain/tree/v1-legacy) branch. Your
-v1 data comes across with one agent-guided migration (see [Coming from v1](#coming-from-v1)).
+v1 data comes across with one agent-guided migration (see [Coming from v1](#coming-from-v1)). [Why version 2](#why-version-2) explains what changed.
 
-## Why move away from Outlook
+## Why version 2
 
-Version 1 drove Classic Outlook on Windows through COM, with separate adapters for Mac. That
-road is closing:
+Version 2 is built on three principles.
 
-- Microsoft is replacing Classic Outlook with the new Outlook for Windows, which has no COM
-  automation, so a COM-based tool has no future there.
-- Native Outlook on the Mac offers much less to automate, so Mac users always had a weaker
-  version.
-- Each client needed its own adapter, with its own quirks and its own gaps.
+### 1. Far, far safer
 
-Version 2 talks to your mail through **Thunderbird**, with a small add-on and a local bridge. The
-same code works on Windows and Mac, with Gmail, Microsoft 365 and IMAP accounts.
-Google Calendar and iCloud are written directly through their own APIs. A Microsoft 365
-calendar is reached through Thunderbird (Owl).
+Nothing changes your mail or calendar without authority you can check:
 
-## What is new in version 2
+- **Permission.** Every send, move, trash, mark-read and calendar change needs a permission you
+  confirm yourself in the local viewer. The agent can propose one but never confirm it.
+- **Exactly once.** Each write is recorded before it is sent and checked afterwards. A write whose
+  outcome is unclear is settled by reading the mailbox or calendar, never by sending it again. A
+  near-duplicate of a recent message is refused unless you say otherwise.
+- **Unread stays unread.** Reading or filing mail leaves it unread unless you have chosen
+  otherwise.
+- **Audit.** Every write and every permission is recorded in an append-only, hash-chained audit
+  log that the harness verifies.
+- **Off limits.** Passwords, payments and accepting terms are refused whatever is granted.
+  Secrets live only in the operating system's credential store, and the data folder may never sit
+  inside the code checkout.
 
-- **Twelve typed tools instead of a large command set.** They work from the command line or as an
-  MCP server, and the same rules hold for any agent: Claude, Codex or another.
-- **The harness does the noticing.** Each scheduled pass and each chat starts with what actually
-  needs attention: new mail per card, due actions and reminders, calendar conflicts, sources that
-  stopped answering. Guidance is handed over at the moment it applies instead of in one long
-  prompt.
-- **Safer writes.** Every send, move, trash, mark-read and calendar change needs a permission
-  you can see and confirm in the viewer. Each write is dispatched exactly once and checked
-  afterwards; an uncertain write is settled by reading, never by sending it again. Everything
-  is audited.
-- **Bulk where it matters.** Filing, trashing and marking read move many messages in one write
+### 2. Integrated, streamlined and token-efficient
+
+The harness does the bookkeeping, so the agent spends its tokens on your mail, not on the tool:
+
+- **A small interface.** Twelve typed tools and a three-sentence prompt replace v1's large command
+  set and long instructions. They work from the command line or as an MCP server, so Claude, Codex
+  or any other agent gets the same rules.
+- **The harness does the noticing.** Each pass or chat starts with a short list of what needs
+  attention: new mail per card, due actions and reminders, calendar conflicts, sources that stopped
+  answering. Guidance arrives only when it applies, within fixed size budgets.
+- **Bulk, not one at a time.** Filing, trashing and marking read move many messages in one write
   and one check.
-- **A local viewer.** It shows the report of each pass, a calendar across all your accounts, the
-  permissions waiting for you, and reminders you acknowledge yourself.
-- **Mail clean-up, off by default.** Rules move old mail to Trash under one permission you
-  confirm.
-- **Conversation export.** A whole thread goes into one zip, with each attachment stored once.
-- **A live test.** It checks every capability end to end against your own mailboxes and calendars.
+- **One harness everywhere.** Thunderbird carries Gmail, Microsoft 365 and IMAP mail on Windows and
+  Mac. Google Calendar and iCloud are written directly; Microsoft 365 calendars go through
+  Thunderbird.
+- **One place to look.** The local viewer shows each pass's report, a calendar across every
+  account, the permissions waiting for you, and reminders you acknowledge yourself.
 - **Bounded storage.** Everything kept has an owner and an expiry, and a sweeper enforces both.
-- **Update notices** when a new version is tagged.
+
+### 3. Robustly tested, self-auditing, on fully supported tools
+
+- **Supported foundations.** v1 drove Classic Outlook through COM. Microsoft is replacing Classic
+  Outlook with the new Outlook for Windows, which has no COM automation, and Outlook on the Mac
+  offers little to automate. v2 rests on supported, documented interfaces instead: Thunderbird's
+  extension APIs, the Google Calendar API and the CalDAV standard.
+- **Tested in depth.** About 1,060 automated tests run on every change. They include contract
+  suites that hold the test doubles and the real Thunderbird add-on to the same promises, property
+  tests of the write state machine, and a checklist that maps each capability to the test proving
+  it.
+- **Tested for real.** `chamberlain live-test` exercises every capability end to end against your
+  own mailboxes and calendars: sends, replies, drafts, attachments, filing, trash and restore, lost
+  replies and calendar edits. It cleans up everything it made and reports a score.
+- **It checks itself.** `chamberlain doctor` verifies the audit chain, the schema, storage and the
+  health of every source. Sync gaps and stale sources are reported, never hidden. It can also
+  review how agents actually use the harness.
+
+### Also new
+
+- Mail clean-up rules, off by default.
+- Conversation export: one zip per thread, with each attachment stored once.
+- Update notices when a new version is tagged.
 
 ## Coming from v1
 
