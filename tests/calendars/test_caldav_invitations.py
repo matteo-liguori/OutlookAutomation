@@ -211,12 +211,10 @@ def test_w36_a_read_back_without_the_guests_is_not_verified(world: World) -> Non
     port, rig = world
     prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(GUEST), uid="lossy@t"), {})
     real = rig.transport.inner.send
-    seen: dict[str, bool] = {"stripped": False}
 
     def strip_guests(method: str, url: str, **kwargs: object):  # type: ignore[no-untyped-def]
         reply = real(method, url, **kwargs)  # type: ignore[arg-type]
-        if method == "GET" and reply.body and not seen["stripped"]:
-            seen["stripped"] = True
+        if method == "GET" and reply.body:
             lines = [
                 line
                 for line in reply.body.decode().replace("\r\n ", "").split("\r\n")
@@ -227,8 +225,9 @@ def test_w36_a_read_back_without_the_guests_is_not_verified(world: World) -> Non
 
     rig.transport.inner.send = strip_guests  # type: ignore[method-assign]
     result = port.dispatch(prepared, "k")
-    rig.transport.inner.send = real  # type: ignore[method-assign]
     assert result.outcome is DispatchOutcome.UNKNOWN
+    assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
+    rig.transport.inner.send = real  # type: ignore[method-assign]
     assert port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
 
 

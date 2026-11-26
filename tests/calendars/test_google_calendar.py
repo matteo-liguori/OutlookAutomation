@@ -158,6 +158,17 @@ def test_p16_private_appointment_round_trips_without_guests_or_notifications(wor
     assert all("sendUpdates" not in params for method, _, params in api.params if method != "GET")
 
 
+def test_p11_an_ambiguous_google_uid_never_selects_one_of_its_events(world: World) -> None:
+    port, api, _ = world
+    uid = "duplicate@t"
+    for _ in range(2):
+        api.seed(item("Event", "2027-03-01T10:00:00Z", "2027-03-01T10:30:00Z", iCalUID=uid))
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(), uid=uid), {})
+    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.NOT_APPLIED
+    assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
+    assert all(method == "GET" for method, _ in api.calls)
+
+
 def test_w10_server_errors_may_have_landed_client_errors_and_1_related_checks(
     world: World,
 ) -> None:

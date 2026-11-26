@@ -324,10 +324,7 @@ leave the connector in angle-bracket form (`<id>`) and enter the bridge bare.
 3. Read flag stability across `getFull`, attachment reads and moves on Gmail
    and Exchange.
 4. Outbox visibility for a queued send.
-5. Calendar (never run against a real Thunderbird): that
-   `calendar_api.js` loads under the target Thunderbird (`calUtils` and
-   `CalIcsParser` module paths); that `icalString` of an occurrence is the
-   occurrence and not its series; that `addItem`, `modifyItem` and `deleteItem`
-   on an Owl calendar complete and a read-back follows promptly; that
-   `icalString` is stable enough to serve as the etag across a restart; and
-   whether Owl exposes a last-synchronised time for `fresh_as_of`.
+5. Calendar: the KCL live test on 2026-11-26 loaded the helper, created a private Owl
+   event, updated it and deleted it, verifying each change through Thunderbird. The Owl
+   adapter reports freshness through the normal calendar port. Further checks cover
+   occurrence expansion and etag stability across a Thunderbird restart.

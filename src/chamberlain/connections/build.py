@@ -32,7 +32,6 @@ from chamberlain.connectors.thunderbird.calendar import (
     OwlCalendarConfig,
     ThunderbirdCalendar,
 )
-from chamberlain.connectors.thunderbird.calendar_bridge import ClientCalendarBridge
 from chamberlain.connectors.thunderbird.client import BridgeClient, RuntimeConnector
 from chamberlain.connectors.thunderbird.contacts import ContactsBinding, ThunderbirdContacts
 from chamberlain.connectors.thunderbird.mail import ThunderbirdBinding, ThunderbirdMail
@@ -114,7 +113,7 @@ def build_router(
                     sid: OwlBinding(calendar_id=s.calendar_id) for sid, s in owl_sources.items()
                 }
             ),
-            ClientCalendarBridge(client),
+            client,
             clock,
             freshness_store=OwlFreshnessStore(data_root / DB_NAME, clock),
         )

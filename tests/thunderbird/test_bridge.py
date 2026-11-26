@@ -19,8 +19,6 @@ from pathlib import Path
 import pytest
 
 from chamberlain.connectors.thunderbird import frames, native_host, protocol
-from chamberlain.connectors.thunderbird.calendar import CalendarBridgeFailure
-from chamberlain.connectors.thunderbird.calendar_bridge import ClientCalendarBridge
 from chamberlain.connectors.thunderbird.client import (
     BridgeClient,
     BridgeFailure,
@@ -659,7 +657,7 @@ def test_b10_calendar_availability_does_not_disturb_mail_handshake(tmp_path: Pat
             assert isinstance(a_status_call(env), protocol.StatusResult)
 
 
-# --- the calendar adapter over the client (CalendarBridge protocol) --------------------------
+# --- calendar commands use the same authenticated bridge as mail ----------------------------
 
 UPDATE_ARGS = {
     "kind": "update",
@@ -674,11 +672,10 @@ def test_b10_the_calendar_adapter_needs_the_capability_and_sends_nothing_without
     tmp_path: Path,
 ) -> None:
     with bridge(tmp_path, status_handler) as env:
-        adapter = ClientCalendarBridge(env.client)
+        adapter = env.client
         assert not adapter.hello().calendar_available
-        with pytest.raises(CalendarBridgeFailure) as raised:
-            adapter.request("calendar_list", {})
-        assert raised.value.proven_not_applied
+        with pytest.raises(BridgeFailure) as raised:
+            adapter.call(Command.CALENDAR_LIST, protocol.StatusArgs(), calendar=True)
         assert not raised.value.sent
         assert env.addon.received == []
 
@@ -690,27 +687,24 @@ def test_b10_the_calendar_adapter_keeps_the_bridges_words_about_mutation(tmp_pat
             addon.error(frame, BridgeErrorCode.CHANGED, "possible" if possible else "none")
 
     with bridge(tmp_path, refuse, calendar_available=True) as env:
-        adapter = ClientCalendarBridge(env.client)
+        adapter = env.client
         assert adapter.hello().calendar_available
-        with pytest.raises(CalendarBridgeFailure) as clean:
-            adapter.request("calendar_write", UPDATE_ARGS, write=True)
-        assert (clean.value.code, clean.value.sent, clean.value.mutation) == (
+        with pytest.raises(BridgeFailure) as clean:
+            adapter.call(
+                Command.CALENDAR_WRITE,
+                protocol.CalendarWriteArgs.model_validate(UPDATE_ARGS),
+                calendar=True,
+            )
+        assert (clean.value.bridge_code, clean.value.sent, clean.value.mutation) == (
             "changed",
             True,
             "none",
         )
-        assert clean.value.proven_not_applied
-        with pytest.raises(CalendarBridgeFailure) as unsure:
-            adapter.request("calendar_write", UPDATE_ARGS | {"event_id": "e2"}, write=True)
+        with pytest.raises(BridgeFailure) as unsure:
+            adapter.call(
+                Command.CALENDAR_WRITE,
+                protocol.CalendarWriteArgs.model_validate(UPDATE_ARGS | {"event_id": "e2"}),
+                calendar=True,
+            )
         assert unsure.value.mutation == "possible"
-        assert not unsure.value.proven_not_applied
-        with pytest.raises(CalendarBridgeFailure) as malformed:
-            adapter.request("calendar_write", {"calendar_id": "cal1"}, write=True)
-        assert not malformed.value.sent
-
-
-def test_b10_the_calendar_adapter_refuses_a_command_outside_the_list() -> None:
-    adapter = ClientCalendarBridge(BridgeClient(RuntimeConnector(Path("."))))
-    with pytest.raises(CalendarBridgeFailure) as raised:
-        adapter.request("eval", {"code": "1"})
-    assert not raised.value.sent
+        assert unsure.value.sent

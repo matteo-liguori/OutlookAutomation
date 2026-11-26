@@ -459,3 +459,9 @@ def _safe(code: BridgeErrorCode) -> str:
         BridgeErrorCode.INTERNAL: "The Thunderbird add-on failed.",
     }
     return texts[code]
+
+
+def typed[M: Model](reply: Reply, model: type[M]) -> M:
+    if not isinstance(reply.result, model):
+        raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Unexpected bridge result type.")
+    return reply.result

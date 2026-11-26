@@ -178,18 +178,8 @@ def event_of(source: str, item: Resource, fallback: datetime) -> CalendarEvent:
     )
 
 
-def refuse_if_unwritable(item: Resource, scope: str | None) -> None:
-    """Events with guests and special event types are never written, and a part of a series is
-    written only with the scope that names it (an instance: occurrence; the master: series)."""
-    part = (
-        "occurrence"
-        if item.get("recurringEventId")
-        else "series"
-        if item.get("recurrence")
-        else None
-    )
-    if scope != part:
-        raise _unsupported("a repeating event is written only with the scope that names it")
+def refuse_if_unwritable(item: Resource) -> None:
+    """Only the organiser can edit a normal Google event."""
     if is_invitee_copy(item):
         raise ChamberlainError(
             ErrorCode.CAPABILITY_UNSUPPORTED,

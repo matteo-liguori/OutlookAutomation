@@ -6,6 +6,7 @@ from typing import Final
 from pydantic import Field
 
 from chamberlain.connectors.thunderbird import protocol
+from chamberlain.connectors.thunderbird.client import typed
 from chamberlain.connectors.thunderbird.frames import CHUNK_BYTES
 from chamberlain.connectors.thunderbird.identity import (
     bare,
@@ -18,7 +19,6 @@ from chamberlain.connectors.thunderbird.mail_reads import (
     MailReads,
     ThunderbirdBinding,
     milliseconds,
-    typed,
 )
 from chamberlain.connectors.thunderbird.protocol import (
     AttachmentSpec,

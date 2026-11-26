@@ -8,9 +8,11 @@ from cal_radicale import RadicaleServer
 from cal_rigs import CalDavRig, FaultyTransport
 from test_caldav_contract import basic, build
 
-from chamberlain.connectors.caldav.calendar import CalDavCalendar
+from chamberlain.connectors.caldav.calendar import CalDavCalendar, resource_name
 from chamberlain.connectors.caldav.config import CalDavBinding, CalDavConfig
+from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.calendar_support.http import UrllibTransport
+from chamberlain.connectors.calendar_support.port import payload
 from chamberlain.domain.calendar import CalendarQuery, EventFields
 from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import CalendarCreate, CalendarDelete, CalendarUpdate
@@ -219,7 +221,7 @@ def test_p18_p16_odd_events_read_without_raising_and_1_related_checks(world: Wor
         all_day=True,
     )
     prepared = port.prepare(CalendarCreate(source=SOURCE, event=day, uid="allday@t"), {})
-    assert "DTSTART;VALUE=DATE:20270303" in str(prepared.data["ics"])
+    assert "DTSTART;VALUE=DATE:20270303" in str(payload(prepared)["ics"])
     result = port.dispatch(prepared, "k")
     assert result.outcome is DispatchOutcome.APPLIED
     assert result.receipt
@@ -303,3 +305,25 @@ def test_p27_an_all_day_series_with_an_until_is_verified_by_date(world: World) -
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.APPLIED
     assert port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
     assert len(port.events(SOURCE, window()).items) == 3
+
+
+@pytest.mark.parametrize(
+    "required",
+    [{"visibility": "private"}, {"recurrence": {"frequency": "daily", "count": 3, "zone": "UTC"}}],
+)
+def test_p27_create_reconcile_checks_requested_privacy_or_rule(
+    world: World, required: dict[str, object]
+) -> None:
+    port, rig = world
+    uid = "provider-lost-a-field@t"
+    wanted = EventFields.model_validate(fields().model_dump() | required)
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=wanted, uid=uid), {})
+    put(rig, resource_name(uid), ics.build_new(uid, fields(), rig.clock.now()))
+
+    assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
+
+    put(rig, resource_name(uid), ics.build_new(uid, wanted, rig.clock.now()))
+    found = port.reconcile(prepared, "k")
+    assert found.status is ReconcileStatus.PRESENT
+    assert found.receipt is not None
+    assert found.receipt.verification.server_verified

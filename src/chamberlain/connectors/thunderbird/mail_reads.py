@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Final
 
 from chamberlain.connectors.thunderbird import protocol
-from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, Reply
+from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, typed
 from chamberlain.connectors.thunderbird.identity import (
     MessageLocator,
     bare,
@@ -90,12 +90,6 @@ class MailLimits:
 @dataclass
 class _Freshness:
     until: datetime | None = None
-
-
-def typed[M: Model](reply: Reply, model: type[M]) -> M:
-    if not isinstance(reply.result, model):
-        raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Unexpected bridge result type.")
-    return reply.result
 
 
 class _Cursor(Model):

@@ -105,6 +105,7 @@ def test_w36_a_read_back_without_the_guests_is_not_verified(world: World) -> Non
     api.send = drop_guests  # type: ignore[method-assign]
     prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(GUEST), uid="lossy@t"), {})
     assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
+    assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
 
 
 def test_w8_an_invitation_that_never_landed_is_proven_absent_and_a_repeat_is_refused(

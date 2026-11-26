@@ -25,7 +25,6 @@ from chamberlain.connectors.thunderbird.calendar import (
     OwlCalendarConfig,
     ThunderbirdCalendar,
 )
-from chamberlain.connectors.thunderbird.calendar_bridge import ClientCalendarBridge
 from chamberlain.connectors.thunderbird.client import BridgeClient, RuntimeConnector
 from chamberlain.connectors.thunderbird.contacts import ContactsBinding, ThunderbirdContacts
 from chamberlain.connectors.thunderbird.identity import (
@@ -274,7 +273,7 @@ class Stack:
     def calendar_for(self, calendar_id: str) -> ThunderbirdCalendar:
         return ThunderbirdCalendar(
             OwlCalendarConfig(bindings={"calendar:test": OwlBinding(calendar_id=calendar_id)}),
-            ClientCalendarBridge(self.client),
+            self.client,
             self.clock,
         )
 

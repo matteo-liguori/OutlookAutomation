@@ -7,11 +7,15 @@ from typing import Any
 from pydantic import JsonValue
 
 from chamberlain.connectors.fake.world import Fault
-from chamberlain.connectors.thunderbird.calendar import BridgeHello, CalendarBridgeFailure, Json
+from chamberlain.connectors.thunderbird import protocol as wire
+from chamberlain.connectors.thunderbird.calendar import Json
+from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, Reply
 from chamberlain.ports.clock import ManualClock
+from chamberlain.schema.base import Model
+from chamberlain.schema.errors import ErrorCode
 
 
-class FakeCalendarBridge:
+class FakeCalendarBridge(BridgeClient):
     def __init__(
         self,
         clock: ManualClock,
@@ -51,19 +55,46 @@ class FakeCalendarBridge:
 
     # --- the bridge -----------------------------------------------------------
 
-    def hello(self) -> BridgeHello:
+    def hello(self) -> wire.Welcome:
         if self.offline:
-            raise CalendarBridgeFailure("not_connected", sent=False)
-        return BridgeHello(self.version, self.calendar_available)
+            raise BridgeFailure(ErrorCode.SOURCE_UNAVAILABLE, "not connected", sent=False)
+        return wire.Welcome(
+            v=self.version,
+            id="calendar_test",
+            host_version="test",
+            addon_version="test",
+            calendar_available=self.calendar_available,
+        )
+
+    def call(
+        self,
+        cmd: wire.Command,
+        args: Model,
+        *,
+        payloads: Mapping[str, bytes] | None = None,
+        calendar: bool = False,
+    ) -> Reply:
+        assert calendar
+        data = self.request(
+            cmd.value,
+            args.model_dump(mode="json", exclude_none=True),
+            write=cmd in wire.WRITE_COMMANDS,
+        )
+        return Reply(wire.parse_result(cmd, data))
 
     def request(self, cmd: str, args: Mapping[str, JsonValue], *, write: bool = False) -> Json:
         self.requests.append((cmd, write))
         if self.offline:
-            raise CalendarBridgeFailure("not_connected", sent=False)
+            raise BridgeFailure(ErrorCode.SOURCE_UNAVAILABLE, "not connected", sent=False)
         if args.get("calendar_id", self.calendar_id) != self.calendar_id:
-            raise CalendarBridgeFailure("not_found", "no such calendar", sent=True)
+            raise BridgeFailure(ErrorCode.REQUEST_UNKNOWN_HANDLE, "no such calendar", sent=True)
         if cmd == "status":
-            return {"write_busy": bool(self._late)}
+            return {
+                "write_busy": bool(self._late),
+                "addon_version": "test",
+                "browser_version": "test",
+                "calendar_available": True,
+            }
         if cmd == "calendar_list":
             entry: Json = {
                 "id": self.calendar_id,
@@ -120,7 +151,7 @@ class FakeCalendarBridge:
         def apply() -> Json:
             if cmd == "create":
                 if event_id in self.items:
-                    raise CalendarBridgeFailure("changed", "exists", sent=True)
+                    raise BridgeFailure(ErrorCode.REMOTE_CHANGED, "exists", sent=True)
                 actual = self.generated_uid or event_id
                 self.items[actual] = str(args["icalendar"]).replace(
                     f"UID:{event_id}\r\n", f"UID:{actual}\r\n", 1
@@ -128,7 +159,7 @@ class FakeCalendarBridge:
                 return {"item": self._item(actual)}
             else:
                 if self.items.get(event_id) != args["expected_icalendar"]:
-                    raise CalendarBridgeFailure("changed", "edited", sent=True)
+                    raise BridgeFailure(ErrorCode.REMOTE_CHANGED, "edited", sent=True)
                 if cmd == "update":
                     self.items[event_id] = str(args["icalendar"])
                 else:
@@ -138,26 +169,32 @@ class FakeCalendarBridge:
         def late() -> None:
             try:
                 apply()
-            except CalendarBridgeFailure:
+            except BridgeFailure:
                 return
 
         if Fault.BUSY_BEFORE_APPLY in self._armed:
             self._armed.remove(Fault.BUSY_BEFORE_APPLY)
-            raise CalendarBridgeFailure("busy", sent=True, mutation="none")
+            raise BridgeFailure(ErrorCode.SOURCE_BUSY, "busy", sent=True, mutation="none")
         if Fault.LOSE_BEFORE_APPLY in self._armed:
             self._armed.remove(Fault.LOSE_BEFORE_APPLY)
-            raise CalendarBridgeFailure("timeout", sent=True, mutation="possible")
+            raise BridgeFailure(
+                ErrorCode.SOURCE_UNAVAILABLE, "timeout", sent=True, mutation="possible"
+            )
         if Fault.SLOW in self._armed:
             self._armed.remove(Fault.SLOW)
             self._late.append((self.clock.now() + timedelta(seconds=self.deadline + 60), late))
             self.clock.advance(seconds=self.deadline + 1)
-            raise CalendarBridgeFailure("timeout", sent=True, mutation="possible")
+            raise BridgeFailure(
+                ErrorCode.SOURCE_UNAVAILABLE, "timeout", sent=True, mutation="possible"
+            )
         try:
             result = apply()
-        except CalendarBridgeFailure as failure:
+        except BridgeFailure as failure:
             failure.mutation = "none"
             raise
         if Fault.LOSE_RESPONSE_AFTER_APPLY in self._armed:
             self._armed.remove(Fault.LOSE_RESPONSE_AFTER_APPLY)
-            raise CalendarBridgeFailure("timeout", sent=True, mutation="possible")
+            raise BridgeFailure(
+                ErrorCode.SOURCE_UNAVAILABLE, "timeout", sent=True, mutation="possible"
+            )
         return result

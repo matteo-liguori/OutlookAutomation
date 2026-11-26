@@ -8,13 +8,15 @@ from cal_bridge import FakeCalendarBridge
 from cal_owl_rig import OwlRig
 
 from chamberlain.connectors.calendar_support import ics
+from chamberlain.connectors.calendar_support.port import payload
 from chamberlain.connectors.fake.world import Fault
 from chamberlain.connectors.thunderbird.calendar import (
-    CalendarBridgeFailure,
+    OwlBackend,
     OwlBinding,
     OwlCalendarConfig,
     ThunderbirdCalendar,
 )
+from chamberlain.connectors.thunderbird.client import BridgeFailure
 from chamberlain.domain.calendar import CalendarQuery, EventFields
 from chamberlain.domain.capabilities import CapabilityName
 from chamberlain.domain.handles import HandleKind, ref_handle
@@ -207,7 +209,7 @@ def test_p16_provider_created_id_is_the_locator_for_update_and_delete() -> None:
     assert refused.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
     bridge.own_appointments.add(current.locator)
     updated = port.prepare(intent, refs)
-    assert updated.data["expected_icalendar"] == bridge.items[current.locator]
+    assert payload(updated)["expected_icalendar"] == bridge.items[current.locator]
     assert port.dispatch(updated, "update").outcome is DispatchOutcome.APPLIED
     after = port.read(SOURCE, current.locator)
     assert after.fields.title == "Updated"
@@ -309,12 +311,14 @@ def test_p4_paging_through_the_limit_is_not_reported_as_a_coverage_gap() -> None
 
 def test_private_freshness_probe_and_lost_create_recovery() -> None:
     port, bridge, _ = build()
+    backend = port.backend
+    assert isinstance(backend, OwlBackend)
     token = "a" * 32
-    assert port.probe(SOURCE, token)
+    assert backend.probe(SOURCE, token)
     assert [cmd for cmd, write in bridge.requests if write] == ["calendar_write"] * 2
     bridge.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
-    with pytest.raises(CalendarBridgeFailure):
-        port.probe(SOURCE, token)
+    with pytest.raises(BridgeFailure):
+        backend.probe(SOURCE, token)
     uid = f"chamberlain-freshness-{token}@chamberlain.local"
     recovered = port.read(SOURCE, uid)
     assert recovered.fields.visibility == "private"
@@ -322,8 +326,8 @@ def test_private_freshness_probe_and_lost_create_recovery() -> None:
     # Exchange may have assigned a new UID before the create reply was lost.
     del bridge.items[uid]
     bridge.items["exchange-uid"] = ics.build_new("exchange-uid", recovered.fields, START)
-    assert port.probe(SOURCE, token, cleanup_only=True)
+    assert backend.probe(SOURCE, token, cleanup_only=True)
     assert not bridge.items
     written = sum(write for _, write in bridge.requests)
-    assert port.probe(SOURCE, token, cleanup_only=True)
+    assert backend.probe(SOURCE, token, cleanup_only=True)
     assert sum(write for _, write in bridge.requests) == written
