@@ -11,12 +11,15 @@ from collections import defaultdict
 from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
+from chamberlain.attention import repo as attention_repo
+from chamberlain.domain.grants import GrantState
 from chamberlain.domain.operations import OUTSIDE_STATE_WORDS
 from chamberlain.domain.timefmt import parse
 from chamberlain.runs import appointments
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs.models import RunRow
 from chamberlain.store.migrate import stamp
+from chamberlain.writes import repo as writes_repo
 
 HEALTH_TEXT = {
     "stale": "its data may be out of date",
@@ -56,7 +59,11 @@ class Facts:
         self.sources = repo.source_facts(ctx.db)
         self.filing = repo.filing_facts(ctx.db, self.since)
         self.outside = repo.outside_facts(ctx.db, self.since)
-        self.unsynced = repo.sync_failures(ctx.db)
+        self.unsynced: dict[str, list[str]] = {}
+        for source, folder in attention_repo.sync_failures(ctx.db):
+            self.unsynced.setdefault(source, []).append(folder.name)
+        for names in self.unsynced.values():
+            names.sort()
         self.gaps: list[str] = []
         """Reasons the pass is only partly verified, filled by the builders."""
 
@@ -121,7 +128,7 @@ def permission_reviews(facts: Facts) -> str:
         f"{when(g.review_at, facts.zone)}. Keep, change or revoke it in the viewer under Grants."
         for g in repo.grants_due_for_review(facts.ctx.db, facts.now)
     ]
-    waiting = repo.count_grants_in_state(facts.ctx.db, "proposed")
+    waiting = len(writes_repo.grants_in_states(facts.ctx.db, [GrantState.PROPOSED]))
     if waiting:
         lines.append(
             f"- {waiting} proposed permission(s) wait for you to confirm them in the viewer."

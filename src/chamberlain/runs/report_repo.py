@@ -72,16 +72,6 @@ def source_facts(db: sqlite3.Connection) -> list[SourceFact]:
     ]
 
 
-def sync_failures(db: sqlite3.Connection) -> dict[str, list[str]]:
-    """Mail folders that would not sync at the last try, by source (attention's table)."""
-    found: dict[str, list[str]] = {}
-    for r in db.execute(
-        "SELECT source_id, name FROM mail_sync_folders WHERE failure <> '' ORDER BY source_id, name"
-    ):
-        found.setdefault(r["source_id"], []).append(r["name"])
-    return found
-
-
 @dataclass(frozen=True)
 class FilingFact:
     source: str
@@ -147,40 +137,6 @@ def grants_due_for_review(db: sqlite3.Connection, now: str) -> list[ReviewGrant]
         (now,),
     )
     return [ReviewGrant(r["handle"], r["title"], r["source_id"], r["review_at"]) for r in rows]
-
-
-def count_grants_in_state(db: sqlite3.Connection, state: str) -> int:
-    return int(db.execute("SELECT count(*) FROM grants WHERE state = ?", (state,)).fetchone()[0])
-
-
-# --- important appointments: open actions whose title starts with "Important" -------------------
-
-
-@dataclass(frozen=True)
-class AppointmentRow:
-    action: str
-    card: str
-    card_title: str
-    title: str
-    start: str
-    snooze_until: str | None
-
-
-def appointment_rows(db: sqlite3.Connection, now: str) -> list[AppointmentRow]:
-    """Open dated actions on open cards, marked important, that have not started yet."""
-    rows = db.execute(
-        "SELECT a.handle, a.card, c.title AS card_title, a.title, a.due_at, a.snooze_until "
-        "FROM actions a JOIN cards c ON c.handle = a.card "
-        "WHERE a.state = 'open' AND c.state = 'open' AND a.due_at IS NOT NULL AND a.due_at > ? "
-        "AND a.important = 1 ORDER BY a.due_at, a.handle",
-        (now,),
-    )
-    return [
-        AppointmentRow(
-            r["handle"], r["card"], r["card_title"], r["title"], r["due_at"], r["snooze_until"]
-        )
-        for r in rows
-    ]
 
 
 # --- local events the owner adds in the viewer ---------------------------------------------------
