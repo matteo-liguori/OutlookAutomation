@@ -128,9 +128,6 @@ class Lab:
         self.handles.add(handle)
         self.run_handles.add(handle)
 
-    def skip(self, reason: str) -> None:
-        raise ScenarioSkip(reason)
-
     def check(self, condition: bool, message: str) -> None:
         if not condition:
             raise ScenarioFailure(message)
@@ -180,7 +177,7 @@ class Lab:
                 return found
             if waited >= limit:
                 raise ScenarioFailure(f"{what} did not happen within {limit} seconds")
-            self.env.waiter.sleep(POLL_SECONDS)
+            self.env.sleep(POLL_SECONDS)
             waited += POLL_SECONDS
 
     # --- mail -----------------------------------------------------------------------
@@ -192,7 +189,7 @@ class Lab:
         data = self.ok("find", **request)
         # Thunderbird reports a reply's subject without its "Re:" (found live, 2026-11-25).
         wanted = strip_reply_prefix(query)
-        found = [hit for hit in data.get("hits", []) if wanted in _line(hit)]
+        found = [hit for hit in data.get("hits", []) if wanted in text_of(hit)]
         for hit in found:
             self.track(str(hit["handle"]))
         return found
@@ -467,14 +464,6 @@ def text_of(item: JSON) -> str:
     if isinstance(content, dict):
         return str(cast("JSON", content).get("text", ""))
     return ""
-
-
-def _line(hit: JSON) -> str:
-    return text_of(hit)
-
-
-def hit_line(hit: JSON) -> str:
-    return _line(hit)
 
 
 def _source_of(lab: Lab, handle: str) -> str:

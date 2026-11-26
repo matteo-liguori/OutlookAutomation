@@ -75,7 +75,7 @@ ban-relative-imports = "all"
 [tool.pyright]
 include = ["src", "tests"]
 strict = ["src", "tests/support"]
-extraPaths = ["tests"]
+extraPaths = ["src", "tests"]
 pythonVersion = "3.12"
 typeCheckingMode = "standard"
 venvPath = "."

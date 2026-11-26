@@ -6,7 +6,6 @@ Inbox of every fake mailbox that owns a recipient address, with the reply header
 server would keep. Nothing in this module touches a real account.
 """
 
-import inspect
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +20,7 @@ from chamberlain.connectors.fake import FakeProvider, Fault
 from chamberlain.domain.intents import IntentKind, MailIntent
 from chamberlain.domain.operations import DispatchResult, Prepared
 from chamberlain.livetest.config import LiveCalendar, LiveMailbox, LivePair, LiveTestConfig
-from chamberlain.livetest.env import ClockWaiter, Environment, PortProbe
+from chamberlain.livetest.env import Environment, PortProbe
 from chamberlain.ports.clock import ManualClock
 from chamberlain.ports.mail import MailPort
 from chamberlain.store.db import transaction
@@ -114,7 +113,7 @@ class FakeFaultInjector:
     def arm_lost_response(self, run_id: str) -> None:
         self._provider.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
 
-    def fired(self, run_id: str) -> bool:
+    def fired(self) -> bool:
         return not self._provider.world.armed(Fault.LOSE_RESPONSE_AFTER_APPLY)
 
     def disarm(self) -> None:
@@ -135,15 +134,6 @@ class FakeLab:
 
     def close(self) -> None:
         self.app.close()
-
-
-def _calendar_source(provider: FakeProvider, source: str, address: str) -> None:
-    """Give the fake calendar an owner address when this fake world supports it."""
-    add: Any = provider.calendar.add_source
-    if "address" in inspect.signature(add).parameters:
-        add(source, address=address)
-    else:
-        add(source)
 
 
 def _bindings(config: LiveTestConfig) -> Connections:
@@ -176,8 +166,8 @@ def build_fake_lab(root: Path, *, approve_calendar_edits: bool = True) -> FakeLa
     provider = FakeProvider(clock)
     for source in (FAKE_MAIL_A, FAKE_MAIL_B):
         provider.mail.add_source(source)
-    _calendar_source(provider, FAKE_CAL_A, ADDRESS_A)
-    _calendar_source(provider, FAKE_CAL_B, ADDRESS_B)
+    provider.calendar.add_source(FAKE_CAL_A, address=ADDRESS_A)
+    provider.calendar.add_source(FAKE_CAL_B, address=ADDRESS_B)
     owners = {ADDRESS_A: FAKE_MAIL_A, ADDRESS_B: FAKE_MAIL_B}
     delivery = DeliveringMail(provider, owners)
     mail = cast(MailPort, delivery)
@@ -208,7 +198,7 @@ def build_fake_lab(root: Path, *, approve_calendar_edits: bool = True) -> FakeLa
     env = Environment(
         mode="fake",
         clock=clock,
-        waiter=ClockWaiter(lambda seconds: clock.advance(seconds=seconds)),
+        sleep=lambda seconds: clock.advance(seconds=seconds),
         faults=FakeFaultInjector(provider),
         probe=PortProbe(app.context),
         dispatches=lambda: len(provider.dispatch_log),

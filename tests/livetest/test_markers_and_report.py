@@ -5,7 +5,7 @@ import os
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from chamberlain.livetest.markers import MARKER, carries_marker, new_run_id, run_of, subject_for
+from chamberlain.livetest.markers import MARKER, carries_marker, new_run_id, run_marker, run_of
 from chamberlain.livetest.model import RunReport, ScenarioResult, Status, compute_score
 from chamberlain.livetest.report import (
     markdown,
@@ -39,7 +39,7 @@ def test_only_a_subject_that_opens_with_the_marker_carries_it() -> None:
         assert carries_marker(subject) is expected, subject
     first = new_run_id(datetime(2026, 11, 24, 15, 30, tzinfo=UTC), "ab12ffff")
     assert first == RUN
-    assert run_of(subject_for(first, "self_send x")) == first
+    assert run_of(f"{run_marker(first)} self_send x") == first
 
 
 def result(id_: str, status: Status, reason: str = "") -> ScenarioResult:

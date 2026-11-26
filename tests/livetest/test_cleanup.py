@@ -59,7 +59,7 @@ def test_keep_leaves_items_and_sweep_removes_only_marked_mail(lab: FakeLab) -> N
     assert result.mail_removed >= 3
     assert not result.problems
     assert sorted(live_messages(lab, FAKE_MAIL_A)) == sorted(LOOKALIKES)
-    assert lab.env.faults.fired(OLD_RUN)  # a pending fault was disarmed
+    assert lab.env.faults.fired()  # a pending fault was disarmed
 
 
 @pytest.mark.parametrize("already_uncertain", [False, True])
