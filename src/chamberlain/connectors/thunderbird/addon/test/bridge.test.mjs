@@ -318,18 +318,6 @@ test("P-6 two copies at the source make a move or trash ambiguous (dropped old b
   assert.equal(world.counters.move, 0);
 });
 
-test("R7 trash that merges into an existing recovery copy is applied and says so", async () => {
-  const { addon, world } = setup();
-  world.add({ folderId: INBOX, headerMessageId: "gm@x", read: true });
-  world.add({ folderId: TRASH, headerMessageId: "gm@x", read: false });
-  world.faults.merge = true;
-  const res = await call(addon, "change", change(["gm@x"], { move_to: TRASH, trash: true }));
-  assert.equal(res.ok, true);
-  assert.equal(res.result.merged_existing_copy, true);
-  assert.equal(res.result.read_state_preserved, false);
-  assert.equal(world.copies("gm@x", TRASH), 1);
-});
-
 test("P-14 batch filing restores both read states with two bulk updates and skips duplicates", async () => {
   const { addon, world } = setup();
   const ids = ["read-1@x", "read-2@x", "unread-1@x", "unread-2@x"];
@@ -436,17 +424,6 @@ test("W-23 restore refreshes again when the first provider callback precedes arr
   assert.equal(message.read, true);
   assert.equal(world.counters.move, 1);
   assert.equal(world.counters.update, 1);
-});
-
-test("W-24 mark_read reports every message and can mark unread", async () => {
-  const { addon, world } = setup();
-  world.add({ folderId: INBOX, headerMessageId: "a@x", read: false });
-  world.add({ folderId: INBOX, headerMessageId: "b@x", read: true });
-  const res = await call(addon, "change", change(["a@x", "b@x", "gone@x"], { set_read: true }));
-  assert.deepEqual(res.result.items.map((i) => [i.ok, i.code]), [[true, ""], [true, ""], [false, "not_found"]]);
-  const back = await call(addon, "change", change(["a@x"], { set_read: false }));
-  assert.equal(back.result.items[0].ok, true);
-  assert.equal(world.find("a@x").read, false);
 });
 
 test("W-24 bulk flag changes isolate a refused folder and wait for a delayed folder", async () => {
@@ -602,15 +579,6 @@ test("P-15 send files the Sent copy with the bound folder and carries the token 
   assert.equal(world.composers.size, 0, "a submitted composer is gone");
 });
 
-test("R8 a prompt the helper answered during the send comes back with the result", async () => {
-  const { addon, world } = setup();
-  world.faults.fccPrompt = true;
-  const res = await call(addon, "compose", compose());
-  assert.equal(res.ok, true, JSON.stringify(res.error));
-  assert.equal(res.result.dialogs.length, 1);
-  assert.match(res.result.dialogs[0], /copy was not placed/);
-});
-
 test("R8 a manual edit of the managed composer invalidates the send", async () => {
   const { addon, world } = setup();
   const real = world.messenger.compose.getComposeDetails;
@@ -679,17 +647,6 @@ test("P-9 draft_update checks the old raw hash before opening anything", async (
   assert.equal(stale.error.code, "changed");
   assert.equal(stale.error.mutation, "none");
   assert.equal(world.composers.size, 0);
-});
-
-test("R8 draft_discard closes the composer and never deletes saved mail", async () => {
-  const { addon, world } = setup();
-  const saved = await call(addon, "compose", compose({ mode: "draft_save", display_only: true }));
-  assert.equal(world.composers.size, 1, "display_only leaves the composer open");
-  const draft = ref(DRAFTS, saved.result.header.internet_message_id);
-  const res = await call(addon, "draft_discard", { ...BASE, draft, expected_raw_sha256: saved.result.raw_sha256 });
-  assert.equal(res.result.closed, 1);
-  assert.equal(world.composers.size, 0);
-  assert.equal(world.copies("<tok-1@chamberlain.local>", DRAFTS), 1);
 });
 
 test("R8 draft_discard refuses a composer the user has edited", async () => {

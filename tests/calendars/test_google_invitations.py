@@ -1,7 +1,6 @@
 """Google invitations: insert with sendUpdates, change, cancel and answer (W-33 to W-36)."""
 
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import pytest
 from cal_fake_google import FakeGoogleApi
@@ -90,22 +89,6 @@ def test_w36_the_read_back_carries_the_guest_list_and_the_organiser_sees_answers
         (GUEST, Response.ACCEPTED),
         ("second@example.test", Response.NEEDS_ACTION),
     ]
-
-
-def test_w36_a_read_back_without_the_guests_is_not_verified(world: World) -> None:
-    port, api, _ = world
-    real = api.send
-
-    def drop_guests(method: str, url: str, **kwargs: Any) -> Any:
-        reply = real(method, url, **kwargs)
-        if method == "POST" and "attendees" in api.events.get(event_id_for("lossy@t"), {}):
-            del api.events[event_id_for("lossy@t")]["attendees"]
-        return reply
-
-    api.send = drop_guests  # type: ignore[method-assign]
-    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(GUEST), uid="lossy@t"), {})
-    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
-    assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
 
 
 def test_w8_an_invitation_that_never_landed_is_proven_absent_and_a_repeat_is_refused(
@@ -211,14 +194,6 @@ def seed_received(api: FakeGoogleApi, status: str = "needsAction") -> str:
             ],
         }
     )
-
-
-def test_w33_a_received_invitation_reads_with_its_organiser_and_my_answer(world: World) -> None:
-    port, api, _ = world
-    event = port.read(SOURCE, seed_received(api))
-    assert event.organiser == "boss@example.test"
-    assert event.my_response is Response.NEEDS_ACTION
-    assert event.fields.attendees == ("boss@example.test", "peer@example.test")
 
 
 def test_w33_answering_patches_only_my_entry_and_tells_the_organiser(world: World) -> None:

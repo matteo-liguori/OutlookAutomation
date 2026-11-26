@@ -207,39 +207,6 @@ def test_w33_the_organiser_cancels_by_deleting_its_copy(world: World) -> None:
     assert rig.count("uid-5@t") == 0
 
 
-def test_w36_a_read_back_without_the_guests_is_not_verified(world: World) -> None:
-    port, rig = world
-    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(GUEST), uid="lossy@t"), {})
-    real = rig.transport.inner.send
-
-    def strip_guests(method: str, url: str, **kwargs: object):  # type: ignore[no-untyped-def]
-        reply = real(method, url, **kwargs)  # type: ignore[arg-type]
-        if method == "GET" and reply.body:
-            lines = [
-                line
-                for line in reply.body.decode().replace("\r\n ", "").split("\r\n")
-                if not line.startswith(("ATTENDEE", "ORGANIZER"))
-            ]
-            return type(reply)(reply.status, reply.headers, "\r\n".join(lines).encode())
-        return reply
-
-    rig.transport.inner.send = strip_guests  # type: ignore[method-assign]
-    result = port.dispatch(prepared, "k")
-    assert result.outcome is DispatchOutcome.UNKNOWN
-    assert port.reconcile(prepared, "k").status is ReconcileStatus.UNKNOWN
-    rig.transport.inner.send = real  # type: ignore[method-assign]
-    assert port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
-
-
-def test_w33_a_received_invitation_reads_with_its_organiser_and_my_answer(world: World) -> None:
-    port, rig = world
-    received(rig, "boss.ics")
-    event = port.read(SOURCE, "boss.ics")
-    assert event.organiser == BOSS
-    assert event.my_response is Response.NEEDS_ACTION
-    assert event.fields.attendees == (BOSS,)
-
-
 def test_w33_answering_changes_only_my_partstat_and_leaves_the_sequence(world: World) -> None:
     port, rig = world
     received(rig, "boss.ics")

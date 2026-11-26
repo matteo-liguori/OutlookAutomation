@@ -370,7 +370,8 @@ class MailPortContract:
         prepared = self._prepare_send(rig, message_id)
         _need(rig, Fault.LOSE_RESPONSE_AFTER_APPLY)
         assert rig.port.dispatch(prepared, "k-send-lost", {}).outcome is DispatchOutcome.UNKNOWN
-        assert rig.port.reconcile(prepared, "k-send-lost").status is ReconcileStatus.PRESENT
+        for _ in range(2):
+            assert rig.port.reconcile(prepared, "k-send-lost").status is ReconcileStatus.PRESENT
         assert rig.copies(message_id, rig.folder_id(FolderRole.SENT)) == 1
 
     def test_p12_send_absence_is_proven_only_where_declared(self, rig: MailRig) -> None:

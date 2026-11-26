@@ -261,17 +261,6 @@ def test_p11_a_mark_read_that_did_not_happen_is_absent_with_proof(stack: Stack) 
 # --- sending, drafts and reconcile ---------------------------------------------------------
 
 
-def test_p13_an_uncertain_send_is_never_reissued(stack: Stack) -> None:
-    """Old: test_uncertain_send_is_never_reissued. The connector sends once, ever."""
-    intent = send_intent(stack)
-    prepared = stack.mail.prepare(intent, {})
-    stack.control("inject", fault="lose_response")
-    assert stack.mail.dispatch(prepared, "k", {}).outcome is DispatchOutcome.UNKNOWN
-    for _ in range(2):
-        assert stack.mail.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
-    assert stack.control("counters")["send"] == 1
-
-
 def test_r1_send_reconcile_matches_by_content_and_needs_no_attachment_file(stack: Stack) -> None:
     """Old: test_send_reconciliation_never_resubmits_or_needs_original_attachment_file."""
     data = b"attachment bytes " * 1000

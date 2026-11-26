@@ -4,12 +4,15 @@ Rules: docs/contracts/05-grants.md (G-13, G-14, G-15, G-18, G-19).
 """
 
 import json
+import logging
 from typing import Any
 
+import pytest
 from viewer_rig import Rig
 
 from chamberlain.domain.grants import GrantState, StandingScope
 from chamberlain.domain.intents import IntentKind
+from chamberlain.domain.operations import OperationState
 from chamberlain.schema.registry import TOOLS
 from chamberlain.writes import repo
 
@@ -48,6 +51,8 @@ def test_g19_the_viewer_shows_the_exact_content_a_wrong_hash_is_409_and_the_righ
     assert done.status == 200
     assert done.body["state"] == "active"
     assert repo.known_recipients(rig.ctx.db, "mail:test") == {"stranger@example.org"}
+    assert proposal.operation is not None
+    assert rig.engine().do(proposal.operation.handle).state is OperationState.CONFIRMED
     activated = [r for r in repo.audit_rows(rig.ctx.db) if r.kind == "grant.activated"][-1]
     assert activated.actor == "human:viewer"
     row = rig.rows("SELECT confirmed_via FROM grants WHERE handle = ?", handle)[0]
@@ -70,6 +75,11 @@ def test_g19_decline_revoke_and_keep_are_audited_as_the_human(rig: Rig) -> None:
     rig.call("POST", f"/api/grants/{handle}/confirm", {"content_sha256": second.content_sha256})
     assert rig.call("POST", f"/api/grants/{handle}/keep", {}).body["state"] == "active"
     assert rig.call("POST", f"/api/grants/{handle}/revoke", {}).body["state"] == "revoked"
+    assert rig.call("POST", f"/api/grants/{handle}/revoke", {}).status == 409
+    shown = rig.call("GET", f"/api/grants/{handle}").body
+    assert shown["scope"]["recipients"] == ["b@example.org"]
+    assert shown["content_sha256"] == second.content_sha256
+    assert "At most 3 a day" in shown["rendered"]
     actors = {
         r.actor
         for r in repo.audit_rows(rig.ctx.db)
@@ -109,7 +119,10 @@ def test_g14_nothing_the_agent_can_call_activates_a_human_only_grant(rig: Rig) -
     assert not {n for n in names if "confirm" in n or "grant" in n or "viewer" in n}
 
 
-def test_g18_the_token_is_in_no_tool_reply_no_audit_row_and_no_viewer_reply(rig: Rig) -> None:
+def test_g18_the_token_is_in_no_tool_reply_no_audit_row_and_no_viewer_reply(
+    rig: Rig, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG)
     proposal = rig.proposal()
     handle = proposal.grant.handle  # type: ignore[union-attr]
     started = rig.app.call("start", {"agent": "agent"})
@@ -124,8 +137,13 @@ def test_g18_the_token_is_in_no_tool_reply_no_audit_row_and_no_viewer_reply(rig:
         replies.append(rig.app.call(tool, {"session": session, **request}).model_dump(mode="json"))
     for path in ("/api/grants", f"/api/grants/{handle}", "/api/overview", "/api/activity"):
         replies.append(rig.call("GET", path).body)
+    confirm = f"/api/grants/{handle}/confirm"
+    replies.append(rig.call("POST", confirm, {"content_sha256": "0" * 64}).body)
+    replies.append(rig.call("POST", confirm, {"content_sha256": proposal.content_sha256}).body)
+    replies.append(rig.call("POST", f"/api/grants/{handle}/keep", {}, token=None).body)
     rig.call("GET", "/api/overview", token="x" + rig.token)
     assert rig.token not in json.dumps(replies)
+    assert rig.token not in caplog.text
     dump = " ".join(
         " ".join(str(v) for v in tuple(row))
         for row in rig.ctx.db.execute("SELECT * FROM audit_log")
