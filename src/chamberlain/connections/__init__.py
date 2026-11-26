@@ -6,8 +6,8 @@ from chamberlain.connections.load import (
     load_connections,
     parse_connections,
     profile_path,
-    render_redacted,
     save_connections,
+    to_document,
 )
 from chamberlain.connections.model import Connections
 
@@ -21,6 +21,6 @@ __all__ = [
     "parse_connections",
     "policy_of",
     "profile_path",
-    "render_redacted",
     "save_connections",
+    "to_document",
 ]

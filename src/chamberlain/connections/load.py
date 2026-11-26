@@ -12,6 +12,7 @@ import tempfile
 from codecs import BOM_UTF8
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import yaml
@@ -167,7 +168,7 @@ def add_test_calendar(data_root: Path, source: str) -> Path | None:
 
 
 def to_document(connections: Connections) -> dict[str, Any]:
-    """The plain-data form that is written to disk and shown by `config show`."""
+    """The plain-data form that is written to disk and shown by `config show` (no secret)."""
     return connections.model_dump(mode="json", exclude_none=True)
 
 
@@ -177,22 +178,19 @@ def dump_connections(connections: Connections) -> str:
     )
 
 
+def atomic_write(path: Path, text: str, *, newline: str | None = None) -> None:
+    """Write `text` beside `path`, then rename it into place."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    pending = path.with_name(f"{path.name}.{uuid4().hex}.tmp")
+    pending.write_text(text, encoding="utf-8", newline=newline)
+    os.replace(pending, path)
+
+
 def save_connections(data_root: Path, connections: Connections) -> bool:
     """Write the profile atomically. False when the file already holds exactly this text."""
     path = profile_path(data_root)
     text = dump_connections(connections)
     if path.is_file() and path.read_text(encoding="utf-8-sig") == text:
         return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pending = path.with_suffix(".tmp")
-    pending.write_text(text, encoding="utf-8")
-    os.replace(pending, path)
+    atomic_write(path, text)
     return True
-
-
-def render_redacted(connections: Connections) -> dict[str, Any]:
-    """What `config show` prints. The profile holds no secret, so this is the document itself.
-
-    Credential names stay (they are references into the credential store, not secrets).
-    """
-    return to_document(connections)

@@ -16,7 +16,12 @@ from pydantic import ValidationError
 
 from chamberlain.app.context import Services
 from chamberlain.connections.build import build_router, policy_of
-from chamberlain.connections.load import dump_connections, load_connections, profile_path
+from chamberlain.connections.load import (
+    atomic_write,
+    dump_connections,
+    load_connections,
+    profile_path,
+)
 from chamberlain.connections.model import GoogleCalendarSource
 from chamberlain.connections.repo import sync_sources
 from chamberlain.connectors.caldav.setup import Check, connect_icloud
@@ -66,10 +71,7 @@ def _write_profile(data_root: Path, mapped: MappedProfile, report: ImportReport)
     path = profile_path(data_root)
     text = dump_connections(mapped.connections)
     if not path.is_file():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        pending = path.with_suffix(".tmp")
-        pending.write_text(text, encoding="utf-8")
-        pending.replace(path)
+        atomic_write(path, text)
         report.config_written = "created"
     elif path.read_text(encoding="utf-8-sig") == text:
         report.config_written = "already identical"

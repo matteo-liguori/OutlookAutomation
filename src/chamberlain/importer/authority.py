@@ -31,7 +31,7 @@ from chamberlain.domain.timefmt import parse
 from chamberlain.importer.convert import add_days, derive, is_sha256, norm_ts, sha256_text, shorten
 from chamberlain.importer.old import Json, OldApproval, OldInstallation, OldJournal
 from chamberlain.importer.profile_map import MappedProfile
-from chamberlain.importer.records import Imported, add_evidence
+from chamberlain.importer.records import Imported, add_evidence, text_of
 from chamberlain.importer.report import ImportReport
 from chamberlain.importer.summary import attempted_at, summarise
 from chamberlain.limits import EVIDENCE_MAX, EVIDENCE_PER_OPEN_CARD_TARGET
@@ -80,10 +80,6 @@ class Context:
     imported: Imported
 
 
-def _text(value: Any) -> str:
-    return value.strip() if isinstance(value, str) else ""
-
-
 def _mapping(value: Any) -> Json:
     return cast(Json, value) if isinstance(value, dict) else {}
 
@@ -102,7 +98,7 @@ def parse_key(key: str) -> tuple[str, str]:
 
 def _source_for(ctx: Context, *candidates: Any, calendar: bool = False) -> str:
     for candidate in candidates:
-        text = _text(candidate)
+        text = text_of(candidate)
         if not calendar and text.lower() in ctx.mapped.mail_by_address:
             return ctx.mapped.mail_by_address[text.lower()]
         if calendar and text in ctx.mapped.calendar_by_id:
@@ -125,14 +121,14 @@ def _journal_outcomes(old: OldInstallation) -> dict[str, str]:
 def _grant_title(approval: OldApproval) -> str:
     message = _mapping(approval.details.get("message"))
     return shorten(
-        _text(approval.details.get("title")) or _text(message.get("subject")) or approval.id, 80
+        text_of(approval.details.get("title")) or text_of(message.get("subject")) or approval.id, 80
     )
 
 
 def _grant_source(ctx: Context, approval: OldApproval) -> str:
     message = _mapping(approval.details.get("message"))
     scope = _mapping(approval.details.get("scope"))
-    if _text(scope.get("operation")).startswith("calendar"):
+    if text_of(scope.get("operation")).startswith("calendar"):
         return _source_for(ctx, scope.get("calendar_id"), calendar=True)
     return _source_for(ctx, message.get("sender"), scope.get("mailbox"), scope.get("store"))
 
@@ -154,7 +150,7 @@ def import_grants(ctx: Context) -> dict[str, str]:
     handles: dict[str, str] = {}
     finished = _journal_outcomes(ctx.old)
     for approval in sorted(ctx.old.approvals, key=lambda a: (a.kind, a.id)):
-        status = _text(approval.details.get("status")).lower() or "approved"
+        status = text_of(approval.details.get("status")).lower() or "approved"
         if status in DEAD_STATUSES:
             key = "approvals already revoked or withdrawn"
             ctx.report.left_behind[key] = ctx.report.left_behind.get(key, 0) + 1
@@ -187,7 +183,7 @@ def _insert_grant(
         cap = add_days(granted, STANDING_DAYS)
         expires = min(expires, cap) if expires else cap
     content = details.get("message_hash") if not standing else details.get("scope_hash")
-    card = ctx.imported.cards.get(_text(approval.case_id)) if approval.case_id else None
+    card = ctx.imported.cards.get(text_of(approval.case_id)) if approval.case_id else None
     writes.insert_grant(
         ctx.db,
         handle=handle,

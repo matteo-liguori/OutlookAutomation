@@ -52,12 +52,12 @@ class Imported:
     evidence: dict[str, str] = field(default_factory=dict[str, str])
 
 
-def _text(value: Any) -> str:
+def text_of(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
 def _evidence_text(old_body: str, meta: Json) -> str:
-    label = _text(meta.get("label")) or _text(meta.get("kind")) or _text(meta.get("source"))
+    label = text_of(meta.get("label")) or text_of(meta.get("kind")) or text_of(meta.get("source"))
     text = f"{label}: {old_body}" if label and old_body else (old_body or label or "Imported")
     return shorten(" ".join(text.split()), EVIDENCE_MAX)
 
@@ -136,7 +136,7 @@ def card_rules(case: OldCase, decisions: list[OldDecision]) -> str:
 
 
 def _card_fields(case: OldCase, rules: str = "") -> tuple[str, str, str, str]:
-    purpose = _text(case.details.get("purpose"))
+    purpose = text_of(case.details.get("purpose"))
     goal = "" if purpose == case.title.strip() else purpose
     return case.title.strip(), goal, case.position.strip(), rules
 
@@ -186,7 +186,7 @@ def import_context(
     Safe to repeat: the ledger row (`imported_context`) outlives the stored item, so a second
     import never adds it again, even after the agent folded it into the position and forgot it.
     """
-    text = _text(case.details.get("context"))
+    text = text_of(case.details.get("context"))
     if not text or case.status == "closed" or memory.imported_context_done(db, case.id):
         return
     card = memory.get_card(db, handle)
@@ -213,7 +213,7 @@ IMPORTANT_KIND = "important"
 
 def is_important(action: OldAction) -> bool:
     """The old harness's own test (`dashboard.is_important_appointment`)."""
-    step = _text(action.details.get("next_step"))
+    step = text_of(action.details.get("next_step"))
     return (
         action.details.get("important_appointment") is True
         or "-important-" in action.id
@@ -343,7 +343,7 @@ def import_cards(
         fields = _card_fields(case, rules)
         views: list[ActionView] = []
         for action in actions:
-            title = shorten(_text(action.details.get("next_step")) or action.id, ACTION_TITLE_MAX)
+            title = shorten(text_of(action.details.get("next_step")) or action.id, ACTION_TITLE_MAX)
             due = norm_ts(action.next_review, zone)
             views.append(
                 ActionView(
@@ -420,10 +420,10 @@ def _import_action(
     now: str,
     report: ImportReport,
 ) -> None:
-    title = _text(action.details.get("next_step")) or action.id
+    title = text_of(action.details.get("next_step")) or action.id
     important = is_important(action)
     if important:
-        heading = _text(action.details.get("appointment_title"))
+        heading = text_of(action.details.get("appointment_title"))
         if heading and heading not in title:
             title = f"{heading}: {title}"
     if len(title) > ACTION_TITLE_MAX:

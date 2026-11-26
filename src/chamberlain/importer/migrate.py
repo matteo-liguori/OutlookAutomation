@@ -24,7 +24,7 @@ from uuid import uuid4
 import yaml
 
 from chamberlain.attention.owner_rules import path_of
-from chamberlain.connections.load import load_connections
+from chamberlain.connections.load import atomic_write, load_connections
 from chamberlain.connectors.calendar_support.secrets import SecretStore
 from chamberlain.importer.authority import DEAD_STATUSES
 from chamberlain.importer.convert import derive, is_sha256, sha256_text
@@ -139,12 +139,7 @@ def _copy_inputs(root: Path, target: Path) -> None:
 
 
 def _atomic_json(path: Path, value: object) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + "." + uuid4().hex + ".tmp")
-    temp.write_text(
-        json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8", newline="\n"
-    )
-    os.replace(temp, path)
+    atomic_write(path, json.dumps(value, indent=2, sort_keys=True) + "\n", newline="\n")
 
 
 @contextmanager
