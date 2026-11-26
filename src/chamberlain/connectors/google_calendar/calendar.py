@@ -318,7 +318,7 @@ class _GoogleBackend:
             return Observation(
                 present=True,
                 delete_confirmed=deleting,
-                unchanged=kind is IntentKind.CALENDAR_RESPOND and unchanged,
+                unchanged=(deleting or kind is IntentKind.CALENDAR_RESPOND) and unchanged,
                 absence_provable=True,
                 receipt=receipt,
             )

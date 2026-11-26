@@ -52,7 +52,17 @@ DISPLAY_ONLY_REF: Final = "_display_only"
 """Reserved key in `refs`: leave a saved draft's composer open (R8) until the intent has a field."""
 
 _PRE_MUTATION_ITEM_CODES: Final = frozenset(
-    {"not_found", "ambiguous", "account_mismatch", "timeout", "busy"}
+    {
+        "not_found",
+        "ambiguous",
+        "account_mismatch",
+        "timeout",
+        "busy",
+        "bad_request",
+        "changed",
+        "client_offline",
+        "unsupported",
+    }
 )
 
 
@@ -64,6 +74,11 @@ class PlanAttachment(Model):
 _BATCH_ITEM_CODES = {
     "not_found": ErrorCode.REQUEST_UNKNOWN_HANDLE,
     "ambiguous": ErrorCode.REMOTE_AMBIGUOUS,
+    "changed": ErrorCode.REMOTE_CHANGED,
+    "account_mismatch": ErrorCode.SOURCE_NOT_CONFIGURED,
+    "client_offline": ErrorCode.SOURCE_UNAVAILABLE,
+    "unsupported": ErrorCode.CAPABILITY_UNSUPPORTED,
+    "bad_request": ErrorCode.REQUEST_INVALID,
 }
 
 
@@ -317,6 +332,7 @@ class ChangePlan(Model):
     move_to: str | None = None
     trash: bool = False
     set_read: bool | None = None
+    date_window: tuple[int, int] | None = None
 
     def dispatch(
         self,
@@ -428,8 +444,10 @@ class ChangePlan(Model):
                         return ReconcileResult(
                             status=ReconcileStatus.UNKNOWN, detail="filed flags differ"
                         )
-                    if done and self.set_read is None and len(there) == 1:
-                        preserved &= there[0].read == before.read
+                    if done and not self.set_read:
+                        preserved &= before.read is not None and all(
+                            copy.read == before.read for copy in there
+                        )
                 items.append(
                     _item(
                         binding,
@@ -468,9 +486,19 @@ class ChangePlan(Model):
     def facts(
         self, mail: MailReads, binding: ThunderbirdBinding, *, refresh: bool
     ) -> protocol.CopiesResult:
-        scopes = [protocol.CopyScope(folder_id=g.folder_id, ids=g.ids) for g in self.items]
+        since, until = self.date_window if refresh and self.date_window else (None, None)
+        scopes = [
+            protocol.CopyScope(
+                folder_id=group.folder_id, ids=group.ids, since_ms=since, until_ms=until
+            )
+            for group in self.items
+        ]
         if self.move_to is not None:
-            scopes.append(protocol.CopyScope(folder_id=self.move_to, ids=self.items[0].ids))
+            scopes.append(
+                protocol.CopyScope(
+                    folder_id=self.move_to, ids=self.items[0].ids, since_ms=since, until_ms=until
+                )
+            )
         return mail.copies(binding, scopes, refresh=refresh)
 
 

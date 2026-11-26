@@ -122,3 +122,5 @@ Column definitions are in `0270_baseline.sql`; that file is normative.
 - **S-18** The data root is given by `CHAMBERLAIN_DATA` or the `--data`
   option; there is no default inside the repository, and tests always use a
   temporary directory.
+
+Migration 0280 converts old single-message move and trash intents to one-item batches. It preserves the original approval text and hash, checks the original Message-ID before dispatch and keeps pending operations discoverable under either representation. A legacy Thunderbird recovery plan that lacks the new batch evidence blocks upgrade. Doctor names the affected operation so its matching bridge can reconcile it before upgrading.

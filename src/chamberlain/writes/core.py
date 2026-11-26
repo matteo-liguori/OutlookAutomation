@@ -43,11 +43,15 @@ from chamberlain.domain.grants import (
 from chamberlain.domain.handles import HandleKind, new_handle
 from chamberlain.domain.intents import (
     IntentKind,
+    MailMarkRead,
+    MailMove,
     MailSend,
+    MailTrash,
     OutsideAction,
     WriteIntent,
     attachments_of,
 )
+from chamberlain.domain.mail import bare
 from chamberlain.domain.operations import (
     MAY_HAVE_HAPPENED_STATES,
     TERMINAL_STATES,
@@ -275,7 +279,7 @@ class Engine:
             outside.check_outside(self, intent, card)
             completed, located = intent, kinds.Located()
         else:
-            completed, located = kinds.prepare_intent(self.ctx, intent, self.policy)
+            completed, located = kinds.prepare_intent(self.ctx, intent, self.policy, card)
         refs = located.to_refs()
         sha = intent_hash(completed)
         existing = self._existing(completed, sha, card)
@@ -283,6 +287,18 @@ class Engine:
             return self.proposal_for(existing, completed)
         handle = new_handle(HandleKind.OPERATION)
         decision = self.decide(completed, handle, sha, card, reserved=None, located=located)
+        if self._only_grant is not None and isinstance(decision, Deny):
+            return Proposal(
+                operation=None,
+                grant=None,
+                state=OperationState.PROPOSED,
+                requirement=decision.requirement,
+                ready=False,
+                content_sha256=sha,
+                preview="",
+                truncated=False,
+                origin=handle,
+            )
         if isinstance(completed, MailSend):
             self.scan_before_storing(completed, handle, refs, decision)
         with transaction(self.db):
@@ -549,7 +565,14 @@ class Engine:
         grants = self._grants_for(intent.source, reserved, redo)
         names = [g.handle for g in grants]
         skip: str | tuple[str, ...] = handle if redo is None else (handle, redo.handle)
+        folders: frozenset[str] = frozenset()
+        if isinstance(intent, MailMarkRead) and any(g.scope and g.scope.folders for g in grants):
+            port = self.ctx.sources.mail_port(intent.source)
+            folders = frozenset(
+                port.folder_of(intent.source, located.refs[h]) for h in intent.messages
+            )
         return Usage(
+            mail_folders=folders,
             live_uses=repo.live_uses(self.db, names, skip),
             recent_uses=repo.recent_uses(
                 self.db, names, format_ts(now - timedelta(hours=24)), skip
@@ -810,6 +833,16 @@ class Engine:
         if grant is not None and grant.scope is not None and grant.scope.allow_duplicate:
             refs[ALLOW_DUPLICATE_REF] = "1"
         try:
+            original = refs.get("_original_move_intent")
+            if original and isinstance(intent, MailMove | MailTrash):
+                old = json.loads(original)
+                if old.get("internet_message_id") is not None:
+                    port = self.ctx.sources.mail_port(intent.source)
+                    current = port.resolve(intent.source, refs[intent.messages[0]])
+                    if bare(current.internet_message_id) != bare(old["internet_message_id"]):
+                        raise ChamberlainError(
+                            ErrorCode.REMOTE_CHANGED, "The message identity differs."
+                        )
             self._read_attachments(intent)
             prepared = kinds.port_prepare(self.ctx, intent, refs)
         except ChamberlainError as error:

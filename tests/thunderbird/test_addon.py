@@ -78,12 +78,13 @@ def test_b2_the_addon_dispatch_covers_exactly_the_closed_command_list() -> None:
     assert handled == {command.value for command in Command}
 
 
-def test_b3_the_mail_helper_exposes_only_eight_named_functions() -> None:
+def test_b3_the_mail_helper_exposes_only_the_named_functions() -> None:
     api = (ADDON_DIR / "experiment" / "api.js").read_text(encoding="utf-8")
     names = set(re.findall(r"^\s{8}async (\w+)\(", api, re.MULTILINE))
     assert names == {
         "syncFolders",
         "headerAttachmentFlags",
+        "verifyCopyWindow",
         "setReadFlags",
         "holdComposer",
         "takePrompts",

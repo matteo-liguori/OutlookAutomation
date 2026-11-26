@@ -526,12 +526,16 @@ class Fingerprint(Model):
     token: str
 
 
+MAX_JS_DATE_MS = 8_640_000_000_000_000
+
+
 class CopyScope(Model):
     folder_id: str | None
     """None scans the sender's own messages in discovered local Outboxes."""
     ids: MessageIds | None = None
     subject: Annotated[str, Field(max_length=500)] | None = None
     since_ms: int | None = None
+    until_ms: int | None = None
     inspect_draft: bool = False
     include_attachment_hashes: bool = False
 
@@ -540,13 +544,20 @@ class CopyScope(Model):
         if (self.ids is None) == (self.subject is None):
             raise ValueError("each copy scope needs IDs or a subject")
         if self.ids is not None:
-            if (
-                self.folder_id is None
-                or self.since_ms is not None
-                or self.include_attachment_hashes
-            ):
+            if self.folder_id is None or self.include_attachment_hashes:
                 raise ValueError("ID lookups require a bound folder and no content scan")
-        elif self.since_ms is None or (self.folder_id is None and self.inspect_draft):
+            if (self.since_ms is not None or self.until_ms is not None) and (
+                self.inspect_draft
+                or self.since_ms is None
+                or self.until_ms is None
+                or not 0 <= self.since_ms <= self.until_ms <= MAX_JS_DATE_MS
+            ):
+                raise ValueError("bounded ID lookups need both date bounds and no draft scan")
+        elif (
+            self.until_ms is not None
+            or self.since_ms is None
+            or (self.folder_id is None and self.inspect_draft)
+        ):
             raise ValueError("subject scans require a lower date bound and a folder for Drafts")
         return self
 

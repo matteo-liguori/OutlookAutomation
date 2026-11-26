@@ -64,7 +64,7 @@ def test_single_baseline_matches_archived_step3_schema_and_keeps_every_row(tmp_p
     old = connect(tmp_path / DB_NAME)
     fresh = connect(MEMORY)
     try:
-        assert len(discover()) == 1
+        assert [m.version for m in discover()] == [270, 280]
         assert discover()[0].version == 270
         migrate(old, clock, backup_dir=None, migrations=legacy_migrations())
         populate(old, clock)
@@ -74,9 +74,9 @@ def test_single_baseline_matches_archived_step3_schema_and_keeps_every_row(tmp_p
         ]
         old_schema = schema(old)
         assert verify(old).ok
-        assert migrate(fresh, clock, backup_dir=None) == [270]
+        assert migrate(fresh, clock, backup_dir=None) == [270, 280]
         assert schema(fresh) == old_schema
-        assert migrate(old, clock, backup_dir=tmp_path / "backups") == [270]
+        assert migrate(old, clock, backup_dir=tmp_path / "backups") == [270, 280]
         assert schema(old) == old_schema
         assert rows(old) == before_rows
         assert [
@@ -124,3 +124,40 @@ def test_unrecognized_prebaseline_store_is_rejected_without_stamping(damage: str
         assert applied_versions(db) == before_ledger
     finally:
         db.close()
+
+
+@pytest.mark.parametrize(
+    ("intent", "plan"),
+    [
+        ("{}", None),
+        ('{"messages":["msg_1"]}', '{"data":{"destination_folder_id":"archive","batch":true}}'),
+    ],
+)
+def test_unsettled_legacy_moves_block_upgrade_and_doctor_without_modifying_history(
+    tmp_path: Path,
+    intent: str,
+    plan: str | None,
+) -> None:
+    import io
+
+    from chamberlain.surface.cli import main
+
+    clock = ManualClock()
+    db = connect(tmp_path / DB_NAME)
+    migrate(db, clock, backup_dir=None, migrations=legacy_migrations())
+    populate(db, clock)
+    db.execute(
+        "UPDATE operations SET kind='mail.move', intent_json=?, prepared_json=? "
+        "WHERE handle='op_t'",
+        (intent, plan),
+    )
+    before = rows(db)
+    with pytest.raises(ChamberlainError, match="Unsettled move or trash"):
+        migrate(db, clock, backup_dir=None)
+    assert before == rows(db)
+    out = io.StringIO()
+    assert main(["--data", str(tmp_path), "doctor"], out) != 0
+    assert "op_t" in out.getvalue()
+    db.execute("UPDATE operations SET state='confirmed' WHERE handle='op_t'")
+    migrate(db, clock, backup_dir=None)
+    db.close()

@@ -133,6 +133,8 @@ captures the flag before and after and fails with `changed` if it moved):
   header of the message, topmost first, each clipped to 2000 characters (at
   most 8). The receiving provider adds the topmost; the sender can add the
   others, so only the topmost is evidence (`domain/sender_auth.py`).
+  The mail port requests the SHA-256 of the raw message bytes for ordinary
+  messages and drafts. The add-on checks the read flag after hashing.
 - `attachment` checks the selected part's reported size and the returned
   file size against the request limit before reading the bytes.
 - `refresh` asks the provider to synchronise exactly the named folders (at
@@ -142,7 +144,10 @@ captures the flag before and after and fails with `changed` if it moved):
   `[Gmail]`) and a saved search answer `success: false, code: "not-selectable"` at once; the
   harness counts that as in sync.
 - `copies` returns observations for each requested scope. An ID scope
-  reports physical copies of the requested IDs in a bound folder. A subject
+  reports physical copies of the requested IDs in a bound folder. Reconcile may
+  supply both dates from a complete baseline. The add-on checks the bounded
+  observations against native counts for the exact IDs across all dates. An
+  out-of-window match or a native scan limit leaves the scope incomplete. A subject
   scope searches the folder or the local Outbox since the requested date and
   can collect content facts. With `refresh: true`, the add-on first refreshes
   the named folders and reports whether provider callbacks verified that refresh.
@@ -171,7 +176,9 @@ captures the flag before and after and fails with `changed` if it moved):
   Trash copy when `trash` is set. The existing Trash copy keeps its read flag.
   The receipt records a merge or a flag that could not be preserved (R7).
 - `change` without `move_to` groups messages by folder and applies `set_read`
-  in bulk. The result reports each requested item (W-24).
+  in bulk. A folder's refusal is recorded for its affected items while the
+  other folders continue. The add-on polls read-back within a shared deadline
+  and reports each requested item (W-24).
 
 The Python client reconciles mail writes using `copies` observations, with
 per-scope completeness and provider refresh results, and decides whether the

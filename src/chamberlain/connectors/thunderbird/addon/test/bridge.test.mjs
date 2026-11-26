@@ -468,6 +468,62 @@ test("W-24 mark_read reports every message and can mark unread", async () => {
   assert.equal(world.find("a@x").read, false);
 });
 
+test("W-24 bulk flag changes isolate a refused folder and wait for a delayed folder", async () => {
+  const { addon, world } = setup();
+  world.add({ folderId: INBOX, headerMessageId: "delayed@x", read: false });
+  world.add({ folderId: INBOX, headerMessageId: "second@x", read: false });
+  world.add({ folderId: FILED, headerMessageId: "refused@x", read: false });
+  const mail = world.messenger.chamberlainMail;
+  const changeFlags = mail.setReadFlags;
+  const updateFolders = mail.syncFolders;
+  const attempts = [];
+  const refreshed = [];
+  let delayed;
+  mail.setReadFlags = async (...args) => {
+    attempts.push([args[2], args[3].length]);
+    if (args[2] === FILED) throw new Error("chamberlain:changed:");
+    delayed = args;
+  };
+  mail.syncFolders = async (account, mailbox, folders) => {
+    refreshed.push([...folders]);
+    await changeFlags(...delayed);
+    delayed = undefined;
+    return updateFolders(account, mailbox, folders);
+  };
+
+  const result = await call(addon, "change", {
+    ...BASE, items: [group(INBOX, "delayed@x", "second@x"), group(FILED, "refused@x")],
+    trash: false, set_read: true,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.error));
+  assert.equal(result.result.verified, true);
+  assert.deepEqual(result.result.items.map((item) => [item.ok, item.code]), [[true, ""], [true, ""], [false, "changed"]]);
+  assert.deepEqual(attempts, [[INBOX, 2], [FILED, 1]]);
+  assert.deepEqual(refreshed, [[INBOX]]);
+  assert.equal(world.find("refused@x").read, false);
+});
+
+test("P-6 bounded ID copies never make a whole-folder WebExtension query", async () => {
+  const { addon, world } = setup();
+  world.add({ folderId: INBOX, headerMessageId: "current@x", date: 120_000 });
+  world.add({ folderId: INBOX, headerMessageId: "another@x", date: 130_000 });
+  world.add({ folderId: INBOX, headerMessageId: "current@x", date: 1_000 });
+  const original = world.messenger.messages.query;
+  const bounds = [];
+  world.messenger.messages.query = async (query) => {
+    bounds.push([query.fromDate?.getTime(), query.toDate?.getTime()]);
+    return original(query);
+  };
+  const result = await call(addon, "copies", copies([{
+    ...lookup(INBOX, "current@x", "another@x"), since_ms: 100_000, until_ms: 150_000,
+  }]));
+  assert.equal(result.ok, true, JSON.stringify(result.error));
+  assert.deepEqual(bounds, [[100_000, 150_000]]);
+  const [scope] = result.result.scopes;
+  assert.equal(scope.copies.length, 2);
+  assert.equal(scope.complete, false);
+});
+
 test("P-17 a write that stalls past its deadline reports possible, keeps writes busy, and reads still answer", async () => {
   const { addon, world } = setup({ writeMs: 40 });
   world.add({ folderId: INBOX, headerMessageId: "slow@x" });

@@ -65,10 +65,11 @@ process.stdin.on("data", (data) => {
 process.stdin.on("end", () => process.exit(0));
 
 const controls = {
-  seed: ({ role, id, subject, body, unread, attachments }) => {
+  seed: ({ role, id, subject, body, unread, attachments, date_ms }) => {
     const m = world.add({
       folderId: ROLES[role],
       headerMessageId: id,
+      date: date_ms,
       subject,
       body,
       author: role === "sent" || role === "drafts" ? OWNER : undefined,

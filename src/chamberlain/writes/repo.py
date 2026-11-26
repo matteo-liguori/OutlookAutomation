@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from chamberlain.domain.grant_rules import parse_ts
+from chamberlain.domain.grant_rules import intent_hash, parse_ts
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement, StandingScope
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.operations import RELEASING_STATES, OperationState, outside_details
@@ -511,11 +511,19 @@ def sends_since(db: sqlite3.Connection, source_id: str, since: str, other_than: 
 def live_by_hash(db: sqlite3.Connection, source_id: str, intent_sha256: str) -> list[OperationRow]:
     """Operations for this content that are not released (W-18, W-19)."""
     rows = db.execute(
-        "SELECT * FROM operations WHERE source_id = ? AND intent_sha256 = ? "
+        "SELECT * FROM operations WHERE source_id = ? AND (intent_sha256 = ? OR "
+        "(kind IN ('mail.move','mail.trash') AND state IN ('proposed','authorised','prepared',"
+        "'dispatched','uncertain','reconciling') AND "
+        "json_type(refs_json,'$._original_move_intent')='text')) "
         f"AND state NOT IN ({_marks(_RELEASING)}) ORDER BY created_at, handle",
         (source_id, intent_sha256, *_RELEASING),
-    ).fetchall()
-    return [_operation(row) for row in rows]
+    )
+    return [
+        op
+        for row in rows
+        if (op := _operation(row)).intent_sha256 == intent_sha256
+        or intent_hash(op.intent()) == intent_sha256
+    ]
 
 
 def stale_uncertain(db: sqlite3.Connection, before: str) -> list[OperationRow]:

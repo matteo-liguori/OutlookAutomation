@@ -470,7 +470,7 @@ class MailReads:
                 mailbox=binding.mailbox,
                 folder_id=where.folder_id,
                 internet_message_id=where.message_id,
-                raw_hash=where.folder_id == binding.draft_folder_id,
+                raw_hash=True,
             ),
         )
         result = typed(reply, protocol.ReadResult)

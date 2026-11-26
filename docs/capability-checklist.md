@@ -55,7 +55,7 @@ Regression tests include the locator checks in `tests/support/mail_contract.py`,
 
 Regression tests include `tests/writes/test_grants.py::test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled`, `tests/writes/test_grant_rules.py::test_g8_an_unreviewed_grant_is_suspended_fourteen_days_after_review_is_due`, `tests/writes/test_authorise.py::test_g16_standing_daily_and_hourly_limits`, `tests/viewer/test_gate.py::test_g17_a_wrong_origin_host_peer_or_fetch_site_is_403`.
 
-- [ ] Seven-day content-bound one-off; standing scope addresses/domains/folders, multiple sources, daily limit, monthly review, 14-day suspension, one-year expiry and card binding: `tests/writes/test_grants.py`, `tests/writes/test_grant_rules.py`, `tests/writes/test_authorise.py`. Lapse persistence and cancellation are checked by `tests/writes/test_grants.py::test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled`; `max_per_day` remains open.
+- [ ] Seven-day content-bound one-off; standing scope addresses/domains/folders, multiple sources, daily limit, monthly review, 14-day suspension, one-year expiry and card binding: `tests/writes/test_grants.py`, `tests/writes/test_grant_rules.py`, `tests/writes/test_authorise.py`. Lapse persistence and cancellation are checked by `tests/writes/test_grants.py::test_g8_an_unanswered_proposal_lapses_in_seven_days_and_its_operation_is_cancelled`. An explicitly configured daily limit is retained.
 - [ ] One permission table and generated documentation: `tests/writes/test_permission_table.py`.
 - [ ] Known recipients and seed; authenticated authorised senders: `tests/writes/test_recipients.py`, `tests/domain/test_senders.py`.
 - [ ] 200 sends/hour per source, all-owner recipients exempt: `tests/writes/test_authorise.py` is a lead; explicit boundary, mixed-recipient and exempt tests needed.
@@ -167,4 +167,4 @@ Regression tests include `tests/calendars/test_google_setup.py::test_s17_the_loo
 
 The local gate passed 1,070 tests with 20 skips. The installed Thunderbird add-on is 3.0.4. The two harness scenarios passed, and the targeted test-mailbox Message-ID lookup and cross-account watermark suggestion passed after Thunderbird restarted. The mail-only scheduled pass stored its report on a disposable profile using the real test mailbox. An authenticated headless Edge session opened all ten viewer pages, and all fifteen API reads returned HTTP 200. See live runs 20261126T014932-9255 and 20261126T015115-df44.
 
-Owl freshness is settled by the owner on 2026-11-26, including KCL. The post-restoration move/trash repeat rule awaits separate owner confirmation.
+Owl freshness is settled by the owner on 2026-11-26, including KCL. The owner also confirmed that a fresh authorized move or trash after restoration proceeds within 24 hours without another confirmation. Restoring an item alone requests no action.

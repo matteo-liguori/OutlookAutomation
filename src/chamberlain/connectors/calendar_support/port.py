@@ -238,18 +238,12 @@ class CalendarPort:
                 )
             if (observed.matches or observed.identity_suffices) and observed.receipt is not None:
                 return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=observed.receipt)
-        elif kind is IntentKind.CALENDAR_DELETE and observed.delete_confirmed:
-            if observed.receipt is not None:
+        elif observed.unchanged:
+            # A cancelled entry or excluded occurrence can predate this write.
+            return ReconcileResult(status=ReconcileStatus.ABSENT, proof=observed.absence_provable)
+        elif kind is IntentKind.CALENDAR_DELETE:
+            if observed.delete_confirmed and observed.receipt is not None:
                 return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=observed.receipt)
-        elif observed.present:
-            if observed.unchanged:
-                return ReconcileResult(
-                    status=ReconcileStatus.ABSENT, proof=observed.absence_provable
-                )
-            if (
-                kind is not IntentKind.CALENDAR_DELETE
-                and observed.matches
-                and observed.receipt is not None
-            ):
-                return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=observed.receipt)
+        elif observed.present and observed.matches and observed.receipt is not None:
+            return ReconcileResult(status=ReconcileStatus.PRESENT, receipt=observed.receipt)
         return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="changed otherwise")

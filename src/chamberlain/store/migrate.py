@@ -245,6 +245,29 @@ def _adopt_baseline(
         ) from error
 
 
+def _require_recoverable_mail(connection: sqlite3.Connection) -> None:
+    """Legacy move receipts lack the batch recovery facts. Leave their journal untouched."""
+    if "operations" not in table_names(connection):
+        return
+    row = connection.execute(
+        "SELECT handle, state FROM operations WHERE kind IN ('mail.move', 'mail.trash') "
+        "AND state IN ('proposed','authorised','prepared','dispatched','uncertain','reconciling') "
+        "AND intent_json IS NOT NULL AND ("
+        "json_type(prepared_json,'$.data.destination_folder_id') IS NOT NULL "
+        "OR (json_type(intent_json,'$.message') IS NOT 'text' "
+        "AND json_type(intent_json,'$.messages') IS NOT 'array')) LIMIT 1"
+    ).fetchone()
+    if row is not None:
+        raise ChamberlainError(
+            ErrorCode.CONFIG_INVALID,
+            f"Unsettled move or trash operation {row[0]} ({row[1]}) needs the previous bridge.",
+            fix=(
+                "Use the matching pre-R1 installation to reconcile the operation, or cancel it "
+                "if it has never dispatched. Then retry the upgrade."
+            ),
+        )
+
+
 def migrate(
     connection: sqlite3.Connection,
     clock: Clock,
@@ -261,6 +284,7 @@ def migrate(
     discovered = discover() if migrations is None else migrations
     adopted: list[int] = []
     if migrations is None:
+        _require_recoverable_mail(connection)
         baseline = next((m for m in discovered if m.version == BASELINE_VERSION), None)
         if baseline is not None:
             adopted = _adopt_baseline(connection, clock, baseline, backup_dir)

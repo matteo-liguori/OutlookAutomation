@@ -13,12 +13,13 @@ from chamberlain.connectors.caldav.config import CalDavBinding, CalDavConfig
 from chamberlain.connectors.calendar_support import ics
 from chamberlain.connectors.calendar_support.http import UrllibTransport
 from chamberlain.connectors.calendar_support.port import payload
-from chamberlain.domain.calendar import CalendarQuery, EventFields
+from chamberlain.domain.calendar import CalendarQuery, EventFields, EventStatus
 from chamberlain.domain.handles import HandleKind, ref_handle
 from chamberlain.domain.intents import CalendarCreate, CalendarDelete, CalendarUpdate
 from chamberlain.domain.operations import DispatchOutcome, Prepared, ReconcileStatus
 from chamberlain.ports.clock import ManualClock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from support.rigs import Fault
 
 SOURCE = "calendar:test"
 START = datetime(2027, 3, 1, 10, 0, tzinfo=UTC)
@@ -175,6 +176,26 @@ def test_p16_someone_elses_invitation_is_never_changed_or_cancelled(world: World
         assert raised.value.code is ErrorCode.CAPABILITY_UNSUPPORTED
         assert raised.value.detail == "invitee-copy"
     assert not rig.transport.sent or all(m not in ("PUT", "DELETE") for m, _ in rig.transport.sent)
+
+
+def test_a_timed_out_delete_does_not_confirm_an_unchanged_cancelled_event(world: World) -> None:
+    port, rig = world
+    locator = "already-cancelled.ics"
+    put(rig, locator, raw("Cancelled earlier", "cancelled@t", "STATUS:CANCELLED\r\n"))
+    before = port.read(SOURCE, locator)
+    assert before.status is EventStatus.CANCELLED
+    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
+    prepared = port.prepare(
+        CalendarDelete(source=SOURCE, event_ref=handle, expected_etag=before.etag),
+        {handle: locator},
+    )
+    assert rig.inject(Fault.LOSE_BEFORE_APPLY)
+    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
+    settled = port.reconcile(prepared, "k")
+    assert settled.status is ReconcileStatus.ABSENT
+    assert settled.proof
+    assert port.read(SOURCE, locator).etag == before.etag
+    assert not any(method == "DELETE" for method, _ in rig.transport.sent)
 
 
 def test_p4_pages_and_text_filter(world: World) -> None:

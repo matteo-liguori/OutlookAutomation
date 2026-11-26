@@ -16,6 +16,7 @@ from chamberlain.domain.intents import (
     CalendarUpdate,
     IntentKind,
     MailDraftUpdate,
+    MailMarkRead,
     MailMove,
     MailTrash,
     OutsideAction,
@@ -180,7 +181,11 @@ def locate(ctx: Context, intent: WriteIntent) -> Located:
 
 
 def complete(
-    ctx: Context, intent: WriteIntent, located: Located, policy: WritePolicy
+    ctx: Context,
+    intent: WriteIntent,
+    located: Located,
+    policy: WritePolicy,
+    card: str | None = None,
 ) -> WriteIntent:
     spec = KINDS[intent.kind]
     completed: dict[str, object] = {}
@@ -197,7 +202,7 @@ def complete(
             )
         completed["from_folder"] = folders.pop()
     if isinstance(intent, MailMove) and not intent.mark_read:
-        completed["mark_read"] = _filing_marks_read(ctx, intent.source, policy)
+        completed["mark_read"] = _filing_marks_read(ctx, intent, policy, card)
     if isinstance(intent, CalendarRespond):
         completed["organiser"] = located.organiser
     if isinstance(intent, CalendarCreate | CalendarUpdate):
@@ -217,24 +222,28 @@ def complete(
     return intent.model_copy(update=completed)
 
 
-def _filing_marks_read(ctx: Context, source: str, policy: WritePolicy) -> bool:
+def _filing_marks_read(ctx: Context, move: MailMove, policy: WritePolicy, card: str | None) -> bool:
     """The filing preference acts only through an active read-state grant (G-24)."""
     if not read_state.options(ctx.db).filing_marks_read:
         return False
-    if read_state.active_grant(ctx.db, source) is not None:
+    source = move.source
+    if (
+        read_state.active_grant(ctx, MailMarkRead(source=source, messages=move.messages), card=card)
+        is not None
+    ):
         return True
     read_state.propose_missing(ctx.db, ctx.clock, ctx.services.audit, [source], policy=policy)
     return False
 
 
 def prepare_intent(
-    ctx: Context, intent: WriteIntent, policy: WritePolicy
+    ctx: Context, intent: WriteIntent, policy: WritePolicy, card: str | None = None
 ) -> tuple[WriteIntent, Located]:
     cap = capability(ctx, intent)
     located = locate(ctx, intent)
     _require_invitations(ctx, intent, located)
     _require_recurrence(ctx, intent)
-    completed = complete(ctx, intent, located, policy)
+    completed = complete(ctx, intent, located, policy, card)
     _check_limits(ctx, completed, cap)
     return completed, located
 

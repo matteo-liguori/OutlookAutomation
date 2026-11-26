@@ -3,11 +3,14 @@
 Contract: docs/contracts/04-writes.md (W-43) and 05-grants.md (G-24). Fake world only.
 """
 
+from collections.abc import Mapping
+
 import pytest
 from runs_rig import MAIL, Rig
 
 from chamberlain.app.wiring import run_tick
 from chamberlain.domain.grants import GrantState
+from chamberlain.domain.operations import DispatchResult, Prepared
 from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs.models import PassKind
@@ -26,16 +29,19 @@ def _grant(rig: Rig) -> list[str]:
     )
 
 
-@pytest.mark.parametrize("case", ["option off", "option on, no grant", "option on, grant"])
+@pytest.mark.parametrize(
+    "case", ["option off", "option on, no grant", "option on, grant", "covered, partial result"]
+)
 def test_reported_mail_is_marked_read_only_with_the_option_and_the_owners_grant(
-    rig: Rig, case: str
+    rig: Rig, case: str, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     db = rig.ctx.db
     on = case != "option off"
     set_state(
         db, rig.clock, READ_STATE_KEY, ReadStateConfig(reporting_marks_read=on).model_dump_json()
     )
-    if case.endswith("grant") and on and "no grant" not in case:
+    covered = case in ("option on, grant", "covered, partial result")
+    if covered:
         (handle,) = _grant(rig)
         row = repo.get_grant(db, handle)
         assert row is not None
@@ -57,14 +63,32 @@ def test_reported_mail_is_marked_read_only_with_the_option_and_the_owners_grant(
     assert rig.call(
         "keep", kind="artifact", owner=run.handle, reason="Morning report", text="2 new."
     )["ok"]
+    if case == "covered, partial result":
+        original = rig.fake.mail.dispatch
+
+        def dispatch(
+            prepared: Prepared, key: str, attachments: Mapping[str, bytes]
+        ) -> DispatchResult:
+            rig.fake.world.mail[MAIL] = [
+                m for m in rig.fake.world.mail[MAIL] if m.internet_message_id != "<seen1@x>"
+            ]
+            return original(prepared, key, attachments)
+
+        monkeypatch.setattr(rig.fake.mail, "dispatch", dispatch)
     rig.clock.advance(minutes=1)
     run_tick(rig.app)
+    present = handled[:1] if case == "covered, partial result" else handled
 
-    unread = {loc: rig.fake.mail.is_unread(MAIL, loc) for loc in [*handled, late]}
-    if case == "option on, grant":
-        assert [unread[loc] for loc in handled] == [False, False]
+    unread = {loc: rig.fake.mail.is_unread(MAIL, loc) for loc in [*present, late]}
+    if covered:
+        assert not any(unread[loc] for loc in present)
     else:
         assert all(unread[loc] for loc in handled), "mail stays unread without option and grant"
+    stamped = {
+        r["locator"]
+        for r in db.execute("SELECT locator FROM mail_seen WHERE read_marked_at IS NOT NULL")
+    }
+    assert stamped == (set(present) if covered else set())
     assert unread[late], "mail that arrived after the report is never touched"
     waiting = repo.grants_in_states(db, (GrantState.PROPOSED,), MAIL)
     assert bool(waiting) is (case == "option on, no grant")

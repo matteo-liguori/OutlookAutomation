@@ -25,6 +25,20 @@
         ]
       },
       {
+        "name": "verifyCopyWindow",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "folderId", "type": "string" },
+          { "name": "messageIds", "type": "array", "items": { "type": "string" } },
+          { "name": "expectedCounts", "type": "array", "items": { "type": "integer" } },
+          { "name": "sinceMs", "type": "number" },
+          { "name": "untilMs", "type": "number" }
+        ]
+      },
+      {
         "name": "setReadFlags",
         "type": "function",
         "async": true,

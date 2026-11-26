@@ -12,7 +12,7 @@ const URIS = { [`${ACCOUNT}://Drafts`]: "imap://owner/Drafts", [`${ACCOUNT}://Se
 
 class ExtensionError extends Error {}
 
-function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map() } = {}) {
+function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map(), folderMessages = [] } = {}) {
   const looked = [];
   const changes = [];
   const identity = { key: "id1", email: MAILBOX, getUnicharAttribute: () => identityDrafts };
@@ -31,7 +31,7 @@ function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map(
       getFolder(id) {
         looked.push(id);
         if (!URIS[id]) throw new ExtensionError(`Folder not found: ${id}`);
-        return { accountKey: ACCOUNT, folder: { canFileMessages: true, URI: URIS[id], markMessagesRead: (messages, read) => changes.push({ messages: [...messages], read }) } };
+        return { accountKey: ACCOUNT, folder: { canFileMessages: true, URI: URIS[id], getFlag: () => false, messages: folderMessages, markMessagesRead: (messages, read) => changes.push({ messages: [...messages], read }) } };
       },
     },
     "resource://gre/modules/ExtensionUtils.sys.mjs": { ExtensionUtils: { ExtensionError } },
@@ -39,7 +39,7 @@ function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map(
   const observers = [];
   const context = vm.createContext({
     ChromeUtils: { importESModule: (url) => modules[url] },
-    Ci: { nsMsgFolderFlags: { Queue: 1 }, nsMsgMessageFlags: { Attachment: 1 } },
+    Ci: { nsMsgFolderFlags: { Queue: 1, Virtual: 2 }, nsMsgMessageFlags: { Attachment: 1 } },
     Components: {},
     Services: { io: { offline: false }, obs: { addObserver: (o, topic) => observers.push([o, topic]), removeObserver() {} } },
     console,
@@ -85,6 +85,15 @@ test("P-3 bulk attachment presence reads the native header flag and binds the ac
   assert.deepEqual([...(await api.headerAttachmentFlags(ACCOUNT, MAILBOX, [1, 2], false))], [true, false]);
   await assert.rejects(api.headerAttachmentFlags(ACCOUNT, MAILBOX, [3], false), /chamberlain:account_mismatch:/);
   assert.deepEqual([...(await api.headerAttachmentFlags(ACCOUNT, MAILBOX, [3], true))], [true]);
+});
+
+test("P-6 the native date-window guard detects same-ID copies elsewhere in the folder", async () => {
+  const folder = `${ACCOUNT}://Sent`;
+  const folderMessages = [{ messageId: "one@x", dateInSeconds: 100 }];
+  const { api } = load({ folderMessages });
+  assert.equal(await api.verifyCopyWindow(ACCOUNT, MAILBOX, folder, ["one@x", "two@x"], [1, 0], 90_000, 110_000), true);
+  folderMessages.push({ messageId: "<one@x>", dateInSeconds: 1 });
+  assert.equal(await api.verifyCopyWindow(ACCOUNT, MAILBOX, folder, ["one@x", "two@x"], [1, 0], 90_000, 110_000), false);
 });
 
 test("R8 a send holds the composer without looking up any draft folder", async () => {

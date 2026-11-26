@@ -123,8 +123,20 @@ class ThunderbirdMail(MailReads):
                     ErrorCode.SOURCE_UNAVAILABLE, "The folder scan was incomplete."
                 )
             here, there = by_id(source), by_id(destination)
+            dates = [
+                fact.header.date_ms for scope in (source, destination) for fact in scope.copies
+            ]
+            margin = 2 * 86_400_000  # Match the date tolerance used during the add-on's move.
+            date_window = (
+                (min(dates) - margin, max(dates) + margin)
+                if len(groups[0].ids) > 1
+                and set(groups[0].ids) <= here.keys()
+                and all(margin <= date <= protocol.MAX_JS_DATE_MS - margin for date in dates)
+                else None
+            )
             change = change.model_copy(
                 update={
+                    "date_window": date_window,
                     "before": {
                         mid: MoveBaseline(
                             source=len(here.get(mid, ())),
@@ -132,7 +144,7 @@ class ThunderbirdMail(MailReads):
                             read=here[mid][0].read if len(here.get(mid, ())) == 1 else None,
                         )
                         for mid in groups[0].ids
-                    }
+                    },
                 }
             )
             if not any(

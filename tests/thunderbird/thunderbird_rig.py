@@ -233,6 +233,7 @@ class Stack:
         subject: str = "Contract test",
         body: str = "Body text.",
         unread: bool = True,
+        date_ms: int | None = None,
         attachments: tuple[tuple[str, bytes], ...] = (),
     ) -> str:
         found = self.control(
@@ -242,6 +243,7 @@ class Stack:
             subject=subject,
             body=body,
             unread=unread,
+            date_ms=date_ms,
             attachments=[
                 {"name": name, "b64": base64.b64encode(data).decode()} for name, data in attachments
             ],

@@ -180,3 +180,10 @@ def test_absence_and_deleted_observation_follow_provider_proof() -> None:
     backend.observation = Observation(False, delete_confirmed=True, receipt=RECEIPT)
     assert port.dispatch(delete, "k").outcome is DispatchOutcome.APPLIED
     assert port.reconcile(delete, "k").status is ReconcileStatus.PRESENT
+    backend.observation = Observation(
+        False, delete_confirmed=True, unchanged=True, absence_provable=True, receipt=RECEIPT
+    )
+    unchanged_delete = port.reconcile(delete, "k")
+    assert unchanged_delete.status is ReconcileStatus.ABSENT
+    assert unchanged_delete.proof
+    assert backend.writes == 1

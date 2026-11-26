@@ -171,35 +171,118 @@ async function readIdGroup(r: Bound, group: ChangeGroup): Promise<{ map: Map<str
   return { map: new Map(found.messages.length ? [[id, found.messages]] : []), complete: found.complete };
 }
 
+interface FlagGroup {
+  group: ChangeGroup;
+  items: ChangeItem[];
+}
+
+const FLAG_PRECHECK_CODES = new Set<BridgeErrorCode>([
+  "account_mismatch", "bad_request", "changed", "client_offline", "not_found", "unsupported",
+]);
+
+function flagError(error: unknown): BridgeErrorCode | undefined {
+  return error instanceof BridgeFailure
+    ? error.code
+    : helperFailure(String((error as Error)?.message ?? error))?.code;
+}
+
+async function verifyFlagGroups(a: Bound, groups: FlagGroup[], read: boolean, ctx: Ctx): Promise<void> {
+  const deadline = Date.now() + TUNING.batchCheckMs;
+  let pending = groups;
+  let refreshed = false;
+  while (pending.length && !ctx.cancelled && Date.now() < deadline) {
+    const remaining: FlagGroup[] = [];
+    for (const { group, items } of pending) {
+      if (ctx.cancelled || Date.now() >= deadline) return;
+      let after;
+      try {
+        after = await readIdGroup(a, group);
+      } catch {
+        remaining.push({ group, items });
+        continue;
+      }
+      const unknown: ChangeItem[] = [];
+      for (const item of items) {
+        const copies = after.map.get(bare(item.ref.internet_message_id)) ?? [];
+        if (!after.complete || copies.length !== 1 || copies[0].read !== read) {
+          unknown.push(item);
+          continue;
+        }
+        item.ok = true;
+        item.code = "";
+      }
+      if (unknown.length) remaining.push({ group, items: unknown });
+    }
+    pending = remaining;
+    if (!pending.length || ctx.cancelled || Date.now() >= deadline) break;
+    if (!refreshed) {
+      refreshed = true;
+      const folders = pending.map(({ group }) => group.folder_id);
+      for (let index = 0; index < folders.length && !ctx.cancelled; index += 8) {
+        await refreshMoveFolders(a, folders.slice(index, index + 8), deadline);
+      }
+    } else {
+      await sleep(TUNING.movePollMs);
+    }
+  }
+}
+
 async function markGroups(a: ChangeArgs, read: boolean, ctx: Ctx): Promise<ChangeResult> {
   const helper = messenger.chamberlainMail;
   check(typeof helper?.setReadFlags === "function", "unsupported", "The bulk read flag helper is not installed.");
   const items: ChangeItem[] = [];
+  const pending: FlagGroup[] = [];
   for (const group of a.items) {
-    const before = await readIdGroup(a, group);
+    if (ctx.cancelled) fail("timeout", "The deadline passed while checking the folders.");
+    let before;
+    try {
+      before = await readIdGroup(a, group);
+    } catch (error) {
+      const failure = flagError(error);
+      const code = failure && FLAG_PRECHECK_CODES.has(failure) ? failure : "not_verified";
+      items.push(...group.ids.map((id) => ({
+        ref: { folder_id: group.folder_id, internet_message_id: id },
+        ok: false, was_read: null, code,
+      })));
+      continue;
+    }
     const changed: BulkReadRef[] = [];
-    const first = items.length;
+    const wanted: ChangeItem[] = [];
     for (const id of group.ids) {
       const found = before.map.get(bare(id)) ?? [];
       const code = !before.complete || found.length > 1 ? "ambiguous" : found.length === 0 ? "not_found" : "";
       const ref = { folder_id: group.folder_id, internet_message_id: id };
       const wasRead = code ? null : found[0].read;
-      items.push({ ref, ok: !code, was_read: wasRead, code });
-      if (wasRead !== null && wasRead !== read) changed.push({ id: found[0].id, internetMessageId: bare(id) });
+      const pendingFlag = wasRead !== null && wasRead !== read;
+      const item = { ref, ok: !code && !pendingFlag, was_read: wasRead, code: pendingFlag ? "not_verified" : code };
+      items.push(item);
+      if (!code) wanted.push(item);
+      if (pendingFlag) {
+        changed.push({ id: found[0].id, internetMessageId: bare(id) });
+      }
     }
     if (!changed.length) continue;
     markMutation(ctx);
-    await helper.setReadFlags(a.account_id, a.mailbox, group.folder_id, changed, read);
-    const after = await readIdGroup(a, group);
-    for (const item of items.slice(first)) {
-      if (!item.ok) continue;
-      const copies = after.map.get(bare(item.ref.internet_message_id)) ?? [];
-      if (!after.complete || copies.length !== 1 || copies[0].read !== read) {
-        item.ok = false;
-        item.code = "not_verified";
+    try {
+      await helper.setReadFlags(a.account_id, a.mailbox, group.folder_id, changed, read);
+    } catch (error) {
+      const code = flagError(error);
+      // The native helper checks every reference before touching any flag.
+      if (code && FLAG_PRECHECK_CODES.has(code)) {
+        for (const item of wanted) {
+          if (!item.ok) item.code = code;
+        }
+        continue;
       }
+      // An IMAP failure may arrive after changing a flag. Look again without writing.
     }
+    for (const item of wanted) {
+      item.ok = false;
+      item.code = "not_verified";
+    }
+    pending.push({ group, items: wanted });
   }
+  await verifyFlagGroups(a, pending, read, ctx);
   return {
     items, verified: items.every((item) => item.code !== "not_verified"),
     read_state_preserved: null, merged_existing_copy: false,
@@ -450,11 +533,6 @@ async function cmdDraftDiscard(a: DraftDiscardArgs, ctx: Ctx): Promise<DiscardRe
 type ContentFacts = Pick<CopyFact, "subject" | "body_sha256" | "to" | "cc" | "bcc" |
   "attachment_sha256" | "high_importance" | "in_reply_to" | "token">;
 
-function checkCopy(before: TbHeader, after: TbHeader): void {
-  check(before.id === after.id && before.headerMessageId === after.headerMessageId &&
-    before.folder?.id === after.folder?.id && before.read === after.read,
-    "changed", "The message or its read flag changed during inspection.");
-}
 
 /** Both duplicate policies use these observations. Only exact verification hashes attachments. */
 async function inspectContent(h: TbHeader, includeHashes: boolean): Promise<ContentFacts> {
@@ -509,9 +587,30 @@ async function copyFact(a: Bound, scope: CopyScope, h: TbHeader, head: Header): 
 
 async function scanCopyScope(a: Bound, scope: CopyScope, folderId: string, outbox: boolean): Promise<{ messages: TbHeader[]; complete: boolean }> {
   if (scope.ids != null) {
-    const scan = await readIdGroup(a, { folder_id: folderId, ids: scope.ids });
-    const ids = new Set(scope.ids.map(bare));
-    return { messages: [...ids].flatMap((id) => scan.map.get(id) ?? []), complete: scan.complete };
+    const ids = [...new Set(scope.ids.map(bare))];
+    if (scope.since_ms == null || scope.until_ms == null) {
+      const scan = await readIdGroup(a, { folder_id: folderId, ids: scope.ids });
+      return { messages: ids.flatMap((id) => scan.map.get(id) ?? []), complete: scan.complete };
+    }
+    await folderOf(a, folderId);
+    const scan = await scanQuery(a, {
+      folderId, sinceMs: scope.since_ms, untilMs: scope.until_ms, maxScan: 200000,
+    });
+    const wanted = new Set(ids);
+    const messages = scan.messages.filter((message) => wanted.has(bare(message.headerMessageId)));
+    if (!scan.complete) return { messages, complete: false };
+    const helper = messenger.chamberlainMail;
+    check(helper?.verifyCopyWindow, "unsupported", "The bounded copy helper is not installed.");
+    const counts = new Map<string, number>();
+    for (const message of messages) {
+      const id = bare(message.headerMessageId);
+      counts.set(id, (counts.get(id) ?? 0) + 1);
+    }
+    const complete = await helper.verifyCopyWindow(
+      a.account_id, a.mailbox, folderId, ids, ids.map((id) => counts.get(id) ?? 0),
+      scope.since_ms, scope.until_ms,
+    );
+    return { messages, complete };
   }
   check(scope.subject != null && scope.since_ms != null, "bad_request", "The scan needs a subject and lower time bound.");
   await folderOf(a, folderId, outbox);
@@ -555,7 +654,7 @@ async function cmdCopies(a: CopiesArgs): Promise<CopiesResult> {
       for (const folderId of folders) {
         const scan = await scanCopyScope(a, scope, folderId, outbox);
         complete &&= scan.complete;
-        if (!scan.complete) errors.push("scan limit: " + clip(folderId, 120));
+        if (!scan.complete) errors.push("copy scan incomplete: " + clip(folderId, 120));
         const headers = await scanHeaders(a, scan.messages, outbox);
         for (let i = 0; i < headers.length; i++) copies.push(await copyFact(a, scope, scan.messages[i], headers[i]));
       }

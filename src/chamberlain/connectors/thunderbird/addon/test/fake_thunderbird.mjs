@@ -350,6 +350,19 @@ export function createWorld() {
         }
         return m.attachments.length > 0;
       }),
+      verifyCopyWindow: async (accountId, mailbox, folderId, ids, expectedCounts, sinceMs, untilMs) => {
+        if (accountId !== ACCOUNT || mailbox.toLowerCase() !== OWNER || world.folders.get(folderId)?.accountId !== accountId) {
+          throw new Error("chamberlain:account_mismatch:");
+        }
+        const counts = new Map(ids.map((id, index) => [id, expectedCounts[index]]));
+        for (const message of world.messages) {
+          if (message.folderId !== folderId || !counts.has(bare(message.headerMessageId))) continue;
+          const id = bare(message.headerMessageId);
+          if (!counts.get(id) || message.date < sinceMs || message.date > untilMs) return false;
+          counts.set(id, counts.get(id) - 1);
+        }
+        return [...counts.values()].every((count) => count === 0);
+      },
       setReadFlags: async (accountId, mailbox, folderId, refs, read) => {
         if (mailbox !== OWNER || world.folders.get(folderId)?.accountId !== accountId) throw new Error("chamberlain:account_mismatch:");
         const messages = refs.map(({ id, internetMessageId }) => {

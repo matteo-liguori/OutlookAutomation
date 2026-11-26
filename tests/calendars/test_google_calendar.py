@@ -291,6 +291,29 @@ def test_p16_a_cancelled_event_is_reported_cancelled(world: World) -> None:
     assert port.read(SOURCE, locator).status is EventStatus.CANCELLED
 
 
+def test_delete_reconcile_requires_a_changed_revision_for_a_google_tombstone(world: World) -> None:
+    port, api, _ = world
+    locator = api.seed(item("X", "2027-03-01T10:00:00Z", "2027-03-01T11:00:00Z"))
+    handle = ref_handle(HandleKind.CALENDAR_EVENT, SOURCE, locator)
+    prepared = port.prepare(
+        CalendarDelete(
+            source=SOURCE, event_ref=handle, expected_etag=port.read(SOURCE, locator).etag
+        ),
+        {handle: locator},
+    )
+    api.arm(Fault.LOSE_BEFORE_APPLY)
+    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
+    api.events[locator]["status"] = "cancelled"
+    unchanged = port.reconcile(prepared, "k")
+    assert unchanged.status is ReconcileStatus.ABSENT
+    assert unchanged.proof
+
+    api.events[locator]["etag"] = '"cancelled"'
+    changed = port.reconcile(prepared, "k")
+    assert changed.status is ReconcileStatus.PRESENT
+    assert [method for method, _ in api.calls if method == "DELETE"] == ["DELETE"]
+
+
 def test_p27_an_all_day_series_with_an_until_is_verified_by_date(world: World) -> None:
     """An all-day series ends on a date: a time of day in `until` must not fail the read-back."""
     port, api, _ = world

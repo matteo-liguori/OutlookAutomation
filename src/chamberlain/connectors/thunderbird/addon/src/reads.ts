@@ -261,6 +261,12 @@ async function bodyText(full: TbPart): Promise<string> {
   return normaliseBody(text.length ? text.join("\n") : await htmlToText(html));
 }
 
+function checkCopy(before: TbHeader, after: TbHeader): void {
+  check(before.id === after.id && before.headerMessageId === after.headerMessageId &&
+    before.folder?.id === after.folder?.id && before.read === after.read,
+    "changed", "The message or its read flag changed during inspection.");
+}
+
 async function rawHash(id: number): Promise<string> {
   const file: File = await messenger.messages.getRaw(id, { data_format: "File" });
   check(file.size <= MAX_ATTACHMENT_BYTES * 4, "too_large", "The message is too large to hash.");
@@ -286,6 +292,8 @@ async function cmdRead(a: ReadArgs): Promise<ReadResult> {
   const headers = full.headers ?? {};
   const decoded = await messenger.messengerUtilities.decodeMimeHeader("subject", headers.subject ?? [after.subject]);
   const attachments = await attachmentInfo(after.id);
+  const digest = a.raw_hash ? await rawHash(after.id) : undefined;
+  checkCopy(after, await messenger.messages.get(after.id));
   return {
     header: header(after, attachments.length > 0),
     subject: clip(decoded[0] ?? after.subject, MAX_BODY_CHARS),
@@ -297,7 +305,7 @@ async function cmdRead(a: ReadArgs): Promise<ReadResult> {
     in_reply_to: (headers["in-reply-to"] ?? []).join(" ").trim(),
     references: (headers.references ?? []).join(" ").trim(),
     authentication_results: (headers["authentication-results"] ?? []).slice(0, 8).map((v: string) => clip(v, 2000)),
-    raw_sha256: a.raw_hash ? await rawHash(after.id) : undefined,
+    raw_sha256: digest,
     read_state_preserved: true,
   };
 }

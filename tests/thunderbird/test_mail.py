@@ -4,12 +4,16 @@ Each test names the rule it enforces (P-n, W-n, B-n) or the review ruling (R1 to
 where it carries an old incident across, says which. Runs the real add-on under Node.
 """
 
+import json
+from collections.abc import Sequence
+
 import pytest
 from thunderbird_rig import ACCOUNT, MAILBOX, Stack
 
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.identity import encode_locator
 from chamberlain.connectors.thunderbird.mail import ALLOW_DUPLICATE_REF, DISPLAY_ONLY_REF
+from chamberlain.connectors.thunderbird.mail_reads import ThunderbirdBinding
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.capabilities import CapabilityName, HealthState
 from chamberlain.domain.handles import HandleKind, ref_handle
@@ -473,3 +477,75 @@ def test_words_find_a_reply_by_its_re_subject(stack: Stack) -> None:
     seed(stack, subject="Quarterly plan")
     assert len(stack.mail.search(SOURCE, MailQuery(text="Re: Quarterly plan")).items) == 1
     assert len(stack.mail.search(SOURCE, MailQuery(text="Fwd: quarterly")).items) == 1
+
+
+def test_w30_reconcile_move_after_lost_reply_reports_a_changed_flag(stack: Stack) -> None:
+    _, locator = seed(stack, unread=True)
+    h = handle(locator)
+    move = MailMove(source=SOURCE, messages=(h,), to_folder=stack.folder_id(FolderRole.TRASH))
+    prepared = stack.mail.prepare(move, {h: locator})
+    receipt = applied(stack.mail.dispatch(prepared, "move", {})).receipt
+    assert receipt is not None
+    dest = receipt.items[0].moved_to
+    assert dest
+    changed = stack.mail.prepare(MailMarkRead(source=SOURCE, messages=(h,)), {h: dest})
+    applied(stack.mail.dispatch(changed, "mark", {}))
+    result = stack.mail.reconcile(prepared, "move")
+    assert result.receipt
+    assert result.receipt.read_state_preserved is False
+    assert "read_state_not_preserved" in result.receipt.warnings
+    assert stack.control("counters")["move"] == 1
+
+
+def test_p3_an_ordinary_read_has_the_raw_evidence_hash_without_marking_read(stack: Stack) -> None:
+    _, locator = seed(stack, subject="Ordinary evidence", body="Original bytes.")
+    expected = json.dumps(
+        {
+            "s": "Ordinary evidence",
+            "b": "Original bytes.",
+            "to": [MAILBOX],
+            "cc": [],
+            "bcc": [],
+            "a": [],
+            "h": {},
+            "p": "normal",
+        },
+        separators=(",", ":"),
+    ).encode()
+    message = stack.mail.read(SOURCE, locator)
+    assert message.raw_sha256 == sha256_bytes(expected)
+    assert stack.is_unread(locator)
+
+
+@pytest.mark.parametrize("known_dates", [True, False])
+def test_p11_lost_batch_reply_uses_prepared_dates_and_refuses_a_cross_date_duplicate(
+    stack: Stack, monkeypatch: pytest.MonkeyPatch, known_dates: bool
+) -> None:
+    start = 1_770_000_000_000
+    day = 86_400_000
+    mid, first = seed(stack, date_ms=start if known_dates else 0)
+    _, second = seed(stack, date_ms=start + 3 * day)
+    refs = {handle(locator): locator for locator in (first, second)}
+    intent = MailTrash.model_validate({"source": SOURCE, "messages": list(refs)})
+    prepared = stack.mail.prepare(intent, refs)
+    stack.control("inject", fault="lose_response")
+    assert stack.mail.dispatch(prepared, "lost", {}).outcome is DispatchOutcome.UNKNOWN
+
+    original = stack.mail.copies
+    windows: list[tuple[int | None, int | None]] = []
+
+    def capture(
+        binding: ThunderbirdBinding, scopes: Sequence[protocol.CopyScope], *, refresh: bool = False
+    ) -> protocol.CopiesResult:
+        windows.extend((scope.since_ms, scope.until_ms) for scope in scopes)
+        return original(binding, scopes, refresh=refresh)
+
+    monkeypatch.setattr(stack.mail, "copies", capture)
+    resolved = stack.mail.reconcile(prepared, "lost")
+    assert resolved.status is ReconcileStatus.PRESENT
+    expected = (start - 2 * day, start + 5 * day) if known_dates else (None, None)
+    assert windows == [expected] * 2
+
+    stack.seed(internet_message_id=mid, folder=FolderRole.TRASH, date_ms=start - 20 * day)
+    assert stack.mail.reconcile(prepared, "lost").status is ReconcileStatus.UNKNOWN
+    assert stack.control("counters")["move"] == 1

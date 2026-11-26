@@ -6,18 +6,25 @@ for the mailbox with `allow_mark_read`, which the owner confirms with a click in
 harness proposes that grant once and never confirms it.
 """
 
+import logging
 import sqlite3
+from datetime import timedelta
 
+from chamberlain.app.context import Context
 from chamberlain.domain.canonical import content_hash
+from chamberlain.domain.grant_rules import format_ts, intent_hash
 from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
-from chamberlain.domain.intents import IntentKind
+from chamberlain.domain.intents import IntentKind, MailMarkRead
 from chamberlain.domain.read_state import ReadStateConfig
 from chamberlain.ports.clock import Clock
 from chamberlain.store.schema import READ_STATE_KEY, get_state
 from chamberlain.writes import repo
 from chamberlain.writes.audit import AuditChain
+from chamberlain.writes.authorise import Allow, OperationFacts, Usage, authorise
 from chamberlain.writes.grants import GrantService
 from chamberlain.writes.models import GrantRow, WritePolicy
+
+log = logging.getLogger("chamberlain.writes")
 
 ACTOR = "system:read_state"
 
@@ -46,14 +53,41 @@ def scope_for(source: str) -> StandingScope:
     )
 
 
-def active_grant(db: sqlite3.Connection, source: str) -> GrantRow | None:
-    """A confirmed standing grant that lets this mailbox's mail be marked read."""
-    for grant in repo.grants_in_states(db, (GrantState.ACTIVE,), source):
-        scope = grant.scope
-        if grant.kind is not GrantKind.STANDING or scope is None:
-            continue
-        if scope.allow_mark_read and IntentKind.MAIL_MARK_READ in scope.intent_kinds:
-            return grant
+def active_grant(
+    ctx: Context,
+    intent: MailMarkRead,
+    *,
+    card: str | None = None,
+) -> GrantRow | None:
+    """Choose a standing grant by the same coverage, age and usage rules as dispatch."""
+    pool = [
+        g
+        for g in repo.grants_in_states(ctx.db, (GrantState.ACTIVE,), intent.source)
+        if g.kind is GrantKind.STANDING and g.scope and g.scope.allow_mark_read
+    ]
+    now = ctx.clock.now()
+    folders: frozenset[str] = frozenset()
+    if any(g.scope and g.scope.folders for g in pool):
+        port = ctx.sources.mail_port(intent.source)
+        folders = frozenset(
+            port.folder_of(intent.source, ctx.services.refs.locate(h)[1]) for h in intent.messages
+        )
+    usage = Usage(
+        mail_folders=folders,
+        recent_uses=repo.recent_uses(
+            ctx.db, [g.handle for g in pool], format_ts(now - timedelta(hours=24)), ""
+        ),
+    )
+    decision = authorise(
+        intent, OperationFacts("", intent_hash(intent), card), pool, usage, ctx.write_policy, now
+    )
+    if isinstance(decision, Allow):
+        return next(g for g in pool if g.handle == decision.grant)
+    log.info(
+        "No standing read-state grant covers %d message(s) on %s",
+        len(intent.messages),
+        intent.source,
+    )
     return None
 
 

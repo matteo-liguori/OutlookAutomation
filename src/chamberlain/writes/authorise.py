@@ -15,7 +15,7 @@ from chamberlain.domain.grant_rules import (
     suspend_at,
 )
 from chamberlain.domain.grants import GrantKind, GrantState, Requirement
-from chamberlain.domain.intents import IntentKind, MailSend, WriteIntent
+from chamberlain.domain.intents import IntentKind, MailMarkRead, MailSend, WriteIntent
 from chamberlain.schema.errors import ErrorCode
 from chamberlain.writes.models import GrantRow, WritePolicy
 
@@ -46,6 +46,7 @@ class Usage:
     or reserved and not yet dispatched."""
     source_sends_last_hour: int = 0
     known_recipients: frozenset[str] = frozenset()
+    mail_folders: frozenset[str] = frozenset()
     event_attendees: frozenset[str] = frozenset()
     """The guests already on the stored event an update acts on (read at propose)."""
     owner_addresses: frozenset[str] = frozenset()
@@ -152,6 +153,8 @@ def _verdict(
         return ErrorCode.GRANT_NOT_ACTIVE
     if grant.expires_at is None or grant.expires_at <= now:
         return ErrorCode.GRANT_NOT_ACTIVE
+    if grant.card is not None and grant.card != operation.card:
+        return ErrorCode.GRANT_SCOPE_MISMATCH
     if grant.kind is GrantKind.ONE_OFF:
         if grant.content_sha256 != operation.intent_sha256:
             return ErrorCode.GRANT_CONTENT_MISMATCH
@@ -163,6 +166,12 @@ def _verdict(
         return ErrorCode.GRANT_NOT_ACTIVE
     if grant.review_at is not None and now >= suspend_at(grant.review_at):
         return ErrorCode.GRANT_NOT_ACTIVE
+    if (
+        isinstance(intent, MailMarkRead)
+        and scope.folders
+        and (not usage.mail_folders or not usage.mail_folders <= scope.folders)
+    ):
+        return ErrorCode.GRANT_SCOPE_MISMATCH
     if scope_mismatch(scope, intent, operation.card):
         return ErrorCode.GRANT_SCOPE_MISMATCH
     used = usage.recent_uses.get(grant.handle, 0)
