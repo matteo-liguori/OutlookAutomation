@@ -107,6 +107,7 @@ def test_g17_a_wrong_origin_host_peer_or_fetch_site_is_403(rig: Rig) -> None:
         rig.call("GET", "/", token=None, host=None),
     ]
     assert [c.status for c in cases] == [403] * 10
+    assert len(rejected(rig)) == 8  # every API refusal is audited; the two shell refusals are not
     assert repo.get_grant(rig.ctx.db, handle).state is GrantState.PROPOSED  # type: ignore[union-attr]
 
 
@@ -119,6 +120,15 @@ def test_g17_a_post_must_be_json_and_the_method_must_be_get_or_post(rig: Rig) ->
     for method in ("PUT", "DELETE", "PATCH", "OPTIONS", "HEAD"):
         assert rig.call(method, "/api/overview").status == 405
     assert rig.call("GET", "/api/overview").status == 200
+    assert rig.last_headers["Content-Type"] == "application/json"
+
+
+def test_g17_reads_need_the_token_but_not_an_origin(rig: Rig) -> None:
+    rig.proposal()
+    reply = rig.call("GET", "/api/grants?state=proposed", origin=None)
+    assert reply.status == 200
+    assert len(reply.body["grants"]) == 1
+    assert rig.call("GET", "/api/grants?state=nonsense").status == 400
 
 
 def test_g17_a_loopback_ipv6_peer_is_allowed(rig: Rig) -> None:
