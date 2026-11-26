@@ -144,10 +144,11 @@ captures the flag before and after and fails with `changed` if it moved):
   `[Gmail]`) and a saved search answer `success: false, code: "not-selectable"` at once; the
   harness counts that as in sync.
 - `copies` returns observations for each requested scope. An ID scope
-  reports physical copies of the requested IDs in a bound folder. Reconcile may
-  supply both dates from a complete baseline. The add-on checks the bounded
-  observations against native counts for the exact IDs across all dates. An
-  out-of-window match or a native scan limit leaves the scope incomplete. A subject
+  uses a bounded native lookup across all dates and reports each visible physical
+  copy of the exact requested IDs in a bound folder. Only matching headers cross
+  the WebExtension boundary. Reconcile may supply both dates from a complete
+  baseline. An out-of-window match or an unfinished native lookup leaves the
+  scope incomplete. A subject
   scope searches the folder or the local Outbox since the requested date and
   can collect content facts. With `refresh: true`, the add-on first refreshes
   the named folders and reports whether provider callbacks verified that refresh.

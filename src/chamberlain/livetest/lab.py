@@ -19,6 +19,7 @@ from chamberlain.app.core import App
 from chamberlain.app.wiring import run_tick
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.mail import FolderRole
+from chamberlain.domain.operations import MAY_HAVE_HAPPENED_STATES, TERMINAL_STATES, OperationState
 from chamberlain.livetest.config import LiveTestConfig
 from chamberlain.livetest.env import CalendarCopy, Environment, MailCopy, strip_reply_prefix
 from chamberlain.livetest.markers import MARKER, carries_marker, run_marker
@@ -247,10 +248,17 @@ class Lab:
         operation = str(proposed["operation"])
         if proposed["ready"]:
             return operation
+        state = OperationState(proposed["state"])
+        if state in MAY_HAVE_HAPPENED_STATES:
+            # A matching operation may still be settling. `do` on its handle cannot redispatch.
+            return operation
         if proposed["requirement"] == "none":
-            raise ScenarioFailure(f"{kind} repeats a write done in the last 24 hours")
+            if state in TERMINAL_STATES:
+                raise ScenarioFailure(f"{kind} matched a settled operation ({state.value})")
+            code = self._refused(operation, kind)
+            raise ScenarioFailure(f"{kind} is not ready ({code})")
         if proposed["requirement"] != "agent_evidence" or not kind.startswith("calendar."):
-            self._refused(operation, kind, str(proposed["requirement"]))
+            self._refused(operation, kind)
             raise ScenarioFailure(
                 f"{kind} is not covered by a confirmed grant "
                 f"(needs {proposed['requirement']}); run `chamberlain live-test grant`"
@@ -283,7 +291,7 @@ class Lab:
             raise ScenarioFailure(f"the approval did not make {operation} ready")
         return operation
 
-    def _refused(self, operation: str, kind: str, requirement: str) -> None:
+    def _refused(self, operation: str, kind: str) -> str:
         """A not-ready write: ask `do` why (it re-checks authority and refuses to send).
 
         The only reason that is not a defect is the hourly or daily limit, which is a skip.
@@ -293,6 +301,7 @@ class Lab:
             raise ScenarioFailure(f"{kind} ran although the proposal was not ready")
         if refused.code == "grant.limit_reached":
             raise ScenarioSkip("the hourly or daily send limit of the grant was reached")
+        return refused.code
 
     def do(self, operation: str) -> Call:
         done = self.call("do", operation=operation)
@@ -403,7 +412,11 @@ class Lab:
     def _trash_batch(self, source: str, copies: list[MailCopy]) -> int:
         """One `mail.trash` write for these copies of one folder; how many moved."""
         handles = list(dict.fromkeys(self.handle_of(copy) for copy in copies))
-        done = self.write({"kind": "mail.trash", "source": source, "messages": handles})
+        operation = self.prepare({"kind": "mail.trash", "source": source, "messages": handles})
+        done = self.do(operation)
+        if done.code in {"operation.uncertain", "operation.needs_reconcile"}:
+            # The cleanup may have already moved the copies. Check the same operation read-only.
+            done = self.call("reconcile", operation=operation)
         view = self.confirmed(done, "trash")
         return int(view.get("items_ok", len(handles)))
 

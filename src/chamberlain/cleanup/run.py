@@ -212,7 +212,7 @@ def run_cleanup(ctx: Context, config: CleanupConfig, *, dry_run: bool) -> Cleanu
                 batch = found[start : start + BATCH]
                 moved = _trash(engine, grant, card, source, batch, report)
                 if moved is None:
-                    break  # not covered: the rest of this mailbox would be refused too
+                    break  # Do not submit further chunks after the write was not started.
                 if moved:
                     where = f"{rule.name} ({source})"
                     report.moved_by[where] = report.moved_by.get(where, 0) + moved
@@ -231,7 +231,7 @@ def _trash(
     batch: list[Candidate],
     report: CleanupReport,
 ) -> int | None:
-    """Move one batch; how many moved, or None when the grant does not cover it."""
+    """Move one batch; how many moved, or None when no operation can run."""
     refs = engine.ctx.services.refs
     handles = [refs.remember(HandleKind.MESSAGE, source, c.summary.locator) for c in batch]
     intent = MailTrash(source=source, messages=tuple(handles))
@@ -240,7 +240,9 @@ def _trash(
         try:
             done = engine.run(intent, actor=ACTOR, grant=grant, card=card)
             if done is None:
-                report.failed += ["not covered by the grant"] * len(batch)
+                report.failed += ["write was not started (grant or existing operation)"] * len(
+                    batch
+                )
                 return None
             break
         except ChamberlainError as error:

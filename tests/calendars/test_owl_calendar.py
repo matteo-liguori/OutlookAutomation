@@ -328,3 +328,67 @@ def test_private_freshness_probe_and_lost_create_recovery() -> None:
     written = sum(write for _, write in bridge.requests)
     assert port.probe(SOURCE, token, cleanup_only=True)
     assert sum(write for _, write in bridge.requests) == written
+
+
+def test_create_rejects_provider_id_with_locator_separator() -> None:
+    port, bridge, _ = build()
+    bridge.generated_uid = "bad#occurrence"
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(), uid="safe"), {})
+    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.UNKNOWN
+
+
+def test_wire_arguments_failing_after_preflight_are_not_dispatched(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    port, bridge, _ = build()
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(), uid="safe"), {})
+    backend = port
+    original = backend._wire_args
+    calls = 0
+
+    def args(plan: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise ValueError("synthetic pre-send failure")
+        return original(plan)
+
+    monkeypatch.setattr(backend, "_wire_args", args)
+    assert port.dispatch(prepared, "k").outcome is DispatchOutcome.NOT_APPLIED
+    assert not [command for command, write in bridge.requests if write]
+
+
+def test_calendar_read_bridge_failure_recommends_current_addon() -> None:
+    port, bridge, _ = build()
+    bridge.offline = True
+    with pytest.raises(ChamberlainError) as raised:
+        port.read(SOURCE, "uid")
+    assert "add-on" in (raised.value.fix or "")
+
+
+@pytest.mark.parametrize(
+    ("wire_code", "expected"),
+    [
+        (None, DispatchOutcome.UNKNOWN),
+        ("busy", DispatchOutcome.NOT_APPLIED),
+    ],
+)
+def test_write_failure_requires_a_trusted_bridge_error_for_clean_outcome(
+    monkeypatch: pytest.MonkeyPatch, wire_code: str | None, expected: DispatchOutcome
+) -> None:
+    from chamberlain.connectors.thunderbird.protocol import BridgeErrorCode
+
+    port, bridge, _ = build()
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(), uid="safe"), {})
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise BridgeFailure(
+            ErrorCode.SOURCE_BUSY,
+            "failure",
+            sent=True,
+            mutation="none",
+            bridge_code=BridgeErrorCode(wire_code) if wire_code else None,
+        )
+
+    monkeypatch.setattr(bridge, "call", fail)
+    assert port.dispatch(prepared, "k").outcome is expected

@@ -422,7 +422,11 @@ class ChangePlan(Model):
                     done = here[0].read == self.set_read
                     pending |= not done
                 else:
-                    before = self.before[mid]
+                    before = self.before.get(mid)
+                    if before is None:
+                        return ReconcileResult(
+                            status=ReconcileStatus.UNKNOWN, detail="move baseline is missing"
+                        )
                     eligible = before.source == 1 and (self.trash or before.destination == 0)
                     unchanged = len(here) == before.source and len(there) == before.destination
                     did_merge = (
@@ -569,7 +573,7 @@ def _item(
         locator=encode_locator(binding.account_id, folder, mid),
         ok=ok,
         moved_to=encode_locator(binding.account_id, dest, mid) if ok and dest else None,
-        code=None if ok else _BATCH_ITEM_CODES.get(code, ErrorCode.SOURCE_UNAVAILABLE),
+        code=None if ok else _BATCH_ITEM_CODES.get(code, ErrorCode.REMOTE_CHANGED),
     )
 
 

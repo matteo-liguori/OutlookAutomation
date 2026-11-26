@@ -549,3 +549,15 @@ def test_p11_lost_batch_reply_uses_prepared_dates_and_refuses_a_cross_date_dupli
     stack.seed(internet_message_id=mid, folder=FolderRole.TRASH, date_ms=start - 20 * day)
     assert stack.mail.reconcile(prepared, "lost").status is ReconcileStatus.UNKNOWN
     assert stack.control("counters")["move"] == 1
+
+
+def test_reconcile_legacy_move_missing_baseline_is_unknown(stack: Stack) -> None:
+    _, locator = seed(stack)
+    intent = MailMove.model_validate(
+        {"source": SOURCE, "messages": [handle(locator)], "to_folder": stack.filing_folder_id()}
+    )
+    prepared = stack.mail.prepare(intent, {handle(locator): locator})
+    prepared = prepared.model_copy(update={"data": {**prepared.data, "before": {}}})
+    result = stack.mail.reconcile(prepared, "legacy")
+    assert result.status is ReconcileStatus.UNKNOWN
+    assert "baseline" in result.detail

@@ -207,9 +207,7 @@ class MailReads:
                     return self._state(source, HealthState.STALE, checked)
                 newest = result.messages[0] if result.messages else None
                 samples.append((newest.internet_message_id, newest.date_ms) if newest else None)
-        except BridgeFailure as error:
-            if error.bridge_code is protocol.BridgeErrorCode.OFFLINE:
-                return self._state(source, HealthState.UNAVAILABLE, checked)
+        except BridgeFailure:
             return self._state(source, HealthState.UNAVAILABLE, checked)
         if samples[0] != samples[1]:
             return self._state(source, HealthState.STALE, checked)

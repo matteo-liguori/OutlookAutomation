@@ -348,3 +348,21 @@ def test_p27_create_reconcile_checks_requested_privacy_or_rule(
     assert found.status is ReconcileStatus.PRESENT
     assert found.receipt is not None
     assert found.receipt.verification.server_verified
+
+
+def test_caldav_request_build_failure_is_not_sent(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from chamberlain.connectors.caldav import calendar as module
+    from chamberlain.connectors.calendar_support.port import WriteFailure
+
+    port, _ = world
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(), uid="build-fail"), {})
+
+    def fail(plan: Prepared) -> object:
+        raise ValueError("synthetic")
+
+    monkeypatch.setattr(module, "payload", fail)
+    with pytest.raises(WriteFailure) as raised:
+        port.write(prepared)
+    assert not raised.value.sent

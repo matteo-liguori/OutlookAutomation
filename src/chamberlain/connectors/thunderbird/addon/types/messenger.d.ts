@@ -66,7 +66,7 @@ interface BulkReadRef {
 interface HarnessMailApi {
   syncFolders(accountId: string, mailbox: string, folderIds: string[], timeoutMs: number): Promise<any>;
   headerAttachmentFlags(accountId: string, mailbox: string, messageIds: number[], allowOutbox: boolean): Promise<boolean[]>;
-  verifyCopyWindow(accountId: string, mailbox: string, folderId: string, messageIds: string[], expectedCounts: number[], sinceMs: number, untilMs: number): Promise<boolean>;
+  lookupCopies(accountId: string, mailbox: string, folderId: string, messageIds: string[]): Promise<{ messages: TbHeader[]; complete: boolean }>;
   setReadFlags(accountId: string, mailbox: string, folderId: string, refs: BulkReadRef[], read: boolean): Promise<void>;
   holdComposer(tabId: number, accountId: string, mailbox: string, draftFolderId: string, sentFolderId: string): Promise<any>;
   openDraft(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;

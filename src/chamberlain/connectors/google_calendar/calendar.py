@@ -265,22 +265,25 @@ class GoogleCalendar(CalendarWritePort):
                 )
 
     def write(self, prepared: Prepared) -> WriteReply:
-        binding = self._binding(prepared.source)
-        values = payload(prepared)
-        events = self._events_path(binding)
-        kind = prepared.intent_kind
-        notify = values.get("notify") is True
-        params = {"sendUpdates": "all"} if notify else {}
-        headers: dict[str, str] = {}
-        raw_body = values.get("body")
-        body = dict(raw_body) if isinstance(raw_body, dict) else None
-        if kind is IntentKind.CALENDAR_CREATE:
-            method = "POST"
-            path = events if "event_id" in values else events + "/import"
-        else:
-            path = f"{events}/{_quote(locator(prepared))}"
-            headers["If-Match"] = expected_etag(prepared)
-            method = _EDIT_METHODS[kind]
+        try:
+            binding = self._binding(prepared.source)
+            values = payload(prepared)
+            events = self._events_path(binding)
+            kind = prepared.intent_kind
+            notify = values.get("notify") is True
+            params = {"sendUpdates": "all"} if notify else {}
+            headers: dict[str, str] = {}
+            raw_body = values.get("body")
+            body = dict(raw_body) if isinstance(raw_body, dict) else None
+            if kind is IntentKind.CALENDAR_CREATE:
+                method = "POST"
+                path = events if "event_id" in values else events + "/import"
+            else:
+                path = f"{events}/{_quote(locator(prepared))}"
+                headers["If-Match"] = expected_etag(prepared)
+                method = _EDIT_METHODS[kind]
+        except Exception as error:
+            raise WriteFailure(type(error).__name__, sent=False) from error
         try:
             reply = self._send(binding, method, path, params=params, body=body, headers=headers)
         except ChamberlainError as error:

@@ -133,33 +133,33 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
             return Boolean(h.flags & Ci.nsMsgMessageFlags.Attachment);
           });
         },
-        async verifyCopyWindow(accountId, mailbox, folderId, messageIds, expectedCounts, sinceMs, untilMs) {
+        async lookupCopies(accountId, mailbox, folderId, messageIds) {
           ownerAccount(accountId, mailbox);
-          need(messageIds.length > 0 && messageIds.length <= 500 &&
-            messageIds.length === expectedCounts.length && new Set(messageIds).size === messageIds.length &&
-            expectedCounts.every((count) => Number.isSafeInteger(count) && count >= 0) &&
-            Number.isSafeInteger(sinceMs) && Number.isSafeInteger(untilMs) && sinceMs <= untilMs,
-          "bad_request");
+          const wanted = new Set(messageIds);
+          need(messageIds.length > 0 && messageIds.length <= 500 && wanted.size === messageIds.length, "bad_request");
           const target = getFolder(folderId);
           need(target.accountKey === accountId, "account_mismatch");
-          if (target.folder.isServer || target.folder.getFlag(Ci.nsMsgFolderFlags.Virtual)) return false;
-          const missing = new Map(messageIds.map((id, i) => [id, expectedCounts[i]]));
+          const messages = [];
+          const incomplete = { messages, complete: false };
+          if (target.folder.isServer || target.folder.getFlag(Ci.nsMsgFolderFlags.Virtual | Ci.nsMsgFolderFlags.ImapNoselect)) return incomplete;
           const deadline = Date.now() + 5000;
+          const deleted = Ci.nsMsgMessageFlags.IMAPDeleted | Ci.nsMsgMessageFlags.Expunged;
           let scanned = 0;
-          // Validate exact IDs across dates against the local native folder data. In particular,
-          // an old copy of a requested ID cannot be hidden by a WebExtension date filter.
+          // Thunderbird's list also excludes logically deleted IMAP headers. Convert only the
+          // matching, visible physical copies; a first-hit ID lookup would hide duplicates.
           for (const header of target.folder.messages) {
-            if (++scanned > 200000 || Date.now() >= deadline) return false;
+            if (++scanned > 200000 || Date.now() >= deadline) return incomplete;
             if (scanned % 2000 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
             const id = String(header.messageId ?? "").trim().replace(/^<(.*)>$/s, "$1");
-            const count = missing.get(id);
-            if (count === undefined) continue;
-            const date = header.dateInSeconds * 1000;
-            if (!Number.isSafeInteger(date) || date < sinceMs || date > untilMs || count === 0) return false;
-            missing.set(id, count - 1);
+            if (!wanted.has(id) || (header.flags & deleted)) continue;
+            const converted = context.extension.messageManager.convert(header);
+            if (!converted || converted.folder?.id !== folderId) return incomplete;
+            const date = converted.date.getTime();
+            if (!Number.isSafeInteger(date)) return incomplete;
+            messages.push({ ...converted, date });
           }
           ownerAccount(accountId, mailbox);
-          return Date.now() < deadline && [...missing.values()].every((count) => count === 0);
+          return { messages, complete: Date.now() < deadline };
         },
         async setReadFlags(accountId, mailbox, folderId, refs, read) {
           ownerAccount(accountId, mailbox);

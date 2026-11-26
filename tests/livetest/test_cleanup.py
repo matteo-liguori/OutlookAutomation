@@ -2,14 +2,19 @@
 
 from datetime import UTC, datetime
 
+import pytest
 from tests.livetest.conftest import confirm_all
 
+from chamberlain.connectors.fake import Fault
 from chamberlain.domain.calendar import EventFields
 from chamberlain.domain.mail import FolderRole
+from chamberlain.domain.operations import Prepared, ReconcileResult, ReconcileStatus
+from chamberlain.livetest.env import MailCopy
 from chamberlain.livetest.fakeworld import FAKE_CAL_A, FAKE_MAIL_A, FakeLab
 from chamberlain.livetest.markers import carries_marker
-from chamberlain.livetest.runner import RunOptions, execute
+from chamberlain.livetest.runner import RunOptions, execute, open_lab
 from chamberlain.livetest.sweep import sweep
+from chamberlain.writes.core import MAIL_SETTLE_ATTEMPTS
 
 LOOKALIKES = (
     "Meeting about CHAMBERLAIN LIVE TEST 20260105T090000-ab12 plans",
@@ -52,6 +57,51 @@ def test_keep_leaves_items_and_sweep_removes_only_marked_mail(lab: FakeLab) -> N
     assert not result.problems
     assert sorted(live_messages(lab, FAKE_MAIL_A)) == sorted(LOOKALIKES)
     assert lab.env.faults.fired(OLD_RUN)  # a pending fault was disarmed
+
+
+@pytest.mark.parametrize("already_uncertain", [False, True])
+def test_cleanup_confirms_a_late_trash_by_reading_the_same_operation(
+    lab: FakeLab, monkeypatch: pytest.MonkeyPatch, already_uncertain: bool
+) -> None:
+    confirm_all(lab)
+    runner = open_lab(lab.app, lab.env, lab.config, OLD_RUN, RunOptions())
+    lab.provider.mail.add_message(
+        FAKE_MAIL_A,
+        internet_message_id="<late-trash@example.test>",
+        subject=runner.subject("late trash"),
+    )
+    lab.provider.arm(Fault.LOSE_RESPONSE_AFTER_APPLY)
+    reconcile = lab.provider.mail.reconcile
+    reads = 0
+
+    def delayed_read(prepared: Prepared, key: str) -> ReconcileResult:
+        nonlocal reads
+        reads += 1
+        if reads <= MAIL_SETTLE_ATTEMPTS:
+            return ReconcileResult(status=ReconcileStatus.UNKNOWN)
+        return reconcile(prepared, key)
+
+    monkeypatch.setattr(lab.provider.mail, "reconcile", delayed_read)
+
+    if already_uncertain:
+        copies = runner.copies
+        [copy] = copies(FAKE_MAIL_A, runner.marker)
+        operation = runner.prepare(
+            {"kind": "mail.trash", "source": FAKE_MAIL_A, "messages": [runner.handle_of(copy)]}
+        )
+        assert runner.do(operation).code == "operation.uncertain"
+        # Cleanup can still be working from a folder observation taken before the trash landed.
+        prior = iter([[copy]])
+
+        def stale_on_first_read(source: str, text: str) -> list[MailCopy]:
+            observed = next(prior, None)
+            return observed if observed is not None else copies(source, text)
+
+        monkeypatch.setattr(runner, "copies", stale_on_first_read)
+    assert runner.remove_mail(FAKE_MAIL_A, runner.marker) == 1
+    assert reads == MAIL_SETTLE_ATTEMPTS + 1
+    assert [dispatch.intent_kind.value for dispatch in lab.provider.dispatch_log] == ["mail.trash"]
+    assert not live_messages(lab, FAKE_MAIL_A)
 
 
 def test_events_are_swept_only_with_approval_and_foreign_ones_never(lab: FakeLab) -> None:

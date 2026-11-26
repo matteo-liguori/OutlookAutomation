@@ -130,10 +130,6 @@ CALENDAR_SETTLE_ATTEMPTS: Final = 7
 CALENDAR_SETTLE_WINDOW_SECONDS: Final = 60
 ALLOW_DUPLICATE_REF = kinds.ALLOW_DUPLICATE_REF
 """Reserved key in the `refs` mapping given to `prepare` (board R3)."""
-OUTSIDE_REPORT_HOURS: Final = 24
-"""How long the assistant has to report an outside action it was allowed to do (W-46)."""
-INVITATIONS_UNSUPPORTED: Final = "invitations-not-supported"
-RECURRENCE_UNSUPPORTED: Final = "recurrence-not-supported"
 
 _PROCESS_TOKEN: list[str] = []
 

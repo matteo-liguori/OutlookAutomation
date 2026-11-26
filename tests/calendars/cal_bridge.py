@@ -151,7 +151,12 @@ class FakeCalendarBridge(BridgeClient):
         def apply() -> Json:
             if cmd == "create":
                 if event_id in self.items:
-                    raise BridgeFailure(ErrorCode.REMOTE_CHANGED, "exists", sent=True)
+                    raise BridgeFailure(
+                        ErrorCode.REMOTE_CHANGED,
+                        "exists",
+                        sent=True,
+                        bridge_code=wire.BridgeErrorCode.CHANGED,
+                    )
                 actual = self.generated_uid or event_id
                 self.items[actual] = str(args["icalendar"]).replace(
                     f"UID:{event_id}\r\n", f"UID:{actual}\r\n", 1
@@ -159,7 +164,12 @@ class FakeCalendarBridge(BridgeClient):
                 return {"item": self._item(actual)}
             else:
                 if self.items.get(event_id) != args["expected_icalendar"]:
-                    raise BridgeFailure(ErrorCode.REMOTE_CHANGED, "edited", sent=True)
+                    raise BridgeFailure(
+                        ErrorCode.REMOTE_CHANGED,
+                        "edited",
+                        sent=True,
+                        bridge_code=wire.BridgeErrorCode.CHANGED,
+                    )
                 if cmd == "update":
                     self.items[event_id] = str(args["icalendar"])
                 else:
@@ -174,7 +184,13 @@ class FakeCalendarBridge(BridgeClient):
 
         if Fault.BUSY_BEFORE_APPLY in self._armed:
             self._armed.remove(Fault.BUSY_BEFORE_APPLY)
-            raise BridgeFailure(ErrorCode.SOURCE_BUSY, "busy", sent=True, mutation="none")
+            raise BridgeFailure(
+                ErrorCode.SOURCE_BUSY,
+                "busy",
+                sent=True,
+                mutation="none",
+                bridge_code=wire.BridgeErrorCode.BUSY,
+            )
         if Fault.LOSE_BEFORE_APPLY in self._armed:
             self._armed.remove(Fault.LOSE_BEFORE_APPLY)
             raise BridgeFailure(

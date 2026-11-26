@@ -462,3 +462,25 @@ def test_r11_a_present_answer_confirms_whatever_made_it_present() -> None:
         assert after.state is S.CONFIRMED
     finally:
         rig.close()
+
+
+def test_r5_late_worker_cannot_replace_a_confirmed_absent_reconcile() -> None:
+    rig = make_rig(send_absence_provable=True)
+    try:
+        op = rig.ready_send()
+
+        def take_over_and_reconcile() -> None:
+            rig.clock.advance(hours=2)
+            assert rig.engine(worker="rescuer").recover() == 1
+            rig.mail.reconcile_script = [ReconcileResult(status=ReconcileStatus.ABSENT, proof=True)]
+            newer, changed = rig.engine(worker="rescuer").reconcile(op.handle)
+            assert changed
+            assert newer.state is S.CONFIRMED_ABSENT
+
+        rig.mail.during_dispatch = take_over_and_reconcile
+        with pytest.raises(ChamberlainError) as raised:
+            rig.engine(worker="original").do(op.handle)
+        assert raised.value.code is ErrorCode.OPERATION_ALREADY_SETTLED
+        assert rig.engine().get(op.handle).state is S.CONFIRMED_ABSENT
+    finally:
+        rig.close()

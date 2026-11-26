@@ -325,22 +325,26 @@ class CalDavCalendar(CalendarWritePort):
         return data
 
     def write(self, prepared: Prepared) -> WriteReply:
-        data = payload(prepared)
-        kind = prepared.intent_kind
-        name = prepared_text(data, "name")
-        headers: dict[str, str]
-        if kind is IntentKind.CALENDAR_DELETE and "ics" not in data:
-            method, body, headers = "DELETE", None, {"If-Match": expected_etag(prepared)}
-        else:
-            method, body = "PUT", prepared_text(data, "ics").encode("utf-8")
-            headers = dict(_CALENDAR_TYPE)
-            if kind is IntentKind.CALENDAR_CREATE:
-                headers["If-None-Match"] = "*"
-            else:
-                headers["If-Match"] = expected_etag(prepared)
         try:
+            data = payload(prepared)
+            kind = prepared.intent_kind
+            name = prepared_text(data, "name")
+            headers: dict[str, str]
+            if kind is IntentKind.CALENDAR_DELETE and "ics" not in data:
+                method, body, headers = "DELETE", None, {"If-Match": expected_etag(prepared)}
+            else:
+                method, body = "PUT", prepared_text(data, "ics").encode("utf-8")
+                headers = dict(_CALENDAR_TYPE)
+                if kind is IntentKind.CALENDAR_CREATE:
+                    headers["If-None-Match"] = "*"
+                else:
+                    headers["If-Match"] = expected_etag(prepared)
             binding = self._binding(prepared.source)
-            reply = self._send(binding, method, self._resource(binding, name), body, headers)
+            target = self._resource(binding, name)
+        except Exception as error:
+            raise WriteFailure(type(error).__name__, sent=False) from error
+        try:
+            reply = self._send(binding, method, target, body, headers)
         except TransportFailure as error:
             raise WriteFailure(f"transport: {error}", sent=error.sent) from None
         except ChamberlainError as error:

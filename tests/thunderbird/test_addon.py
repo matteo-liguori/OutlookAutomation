@@ -84,7 +84,7 @@ def test_b3_the_mail_helper_exposes_only_the_named_functions() -> None:
     assert names == {
         "syncFolders",
         "headerAttachmentFlags",
-        "verifyCopyWindow",
+        "lookupCopies",
         "setReadFlags",
         "holdComposer",
         "takePrompts",

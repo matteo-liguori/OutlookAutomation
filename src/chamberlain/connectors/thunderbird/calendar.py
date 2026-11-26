@@ -163,7 +163,10 @@ class ThunderbirdCalendar(CalendarWritePort):
         binding = self._binding(source)
         offset = offset_cursor(cursor, "o1")
         wanted = min(offset + query.limit + 1, _SCAN_CAP)
-        result = self._query(binding, query.start, query.end, wanted)
+        try:
+            result = self._query(binding, query.start, query.end, wanted)
+        except BridgeFailure as error:
+            raise _read_unavailable(error) from error
         found: list[CalendarEvent] = []
         unreadable = 0
         for item in result.items:
@@ -191,7 +194,10 @@ class ThunderbirdCalendar(CalendarWritePort):
     def read(self, source: str, locator: str) -> CalendarEvent:
         binding = self._binding(source)
         event_id, recurrence = ics.split_locator(locator)
-        item = self._item(binding, event_id)
+        try:
+            item = self._item(binding, event_id)
+        except BridgeFailure as error:
+            raise _read_unavailable(error) from error
         if item is None:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
         text = item.icalendar
@@ -201,7 +207,10 @@ class ThunderbirdCalendar(CalendarWritePort):
         for parsed in ics.parse_events(text):
             if parsed.recurrence_id == recurrence:
                 return _event_of(source, locator, text, parsed)
-        return self._occurrence(source, binding, event_id, recurrence)
+        try:
+            return self._occurrence(source, binding, event_id, recurrence)
+        except BridgeFailure as error:
+            raise _read_unavailable(error) from error
 
     def _occurrence(
         self, source: str, binding: OwlBinding, event_id: str, recurrence: str
@@ -227,7 +236,10 @@ class ThunderbirdCalendar(CalendarWritePort):
         uid, occurrence = ics.split_locator(locator)
         if occurrence:
             raise _no_series()
-        item = self._item(self._binding(source), uid)
+        try:
+            item = self._item(self._binding(source), uid)
+        except BridgeFailure as error:
+            raise _read_unavailable(error) from error
         if item is None:
             raise ChamberlainError(ErrorCode.REQUEST_UNKNOWN_HANDLE, "That event is not there.")
         text = item.icalendar
@@ -298,12 +310,15 @@ class ThunderbirdCalendar(CalendarWritePort):
         self._wire_args(prepared)
 
     def write(self, prepared: Prepared) -> WriteReply:
-        args = self._wire_args(prepared)
+        try:
+            args = self._wire_args(prepared)
+        except Exception as error:
+            raise WriteFailure(type(error).__name__, sent=False, mutation_possible=False) from error
         try:
             result = self._bridge.call(wire.Command.CALENDAR_WRITE, args, calendar=True).result
         except BridgeFailure as error:
             raise WriteFailure(
-                str(error.code), sent=error.sent, mutation_possible=error.mutation != "none"
+                str(error.code), sent=error.sent, mutation_possible=not error.proven_not_applied
             ) from error
         return WriteReply(result)
 
@@ -318,6 +333,8 @@ class ThunderbirdCalendar(CalendarWritePort):
             header = reply.hint.item
             item = header
             if args.kind == "create" and header:
+                if not header.id or "#" in header.id:
+                    return Observation(present=False, complete=False)
                 uid = header.id
         if item is None:
             deleted = args.kind == "delete"
@@ -465,6 +482,14 @@ class ThunderbirdCalendar(CalendarWritePort):
             ),
         )
         return result.item
+
+
+def _read_unavailable(error: BridgeFailure) -> ChamberlainError:
+    return calendar_unavailable(
+        str(error),
+        message="Thunderbird did not answer for the calendar.",
+        fix="Install the current Chamberlain Thunderbird add-on and restart Thunderbird.",
+    )
 
 
 def _stored(current: Current) -> wire.CalendarItem:

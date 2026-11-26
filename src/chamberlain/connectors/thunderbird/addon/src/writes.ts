@@ -2,7 +2,7 @@
 // Each write performs one logical mutation, never retries, keeps no journal. The add-on
 // reports facts; deciding what absence proves is the Python connector's job.
 
-const TUNING = { movePollMs: 250, savePollMs: 250, saveAttempts: 24, batchCheckMs: 25_000 };
+const TUNING = { movePollMs: 250, moveRefreshMs: 2_000, savePollMs: 250, saveAttempts: 24, batchCheckMs: 25_000 };
 
 interface Ctx {
   id: string;
@@ -23,32 +23,6 @@ function escapeHtml(text: string): string {
 
 // --- move, trash, mark read -----------------------------------------------------------------
 
-interface DateWindow {
-  sinceMs?: number;
-  untilMs?: number;
-}
-
-/** Every message of one folder (within a date window) by bare Message-ID: one scan. */
-async function byMessageId(r: Bound, folderId: string, window: DateWindow = {}): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
-  await folderOf(r, folderId);
-  const scan = await scanQuery(r, { folderId, maxScan: 200000, ...window });
-  const map = new Map<string, TbHeader[]>();
-  for (const h of scan.messages) {
-    const id = bare(h.headerMessageId);
-    const list = map.get(id);
-    if (list) list.push(h);
-    else map.set(id, [h]);
-  }
-  return { map, complete: scan.complete };
-}
-
-/** The date window a set of headers spans, with two days' margin for clocks and zones. */
-function spanOf(headers: TbHeader[]): DateWindow {
-  const dates = headers.map(whenMs);
-  const day = 86_400_000;
-  return { sinceMs: Math.min(...dates) - 2 * day, untilMs: Math.max(...dates) + 2 * day };
-}
-
 async function refreshMoveFolders(a: Bound, folderIds: string[], deadline: number): Promise<boolean> {
   const timeout = Math.min(8_000, deadline - Date.now());
   if (timeout < 500) return false;
@@ -60,9 +34,7 @@ async function refreshMoveFolders(a: Bound, folderIds: string[], deadline: numbe
   return true;
 }
 
-/** Many messages of one folder, filed or to Trash: find, move and verify them together.
- *  Folder reads cover only the dates the batch spans: a few hundred headers, never the whole
- *  Inbox and Trash on every round (found live, 2026-11-25: full reads overran the deadline). */
+/** Resolve, move once and verify exact physical copies, in bulk, in both folders. */
 async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string, ctx: Ctx): Promise<ChangeResult> {
   await folderOf(a, destination);
   check(group.folder_id !== destination, "changed", "The messages are already in that folder.");
@@ -75,10 +47,7 @@ async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string,
     if (located.some((m) => m.found.length > 1)) return fail("ambiguous", "The folder contains duplicate copies.");
     return fail("not_found", "None of the messages is in that folder.");
   }
-  const window = spanOf(present);
-  const scanFolder = (folderId: string) => group.ids.length === 1
-    ? readIdGroup(a, { folder_id: folderId, ids: group.ids })
-    : byMessageId(a, folderId, window);
+  const scanFolder = (folderId: string) => readIdGroup(a, { folder_id: folderId, ids: group.ids });
   // Filing leaves existing copies alone; Trash may merge into one without changing its flag.
   const before = await scanFolder(destination);
   check(before.complete, "ambiguous", "The destination could not be scanned completely.");
@@ -97,7 +66,8 @@ async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string,
   markMutation(ctx);
   await messenger.messages.move(ids, destination);
   const giveUpAt = Date.now() + TUNING.batchCheckMs;
-  let syncedArrival = false;
+  let arrivalRefreshes = 0;
+  let nextArrivalRefresh = 0;
   let staleRefRetried = false;
   const updatedStates = new Set<boolean>();
   while (!ctx.cancelled && Date.now() < giveUpAt) {
@@ -128,10 +98,16 @@ async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string,
       return true;
     });
     const needsUpdate = changedRead.length > 0 || changedUnread.length > 0;
-    if (!syncedArrival && (!arrived || needsUpdate || a.set_read != null)) {
-      // The move callback can precede a stable IMAP destination header.
-      syncedArrival = true;
-      if (await refreshMoveFolders(a, [group.folder_id, destination], giveUpAt)) continue;
+    const now = Date.now();
+    if ((!arrived || (arrivalRefreshes === 0 && (needsUpdate || a.set_read != null))) &&
+        arrivalRefreshes < 3 && now >= nextArrivalRefresh) {
+      // A provider refresh can finish before a move is visible. Refresh again while
+      // arrival is unproven so the remainder of the window does not poll a stale cache.
+      arrivalRefreshes++;
+      if (await refreshMoveFolders(a, [group.folder_id, destination], giveUpAt)) {
+        nextArrivalRefresh = Date.now() + TUNING.moveRefreshMs;
+        continue;
+      }
     }
     if (arrived) {
       if (!needsUpdate) return { items, verified: true, read_state_preserved: preserved, merged_existing_copy: merged };
@@ -163,12 +139,23 @@ async function moveBatch(a: ChangeArgs, group: ChangeGroup, destination: string,
   return { items, verified: false, read_state_preserved: null, merged_existing_copy: false };
 }
 
-/** One scan per folder, with Thunderbird's exact Message-ID filter for a one-item group. */
-async function readIdGroup(r: Bound, group: ChangeGroup): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
-  if (group.ids.length > 1) return byMessageId(r, group.folder_id);
-  const id = bare(group.ids[0]);
-  const found = await copiesIn(r, group.folder_id, id);
-  return { map: new Map(found.messages.length ? [[id, found.messages]] : []), complete: found.complete };
+/** Read exact IDs in one native scan. No unrelated header crosses the WebExtension boundary. */
+async function lookupCopies(a: Bound, folderId: string, ids: string[]): Promise<{ messages: TbHeader[]; complete: boolean }> {
+  const helper = messenger.chamberlainMail;
+  check(typeof helper?.lookupCopies === "function", "unsupported", "The exact copy helper is not installed.");
+  return helper.lookupCopies(a.account_id, a.mailbox, folderId, [...new Set(ids.map(bare))]);
+}
+
+async function readIdGroup(a: Bound, group: ChangeGroup): Promise<{ map: Map<string, TbHeader[]>; complete: boolean }> {
+  const scan = await lookupCopies(a, group.folder_id, group.ids);
+  const map = new Map<string, TbHeader[]>();
+  for (const header of scan.messages) {
+    const id = bare(header.headerMessageId);
+    const copies = map.get(id);
+    if (copies) copies.push(header);
+    else map.set(id, [header]);
+  }
+  return { map, complete: scan.complete };
 }
 
 interface FlagGroup {
@@ -587,30 +574,13 @@ async function copyFact(a: Bound, scope: CopyScope, h: TbHeader, head: Header): 
 
 async function scanCopyScope(a: Bound, scope: CopyScope, folderId: string, outbox: boolean): Promise<{ messages: TbHeader[]; complete: boolean }> {
   if (scope.ids != null) {
-    const ids = [...new Set(scope.ids.map(bare))];
-    if (scope.since_ms == null || scope.until_ms == null) {
-      const scan = await readIdGroup(a, { folder_id: folderId, ids: scope.ids });
-      return { messages: ids.flatMap((id) => scan.map.get(id) ?? []), complete: scan.complete };
-    }
-    await folderOf(a, folderId);
-    const scan = await scanQuery(a, {
-      folderId, sinceMs: scope.since_ms, untilMs: scope.until_ms, maxScan: 200000,
-    });
-    const wanted = new Set(ids);
-    const messages = scan.messages.filter((message) => wanted.has(bare(message.headerMessageId)));
-    if (!scan.complete) return { messages, complete: false };
-    const helper = messenger.chamberlainMail;
-    check(helper?.verifyCopyWindow, "unsupported", "The bounded copy helper is not installed.");
-    const counts = new Map<string, number>();
-    for (const message of messages) {
-      const id = bare(message.headerMessageId);
-      counts.set(id, (counts.get(id) ?? 0) + 1);
-    }
-    const complete = await helper.verifyCopyWindow(
-      a.account_id, a.mailbox, folderId, ids, ids.map((id) => counts.get(id) ?? 0),
-      scope.since_ms, scope.until_ms,
-    );
-    return { messages, complete };
+    const scan = await lookupCopies(a, folderId, scope.ids);
+    const since = scope.since_ms;
+    const until = scope.until_ms;
+    if (since == null || until == null) return scan;
+    // Keep the prior date evidence for settlement without hiding any exact-ID copy.
+    const within = scan.messages.every((message) => since <= whenMs(message) && whenMs(message) <= until);
+    return { messages: scan.messages, complete: scan.complete && within };
   }
   check(scope.subject != null && scope.since_ms != null, "bad_request", "The scan needs a subject and lower time bound.");
   await folderOf(a, folderId, outbox);

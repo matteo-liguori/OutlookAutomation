@@ -332,3 +332,23 @@ def test_p27_an_all_day_series_with_an_until_is_verified_by_date(world: World) -
     assert result.outcome is DispatchOutcome.APPLIED, result.detail
     assert port.reconcile(prepared, "k").status is ReconcileStatus.PRESENT
     assert api.live("allday-series@t")[0]["recurrence"] == ["RRULE:FREQ=DAILY;UNTIL=20270303"]
+
+
+def test_google_request_build_failure_is_not_sent(
+    world: World, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from chamberlain.connectors.calendar_support.port import WriteFailure
+    from chamberlain.connectors.google_calendar import calendar as module
+
+    port, api, _ = world
+    prepared = port.prepare(CalendarCreate(source=SOURCE, event=fields(), uid="build-fail"), {})
+    calls = list(api.calls)
+
+    def fail(plan: Prepared) -> Any:
+        raise ValueError("synthetic")
+
+    monkeypatch.setattr(module, "payload", fail)
+    with pytest.raises(WriteFailure) as raised:
+        port.write(prepared)
+    assert not raised.value.sent
+    assert api.calls == calls

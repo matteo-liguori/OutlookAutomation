@@ -342,8 +342,6 @@ class FakeMail:
             case MailMove() | MailTrash():
                 # A batch: each message is checked where it is moved, as Thunderbird does.
                 locators = [refs[h] for h in intent.messages]
-                for locator in locators:
-                    self._one(source, locator)
                 folders = {locator.split("/", 1)[0] for locator in locators}
                 if len(folders) != 1 or (intent.from_folder and intent.from_folder not in folders):
                     raise ChamberlainError(
@@ -351,13 +349,35 @@ class FakeMail:
                     )
                 filing = isinstance(intent, MailMove)
                 target = (
-                    self._world.folder(source, intent.to_folder).id
+                    intent.to_folder
                     if isinstance(intent, MailMove)
                     else self._world.folder_by_role(source, FolderRole.TRASH).id
                 )
                 if target in folders:
                     raise ChamberlainError(
                         ErrorCode.REMOTE_CHANGED, "The messages are already in that folder."
+                    )
+                if target not in {folder.id for folder in self._world.folders[source]}:
+                    raise ChamberlainError(
+                        ErrorCode.REQUEST_INVALID, "The destination folder does not exist."
+                    )
+                matches = [self._find(source, locator) for locator in locators]
+                movable = any(
+                    len(found) == 1
+                    and (
+                        not filing
+                        or not self._matching(source, found[0].internet_message_id, target)
+                    )
+                    for found in matches
+                )
+                if not movable:
+                    if not any(matches):
+                        raise ChamberlainError(
+                            ErrorCode.REQUEST_UNKNOWN_HANDLE,
+                            "None of the messages is in the folder.",
+                        )
+                    raise ChamberlainError(
+                        ErrorCode.REMOTE_AMBIGUOUS, "No message could be moved unambiguously."
                     )
                 data = {
                     "locators": cast(list[JsonValue], locators),

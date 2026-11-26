@@ -414,17 +414,18 @@ test("W-23 restore checks refreshed folders and re-resolves a stale flag referen
   const { addon, world } = setup({ tuning: { batchCheckMs: 1500, movePollMs: 1 } });
   const id = "restored@x";
   const message = world.add({ folderId: TRASH, headerMessageId: id, read: false });
-  const query = world.messenger.messages.query;
   const helper = world.messenger.chamberlainMail;
+  const lookupCopies = helper.lookupCopies;
   const sync = helper.syncFolders;
   const setRead = helper.setReadFlags;
   const refreshed = [];
   let queuedFlags;
   const attemptedIds = [];
 
-  world.messenger.messages.query = async (q) => {
-    if (q.folderId === INBOX && !refreshed.length) return { messages: [] };
-    return query(q);
+  world.messenger.messages.query = () => assert.fail("restore must use exact native copy lookups");
+  helper.lookupCopies = async (...args) => {
+    if (args[2] === INBOX && !refreshed.length) return { messages: [], complete: true };
+    return lookupCopies(...args);
   };
   helper.syncFolders = async (...args) => {
     refreshed.push([...args[2]]);
@@ -455,6 +456,36 @@ test("W-23 restore checks refreshed folders and re-resolves a stale flag referen
   assert.equal(world.counters.update, 1);
   assert.notEqual(attemptedIds[0], attemptedIds[1]);
   assert.deepEqual(refreshed, [[TRASH, INBOX], [INBOX], [INBOX]]);
+});
+
+test("W-23 restore refreshes again when the first provider callback precedes arrival", async () => {
+  const { addon, world } = setup({ tuning: { batchCheckMs: 1500, movePollMs: 1, moveRefreshMs: 1 } });
+  const id = "delayed-restore@x";
+  const message = world.add({ folderId: TRASH, headerMessageId: id, read: false });
+  const helper = world.messenger.chamberlainMail;
+  const lookup = helper.lookupCopies;
+  const sync = helper.syncFolders;
+  let arrivalRefreshes = 0;
+  helper.lookupCopies = (account, mailbox, folder, ids) => {
+    if (folder === INBOX && arrivalRefreshes < 2) return { messages: [], complete: true };
+    return lookup(account, mailbox, folder, ids);
+  };
+  helper.syncFolders = (...args) => {
+    if (args[2].includes(TRASH)) arrivalRefreshes++;
+    return sync(...args);
+  };
+
+  const result = await call(addon, "change", {
+    ...BASE, items: [group(TRASH, id)], move_to: INBOX, trash: false, set_read: true,
+  });
+  assert.equal(result.ok, true, JSON.stringify(result.error));
+  assert.equal(result.result.verified, true);
+  assert.equal(arrivalRefreshes, 2);
+  assert.equal(world.copies(id, TRASH), 0);
+  assert.equal(world.copies(id, INBOX), 1);
+  assert.equal(message.read, true);
+  assert.equal(world.counters.move, 1);
+  assert.equal(world.counters.update, 1);
 });
 
 test("W-24 mark_read reports every message and can mark unread", async () => {
@@ -503,25 +534,33 @@ test("W-24 bulk flag changes isolate a refused folder and wait for a delayed fol
   assert.equal(world.find("refused@x").read, false);
 });
 
-test("P-6 bounded ID copies never make a whole-folder WebExtension query", async () => {
+test("P-6 the same exact lookup finds single and batch IDs across dates", async () => {
   const { addon, world } = setup();
   world.add({ folderId: INBOX, headerMessageId: "current@x", date: 120_000 });
   world.add({ folderId: INBOX, headerMessageId: "another@x", date: 130_000 });
   world.add({ folderId: INBOX, headerMessageId: "current@x", date: 1_000 });
-  const original = world.messenger.messages.query;
-  const bounds = [];
-  world.messenger.messages.query = async (query) => {
-    bounds.push([query.fromDate?.getTime(), query.toDate?.getTime()]);
-    return original(query);
-  };
-  const result = await call(addon, "copies", copies([{
-    ...lookup(INBOX, "current@x", "another@x"), since_ms: 100_000, until_ms: 150_000,
-  }]));
+  world.messenger.messages.query = () => assert.fail("ID lookups must not scan through WebExtension search");
+  const result = await call(addon, "copies", copies([
+    lookup(INBOX, "current@x"),
+    { ...lookup(INBOX, "current@x", "another@x"), since_ms: 100_000, until_ms: 150_000 },
+  ]));
   assert.equal(result.ok, true, JSON.stringify(result.error));
-  assert.deepEqual(bounds, [[100_000, 150_000]]);
-  const [scope] = result.result.scopes;
-  assert.equal(scope.copies.length, 2);
-  assert.equal(scope.complete, false);
+  const [single, bounded] = result.result.scopes;
+  assert.equal(single.copies.length, 2);
+  assert.equal(single.complete, true);
+  assert.deepEqual(bounded.copies.map((copy) => copy.header.date_ms), [120_000, 130_000, 1_000]);
+  assert.equal(bounded.complete, false);
+});
+
+test("P-10 an incomplete native lookup cannot prove absence or issue a move", async () => {
+  const { addon, world } = setup();
+  world.messenger.chamberlainMail.lookupCopies = async () => ({ messages: [], complete: false });
+  const facts = await call(addon, "copies", copies([lookup(INBOX, "late@x")]));
+  assert.equal(facts.result.scopes[0].complete, false);
+  const result = await call(addon, "change", change(["late@x"], { move_to: TRASH, trash: true }));
+  assert.equal(result.error.code, "ambiguous");
+  assert.equal(result.error.mutation, "none");
+  assert.equal(world.counters.move, 0);
 });
 
 test("P-17 a write that stalls past its deadline reports possible, keeps writes busy, and reads still answer", async () => {
@@ -547,10 +586,11 @@ test("P-17 a write that stalls past its deadline reports possible, keeps writes 
 test("P-10 a deadline that passes before the mutation proves none was issued and cancels it", async () => {
   const { addon, world } = setup({ writeMs: 30 });
   world.add({ folderId: INBOX, headerMessageId: "late@x" });
-  const real = world.messenger.messages.query;
-  world.messenger.messages.query = async (q) => {
+  const mail = world.messenger.chamberlainMail;
+  const real = mail.lookupCopies;
+  mail.lookupCopies = async (...args) => {
     await new Promise((r) => setTimeout(r, 80));
-    return real(q);
+    return real(...args);
   };
   const res = await call(addon, "change", change(["late@x"], { move_to: FILED }));
   assert.equal(res.error.code, "timeout");

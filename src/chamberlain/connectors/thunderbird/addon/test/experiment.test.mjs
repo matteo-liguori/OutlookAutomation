@@ -12,7 +12,7 @@ const URIS = { [`${ACCOUNT}://Drafts`]: "imap://owner/Drafts", [`${ACCOUNT}://Se
 
 class ExtensionError extends Error {}
 
-function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map(), folderMessages = [] } = {}) {
+function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map(), folderMessages = [], now = Date.now } = {}) {
   const looked = [];
   const changes = [];
   const identity = { key: "id1", email: MAILBOX, getUnicharAttribute: () => identityDrafts };
@@ -38,16 +38,31 @@ function load({ identityDrafts = URIS[`${ACCOUNT}://Drafts`], headers = new Map(
   };
   const observers = [];
   const context = vm.createContext({
+    Date: class extends Date { static now() { return now(); } },
     ChromeUtils: { importESModule: (url) => modules[url] },
-    Ci: { nsMsgFolderFlags: { Queue: 1, Virtual: 2 }, nsMsgMessageFlags: { Attachment: 1 } },
+    Ci: { nsMsgFolderFlags: { Queue: 1, Virtual: 2 }, nsMsgMessageFlags: { Attachment: 1, IMAPDeleted: 2, Expunged: 4 } },
     Components: {},
     Services: { io: { offline: false }, obs: { addObserver: (o, topic) => observers.push([o, topic]), removeObserver() {} } },
     console,
   });
   vm.runInContext(SOURCE + "\n;this.api = chamberlainMail;", context);
-  const extensionContext = { extension: { tabManager: { get: () => ({ nativeTab: win }) }, messageManager: { get: (id) => headers.get(id) } } };
+  const converted = [];
+  const extensionContext = { extension: {
+    tabManager: { get: () => ({ nativeTab: win }) },
+    messageManager: {
+      get: (id) => headers.get(id),
+      convert(header) {
+        converted.push(header.messageId);
+        return {
+          id: header.messageKey, headerMessageId: header.messageId,
+          date: new Date(header.dateInSeconds * 1000), read: header.isRead,
+          folder: { id: `${ACCOUNT}://Sent` },
+        };
+      },
+    },
+  } };
   const api = new context.api().getAPI(extensionContext).chamberlainMail;
-  return { api, looked, observers, win, changes };
+  return { api, looked, observers, win, changes, converted };
 }
 
 /** A Thunderbird common dialog opened by `opener`, with the buttons the real one has. */
@@ -87,13 +102,35 @@ test("P-3 bulk attachment presence reads the native header flag and binds the ac
   assert.deepEqual([...(await api.headerAttachmentFlags(ACCOUNT, MAILBOX, [3], true))], [true]);
 });
 
-test("P-6 the native date-window guard detects same-ID copies elsewhere in the folder", async () => {
+test("P-6 native lookup converts every visible exact match across dates, and only those matches", async () => {
   const folder = `${ACCOUNT}://Sent`;
-  const folderMessages = [{ messageId: "one@x", dateInSeconds: 100 }];
-  const { api } = load({ folderMessages });
-  assert.equal(await api.verifyCopyWindow(ACCOUNT, MAILBOX, folder, ["one@x", "two@x"], [1, 0], 90_000, 110_000), true);
-  folderMessages.push({ messageId: "<one@x>", dateInSeconds: 1 });
-  assert.equal(await api.verifyCopyWindow(ACCOUNT, MAILBOX, folder, ["one@x", "two@x"], [1, 0], 90_000, 110_000), false);
+  const folderMessages = [
+    { messageId: "one@x", dateInSeconds: 100, messageKey: 1, isRead: true, flags: 0 },
+    { messageId: "other@x", dateInSeconds: 80, messageKey: 2, flags: 0 },
+    { messageId: "two@x", dateInSeconds: 12, messageKey: 3, flags: 2 },
+    { messageId: "<one@x>", dateInSeconds: 1, messageKey: 4, isRead: false, flags: 0 },
+  ];
+  const { api, converted } = load({ folderMessages });
+  const result = await api.lookupCopies(ACCOUNT, MAILBOX, folder, ["one@x", "two@x"]);
+  assert.equal(result.complete, true);
+  assert.deepEqual(Array.from(result.messages, (h) => [h.id, h.date, h.read]), [[1, 100_000, true], [4, 1_000, false]]);
+  assert.deepEqual(converted, ["one@x", "<one@x>"]);
+});
+
+test("P-6 a native lookup that reaches its deadline does not claim a complete observation", async () => {
+  let clock = 0;
+  const folderMessages = {
+    *[Symbol.iterator]() {
+      yield { messageId: "other@x", flags: 0 };
+      clock = 5000;
+      yield { messageId: "one@x", flags: 0 };
+    },
+  };
+  const { api, converted } = load({ folderMessages, now: () => clock });
+  const result = await api.lookupCopies(ACCOUNT, MAILBOX, `${ACCOUNT}://Sent`, ["one@x"]);
+  assert.equal(result.complete, false);
+  assert.equal(result.messages.length, 0);
+  assert.deepEqual(converted, []);
 });
 
 test("R8 a send holds the composer without looking up any draft folder", async () => {

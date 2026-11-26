@@ -184,3 +184,16 @@ def test_the_dispatch_log_exposes_a_double_dispatch_and_1_related_checks(
     with pytest.raises(ChamberlainError) as raised:
         fake.mail.search("mail:nowhere", MailQuery())
     assert raised.value.code is ErrorCode.SOURCE_NOT_CONFIGURED
+
+
+def test_move_prepare_rejects_unknown_destination_and_no_movable_items(fake: FakeProvider) -> None:
+    locator = fake.mail.add_message(MAIL, internet_message_id=MSG)
+    handle = ref_handle(HandleKind.MESSAGE, MAIL, locator)
+    missing = MailMove(source=MAIL, messages=(handle,), to_folder="missing")
+    with pytest.raises(ChamberlainError) as raised:
+        fake.mail.prepare(missing, {handle: locator})
+    assert raised.value.code is ErrorCode.REQUEST_INVALID
+    fake.mail.add_message(MAIL, internet_message_id=MSG, folder_id="f-archive")
+    with pytest.raises(ChamberlainError) as raised:
+        _move(fake, locator)
+    assert raised.value.code is ErrorCode.REMOTE_AMBIGUOUS

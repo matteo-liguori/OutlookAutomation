@@ -374,9 +374,10 @@ def trash_restore(lab: Lab, t: Target) -> None:
     lab.check(
         not any(c.folder_id == inbox for c in after), "a copy is still in the inbox after trashing"
     )
-    restored = lab.write(
+    operation = lab.prepare(
         {"kind": "mail.move", "source": t.source, "messages": [handle], "to_folder": inbox}
     )
+    restored = lab.do(operation)
     if restored.code == "operation.uncertain":
         # Cleanup moves the marked copies again. Capture the evidence while it still exists.
         copies = lab.copies(t.source, subject)
@@ -386,6 +387,13 @@ def trash_restore(lab: Lab, t: Target) -> None:
             ("Trash", [c for c in copies if c.folder_role is FolderRole.TRASH]),
         ):
             facts.append(f"{label} {len(group)} copies ({sum(c.unread for c in group)} unread)")
+        known_ids = {c.message_id for c in after if c.folder_role is FolderRole.TRASH}
+        same = sum(c.message_id in known_ids for c in copies if c.folder_id == inbox)
+        facts.append(f"{same} Inbox copies have the original Message-ID")
+        # Diagnose the already-issued write before cleanup changes its evidence. Never repeat it.
+        checked = lab.call("reconcile", operation=operation)
+        state = str(lab.ok("open", handle=operation)["view"]["state"])
+        facts.append(f"read-only recheck: {state if checked.ok else checked.code}")
         raise ScenarioFailure("restore uncertain before cleanup: " + ", ".join(facts))
     lab.confirmed(restored, "restore from the trash")
     back = lab.copies(t.source, subject)
