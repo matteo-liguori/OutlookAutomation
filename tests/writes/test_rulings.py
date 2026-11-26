@@ -76,7 +76,7 @@ def test_r1_the_token_is_derived_from_the_grant_and_the_intent_hash() -> None:
         seed = sha256_text(f"{done.grant}:{done.intent_sha256}")
         assert done.idempotency_key == seed
         assert done.reconcile_token == f"<{seed[:32]}@chamberlain.invalid>"
-        stored = rig.engine().intent_of(done)
+        stored = done.intent()
         assert stored.message_id == done.reconcile_token  # type: ignore[union-attr]
         assert intent_hash(stored) == done.intent_sha256
         assert rig.fake.world.mail[MAIL][-1].internet_message_id == done.reconcile_token
@@ -91,7 +91,7 @@ def test_r1_an_agent_supplied_message_id_is_ignored() -> None:
         intent = rig.send().model_copy(update={"message_id": "<chosen@evil.example>"})
         proposal = rig.engine().propose_intent(intent)
         assert proposal.operation is not None
-        stored = rig.engine().intent_of(proposal.operation)
+        stored = proposal.operation.intent()
         assert stored.message_id is None  # type: ignore[union-attr]
         plain = rig.engine().propose_intent(rig.send())
         assert plain.operation is not None

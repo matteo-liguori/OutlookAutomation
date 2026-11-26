@@ -40,6 +40,7 @@ from chamberlain.writes import repo
 from chamberlain.writes.audit import verify
 from chamberlain.writes.confirm import confirm_grant
 from chamberlain.writes.maintenance import maintain
+from chamberlain.writes.resend import propose_redo
 from support.write_rig import (
     CALENDAR,
     MAIL,
@@ -157,7 +158,7 @@ class WriteMachine(RuleBasedStateMachine):
     def resend_op(self, op: str) -> None:
         """The agent sends a missing uncertain send again, on its original permission (W-38)."""
         with contextlib.suppress(ChamberlainError, SimulatedCrash):
-            again = self.engine().propose_redo(op)
+            again = propose_redo(self.engine(), op)
             assert again.operation is not None
             self.engine().do(again.operation.handle)
 
@@ -171,7 +172,7 @@ class WriteMachine(RuleBasedStateMachine):
         if odds:
             return
         with contextlib.suppress(ChamberlainError):
-            self.engine().cancel(op, actor="agent:test")
+            self.r.ctx.services.writes.cancel_operation(op, actor="agent:test")
 
     @rule(op=ops, odds=st.integers(0, 3))
     def revoke_its_grant(self, op: str, odds: int) -> None:

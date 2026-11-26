@@ -24,7 +24,7 @@ def _file(rig: WriteRig, message_id: str) -> tuple[str, str]:
         MailMove(source=MAIL, messages=(handle,), to_folder="f-archive")
     )
     assert proposal.operation is not None
-    stored = rig.engine().intent_of(proposal.operation)
+    stored = proposal.operation.intent()
     assert isinstance(stored, MailMove)
     return message_id, str(stored.mark_read)
 

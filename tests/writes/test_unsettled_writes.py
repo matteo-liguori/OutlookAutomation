@@ -22,6 +22,7 @@ from chamberlain.store.migrate import migrate
 from chamberlain.writes import repo
 from chamberlain.writes.maintenance import maintain
 from chamberlain.writes.models import StoredReceipt
+from chamberlain.writes.resend import propose_redo
 from support.write_rig import CALENDAR, MAIL, OWNER, WriteRig, make_rig
 
 S = OperationState
@@ -57,7 +58,7 @@ def test_a_lost_calendar_write_goes_to_the_agent_after_a_day_and_may_be_done_aga
     maintain(rig.ctx, rig.policy)
     assert asked_about(rig) == []
     with pytest.raises(ChamberlainError):
-        rig.engine().propose_redo(op.handle)
+        propose_redo(rig.engine(), op.handle)
 
     # After a day the harness looked once, found nothing, and the agent is told.
     rig.clock.advance(hours=2)
@@ -68,7 +69,7 @@ def test_a_lost_calendar_write_goes_to_the_agent_after_a_day_and_may_be_done_aga
     assert looked.recheck_result == "missing"
 
     # The agent redoes it from the original: one new dispatch, the original is superseded.
-    again = rig.engine().propose_redo(op.handle)
+    again = propose_redo(rig.engine(), op.handle)
     assert again.operation is not None
     assert again.ready
     done = rig.engine().do(again.operation.handle)
@@ -77,7 +78,7 @@ def test_a_lost_calendar_write_goes_to_the_agent_after_a_day_and_may_be_done_aga
     assert rig.state(op.handle) == "superseded"
     assert rig.fake.calendar.count(CALENDAR, done.reconcile_token or "") == 1
     assert asked_about(rig) == []
-    assert rig.engine().propose_redo(op.handle).operation.handle == done.handle  # type: ignore[union-attr]
+    assert propose_redo(rig.engine(), op.handle).operation.handle == done.handle  # type: ignore[union-attr]
 
 
 def test_a_send_the_harness_could_not_read_still_reaches_the_agent_and_is_never_resent(
@@ -90,7 +91,7 @@ def test_a_send_the_harness_could_not_read_still_reaches_the_agent_and_is_never_
     rig.clock.advance(hours=UNCERTAIN_SEND_RECHECK_HOURS + 1)  # the harness's look never ran
     assert asked_about(rig) == [op.handle]
     with pytest.raises(ChamberlainError) as early:
-        rig.engine().propose_redo(op.handle)  # not looked at yet, so not resendable
+        propose_redo(rig.engine(), op.handle)  # not looked at yet, so not resendable
     assert early.value.code is ErrorCode.REQUEST_INVALID
     assert rig.sent_copies() == 0
     assert rig.state(op.handle) == "uncertain"

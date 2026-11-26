@@ -19,6 +19,7 @@ from chamberlain.ports.mail import MailPort
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.writes import repo
 from chamberlain.writes.maintenance import maintain
+from chamberlain.writes.resend import propose_redo
 from support.write_rig import MAIL, OWNER, OWNER_B, WriteRig, make_rig
 
 MAIL_B = "mail:two"
@@ -67,7 +68,7 @@ def test_nothing_is_looked_at_or_resent_while_the_send_is_fresh(rig: WriteRig) -
     maintain(rig.ctx, rig.policy)
     assert get(rig, handle).rechecked_at is None
     with pytest.raises(ChamberlainError) as early:
-        rig.engine().propose_redo(handle)
+        propose_redo(rig.engine(), handle)
     assert early.value.code is ErrorCode.REQUEST_INVALID
     assert get(rig, handle).state is S.UNCERTAIN
     assert rig.sent_copies() == 0
@@ -100,7 +101,7 @@ def test_still_in_the_outbox_is_reported_and_never_resent(rig: WriteRig) -> None
     assert get(rig, handle).recheck_result == "queued"
     assert reasons(rig) == ["outbox"]
     with pytest.raises(ChamberlainError) as stuck:
-        rig.engine().propose_redo(handle)
+        propose_redo(rig.engine(), handle)
     assert stuck.value.code is ErrorCode.REQUEST_INVALID
     assert get(rig, handle).state is S.UNCERTAIN
 
@@ -110,10 +111,10 @@ def test_reserved_resend_remains_ready_after_its_original_is_superseded(rig: Wri
     handle = lost_send(rig, Fault.LOSE_BEFORE_APPLY, to=("friend@example.org",))
     a_day_later(rig)
     engine = rig.engine()
-    resend = engine.propose_redo(handle).operation
+    resend = propose_redo(engine, handle).operation
     assert resend is not None
     engine.reserve(resend, resend.intent())
-    assert engine.propose_redo(handle).ready
+    assert propose_redo(engine, handle).ready
     assert engine.do(resend.handle).state is S.CONFIRMED
     assert rig.sent_copies() == 1
 
@@ -131,11 +132,11 @@ def test_missing_everywhere_is_reported_once_and_the_agent_may_send_it_again(
     assert reasons(rig) == ["missing"]
 
     eng = rig.engine()
-    proposal = eng.propose_redo(handle)
+    proposal = propose_redo(eng, handle)
     assert proposal.ready
     assert proposal.operation is not None
     assert get(rig, handle).state is S.UNCERTAIN  # nothing changes until `do`
-    again = eng.propose_redo(handle)
+    again = propose_redo(eng, handle)
     assert again.operation is not None
     assert again.operation.handle == proposal.operation.handle
     same_text = eng.propose_intent(rig.send())
@@ -149,7 +150,7 @@ def test_missing_everywhere_is_reported_once_and_the_agent_may_send_it_again(
     assert get(rig, handle).state is S.SUPERSEDED
     assert rig.sent_copies() == 1
     assert reasons(rig) == []
-    last = eng.propose_redo(handle)  # asking again only shows the resend that exists
+    last = propose_redo(eng, handle)  # asking again only shows the resend that exists
     assert last.operation is not None
     assert last.operation.handle == proposal.operation.handle
     assert not last.ready
@@ -162,14 +163,14 @@ def test_missing_everywhere_is_reported_once_and_the_agent_may_send_it_again(
     # A resend is not itself resent: a second one needs the owner.
     lost_first = lost_send(rig, Fault.LOSE_BEFORE_APPLY, subject="Third")
     a_day_later(rig)
-    resent = eng.propose_redo(lost_first).operation
+    resent = propose_redo(eng, lost_first).operation
     assert resent is not None
     rig.fake.arm(Fault.LOSE_BEFORE_APPLY)
     with pytest.raises(ChamberlainError):
         eng.do(resent.handle)
     a_day_later(rig)
     with pytest.raises(ChamberlainError) as twice:
-        eng.propose_redo(resent.handle)
+        propose_redo(eng, resent.handle)
     assert twice.value.code is ErrorCode.REQUEST_INVALID
 
 
@@ -180,7 +181,7 @@ def test_w40_a_missing_send_remains_visible_after_its_permission_is_revoked(rig:
     assert grant is not None
     rig.engine().grants.revoke(grant, actor="human:viewer")
     with pytest.raises(ChamberlainError) as refused:
-        rig.engine().propose_redo(handle)
+        propose_redo(rig.engine(), handle)
     assert refused.value.code is ErrorCode.GRANT_NOT_ACTIVE
 
     rig.clock.advance(hours=24 * (UNCERTAIN_ABANDON_DAYS + 1))
