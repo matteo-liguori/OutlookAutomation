@@ -508,3 +508,16 @@ def test_cli_switch_plans_then_applies_pause_and_retire(
     assert not xpi.exists()
     assert not manifest.exists()
     assert (data_root / "import" / "v1-retired" / ("v1-addon-" + V1_ADDON_FILE)).exists()
+
+
+def test_obsolete_grant_wording_is_recognised_without_false_alarms() -> None:
+    from chamberlain.importer.authority import _OBSOLETE_V2  # pyright: ignore[reportPrivateUsage]
+
+    for obsolete in (
+        "Own-account delivery tests",
+        "Private release-stability assessment",
+        "smoke test",
+    ):
+        assert _OBSOLETE_V2.search(obsolete), obsolete
+    for kept in ("Smoke alarm service appointments", "Forward the clinic's letters to a relative"):
+        assert not _OBSOLETE_V2.search(kept), kept

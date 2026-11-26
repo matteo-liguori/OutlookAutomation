@@ -363,7 +363,7 @@ def _insert_operation(
 
 _OBSOLETE_V2 = re.compile(
     r"delivery[- ]?test|dev(?:elopment)?[- ]work|self[- ]?test|test (?:send|mail)|"
-    r"e2e|smoke|testing",
+    r"e2e|\bsmoke[- ]?test|\btesting\b|release[- ]?stability",
     re.IGNORECASE,
 )
 

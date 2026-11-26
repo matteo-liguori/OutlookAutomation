@@ -288,11 +288,11 @@ def automation_prompts(root: Path, *, checkout: Path | None = None) -> list[str]
                     f"Time: {repeat} at {schedule.at} ({zone})",
                     f"Working folder: {folder}",
                     "Prompt:",
-                    f"Do the scheduled {schedule.name} pass ({schedule.kind}) with the chamberlain",
-                    "tools.",
-                    'Call `start` with purpose "scheduled" and scheduled_day set to today\'s date',
-                    f"in {zone} (YYYY-MM-DD). Then follow `next` until the pass is done, and keep",
-                    "the report under the run when `report.due` arrives. Stop when done.",
+                    f"Do the scheduled {schedule.name} pass ({schedule.kind}) with the chamberlain"
+                    " tools.",
+                    'Call `start` with purpose "scheduled" and scheduled_day set to today\'s date'
+                    f" in {zone} (YYYY-MM-DD). Then follow `next` until the pass is done, and keep"
+                    " the report under the run when `report.due` arrives. Stop when done.",
                 ]
             )
         )
