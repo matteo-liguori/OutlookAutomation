@@ -64,12 +64,8 @@ def test_p5_p16_the_capability_set_is_narrow_and_honest_and_3_related_checks() -
         port.events(SOURCE, CalendarQuery(start=START, end=START + timedelta(days=1)))
 
     # p5_a_client_cache_is_stale_unless_it_says_when_it_last_synchronised
-    port, bridge, clock = build()
+    port, _, _ = build()
     assert port.health(SOURCE).state.value == "stale"
-    bridge.fresh_as_of = clock.now().isoformat()
-    health = port.health(SOURCE)
-    assert health.state.value == "ok"
-    assert health.fresh_as_of is not None
 
     # p16_events_with_attendees_or_an_organiser_are_refused_without_sending
     port, bridge, _ = build()

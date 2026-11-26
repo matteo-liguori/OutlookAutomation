@@ -166,8 +166,8 @@ def write_runtime(bridge_dir: Path, *, port: int, token: str, pid: int) -> Path:
     return target
 
 
-class SocketStream:
-    """A connected socket as `Readable` and `Writable`."""
+class SocketConnection:
+    """A connected socket as `Readable` and `Writable`, used by the host and by clients."""
 
     def __init__(self, connection: socket.socket) -> None:
         self._connection = connection
@@ -179,8 +179,12 @@ class SocketStream:
         self._connection.sendall(data)
         return len(data)
 
-    def flush(self) -> None:
-        return None
+    def settimeout(self, seconds: float) -> None:
+        self._connection.settimeout(seconds)
+
+    def close(self) -> None:
+        with contextlib.suppress(OSError):
+            self._connection.close()
 
 
 class FdReader:
@@ -199,9 +203,6 @@ class FdWriter:
 
     def write(self, data: bytes | memoryview, /) -> int:
         return os.write(self._fd, data)
-
-    def flush(self) -> None:
-        return None
 
 
 _Pending = queue.Queue[ChunkFrame | ResponseFrame | None]
@@ -334,17 +335,16 @@ class NativeHost:
             thread.start()
 
     def _serve_client(self, connection: socket.socket) -> None:
-        stream = SocketStream(connection)
+        stream = SocketConnection(connection)
         try:
-            connection.settimeout(10)
-            self._converse(stream, connection)
+            stream.settimeout(10)
+            self._converse(stream)
         except (ChamberlainError, OSError):
             pass  # a bad frame or a dropped client ends only this connection
         finally:
             with self._state_lock:
                 self._connections.discard(connection)
-            with contextlib.suppress(OSError):
-                connection.close()
+            stream.close()
 
     def _send(self, stream: Writable, frame: Model) -> None:
         frames.write_frame(stream, protocol.dump_frame(frame), frames.LOCAL_LIMIT)
@@ -354,15 +354,14 @@ class NativeHost:
         with contextlib.suppress(ChamberlainError):
             self._send(stream, refusal)
 
-    def _converse(self, stream: SocketStream, connection: socket.socket) -> None:
+    def _converse(self, stream: SocketConnection) -> None:
         raw = frames.read_frame(stream, frames.LOCAL_LIMIT)
         if raw is None:
             return
         try:
             hello = protocol.parse_frame(raw)
         except ChamberlainError:
-            self._refuse(stream, "bad-hello-000", RefusalCode.BAD_HELLO, "Expected a client hello.")
-            return
+            hello = None
         if not isinstance(hello, ClientHello):
             self._refuse(stream, "bad-hello-000", RefusalCode.BAD_HELLO, "Expected a client hello.")
             return
@@ -390,13 +389,13 @@ class NativeHost:
                 calendar_available=addon.calendar_available,
             ),
         )
-        connection.settimeout(self._deadlines.client_write)
+        stream.settimeout(self._deadlines.client_write)
         raw_request = frames.read_frame(stream, frames.LOCAL_LIMIT)
         if raw_request is None:
             return
         self._relay(stream, raw_request)
 
-    def _relay(self, stream: SocketStream, raw_request: bytes) -> None:
+    def _relay(self, stream: SocketConnection, raw_request: bytes) -> None:
         request = protocol.parse_frame(raw_request)
         if not isinstance(request, RequestFrame):
             return
@@ -429,7 +428,7 @@ class NativeHost:
             with self._state_lock:
                 self._pending.pop(request.id, None)
 
-    def _forward(self, stream: SocketStream, request: RequestFrame) -> None:
+    def _forward(self, stream: SocketConnection, request: RequestFrame) -> None:
         self._to_addon(request)
         total = 0
         attachments = request.args.get("attachments")
@@ -449,7 +448,7 @@ class NativeHost:
 
     def _wait_for_response(
         self,
-        stream: SocketStream,
+        stream: SocketConnection,
         request: RequestFrame,
         pending: _Pending,
         is_write: bool,

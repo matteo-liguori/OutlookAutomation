@@ -6,7 +6,7 @@ is the source of the add-on's generated TypeScript types (`typegen.py`).
 A frame carries one JSON object. Handshake, request, chunk and response
 messages are told apart by `t`. A request names a command from the closed
 list; its `args` and the response `result` are validated against the model
-registered for that command in `ARGS_MODELS` and `RESULT_MODELS`.
+registered for that command in `COMMAND_MODELS`.
 """
 
 from enum import StrEnum
@@ -54,9 +54,6 @@ class Command(StrEnum):
     CALENDAR_WRITE = "calendar_write"
 
 
-CALENDAR_COMMANDS = frozenset(
-    {Command.CALENDAR_LIST, Command.CALENDAR_QUERY, Command.CALENDAR_READ, Command.CALENDAR_WRITE}
-)
 WRITE_COMMANDS = frozenset(
     {Command.COMPOSE, Command.CHANGE, Command.DRAFT_DISCARD, Command.CALENDAR_WRITE}
 )
@@ -94,7 +91,6 @@ class AddonHello(_BridgeFrame):
 
     t: Literal["addon_hello"] = "addon_hello"
     addon_version: Annotated[str, Field(max_length=40)]
-    browser_version: Annotated[str, Field(max_length=40)] = ""
     calendar_available: bool
 
 
@@ -103,7 +99,6 @@ class ClientHello(_BridgeFrame):
 
     t: Literal["client_hello"] = "client_hello"
     token: Annotated[str, Field(max_length=200)]
-    client_version: Annotated[str, Field(max_length=40)] = ""
 
 
 class Welcome(_BridgeFrame):
@@ -216,8 +211,6 @@ class MessageRef(Model):
 
 
 class Header(Model):
-    session_id: int
-    """Session-local diagnostic only; never an argument (P-6)."""
     internet_message_id: str
     subject: Text
     date_ms: int
@@ -227,10 +220,7 @@ class Header(Model):
     bcc: tuple[Short, ...] = ()
     read: bool
     folder_id: str
-    folder_path: str = ""
-    special_use: tuple[str, ...] = ()
     has_attachments: bool = False
-    priority: str = ""
 
 
 class _Recipients(Model):
@@ -279,7 +269,6 @@ class StatusArgs(Model):
 
 class StatusResult(Model):
     addon_version: str
-    browser_version: str
     write_busy: bool
     calendar_available: bool
 
@@ -327,7 +316,6 @@ class ReadResult(_Recipients):
     raw_sha256: Hex64 | None = None
     authentication_results: tuple[Annotated[str, Field(max_length=2000)], ...] = ()
     """Every Authentication-Results header, topmost first (sender authentication)."""
-    read_state_preserved: bool
 
 
 class AttachmentArgs(AccountArgs):
@@ -343,7 +331,6 @@ class AttachmentResult(Model):
     size: int
     sha256: Hex64
     chunks: int
-    read_state_preserved: bool
 
 
 class RefreshArgs(AccountArgs):
@@ -480,7 +467,6 @@ class ChangeItem(Model):
     ref: MessageRef
     ok: bool
     code: str = ""
-    was_read: bool | None = None
 
 
 class ChangeResult(Model):
@@ -571,7 +557,6 @@ class CopyScopeResult(Model):
 class CopiesResult(Model):
     scopes: tuple[CopyScopeResult, ...]
     refresh_verified: bool
-    errors: tuple[Short, ...] = ()
 
 
 # --- calendar (optional capability `calendar`) ----------------------------------------------
@@ -583,8 +568,6 @@ class CalendarInfo(Model):
     type: Annotated[str, Field(max_length=100)]
     read_only: bool
     disabled: bool
-    fresh_as_of: Annotated[str, Field(max_length=40)] | None = None
-    """ISO time of the last synchronisation, only when the client can say."""
 
 
 class CalendarListResult(Model):
@@ -645,7 +628,7 @@ class CalendarWriteResult(Model):
     """The read-back; None after a delete."""
 
 
-_COMMAND_MODELS: dict[Command, tuple[type[Model], type[Model]]] = {
+COMMAND_MODELS: dict[Command, tuple[type[Model], type[Model]]] = {
     Command.STATUS: (StatusArgs, StatusResult),
     Command.FOLDERS: (AccountArgs, FoldersResult),
     Command.QUERY: (QueryArgs, QueryResult),
@@ -663,8 +646,15 @@ _COMMAND_MODELS: dict[Command, tuple[type[Model], type[Model]]] = {
     Command.CALENDAR_READ: (CalendarReadArgs, CalendarReadResult),
     Command.CALENDAR_WRITE: (CalendarWriteArgs, CalendarWriteResult),
 }
-ARGS_MODELS = {command: pair[0] for command, pair in _COMMAND_MODELS.items()}
-RESULT_MODELS = {command: pair[1] for command, pair in _COMMAND_MODELS.items()}
+
+
+def _validate(
+    model: type[Model], data: dict[str, JsonValue], code: ErrorCode, message: str
+) -> Model:
+    try:
+        return model.model_validate(data)
+    except ValidationError as error:
+        raise ChamberlainError(code, message, detail=str(error)[:500]) from None
 
 
 def parse_args(cmd: str, args: dict[str, JsonValue]) -> Model:
@@ -677,23 +667,19 @@ def parse_args(cmd: str, args: dict[str, JsonValue]) -> Model:
             "The Thunderbird bridge has no such command.",
             detail=f"unknown command {cmd[:40]!r}",
         ) from None
-    try:
-        return ARGS_MODELS[command].model_validate(args)
-    except ValidationError as error:
-        raise ChamberlainError(
-            ErrorCode.REQUEST_INVALID,
-            "The bridge request was malformed.",
-            detail=str(error)[:500],
-        ) from None
+    return _validate(
+        COMMAND_MODELS[command][0],
+        args,
+        ErrorCode.REQUEST_INVALID,
+        "The bridge request was malformed.",
+    )
 
 
 def parse_result(cmd: Command, result: dict[str, JsonValue]) -> Model:
     """Validate a response result against the command's model."""
-    try:
-        return RESULT_MODELS[cmd].model_validate(result)
-    except ValidationError as error:
-        raise ChamberlainError(
-            ErrorCode.SOURCE_UNAVAILABLE,
-            "The Thunderbird add-on answered in a shape this version does not understand.",
-            detail=str(error)[:500],
-        ) from None
+    return _validate(
+        COMMAND_MODELS[cmd][1],
+        result,
+        ErrorCode.SOURCE_UNAVAILABLE,
+        "The Thunderbird add-on answered in a shape this version does not understand.",
+    )

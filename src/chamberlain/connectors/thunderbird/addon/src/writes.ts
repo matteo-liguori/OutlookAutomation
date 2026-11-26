@@ -154,8 +154,8 @@ async function readIdGroup(a: Bound, group: ChangeGroup): Promise<IdGroup> {
   return { map, complete: scan.complete };
 }
 
-function changeItem(folder: string, raw: string, wasRead: boolean | null, code: string): ChangeItem {
-  return { ref: { folder_id: folder, internet_message_id: raw }, ok: !code, code, was_read: wasRead };
+function changeItem(folder: string, raw: string, code: string): ChangeItem {
+  return { ref: { folder_id: folder, internet_message_id: raw }, ok: !code, code };
 }
 
 function changeItems(group: ChangeGroup, found: IdGroup) {
@@ -164,7 +164,7 @@ function changeItems(group: ChangeGroup, found: IdGroup) {
     const copies = found.map.get(id) ?? [];
     const code = !found.complete || copies.length > 1 ? "ambiguous" : copies.length ? "" : "not_found";
     const header = code ? null : copies[0];
-    return { id, header, item: changeItem(group.folder_id, raw, header?.read ?? null, code) };
+    return { id, header, item: changeItem(group.folder_id, raw, code) };
   });
 }
 
@@ -188,10 +188,12 @@ const FLAG_PRECHECK_CODES = new Set<BridgeErrorCode>([
   "account_mismatch", "bad_request", "changed", "client_offline", "not_found", "unsupported",
 ]);
 
-function flagError(error: unknown): BridgeErrorCode | undefined {
-  return error instanceof BridgeFailure
+/** The code of a failure that proves the helper changed nothing, if it is one. */
+function precheckCode(error: unknown): BridgeErrorCode | undefined {
+  const code = error instanceof BridgeFailure
     ? error.code
     : helperFailure(String((error as Error)?.message ?? error))?.code;
+  return code && FLAG_PRECHECK_CODES.has(code) ? code : undefined;
 }
 
 async function verifyFlagGroups(a: Bound, groups: FlagGroup[], read: boolean, ctx: Ctx): Promise<void> {
@@ -239,9 +241,8 @@ async function markGroups(a: ChangeArgs, read: boolean, ctx: Ctx): Promise<Chang
     try {
       before = await readIdGroup(a, group);
     } catch (error) {
-      const failure = flagError(error);
-      const code = failure && FLAG_PRECHECK_CODES.has(failure) ? failure : "not_verified";
-      items.push(...group.ids.map((id) => changeItem(group.folder_id, id, null, code)));
+      const code = precheckCode(error) ?? "not_verified";
+      items.push(...group.ids.map((id) => changeItem(group.folder_id, id, code)));
       continue;
     }
     const changed: BulkReadRef[] = [];
@@ -260,9 +261,9 @@ async function markGroups(a: ChangeArgs, read: boolean, ctx: Ctx): Promise<Chang
     try {
       await helper.setReadFlags(a.account_id, a.mailbox, group.folder_id, changed, read);
     } catch (error) {
-      const code = flagError(error);
+      const code = precheckCode(error);
       // The native helper checks every reference before touching any flag.
-      if (code && FLAG_PRECHECK_CODES.has(code)) {
+      if (code) {
         for (const item of wanted) {
           if (!item.ok) item.code = code;
         }
@@ -282,8 +283,7 @@ async function cmdChange(a: ChangeArgs, ctx: Ctx): Promise<ChangeResult> {
   // Bind every folder before issuing any changes, even when marking across several folders.
   for (const group of a.items) await folderOf(a, group.folder_id);
   if (a.move_to != null) return moveBatch(a, a.items[0], a.move_to, ctx);
-  check(a.set_read != null, "bad_request", "The change needs a read flag.");
-  return markGroups(a, a.set_read, ctx);
+  return markGroups(a, a.set_read!, ctx); // the host's ChangeArgs guarantee a read flag here
 }
 
 // --- composing ------------------------------------------------------------------------------
@@ -370,8 +370,7 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx): Promise<ComposeResult> {
   await folderOf(a, a.draft_folder_id);
   let existing: TbHeader | null = null;
   if (a.mode === "draft_update") {
-    check(a.draft && a.expected_raw_sha256, "bad_request", "A draft update needs its current hash.");
-    existing = await locateOne(a, a.draft);
+    existing = await locateOne(a, a.draft!); // the host's ComposeArgs guarantee both fields here
     check(existing.folder?.id === a.draft_folder_id, "changed", "That message is not in the bound draft folder.");
     check((await rawHash(existing.id)) === a.expected_raw_sha256, "changed", "The draft changed since it was read.");
   }
@@ -581,11 +580,10 @@ async function scanCopyScope(a: Bound, scope: CopyScope, folderId: string, outbo
     const within = scan.messages.every((message) => since <= whenMs(message) && whenMs(message) <= until);
     return { messages: scan.messages, complete: scan.complete && within };
   }
-  check(scope.subject != null && scope.since_ms != null, "bad_request", "The scan needs a subject and lower time bound.");
   await folderOf(a, folderId, outbox);
   const scan = await scanQuery(a, {
-    folderId, foreign: outbox, sinceMs: scope.since_ms,
-    subject: scope.subject, subjectContains: true, ownOnly: true, maxScan: 500,
+    folderId, foreign: outbox, sinceMs: scope.since_ms!,
+    subject: scope.subject!, subjectContains: true, ownOnly: true, maxScan: 500,
   });
   const limit = 200;
   return { messages: scan.messages.slice(0, limit), complete: scan.complete && scan.messages.length <= limit };
@@ -597,7 +595,6 @@ async function cmdCopies(a: CopiesArgs): Promise<CopiesResult> {
   // local Outboxes, whose headers and contents are filtered to the bound sender.
   const boundFolders = [...new Set(a.where.flatMap((scope) => scope.folder_id == null ? [] : [scope.folder_id]))];
   for (const folderId of boundFolders) await folderOf(a, folderId);
-  const errors: string[] = [];
   let refreshVerified = a.refresh && boundFolders.length > 0;
   if (a.refresh) {
     for (let offset = 0; offset < boundFolders.length; offset += 8) {
@@ -605,10 +602,8 @@ async function cmdCopies(a: CopiesArgs): Promise<CopiesResult> {
       try {
         const result = await cmdRefresh({ account_id: a.account_id, mailbox: a.mailbox, folder_ids: folderIds, timeout_ms: 8000 });
         refreshVerified &&= result.provider_callback_verified;
-        for (const f of result.folders) if (!f.success) errors.push(clip(f.folder_id + ": " + f.code, 120));
-      } catch (error) {
+      } catch {
         refreshVerified = false;
-        errors.push("refresh: " + clip((error as Error)?.message ?? error, 120));
       }
     }
   }
@@ -623,15 +618,13 @@ async function cmdCopies(a: CopiesArgs): Promise<CopiesResult> {
       for (const folderId of folders) {
         const scan = await scanCopyScope(a, scope, folderId, outbox);
         complete &&= scan.complete;
-        if (!scan.complete) errors.push("copy scan incomplete: " + clip(folderId, 120));
         const headers = await scanHeaders(a, scan.messages, outbox);
         for (let i = 0; i < headers.length; i++) copies.push(await copyFact(a, scope, scan.messages[i], headers[i]));
       }
-    } catch (error) {
+    } catch {
       complete = false;
-      errors.push("copy inspection: " + clip((error as Error)?.message ?? error, 120));
     }
     scopes.push({ copies, complete });
   }
-  return { scopes, refresh_verified: refreshVerified, errors };
+  return { scopes, refresh_verified: refreshVerified };
 }

@@ -5,12 +5,12 @@ named in its binding and nothing else; it does not reach a university or
 global directory, and it reports an incomplete scan as a gap (P-4).
 """
 
-import base64
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from chamberlain.connectors.calendar_support.paging import bad_cursor, decode_token, encode_token
 from chamberlain.connectors.thunderbird import protocol
-from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure
+from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, typed
 from chamberlain.connectors.thunderbird.identity import (
     decode_contact_locator,
     encode_contact_locator,
@@ -33,10 +33,6 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 @dataclass(frozen=True)
 class ContactsBinding:
     address_book_ids: tuple[str, ...]
-
-
-def _bad_cursor() -> ChamberlainError:
-    return ChamberlainError(ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid.")
 
 
 def _contact(source: str, found: protocol.ContactInfo) -> Contact:
@@ -108,24 +104,17 @@ class ThunderbirdContacts:
             protocol.Command.CONTACT_READ,
             protocol.ContactReadArgs(address_book_id=book_id, contact_id=contact_id),
         )
-        result = reply.result
-        if not isinstance(result, protocol.ContactReadResult):
-            raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Unexpected bridge result type.")
-        return _contact(source, result.contact)
+        return _contact(source, typed(reply, protocol.ContactReadResult).contact)
 
     def search(self, source: str, query: ContactQuery, cursor: str | None = None) -> Page[Contact]:
         binding = self._binding(source)
         tag = sha256_text(query.text)[:12]
         skip = 0
         if cursor is not None:
-            try:
-                raw = base64.urlsafe_b64decode(cursor + "=" * (-len(cursor) % 4)).decode("ascii")
-                bound, _, offset = raw.partition(":")
-                skip = int(offset)
-            except ValueError:
-                raise _bad_cursor() from None
-            if bound != tag or skip < 0:
-                raise _bad_cursor()
+            bound, _, offset = decode_token(cursor, "c1").partition(":")
+            if bound != tag or not offset.isdigit():
+                raise bad_cursor()
+            skip = int(offset)
         reply = self._client.call(
             protocol.Command.CONTACTS,
             protocol.ContactsArgs(
@@ -135,14 +124,11 @@ class ThunderbirdContacts:
                 skip=skip,
             ),
         )
-        result = reply.result
-        if not isinstance(result, protocol.ContactsResult):
-            raise ChamberlainError(ErrorCode.INTERNAL_UNEXPECTED, "Unexpected bridge result type.")
+        result = typed(reply, protocol.ContactsResult)
         items = [_contact(source, found) for found in result.contacts]
         next_cursor = None
         if result.more:
-            marker = f"{tag}:{skip + query.limit}".encode("ascii")
-            next_cursor = base64.urlsafe_b64encode(marker).decode("ascii").rstrip("=")
+            next_cursor = encode_token(f"{tag}:{skip + query.limit}", "c1")
         gaps: tuple[Gap, ...] = ()
         if not result.complete:
             gaps = (

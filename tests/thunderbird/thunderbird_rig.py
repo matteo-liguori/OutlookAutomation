@@ -32,7 +32,8 @@ from chamberlain.connectors.thunderbird.identity import (
     encode_contact_locator,
     encode_locator,
 )
-from chamberlain.connectors.thunderbird.mail import MailLimits, ThunderbirdBinding, ThunderbirdMail
+from chamberlain.connectors.thunderbird.mail import ThunderbirdMail
+from chamberlain.connectors.thunderbird.mail_reads import MailLimits, ThunderbirdBinding
 from chamberlain.connectors.thunderbird.native_host import (
     Deadlines,
     NativeHost,

@@ -25,9 +25,7 @@ function whenMs(h: TbHeader): number {
 }
 
 function header(h: TbHeader, hasAttachments = false): Header {
-  const folder = h.folder ?? { id: "", accountId: "" };
   return {
-    session_id: h.id,
     internet_message_id: bare(h.headerMessageId),
     subject: clip(h.subject, MAX_BODY_CHARS),
     date_ms: whenMs(h),
@@ -36,11 +34,8 @@ function header(h: TbHeader, hasAttachments = false): Header {
     cc: (h.ccList ?? []).map((v) => clip(v, 2000)),
     bcc: (h.bccList ?? []).map((v) => clip(v, 2000)),
     read: h.read,
-    folder_id: folder.id,
-    folder_path: clip((folder as TbFolder).path, 1000),
-    special_use: (folder as TbFolder).specialUse ?? [],
+    folder_id: h.folder?.id ?? "",
     has_attachments: hasAttachments,
-    priority: h.priority ?? "",
   };
 }
 
@@ -325,7 +320,6 @@ async function cmdRead(a: ReadArgs): Promise<ReadResult> {
     references: (headers.references ?? []).join(" ").trim(),
     authentication_results: (headers["authentication-results"] ?? []).slice(0, 8).map((v: string) => clip(v, 2000)),
     raw_sha256: digest,
-    read_state_preserved: true,
   };
 }
 
@@ -353,7 +347,6 @@ async function cmdAttachment(a: AttachmentArgs, id: string): Promise<{ result: A
       size: bytes.length,
       sha256: await sha256Hex(bytes),
       chunks: chunks.length,
-      read_state_preserved: true,
     },
     chunks,
   };
@@ -376,6 +369,13 @@ async function cmdRefresh(a: RefreshArgs): Promise<RefreshResult> {
   return { folders, provider_callback_verified: folders.length === a.folder_ids.length && folders.every((f) => f.success) };
 }
 
+function contactInfo(person: any, bookId: string): ContactInfo {
+  const p = person.properties ?? {};
+  const emails = [p.PrimaryEmail, p.SecondEmail].filter(Boolean).map(String);
+  const name = p.DisplayName || [p.FirstName, p.LastName].filter(Boolean).join(" ");
+  return { id: String(person.id), book_id: bookId, name: clip(name, 500), emails };
+}
+
 async function cmdContacts(a: ContactsArgs): Promise<ContactsResult> {
   const needle = a.text.toLowerCase();
   const contacts: ContactInfo[] = [];
@@ -390,11 +390,10 @@ async function cmdContacts(a: ContactsArgs): Promise<ContactsResult> {
         break;
       }
       scanned++;
+      const info = contactInfo(person, bookId);
       const p = person.properties ?? {};
-      const emails = [p.PrimaryEmail, p.SecondEmail].filter(Boolean).map(String);
-      const name = p.DisplayName || [p.FirstName, p.LastName].filter(Boolean).join(" ");
-      const hay = [p.DisplayName, p.FirstName, p.LastName, ...emails].filter(Boolean).join("\n").toLowerCase();
-      if (hay.includes(needle)) contacts.push({ id: String(person.id), book_id: bookId, name: clip(name, 500), emails });
+      const hay = [p.DisplayName, p.FirstName, p.LastName, ...info.emails].filter(Boolean).join("\n").toLowerCase();
+      if (hay.includes(needle)) contacts.push(info);
     }
   }
   contacts.sort((x, y) => (x.name + x.id < y.name + y.id ? -1 : 1));
@@ -410,13 +409,9 @@ async function cmdContactRead(a: ContactReadArgs): Promise<ContactReadResult> {
     person = null;
   }
   check(person && String(person.parentId ?? a.address_book_id) === a.address_book_id, "not_found", "That contact is not in the address book.");
-  const p = person.properties ?? {};
-  const emails = [p.PrimaryEmail, p.SecondEmail].filter(Boolean).map(String);
-  const name = p.DisplayName || [p.FirstName, p.LastName].filter(Boolean).join(" ");
-  return { contact: { id: String(person.id), book_id: a.address_book_id, name: clip(name, 500), emails } };
+  return { contact: contactInfo(person, a.address_book_id) };
 }
 
 async function cmdStatus(): Promise<StatusResult> {
-  const info = await messenger.runtime.getBrowserInfo();
-  return { addon_version: ADDON_VERSION, browser_version: info.version, write_busy: writeBusy, calendar_available: calendarSupported() };
+  return { addon_version: ADDON_VERSION, write_busy: writeBusy, calendar_available: calendarSupported() };
 }

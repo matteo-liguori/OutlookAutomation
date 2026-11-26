@@ -103,7 +103,7 @@ interface HarnessCalendarApi {
 }
 
 declare const messenger: {
-  runtime: { getBrowserInfo(): Promise<{ version: string }>; connectNative(name: string): TbPort };
+  runtime: { connectNative(name: string): TbPort };
   accounts: { list(includeFolders: boolean): Promise<TbAccount[]>; get(id: string, includeFolders: boolean): Promise<TbAccount | null> };
   folders: { get(id: string): Promise<TbFolder> };
   messages: any;

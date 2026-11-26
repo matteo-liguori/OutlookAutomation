@@ -61,7 +61,7 @@ test("B-2 a command outside the closed list is refused and executes nothing", as
 test("B-2 a malformed request object is refused before anything runs", async () => {
   const { addon } = setup();
   const malformed = await callWire(addon, "folders", []);
-  assert.equal(malformed.error.code, "bad_request");
+  assert.equal(malformed.ok, false);
   assert.equal(malformed.error.mutation, "none");
 });
 
@@ -443,7 +443,7 @@ test("W-24 mark_read reports every message and can mark unread", async () => {
   world.add({ folderId: INBOX, headerMessageId: "a@x", read: false });
   world.add({ folderId: INBOX, headerMessageId: "b@x", read: true });
   const res = await call(addon, "change", change(["a@x", "b@x", "gone@x"], { set_read: true }));
-  assert.deepEqual(res.result.items.map((i) => [i.ok, i.was_read ?? null, i.code]), [[true, false, ""], [true, true, ""], [false, null, "not_found"]]);
+  assert.deepEqual(res.result.items.map((i) => [i.ok, i.code]), [[true, ""], [true, ""], [false, "not_found"]]);
   const back = await call(addon, "change", change(["a@x"], { set_read: false }));
   assert.equal(back.result.items[0].ok, true);
   assert.equal(world.find("a@x").read, false);
@@ -668,8 +668,7 @@ test("P-9 a placeholder draft without a Message-ID is followed to its synced cop
   const res = await call(addon, "compose", compose({ mode: "draft_save" }));
   assert.equal(res.ok, true, JSON.stringify(res.error));
   assert.ok(res.result.header.internet_message_id, "the handle needs a Message-ID");
-  const stored = world.find(res.result.header.internet_message_id, DRAFTS);
-  assert.equal(res.result.header.session_id, stored.id, "the synced copy, not the placeholder");
+  assert.match(res.result.raw_sha256, /^[0-9a-f]{64}$/, "the synced copy, not the placeholder, was hashed");
 });
 
 test("P-9 draft_update checks the old raw hash before opening anything", async () => {

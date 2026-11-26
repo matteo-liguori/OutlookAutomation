@@ -65,7 +65,6 @@ def echo(frame: RequestFrame | ChunkFrame, addon: Addon) -> None:
             if frame.cmd == "compose"
             else protocol.StatusResult(
                 addon_version="2.0.0",
-                browser_version="159.0",
                 write_busy=False,
                 calendar_available=False,
             )

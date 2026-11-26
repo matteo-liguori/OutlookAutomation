@@ -12,8 +12,8 @@ from thunderbird_rig import ACCOUNT, MAILBOX, Stack
 
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.identity import encode_locator
-from chamberlain.connectors.thunderbird.mail import ALLOW_DUPLICATE_REF, DISPLAY_ONLY_REF
 from chamberlain.connectors.thunderbird.mail_reads import ThunderbirdBinding
+from chamberlain.connectors.thunderbird.mail_writes import ALLOW_DUPLICATE_REF, DISPLAY_ONLY_REF
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.capabilities import CapabilityName, HealthState
 from chamberlain.domain.handles import HandleKind, ref_handle

@@ -1,7 +1,7 @@
 // Command bridge (protocol v3). Credentials stay in Thunderbird. No journal, no retry,
 // no command outside the generated closed list (bridge contract B-2 to B-5).
 
-const ADDON_VERSION = "3.0.8";
+const ADDON_VERSION = "3.0.9";
 const HOST_NAME = "chamberlain_thunderbird_bridge";
 const ASSEMBLY_DEADLINE_MS = 60_000;
 const RECONNECT_MS = 1_500;
@@ -124,18 +124,9 @@ function onRequest(frame: RequestFrame): void {
     respondError(frame.id, frame.cmd, { code: "unknown_command", message: "No such command.", mutation: "none" });
     return;
   }
-  if (!frame.args || typeof frame.args !== "object" || Array.isArray(frame.args)) {
-    respondError(frame.id, frame.cmd, { code: "bad_request", message: "Arguments must be an object.", mutation: "none" });
-    return;
-  }
   inFlight.add(frame.id);
-  const specs = frame.cmd === "compose"
-    ? (frame.args as unknown as ComposeArgs).attachments : [];
-  if (!Array.isArray(specs)) {
-    respondError(frame.id, frame.cmd, { code: "bad_request", message: "Attachments must be an array.", mutation: "none" });
-    inFlight.delete(frame.id);
-    return;
-  }
+  // The host's argument models guarantee an object, and an array of attachment specs for compose.
+  const specs = frame.cmd === "compose" ? (frame.args as unknown as ComposeArgs).attachments : [];
   if (!specs.length) {
     execute(frame, new Map());
     return;
@@ -234,10 +225,7 @@ function connect(): void {
     assemblies.clear();
     setTimeout(connect, RECONNECT_MS);
   });
-  messenger.runtime.getBrowserInfo().then(
-    (info) => post({ t: "addon_hello", v: PROTOCOL_VERSION, id: "hello" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), addon_version: ADDON_VERSION, browser_version: info.version, calendar_available: calendarSupported() }),
-    () => undefined,
-  );
+  post({ t: "addon_hello", v: PROTOCOL_VERSION, id: "hello" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8), addon_version: ADDON_VERSION, calendar_available: calendarSupported() });
 }
 
 connect();

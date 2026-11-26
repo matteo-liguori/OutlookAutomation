@@ -7,8 +7,7 @@ import pytest
 
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.protocol import (
-    ARGS_MODELS,
-    RESULT_MODELS,
+    COMMAND_MODELS,
     Command,
     parse_args,
     parse_frame,
@@ -20,7 +19,7 @@ ID = "req_0123456789"
 
 
 def test_b2_every_command_has_an_args_and_a_result_model() -> None:
-    assert set(ARGS_MODELS) == set(Command) == set(RESULT_MODELS)
+    assert set(COMMAND_MODELS) == set(Command)
 
 
 def test_b2_the_command_list_is_the_one_in_the_brief() -> None:
