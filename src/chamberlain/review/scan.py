@@ -45,15 +45,6 @@ class ReviewSettings:
     rule: rounds.RoundRule = field(default_factory=rounds.RoundRule)
 
 
-def checkout_root() -> Path | None:
-    """The folder this installation's code runs from, when it is a source checkout."""
-    here = Path(__file__).resolve()
-    for folder in here.parents:
-        if (folder / ".git").exists() and (folder / "pyproject.toml").exists():
-            return folder
-    return None
-
-
 def _same_or_inside(cwd: str, root: Path | None) -> bool:
     if root is None:
         return False

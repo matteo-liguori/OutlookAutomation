@@ -54,7 +54,6 @@ ArtifactHandle = Annotated[str, StringConstraints(pattern=handle_pattern("art"))
 GrantHandle = Annotated[str, StringConstraints(pattern=handle_pattern("grant"))]
 OperationHandle = Annotated[str, StringConstraints(pattern=handle_pattern("op"))]
 EventHandle = Annotated[str, StringConstraints(pattern=handle_pattern("evt"))]
-RunHandle = Annotated[str, StringConstraints(pattern=handle_pattern("run"))]
 SessionHandle = Annotated[str, StringConstraints(pattern=handle_pattern("ses"))]
 MessageHandle = Annotated[str, StringConstraints(pattern=handle_pattern("msg"))]
 CalendarEventHandle = Annotated[str, StringConstraints(pattern=handle_pattern("cev"))]

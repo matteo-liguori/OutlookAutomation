@@ -175,41 +175,9 @@ class ViewerApp:
         return 404, _error("not_found", "No such endpoint.")
 
     def _read(self, ctx: Context, path: str, query: dict[str, list[str]]) -> dict[str, Any]:
-        if path == "/api/overview":
-            return views.overview(ctx)
-        if path == "/api/work":
-            return views.work(ctx)
-        if path == "/api/uncertain":
-            return views.uncertain(ctx)
-        if path == "/api/calendar":
-            return pages.calendar(
-                ctx,
-                self._zone,
-                (query.get("start") or [None])[0],
-                (query.get("until") or [None])[0],
-            )
-        if path == "/api/report":
-            return report_api.front(ctx, (query.get("run") or [None])[0], self._zone)
-        if path == "/api/reports":
-            return pages.reports_of_day(ctx, (query.get("day") or [""])[0])
-        if path == "/api/cards":
-            return complex_api.with_complex(ctx, pages.cards(ctx))
-        if path == "/api/complex":
-            return complex_api.overview(ctx)
-        if path == "/api/timeline":
-            return pages.timeline(
-                ctx, self._zone, (query.get("until") or [None])[0], _count(query, "days", 7)
-            )
-        if path == "/api/activity":
-            return views.activity(ctx, self._zone, (query.get("day") or [None])[0])
-        if path == "/api/runs":
-            return views.runs(ctx)
-        if path == "/api/live-test":
-            return recent_runs(ctx.data_root)
-        if path == "/api/storage":
-            return views.storage(ctx)
-        if path == "/api/notes":
-            return views.notes(ctx)
+        route = _READS.get(path)
+        if route is not None:
+            return route(ctx, self._zone, query)
         match = _RUN_REPORT.match(path)
         if match:
             return views.run_reports(ctx, match.group(1))
@@ -259,6 +227,31 @@ def _count(query: dict[str, list[str]], name: str, default: int) -> int:
     if not text.isdigit() or len(text) > 3:
         raise ChamberlainError(ErrorCode.REQUEST_INVALID, f"{name} is a whole number.", field=name)
     return int(text)
+
+
+_Query = dict[str, list[str]]
+
+
+def _arg(query: _Query, name: str, default: str | None = None) -> str | None:
+    return (query.get(name) or [default])[0]
+
+
+_READS: dict[str, Callable[[Context, str, _Query], dict[str, Any]]] = {
+    "/api/overview": lambda c, z, q: views.overview(c),
+    "/api/work": lambda c, z, q: views.work(c),
+    "/api/uncertain": lambda c, z, q: views.uncertain(c),
+    "/api/calendar": lambda c, z, q: pages.calendar(c, z, _arg(q, "start"), _arg(q, "until")),
+    "/api/report": lambda c, z, q: report_api.front(c, _arg(q, "run"), z),
+    "/api/reports": lambda c, z, q: pages.reports_of_day(c, _arg(q, "day", "") or ""),
+    "/api/cards": lambda c, z, q: complex_api.with_complex(c, pages.cards(c)),
+    "/api/complex": lambda c, z, q: complex_api.overview(c),
+    "/api/timeline": lambda c, z, q: pages.timeline(c, z, _arg(q, "until"), _count(q, "days", 7)),
+    "/api/activity": lambda c, z, q: views.activity(c, z, _arg(q, "day")),
+    "/api/runs": lambda c, z, q: views.runs(c),
+    "/api/live-test": lambda c, z, q: recent_runs(c.data_root),
+    "/api/storage": lambda c, z, q: views.storage(c),
+    "/api/notes": lambda c, z, q: views.notes(c),
+}
 
 
 def _json(body: bytes) -> dict[str, Any]:

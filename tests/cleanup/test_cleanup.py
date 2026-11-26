@@ -175,8 +175,7 @@ def test_an_agents_start_runs_the_clean_up_and_reports_it(tmp_path: Path) -> Non
 
 def test_no_limit_but_a_big_run_asks_the_agent_to_glance_at_trash() -> None:
     report = CleanupReport(
-        moved_by={"Old (mail:kcl)": 101, "Old (mail:personal)": 100},
-        per_mailbox={"mail:kcl": 101, "mail:personal": 100},
+        moved_by={("Old", "mail:kcl"): 101, ("Old", "mail:personal"): 100},
     )
     assert report.summary() == [
         "Clean-up moved 201 emails to Trash: Old (mail:kcl) 101; Old (mail:personal) 100.",

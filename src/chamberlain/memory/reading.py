@@ -25,7 +25,7 @@ from chamberlain.limits import ATTACHMENT_TEXT_MAX_BYTES
 from chamberlain.memory import attachment_text, refs, repo
 from chamberlain.memory.cards import CardService
 from chamberlain.memory.retrieval import one_line
-from chamberlain.ports import MailPort
+from chamberlain.ports.mail import MailPort
 from chamberlain.review.rounds import brief
 from chamberlain.schema.envelope import Content, ContentKind
 from chamberlain.schema.errors import ChamberlainError, ErrorCode

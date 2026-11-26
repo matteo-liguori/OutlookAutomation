@@ -125,14 +125,15 @@ def first_added(db: sqlite3.Connection) -> str | None:
 # --- rounds and findings -------------------------------------------------------------------
 
 
+_ROUNDS = "SELECT id, state, opened_at, new_patterns FROM review_rounds"
+
+
 def _round(row: sqlite3.Row) -> RoundRow:
     return RoundRow(row["id"], row["state"], row["opened_at"], row["new_patterns"])
 
 
 def latest_round(db: sqlite3.Connection) -> RoundRow | None:
-    row = db.execute(
-        "SELECT id, state, opened_at, new_patterns FROM review_rounds ORDER BY id DESC LIMIT 1"
-    ).fetchone()
+    row = db.execute(f"{_ROUNDS} ORDER BY id DESC LIMIT 1").fetchone()
     return None if row is None else _round(row)
 
 
@@ -144,17 +145,12 @@ def previous_round_opened(db: sqlite3.Connection, before: int) -> str | None:
 
 
 def open_rounds(db: sqlite3.Connection) -> list[RoundRow]:
-    rows = db.execute(
-        "SELECT id, state, opened_at, new_patterns FROM review_rounds WHERE state = 'open' "
-        "ORDER BY id"
-    )
+    rows = db.execute(f"{_ROUNDS} WHERE state = 'open' ORDER BY id")
     return [_round(r) for r in rows]
 
 
 def get_round(db: sqlite3.Connection, round_id: int) -> RoundRow | None:
-    row = db.execute(
-        "SELECT id, state, opened_at, new_patterns FROM review_rounds WHERE id = ?", (round_id,)
-    ).fetchone()
+    row = db.execute(f"{_ROUNDS} WHERE id = ?", (round_id,)).fetchone()
     return None if row is None else _round(row)
 
 

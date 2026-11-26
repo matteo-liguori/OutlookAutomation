@@ -19,6 +19,7 @@ from chamberlain.runs import appointments, compose, local_events
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs.models import RunRow, RunState
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.surface.viewer.views import pick
 
 EARLIER_LIMIT = 40
 RUN_WINDOW = 90
@@ -28,15 +29,7 @@ _RUN = re.compile(r"^run_[a-z0-9]{8,32}$")
 
 
 def appointment_line(item: appointments.Appointment) -> dict[str, Any]:
-    return {
-        "action": item.action,
-        "card": item.card,
-        "card_title": item.card_title,
-        "title": item.title,
-        "start": item.start,
-        "reminder_from": item.reminder_from,
-        "due": item.due,
-    }
+    return pick(item, "action", "card", "card_title", "title", "start", "reminder_from", "due")
 
 
 def due_appointments(ctx: Context) -> list[dict[str, Any]]:
@@ -51,11 +44,9 @@ def _has_report(ctx: Context, run: RunRow) -> bool:
 
 def _entry(run: RunRow) -> dict[str, Any]:
     return {
+        **pick(run, "schedule", "day", "started_at"),
         "run": run.handle,
-        "schedule": run.schedule,
-        "day": run.day,
         "state": run.state.value,
-        "started_at": run.started_at,
     }
 
 

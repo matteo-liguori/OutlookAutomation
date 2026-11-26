@@ -8,6 +8,7 @@ every label, so such a message would vanish from that folder too.
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from functools import partial
 
 from pydantic import Field
 
@@ -70,6 +71,16 @@ def own_folders(folders: list[Folder]) -> set[str]:
     return keep
 
 
+def only_source(config: CleanupConfig, source: str) -> CleanupConfig:
+    """The rules that apply to one mailbox, narrowed to it."""
+    rules = tuple(
+        rule.model_copy(update={"sources": (source,)})
+        for rule in config.rules
+        if ALL_MAILBOXES in rule.sources or source in rule.sources
+    )
+    return config.model_copy(update={"rules": rules})
+
+
 def sources_of(ctx: Context, rule: CleanupRule) -> list[str]:
     if ALL_MAILBOXES in rule.sources:
         return sorted(ctx.sources.mail)
@@ -125,7 +136,7 @@ def candidates(
 
 
 def _all(port: MailPort, source: str, query: MailQuery) -> Iterator[MessageSummary]:
-    for page in pages(lambda cursor: port.search(source, query, cursor)):
+    for page in pages(partial(port.search, source, query)):
         yield from page.items
 
 
@@ -134,25 +145,9 @@ def _ids_in(port: MailPort, source: str, folders: set[str], until: datetime) -> 
     read was cut short."""
     ids: set[str] = set()
     for folder in sorted(folders):
-        cursor: str | None = None
-        while True:
-            query = MailQuery(folder_id=folder, until=until, limit=200)
-            page = port.search(source, query, cursor)
+        query = MailQuery(folder_id=folder, until=until, limit=200)
+        for page in pages(partial(port.search, source, query)):
             if not page.complete:
                 return None
             ids |= {item.internet_message_id for item in page.items}
-            if page.cursor is None:
-                break
-            cursor = page.cursor
     return ids
-
-
-__all__ = [
-    "ALL_MAILBOXES",
-    "Candidate",
-    "CleanupConfig",
-    "CleanupRule",
-    "candidates",
-    "find_folder",
-    "own_folders",
-]
