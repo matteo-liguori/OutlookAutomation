@@ -3,7 +3,7 @@
 Contract: docs/contracts/08-ports.md.
 """
 
-from chamberlain.connectors.fake.world import FakeWorld, Fault, StoredContact
+from chamberlain.connectors.fake.world import FakeWorld, StoredContact
 from chamberlain.domain.capabilities import (
     Capability,
     CapabilityName,
@@ -12,7 +12,7 @@ from chamberlain.domain.capabilities import (
     VerificationLevel,
 )
 from chamberlain.domain.contacts import Contact, ContactQuery
-from chamberlain.ports.page import Gap, Page
+from chamberlain.ports.page import Page
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 
@@ -55,32 +55,12 @@ class FakeContacts:
     def search(self, source: str, query: ContactQuery, cursor: str | None = None) -> Page[Contact]:
         self._world.require_source(self._world.contacts, source)
         self._world.begin_read(source)
-        try:
-            offset = int(cursor or "0")
-        except ValueError:
-            raise ChamberlainError(
-                ErrorCode.REQUEST_BAD_CURSOR, "That cursor is not valid."
-            ) from None
         needle = query.text.casefold()
-        matches = [
-            c
-            for c in self._world.contacts[source]
-            if needle in c.name.casefold() or any(needle in e.casefold() for e in c.emails)
-        ]
-        window = matches[offset : offset + query.limit]
-        more = offset + query.limit < len(matches)
-        gaps: tuple[Gap, ...] = ()
-        if self._world.take(Fault.STALE):
-            gaps = (Gap.model_validate({"source": source, "reason": "The address book is stale."}),)
-        items = tuple(
+        found = [
             Contact.model_validate(
                 {"source": source, "locator": c.id, "name": c.name, "emails": c.emails}
             )
-            for c in window
-        )
-        return Page[Contact](
-            items=items,
-            cursor=str(offset + query.limit) if more else None,
-            complete=not more and not gaps,
-            gaps=gaps,
-        )
+            for c in self._world.contacts[source]
+            if needle in c.name.casefold() or any(needle in e.casefold() for e in c.emails)
+        ]
+        return self._world.page(Page[Contact], source, found, cursor, query.limit, "address book")

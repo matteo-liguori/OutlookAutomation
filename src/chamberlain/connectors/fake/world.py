@@ -3,17 +3,36 @@
 Contract: docs/contracts/08-ports.md (The fake provider).
 """
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import StrEnum
 
+from pydantic import BaseModel, JsonValue
+
+from chamberlain.connectors.calendar_support.paging import offset_cursor, slice_page
 from chamberlain.domain.calendar import EventFields, EventStatus, Response
 from chamberlain.domain.capabilities import HealthState, SourceHealth
 from chamberlain.domain.intents import IntentKind
 from chamberlain.domain.mail import Address, AttachmentMeta, Folder, FolderRole
+from chamberlain.domain.operations import (
+    DispatchOutcome,
+    DispatchResult,
+    Prepared,
+    ProviderReceipt,
+    ReconcileResult,
+    ReconcileStatus,
+)
 from chamberlain.ports.clock import ManualClock
+from chamberlain.ports.page import Gap, Page
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+
+
+def text(data: Mapping[str, JsonValue], key: str) -> str:
+    value = data[key]
+    if not isinstance(value, str):
+        raise TypeError(f"prepared field {key} is not text")
+    return value
 
 
 class Fault(StrEnum):
@@ -106,7 +125,6 @@ class FakeWorld:
     def __init__(self, clock: ManualClock, *, deadline_seconds: int = 30) -> None:
         self.clock = clock
         self.deadline_seconds = deadline_seconds
-        self.generation = 1
         self.mail: dict[str, list[StoredMail]] = {}
         self.folders: dict[str, list[Folder]] = {}
         self.events: dict[str, dict[str, StoredEvent]] = {}
@@ -177,15 +195,21 @@ class FakeWorld:
 
     def restart(self) -> None:
         """Renumber every session ID, as a mail client does on restart (P-6)."""
-        self.generation += 1
         for messages in self.mail.values():
             for message in messages:
                 message.session_id = self.next_session_id()
 
-    def apply_late(self, apply: Callable[[], None]) -> None:
-        """Schedule a mutation that lands after its caller has given up."""
-        due = self.clock.now() + timedelta(seconds=self.deadline_seconds + 60)
-        self._late.append((due, apply))
+    def apply_late(self, apply: Callable[[], ProviderReceipt]) -> None:
+        """Schedule a mutation that lands after its caller has given up (a failed precondition
+        means it simply does not happen)."""
+
+        def run() -> None:
+            try:
+                apply()
+            except ChamberlainError:
+                return
+
+        self._late.append((self.clock.now() + timedelta(seconds=self.deadline_seconds + 60), run))
 
     def settle_late_writes(self) -> None:
         now = self.clock.now()
@@ -193,6 +217,69 @@ class FakeWorld:
         self._late = [item for item in self._late if item[0] > now]
         for _, apply in due:
             apply()
+
+    def run_dispatch(
+        self,
+        prepared: Prepared,
+        key: str,
+        apply: Callable[[], ProviderReceipt],
+        finish: Callable[[ProviderReceipt], DispatchResult] | None = None,
+    ) -> DispatchResult:
+        """The fault ladder of the one mutation (P-10). Never retries and never raises."""
+        kind = prepared.intent_kind
+        self.begin_call()
+
+        def lost(outcome: DispatchOutcome, detail: str) -> DispatchResult:
+            self.dispatch_log.append(DispatchRecord(key, kind, applied=False))
+            return DispatchResult(outcome=outcome, detail=detail)
+
+        if self.take(Fault.BUSY_BEFORE_APPLY):
+            return lost(DispatchOutcome.NOT_APPLIED, "fake: busy")
+        if self.take(Fault.LOSE_BEFORE_APPLY):
+            return lost(DispatchOutcome.UNKNOWN, "fake: lost before apply")
+        if kind is IntentKind.MAIL_SEND and self.take(Fault.QUEUE_INSTEAD_OF_SEND):
+            self.outbox.setdefault(prepared.source, set()).add(prepared.reconcile_token or "")
+            return lost(DispatchOutcome.UNKNOWN, "fake: held in Outbox")
+        if self.take(Fault.SLOW):
+            self.apply_late(apply)
+            self.clock.advance(seconds=self.deadline_seconds + 1)
+            return lost(DispatchOutcome.UNKNOWN, "fake: deadline passed")
+        try:
+            receipt = apply()
+        except ChamberlainError as error:
+            return lost(DispatchOutcome.NOT_APPLIED, f"fake: precondition {error.code}")
+        self.dispatch_log.append(DispatchRecord(key, kind, applied=True))
+        if self.take(Fault.LOSE_RESPONSE_AFTER_APPLY):
+            return DispatchResult(outcome=DispatchOutcome.UNKNOWN, detail="fake: response lost")
+        if finish is not None:
+            return finish(receipt)
+        return DispatchResult(outcome=DispatchOutcome.APPLIED, receipt=receipt)
+
+    def reconcile_gate(self, stale: str) -> ReconcileResult | None:
+        """Run at the start of `reconcile`: an answer when a fault stops the read-back."""
+        self.begin_call()
+        if self.take(Fault.SLOW):
+            self.clock.advance(seconds=self.deadline_seconds + 1)
+            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail="fake: deadline passed")
+        if self.take(Fault.STALE):
+            return ReconcileResult(status=ReconcileStatus.UNKNOWN, detail=f"fake: stale {stale}")
+        return None
+
+    def page[T: BaseModel](
+        self,
+        page: type[Page[T]],
+        source: str,
+        found: Sequence[T],
+        cursor: str | None,
+        limit: int,
+        stale: str,
+    ) -> Page[T]:
+        """One page of `found`; the cursor is an offset, and a stale source leaves a gap."""
+        offset = offset_cursor(cursor, "f1")
+        gaps: tuple[Gap, ...] = ()
+        if self.take(Fault.STALE):
+            gaps = (Gap.model_validate({"source": source, "reason": f"The {stale} is stale."}),)
+        return slice_page(page, found, gaps, offset, limit, "f1")
 
     # --- counters and health --------------------------------------------------
 

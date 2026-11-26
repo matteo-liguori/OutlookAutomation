@@ -174,19 +174,12 @@ def select_unique[T](records: Iterable[T]) -> tuple[T | None, bool]:
 
 
 def calendar_capabilities(
-    source: str, *, server: bool = False, invitations: bool = False
+    source: str, *, server: bool = False, invitations: bool = False, recurrence: bool | None = None
 ) -> CapabilitySet:
+    """`recurrence` defaults to `server`: a calendar that proves absence writes series."""
     level = VerificationLevel.IMPLEMENTED
     proof = (
-        frozenset(
-            kind.value
-            for kind in (
-                IntentKind.CALENDAR_CREATE,
-                IntentKind.CALENDAR_UPDATE,
-                IntentKind.CALENDAR_DELETE,
-                IntentKind.CALENDAR_RESPOND,
-            )
-        )
+        frozenset(kind.value for kind in IntentKind if kind.value.startswith("calendar."))
         if server
         else frozenset[str]()
     )
@@ -196,7 +189,7 @@ def calendar_capabilities(
     ]
     if invitations:
         items.append(Capability(name=CapabilityName.CALENDAR_INVITE, level=level))
-    if server:
+    if server if recurrence is None else recurrence:
         items.extend(
             Capability(name=name, level=level, absence_provable=proof)
             for name in (CapabilityName.CALENDAR_RECURRENCE, CapabilityName.CALENDAR_OCCURRENCE)
@@ -205,11 +198,14 @@ def calendar_capabilities(
 
 
 def commit_http(
-    send: Callable[[], HttpReply],
-    provider: str,
-    accepted: tuple[int, ...],
+    build: Callable[[], tuple[Callable[[], HttpReply], tuple[int, ...]]], provider: str
 ) -> WriteReply:
-    """Classify the one mutation's transport and response before reading back."""
+    """Build the one request (a failure here sent nothing), then classify its transport and
+    response before reading back."""
+    try:
+        send, accepted = build()
+    except Exception as error:
+        raise WriteFailure(type(error).__name__, sent=False) from error
     try:
         reply = send()
     except TransportFailure as error:

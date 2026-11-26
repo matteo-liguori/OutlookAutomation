@@ -3,6 +3,8 @@
 import base64
 from collections.abc import Sequence
 
+from pydantic import BaseModel
+
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery, EventFields, EventStatus
 from chamberlain.ports.page import Gap, Page
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
@@ -54,6 +56,24 @@ def matches_window(query: CalendarQuery, fields: EventFields, status: EventStatu
     )
 
 
+def slice_page[T: BaseModel](
+    page: type[Page[T]],
+    found: Sequence[T],
+    gaps: Sequence[Gap],
+    offset: int,
+    limit: int,
+    prefix: str,
+) -> Page[T]:
+    end = offset + limit
+    more = end < len(found)
+    return page(
+        items=tuple(found[offset:end]),
+        cursor=f"{prefix}.{end}" if more else None,
+        complete=not more and not gaps,
+        gaps=tuple(gaps[:1]),
+    )
+
+
 def offset_page(
     found: list[CalendarEvent],
     gaps: Sequence[Gap],
@@ -62,11 +82,4 @@ def offset_page(
     prefix: str,
 ) -> Page[CalendarEvent]:
     found.sort(key=lambda event: (event.fields.start, event.locator))
-    end = offset + limit
-    more = end < len(found)
-    return Page[CalendarEvent](
-        items=tuple(found[offset:end]),
-        cursor=f"{prefix}.{end}" if more else None,
-        complete=not more and not gaps,
-        gaps=tuple(gaps[:1]),
-    )
+    return slice_page(Page[CalendarEvent], found, gaps, offset, limit, prefix)

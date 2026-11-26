@@ -47,3 +47,15 @@ def refuse_inside_checkout(
                 field="data",
             )
     return path
+
+
+def data_root_arg(data: str | None) -> Path:
+    """The `--data` value or `CHAMBERLAIN_DATA`, refused when inside the checkout."""
+    root = data or os.environ.get("CHAMBERLAIN_DATA")
+    if not root:
+        raise ChamberlainError(
+            ErrorCode.CONFIG_INVALID,
+            "Give the data root with --data or CHAMBERLAIN_DATA.",
+            field="data",
+        )
+    return refuse_inside_checkout(root)
