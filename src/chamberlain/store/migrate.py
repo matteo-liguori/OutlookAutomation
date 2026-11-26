@@ -16,6 +16,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from chamberlain.dataroot import refuse_inside_checkout
+from chamberlain.domain.timefmt import ts
 from chamberlain.ports.clock import Clock
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.store.db import DB_NAME, connect, table_names, transaction
@@ -186,7 +187,7 @@ def _backup(connection: sqlite3.Connection, target: Path) -> None:
 
 def stamp(clock: Clock) -> str:
     """The clock's time in the stored form (D-7)."""
-    return clock.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+    return ts(clock.now())
 
 
 def open_store(data_root: Path, clock: Clock) -> sqlite3.Connection:

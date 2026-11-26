@@ -8,12 +8,12 @@ comes across only when an imported card refers to it, newest 15 per card (M-12 t
 
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
 from chamberlain.domain.artifacts import ArtifactKind
 from chamberlain.domain.cards import card_over_cap
+from chamberlain.domain.timefmt import parse
 from chamberlain.importer.convert import add_days, derive, norm_ts, shorten
 from chamberlain.importer.old import Json, OldAction, OldCase, OldDecision, OldInstallation
 from chamberlain.importer.report import ImportReport
@@ -351,7 +351,7 @@ def import_cards(
                     card=handle,
                     title=title,
                     state="open",
-                    due_at=None if due is None else _parse(due),
+                    due_at=None if due is None else parse(due),
                 )
             )
         over = _over_cap(fields, views, handle)
@@ -386,10 +386,6 @@ def import_cards(
     if other_settings:
         report.left_behind["card settings other than instructions"] = other_settings
     return imported
-
-
-def _parse(stamp: str) -> datetime:
-    return datetime.strptime(stamp, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=ZoneInfo("UTC"))
 
 
 def _import_closed(

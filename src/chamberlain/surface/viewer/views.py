@@ -31,11 +31,6 @@ from chamberlain.writes.render import describe_intent
 LIST_LIMIT = 50
 ACTIVITY_LIMIT = 200
 DUE_WINDOW = timedelta(days=7)
-_UTC = ZoneInfo("UTC")
-
-
-def _stored(moment: datetime) -> str:
-    return ts(moment)
 
 
 def pick(row: object, *names: str) -> dict[str, Any]:
@@ -77,7 +72,7 @@ def overview(ctx: Context) -> dict[str, Any]:
 
 def work(ctx: Context) -> dict[str, Any]:
     """Open cards and the actions due within a week."""
-    until = _stored(ctx.clock.now() + DUE_WINDOW)
+    until = ts(ctx.clock.now() + DUE_WINDOW)
     return {
         "cards": [
             pick(c, "handle", "title", "review_at", "over_cap", "open_actions")
@@ -91,7 +86,7 @@ def work(ctx: Context) -> dict[str, Any]:
 
 
 def _iso(moment: datetime | None) -> str | None:
-    return None if moment is None else _stored(moment)
+    return None if moment is None else ts(moment)
 
 
 def uncertain(ctx: Context) -> dict[str, Any]:
@@ -142,7 +137,7 @@ def _day_window(ctx: Context, zone: str, day: str | None) -> tuple[str, str, str
                 ErrorCode.REQUEST_INVALID, "The day is YYYY-MM-DD.", field="day"
             ) from None
     start = datetime(local.year, local.month, local.day, tzinfo=tz)
-    return local.isoformat(), _stored(start), _stored(start + timedelta(days=1))
+    return local.isoformat(), ts(start), ts(start + timedelta(days=1))
 
 
 def activity(ctx: Context, zone: str, day: str | None) -> dict[str, Any]:
@@ -211,7 +206,7 @@ def storage(ctx: Context) -> dict[str, Any]:
 
 
 def notes(ctx: Context) -> dict[str, Any]:
-    since = _stored(ctx.clock.now() - NOTE_KEEP)
+    since = ts(ctx.clock.now() - NOTE_KEEP)
     return {
         "notes": [
             pick(n, "id", "text", "state", "created_at")

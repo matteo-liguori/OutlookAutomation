@@ -12,10 +12,11 @@ from datetime import timedelta
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import content_hash
-from chamberlain.domain.grant_rules import format_ts, intent_hash
+from chamberlain.domain.grant_rules import intent_hash
 from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
 from chamberlain.domain.intents import IntentKind, MailMarkRead
 from chamberlain.domain.read_state import ReadStateConfig
+from chamberlain.domain.timefmt import ts
 from chamberlain.ports.clock import Clock
 from chamberlain.store.schema import READ_STATE_KEY, get_state
 from chamberlain.writes import repo
@@ -75,7 +76,7 @@ def active_grant(
     usage = Usage(
         mail_folders=folders,
         recent_uses=repo.grant_usage(
-            ctx.db, [g.handle for g in pool], format_ts(now - timedelta(hours=24)), ""
+            ctx.db, [g.handle for g in pool], ts(now - timedelta(hours=24)), ""
         ).recent,
     )
     decision = authorise(

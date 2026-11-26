@@ -6,9 +6,9 @@ import json
 import logging
 from datetime import timedelta
 
-from chamberlain.domain.grant_rules import format_ts
 from chamberlain.domain.intents import MailSend, WriteIntent, attachments_of
 from chamberlain.domain.operations import OperationState, ReconcileStatus
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import UNCERTAIN_ABANDON_DAYS, UNCERTAIN_SEND_RECHECK_HOURS
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.safelog import log_failure
@@ -56,7 +56,7 @@ def recheck_sends(engine: core.Engine) -> int:
     """The tick's step: each uncertain send old enough gets one more look. Never raises."""
     cutoff = engine.ctx.clock.now() - timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS)
     looked = 0
-    for op in repo.sends_due_recheck(engine.db, format_ts(cutoff)):
+    for op in repo.sends_due_recheck(engine.db, ts(cutoff)):
         try:
             _, outcome = look_for_send(engine, op, actor="system:tick", record=True)
         except Exception:

@@ -24,7 +24,6 @@ from chamberlain.domain.intents import (
 from chamberlain.domain.permissions import Facts, Needs, cover_for, needs_for, recipients_of
 from chamberlain.limits import REVIEW_GRACE_DAYS
 
-_TS_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
 _STRICTNESS = {
     Requirement.NONE: 0,
     Requirement.AGENT_EVIDENCE: 1,
@@ -33,15 +32,6 @@ _STRICTNESS = {
 
 HARNESS_TOKEN_FIELDS = ("message_id", "uid")
 """Tokens the harness assigns at reservation; excluded from the hash (board R1)."""
-
-
-def parse_ts(text: str) -> datetime:
-    """A stored timestamp (D-7) as an aware UTC datetime."""
-    return datetime.strptime(text, _TS_FORMAT).replace(tzinfo=UTC)
-
-
-def format_ts(moment: datetime) -> str:
-    return moment.astimezone(UTC).strftime(_TS_FORMAT)
 
 
 # --- intent facts ---------------------------------------------------------------

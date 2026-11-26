@@ -11,8 +11,8 @@ from datetime import timedelta
 import pytest
 
 from chamberlain.connectors.fake import Fault
-from chamberlain.domain.grant_rules import format_ts
 from chamberlain.domain.operations import OperationState
+from chamberlain.domain.timefmt import ts
 from chamberlain.limits import UNCERTAIN_SEND_RECHECK_HOURS
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.writes import repo
@@ -33,7 +33,7 @@ def rig() -> Iterator[WriteRig]:
 
 def asked_about(rig: WriteRig) -> list[str]:
     """What attention would hand the agent as `operation.uncertain` right now."""
-    before = format_ts(rig.clock.now() - timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS))
+    before = ts(rig.clock.now() - timedelta(hours=UNCERTAIN_SEND_RECHECK_HOURS))
     return [o.handle for o in repo.uncertain_operations(rig.db, before)]
 
 

@@ -6,24 +6,16 @@ that the scenario is skipped with the reason, never approved by the runner.
 """
 
 from collections.abc import Callable
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from chamberlain.domain.timefmt import parse, ts
 from chamberlain.livetest.lab import JSON, Lab, ScenarioFailure, ScenarioSkip, text_of
 from chamberlain.livetest.registry import Scope, Target, scenario
 
 LONDON = ZoneInfo("Europe/London")
-STAMP = "%Y-%m-%dT%H:%M:%SZ"
 _NEEDS = ("calendar.read", "calendar.write")
-
-
-def _stamp(moment: datetime) -> str:
-    return moment.astimezone(UTC).strftime(STAMP)
-
-
-def _parse(text: str) -> datetime:
-    return datetime.strptime(text, STAMP).replace(tzinfo=UTC)
 
 
 def _require_approval(lab: Lab) -> None:
@@ -42,8 +34,8 @@ def _soon(lab: Lab, days: int, hour: int = 10) -> datetime:
 def _event(title: str, start: datetime, minutes: int = 30, **more: object) -> JSON:
     fields: JSON = {
         "title": title,
-        "start": _stamp(start),
-        "end": _stamp(start + timedelta(minutes=minutes)),
+        "start": ts(start),
+        "end": ts(start + timedelta(minutes=minutes)),
     }
     fields.update(more)
     return fields
@@ -62,7 +54,7 @@ def _create(lab: Lab, source: str, fields: JSON) -> str:
     view = _write(lab, "create", source, "create event", event=fields)
     if view.get("result_ref"):
         return str(view["result_ref"])
-    hits = _find(lab, source, str(fields["title"]), _parse(str(fields["start"])))
+    hits = _find(lab, source, str(fields["title"]), parse(str(fields["start"])))
     lab.check(len(hits) == 1, f"expected one new event, found {len(hits)}")
     return str(hits[0]["handle"])
 
@@ -74,8 +66,8 @@ def _find(lab: Lab, source: str, title: str, around: datetime, days: int = 2) ->
         scope="calendar",
         source=source,
         query=title,
-        since=_stamp(around - timedelta(days=1)),
-        until=_stamp(around + timedelta(days=days)),
+        since=ts(around - timedelta(days=1)),
+        until=ts(around + timedelta(days=days)),
     )
     return [hit for hit in found.get("hits", []) if title in text_of(hit)]
 
@@ -202,13 +194,13 @@ def timezone_case(lab: Lab, t: Target) -> None:
         handles.append((title, _create(lab, t.source, _event(title, wall, 60)), wall))
     for _title, handle, wall in handles:
         view = _view(lab, handle)
-        expected = _stamp(wall)
+        expected = ts(wall)
         lab.check(
             view["start"] == expected,
             f"09:00 London on {wall.date()} came back as {view['start']}, not {expected}",
         )
-    first = _parse(_view(lab, handles[0][1])["start"])
-    second = _parse(_view(lab, handles[1][1])["start"])
+    first = parse(_view(lab, handles[0][1])["start"])
+    second = parse(_view(lab, handles[1][1])["start"])
     hours = (second - first).total_seconds() / 3600
     lab.check(
         hours in (23.0, 25.0),
@@ -261,7 +253,7 @@ def recurring(lab: Lab, t: Target) -> None:
         event_ref=seen[1]["handle"],
         expected_etag=second["etag"],
         scope="occurrence",
-        event=_event(title, _parse(second["start"]), location="Live test room"),
+        event=_event(title, parse(second["start"]), location="Live test room"),
     )
     lab.check(
         "Live test room" in text_of(lab.ok("open", handle=seen[1]["handle"], part="body")),
@@ -477,9 +469,7 @@ def recurring_invite(lab: Lab, t: Target) -> None:
         event_ref=mine[1]["handle"],
         expected_etag=second["etag"],
         scope="occurrence",
-        event=_event(
-            title, _parse(second["start"]), location="Live test room", attendees=[invitee]
-        ),
+        event=_event(title, parse(second["start"]), location="Live test room", attendees=[invitee]),
     )
     if setting.invitee_calendar is not None:
         invited = str(setting.invitee_calendar)

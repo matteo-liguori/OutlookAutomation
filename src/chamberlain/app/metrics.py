@@ -11,7 +11,7 @@ from chamberlain.app.context import Context
 from chamberlain.app.core import REPLY_SIZE_PATTERN
 from chamberlain.attention.overrides import apply_overrides
 from chamberlain.attention.rules import load_rules
-from chamberlain.domain.grant_rules import format_ts
+from chamberlain.domain.timefmt import ts
 from chamberlain.memory.metrics import memory_metrics
 from chamberlain.schema.tools import Metrics
 from chamberlain.writes.repo import permission_metric_counts, tool_call_summaries
@@ -22,7 +22,7 @@ REPLY_WINDOW_DAYS = 7
 
 def largest_reply_chars(ctx: Context) -> int:
     """The largest reply any tool call produced in the last seven days (audit rows)."""
-    since = format_ts(ctx.clock.now() - timedelta(days=REPLY_WINDOW_DAYS))
+    since = ts(ctx.clock.now() - timedelta(days=REPLY_WINDOW_DAYS))
     largest = 0
     for summary in tool_call_summaries(ctx.db, since):
         found = _SIZE.match(summary)
