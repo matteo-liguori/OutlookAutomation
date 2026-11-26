@@ -1,5 +1,12 @@
 # Outlook Automation
 
+> **This is version 1, now legacy.** Version 2 (Chamberlain) replaced it on `main`: one harness
+> on Windows and Mac through Thunderbird, twelve typed tools, verified writes, a local viewer and
+> scheduled passes. v1 still works but gets no new features. To move over, give your agent the
+> [v2 agent setup guide](https://github.com/matteo-liguori/chamberlain/blob/main/docs/setup-agent.md):
+> it migrates your cards, actions, permissions and instructions and leaves this installation
+> untouched as the fallback. See [why and what is new](https://github.com/matteo-liguori/chamberlain#why-move-away-from-outlook).
+
 A collection of tools that let AI coding assistants like Codex and Claude work with Outlook emails, calendars and follow-ups.
 
 I originally built this for my own use, mainly to make managing emails and keeping track of ongoing conversations a bit less painful. I’ve since started sharing it with friends and expanding it to work across different platforms.
