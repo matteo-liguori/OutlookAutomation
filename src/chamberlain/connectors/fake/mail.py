@@ -162,6 +162,10 @@ class FakeMail:
         world.mail[source].append(stored)
         return self._locator(stored)
 
+    def deliver_self_sends(self, source: str, on: bool = True) -> None:
+        """Make a send to the mailbox's own address also arrive in its Inbox."""
+        (self._world.delivers_to_self.add if on else self._world.delivers_to_self.discard)(source)
+
     def stick_folder(self, source: str, folder_id: str, stuck: bool = True) -> None:
         """Make a folder's sync never finish (or finish again)."""
         folders = self._world.stuck_folders.setdefault(source, set())
@@ -502,6 +506,19 @@ class FakeMail:
                 raw_sha256=text(data, "raw_sha256"),
             )
             world.mail[source].append(stored)
+            if (
+                kind is _K.MAIL_SEND
+                and source in world.delivers_to_self
+                and any(a.address.lower() == stored.sender.address.lower() for a in stored.to)
+            ):
+                world.mail[source].append(
+                    replace(
+                        stored,
+                        uid=world.next_uid(),
+                        folder_id=world.folder_by_role(source, FolderRole.INBOX).id,
+                        unread=True,
+                    )
+                )
             verification = _CLIENT_ONLY if kind is _K.MAIL_SEND else _VERIFIED
             return ProviderReceipt(
                 locator=self._locator(stored),

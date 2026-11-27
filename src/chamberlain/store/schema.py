@@ -103,6 +103,7 @@ SYSTEM_KEYS: frozenset[str] = frozenset(
         "review.last_scan_at",
         "cleanup.last_run_at",
         "cleanup.card",
+        "attention.delivery_check",
     }
 )
 """The closed key set of `system_state` (M-2). Prefix is the writing track."""
@@ -110,6 +111,8 @@ AUTHORISED_SENDERS_KEY = "app.authorised_senders"
 """The profile's `authorised_senders`, mirrored at every start for the tools that check email."""
 READ_STATE_KEY = "app.read_state"
 """The profile's `read_state` options, mirrored at every start (docs/configuration.md)."""
+DELIVERY_CHECK_KEY = "attention.delivery_check"
+"""JSON map of source to its fallback delivery-check record (one key: the key set is closed)."""
 MAIL_SYNC_KEY = "app.mail_sync"
 """The profile's `mail_sync` (how fresh folders must be, the sync time limit), mirrored at start."""
 

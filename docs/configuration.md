@@ -60,6 +60,8 @@ viewer:
 mail_sync:                       # how fresh Thunderbird's folders must be when mail is read
   fresh_minutes: 10              # a folder last synced longer ago is synced again (default 10)
   time_limit_seconds: 300        # all syncing in one call gives up after this long and goes on (default 300)
+  delivery_check: true           # a stale mailbox gets a fallback delivery check (default true)
+  delivery_check_seconds: 120    # how long that check waits for its message (default 120)
 
 authorised_senders:              # who may instruct by email (see docs/permissions.md)
   owner: [you@example.com]       # a verified email from these counts like chat
@@ -93,6 +95,17 @@ Thunderbird to sync every folder the scan reads and waits (`mail_sync`). A folde
 sync within the time limit is named in the pass report ("Partially verified"), raised as a
 `source.stale` event, and tried again at the next tick. The scheduler side is described in
 [scheduling](scheduling.md); cutover in [cutover](cutover.md).
+
+The normal freshness check can fail for a moment when Thunderbird is busy. When it says a
+mailbox is `stale` (never when it says unreachable), the harness may run a fallback delivery
+check: it sends one marked message ("CHAMBERLAIN DELIVERY CHECK ...") from the mailbox to its own
+address, waits up to `delivery_check_seconds` for it to arrive in the Inbox, then moves it to
+Trash. If it arrives, the mailbox counts as fresh and the report says it was confirmed by a
+delivery check; if not, it stays `stale` and the report says the check also failed. It runs at
+most once per mailbox in 3 hours, never for `test_only` sources, and only with a standing
+permission for the mailbox that your click in the viewer confirms (see
+[permissions](permissions.md)). Without that permission the harness proposes it once and sends
+nothing. Set `delivery_check: false` to turn the fallback off.
 
 ### `read_state`: marking mail read
 

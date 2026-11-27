@@ -36,3 +36,13 @@ def carries_marker(subject: str) -> bool:
     # A calendar's own email about a marked event: its notice words, then the marked title.
     stripped = _OPEN_QUOTE.sub("", _NOTICE_PREFIX.sub("", stripped, count=1), count=1).lstrip()
     return stripped.startswith(MARKER + " ") and run_of(stripped) is not None
+
+
+DELIVERY_MARK = "CHAMBERLAIN DELIVERY CHECK"
+"""Opens the subject of the message the fallback delivery check sends from a mailbox to itself
+(docs/configuration.md, `mail_sync`). The daily mail scan leaves such messages out."""
+
+
+def carries_delivery_mark(subject: str) -> bool:
+    """True for `CHAMBERLAIN DELIVERY CHECK <source> <time>` after any `Re:` or `Fwd:` prefixes."""
+    return _REPLY_PREFIX.sub("", subject, count=1).lstrip().startswith(DELIVERY_MARK + " ")

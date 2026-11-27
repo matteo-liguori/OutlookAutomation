@@ -12,6 +12,7 @@ from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
+from chamberlain.attention import delivery_check
 from chamberlain.attention import repo as attention_repo
 from chamberlain.domain.grants import GrantState
 from chamberlain.domain.operations import OUTSIDE_STATE_WORDS
@@ -70,11 +71,27 @@ class Facts:
             self.unsynced.setdefault(source, []).append(folder.name)
         for names in self.unsynced.values():
             names.sort()
+        self.checks = delivery_check.records(ctx.db)
         self.gaps: list[str] = []
         """Reasons the pass is only partly verified, filled by the builders."""
 
     def name(self, source: repo.SourceFact) -> str:
         return _cell(source.label or source.id)
+
+    def failed_check(self, source: repo.SourceFact) -> str:
+        """` The delivery check also failed.` when the fallback check ran lately and failed."""
+        record = self.checks.get(source.id)
+        if record is None or record.result not in ("missing", "not_sent") or not record.result_at:
+            return ""
+        recent = parse(self.now) - parse(record.result_at) < delivery_check.FAILED_NOTE_FOR
+        return " The delivery check also failed." if recent else ""
+
+    def confirmed_by_check(self, source: repo.SourceFact) -> str:
+        """The time of the delivery check that made this mailbox `ok`, else empty."""
+        record = self.checks.get(source.id)
+        if record is None or record.result != "arrived" or record.result_at != source.fresh_as_of:
+            return ""
+        return when(record.result_at, self.zone)
 
 
 def _gap(source: repo.SourceFact) -> timedelta | None:
@@ -98,7 +115,7 @@ def access_problems(facts: Facts) -> str:
         if source.health is None:
             lines.append(f"- {who}: it has not been checked yet.")
             facts.gaps.append(f"{source.id} was not checked")
-        elif source.kind == "mail" and _catching_up(source):
+        elif source.kind == "mail" and _catching_up(source) and not facts.failed_check(source):
             facts.gaps.append(
                 f"{source.id} was still catching up when this was written (read at the next check)"
             )
@@ -107,7 +124,7 @@ def access_problems(facts: Facts) -> str:
             fresh = when(source.fresh_as_of, facts.zone) if source.fresh_as_of else "not yet"
             lines.append(
                 f"- {who}: {HEALTH_TEXT.get(source.health, source.health)}. Last checked "
-                f"{checked}; last confirmed fresh {fresh}."
+                f"{checked}; last confirmed fresh {fresh}.{facts.failed_check(source)}"
             )
             facts.gaps.append(f"{source.id} is not fully readable")
         gap = _gap(source)
@@ -200,6 +217,8 @@ def verification(facts: Facts) -> str:
     ]
     for source in facts.sources:
         state = "not checked" if source.health is None else source.health.replace("_", " ")
+        if source.health == "ok" and (at := facts.confirmed_by_check(source)):
+            state = f"fresh, confirmed by a delivery check at {at[-5:]}"
         if source.kind == "mail":
             newest = when(source.newest_mail, facts.zone) if source.newest_mail else "none seen"
             through = (

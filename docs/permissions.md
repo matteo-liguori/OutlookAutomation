@@ -104,6 +104,13 @@ together. Revoking it ends it for all of them. Older permissions for one source 
 
 One-off permissions (for a single exact action) expire after 7 days if unused.
 
+**Delivery check.** When the normal freshness check says a mailbox is `stale`, the harness may
+test delivery by sending a marked message from the mailbox to itself and moving it to Trash. This
+needs one standing permission per mailbox, titled "Delivery check: a marked test message to
+yourself, then to Trash". It covers sending to that mailbox's own address only, and moving mail to
+Trash from its Inbox and Sent folders. It runs only when the normal check fails, at most every 3
+hours. The harness proposes it once and never confirms it; without your click nothing is sent.
+
 ## Known recipients
 
 A person is **known** for a mailbox when any of these is true:

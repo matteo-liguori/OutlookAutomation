@@ -39,6 +39,9 @@ class Facts:
     def name(self, source: SourceFact) -> str:
         return source.id
 
+    def failed_check(self, source: SourceFact) -> str:
+        return ""
+
 
 def mail(health: str, gap: tuple[str, str] | None = None, fresh: str | None = None) -> SourceFact:
     return SourceFact(

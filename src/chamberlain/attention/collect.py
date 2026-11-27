@@ -11,7 +11,7 @@ from dataclasses import dataclass, replace
 from datetime import timedelta
 
 from chamberlain.app.context import Context
-from chamberlain.attention import repo
+from chamberlain.attention import delivery_check, repo
 from chamberlain.attention.models import (
     BudgetRow,
     CalendarSlot,
@@ -55,12 +55,14 @@ class Collected:
 
 
 def source_health(ctx: Context, source: str) -> SourceHealth | None:
-    """Ask the owning port; None when the port raises (A-7)."""
+    """Ask the owning port; None when the port raises (A-7). A `stale` mailbox may get the
+    fallback delivery check, which can only turn it `ok`."""
     try:
-        return ctx.sources.port(source).health(source)
+        health = ctx.sources.port(source).health(source)
     except Exception:
         log_failure(log, "health check failed for %s", source)
         return None
+    return delivery_check.confirm(ctx, source, health)  # only a `stale` mailbox, 3-hourly at most
 
 
 def _health(ctx: Context) -> tuple[SourceSnapshot, ...]:

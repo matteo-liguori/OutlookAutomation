@@ -115,6 +115,11 @@ class MailSyncConfig(Model):
     time_limit_seconds: float = Field(default=300, ge=10, le=3600)
     """One sync of one source gives up after this long and goes on with the folders that
     finished."""
+    delivery_check: bool = True
+    """When the normal freshness check says a mailbox is `stale`, send a marked message from the
+    mailbox to itself and see whether it arrives (needs the owner's standing grant)."""
+    delivery_check_seconds: float = Field(default=120, ge=10, le=600)
+    """How long the delivery check waits for its message to arrive."""
 
 
 class UpdatesConfig(Model):

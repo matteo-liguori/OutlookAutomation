@@ -144,6 +144,9 @@ class FakeWorld:
         """Per mail source, folders whose sync never finishes (a stuck client)."""
         self.sync_log: list[tuple[str, tuple[str, ...]]] = []
         """Every `sync_folders` call: the source and the folders asked, in order."""
+        self.delivers_to_self: set[str] = set()
+        """Mail sources where a send addressed to the mailbox's own address also lands in the
+        Inbox (a working round trip). Off by default: a send leaves only a Sent copy."""
         self.dispatch_log: list[DispatchRecord] = []
         self.outbox: dict[str, set[str]] = {}
         """Per mail source, the Message-ID tokens of sends held in the client's Outbox."""

@@ -32,6 +32,7 @@ from chamberlain.attention.tuning import (
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.mail import FolderRole, MailQuery, MessageSummary, message_key
+from chamberlain.domain.testmark import carries_delivery_mark
 from chamberlain.domain.timefmt import parse, ts
 from chamberlain.memory.refs import existing_handles, remember_many
 from chamberlain.ports.mail import MailPort
@@ -239,6 +240,8 @@ def _read(
 
         def take(items: list[MessageSummary]) -> None:
             for item in items:
+                if carries_delivery_mark(item.subject):
+                    continue  # the fallback delivery check's own message: never mail to handle
                 if item.folder_id not in skipped:
                     key = message_key(item.internet_message_id, item.locator)
                     found.setdefault(key, []).append(item)

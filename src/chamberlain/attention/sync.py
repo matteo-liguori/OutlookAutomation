@@ -44,20 +44,27 @@ class SyncSettings:
     limit: timedelta
     """The overall time one tool call may spend syncing, all sources together. Sources are
     synced in turn and the ones the limit cuts off are tried again on the next tick."""
+    delivery_check: bool = True
+    """Whether a `stale` mailbox gets the fallback delivery check."""
+    delivery_seconds: timedelta = timedelta(seconds=120)
+    """How long the delivery check waits for its message."""
 
 
 def settings(ctx: Context) -> SyncSettings:
     """The profile's `mail_sync`, mirrored into the store at start; defaults when absent."""
     fresh, limit = SYNC_FRESH, SYNC_LIMIT
+    check, wait = True, timedelta(seconds=120)
     raw = get_state(ctx.db, MAIL_SYNC_KEY)
     if raw:
         try:
             data = json.loads(raw)
             fresh = timedelta(minutes=float(data.get("fresh_minutes", fresh.total_seconds() / 60)))
             limit = timedelta(seconds=float(data.get("time_limit_seconds", limit.total_seconds())))
+            check = data.get("delivery_check", True) is not False
+            wait = timedelta(seconds=float(data.get("delivery_check_seconds", 120)))
         except (ValueError, TypeError, AttributeError):
             log_failure(log, "the mail_sync setting could not be read")
-    return SyncSettings(fresh, limit)
+    return SyncSettings(fresh, limit, check, wait)
 
 
 def scan_folders(folders: list[Folder]) -> list[Folder]:
