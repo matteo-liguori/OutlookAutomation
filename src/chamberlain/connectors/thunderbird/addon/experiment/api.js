@@ -173,9 +173,12 @@ function compFieldsOf(plan, spec) {
   fields.bcc = spec.bcc.join(", ");
   fields.subject = spec.subject;
   fields.body = spec.body;
-  fields.forcePlainText = true;
-  fields.useMultipartAlternative = false;
-  fields.characterSet = "UTF-8";
+  // Optional settings differ between Thunderbird versions (characterSet is gone: always UTF-8);
+  // assigning a property an XPCOM object lacks throws, so each is set only where it exists.
+  const optional = { forcePlainText: true, useMultipartAlternative: false, characterSet: "UTF-8" };
+  for (const [name, value] of Object.entries(optional)) {
+    if (name in fields) fields[name] = value;
+  }
   if (spec.highImportance) fields.priority = "High";
   fields.setRawHeader("X-Chamberlain-Write-Token", spec.token);
   // "nocopy://" files no client copy: the server keeps its own (sent_copy: server).
