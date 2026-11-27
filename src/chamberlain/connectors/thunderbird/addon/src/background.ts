@@ -1,7 +1,7 @@
 // Command bridge (protocol v3). Credentials stay in Thunderbird. No journal, no retry,
 // no command outside the generated closed list (bridge contract B-2 to B-5).
 
-const ADDON_VERSION = "3.1.0";
+const ADDON_VERSION = "3.1.1";
 const HOST_NAME = "chamberlain_thunderbird_bridge";
 const ASSEMBLY_DEADLINE_MS = 60_000;
 const RECONNECT_MS = 1_500;

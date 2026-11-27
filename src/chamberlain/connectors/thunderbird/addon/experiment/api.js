@@ -482,9 +482,16 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
         },
         async composeHeadless(accountId, mailbox, spec, files, checkOnly) {
           // checkOnly runs every check and changes nothing, so a refusal proves no mutation.
-          const plan = headlessPlan(context, accountId, mailbox, spec, files);
-          if (checkOnly) return { checked: true };
-          return runHeadless(plan, spec, files);
+          try {
+            const plan = headlessPlan(context, accountId, mailbox, spec, files);
+            if (checkOnly) return { checked: true };
+            return await runHeadless(plan, spec, files);
+          } catch (error) {
+            if (error instanceof ExtensionUtils.ExtensionError) throw error;
+            // A plain error would reach the add-on as "An unexpected error occurred": keep its text.
+            const where = checkOnly ? "check" : "send";
+            throw new ExtensionUtils.ExtensionError(`chamberlain:internal:${where}: ${String(error?.message ?? error).slice(0, 300)}`);
+          }
         },
       },
     };
