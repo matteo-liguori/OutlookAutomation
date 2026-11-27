@@ -1,9 +1,11 @@
 """`chamberlain schedule install|uninstall|prompts`: the operating system tick and the agent text.
 
-The tick runs `chamberlain.surface.cli --data ROOT tick --quiet` every few minutes while the
-person is logged on: a hidden Windows Task Scheduler task (overlapping runs ignored) or a macOS
-LaunchAgent. Nothing changes without `--apply`; whatever is replaced is first saved under
-`<data root>/backups/`. The runner and every path are injected, so tests touch no real system.
+The tick runs `chamberlain.surface.cli --data ROOT tick --quiet` every `tick.every_minutes`
+(profile, default 60) while the person is logged on, plus once `presync_minutes` before each
+scheduled pass, so the agent starts on freshly synced mail: a hidden Windows Task Scheduler task
+(overlapping runs ignored) or a macOS LaunchAgent. Nothing changes without `--apply`; whatever
+is replaced is first saved under `<data root>/backups/`. The runner and every path are injected,
+so tests touch no real system.
 """
 
 import os
@@ -11,10 +13,11 @@ import subprocess
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Final, Protocol
 from xml.sax.saxutils import escape
+from zoneinfo import ZoneInfo
 
 from chamberlain.connections import load_connections
 from chamberlain.dataroot import checkout_root
@@ -23,10 +26,56 @@ from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
 TASK_NAME: Final = "Chamberlain tick"
 LAUNCHD_LABEL: Final = "uk.chamberlain.tick"
-DEFAULT_EVERY_MINUTES: Final = 5
+DEFAULT_EVERY_MINUTES: Final = 60
 _CLOCK: Final = SystemClock()
-MAX_EVERY_MINUTES: Final = 60
+MAX_EVERY_MINUTES: Final = 1440
 _DAY_NAMES: Final = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+_XML_DAYS: Final = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
+
+@dataclass(frozen=True)
+class PrePass:
+    """One extra tick before a pass, in this machine's local time."""
+
+    name: str
+    hour: int
+    minute: int
+    weekdays: tuple[int, ...]
+    """ISO weekdays (1 Monday .. 7 Sunday) on this machine's clock."""
+
+    @property
+    def clock(self) -> str:
+        return f"{self.hour:02d}:{self.minute:02d}"
+
+
+def pre_pass_times(root: Path, now: datetime) -> list[PrePass]:
+    """The machine-local time `presync_minutes` before each enabled pass (none without a
+    readable profile)."""
+    try:
+        profile = load_connections(root)
+    except (ChamberlainError, OSError):
+        return []
+    found: list[PrePass] = []
+    for schedule in profile.schedules:
+        if not schedule.enabled or schedule.presync_minutes <= 0:
+            continue
+        zone = ZoneInfo(schedule.zone or profile.timezone)
+        hour, minute = (int(part) for part in str(schedule.at).split(":")[:2])
+        today = now.astimezone(zone).date()
+        due = datetime(today.year, today.month, today.day, hour, minute, tzinfo=zone)
+        local = (due - timedelta(minutes=schedule.presync_minutes)).astimezone()
+        shift = (local.date() - today).days
+        days = tuple(sorted({(day - 1 + shift) % 7 + 1 for day in schedule.weekdays}))
+        found.append(PrePass(schedule.name, local.hour, local.minute, days))
+    return found
+
+
+def profile_minutes(root: Path) -> int:
+    """`tick.every_minutes` from the profile, or the default without one."""
+    try:
+        return load_connections(root).tick.every_minutes
+    except (ChamberlainError, OSError):
+        return DEFAULT_EVERY_MINUTES
 
 
 @dataclass(frozen=True)
@@ -65,7 +114,27 @@ def _quote(argument: str) -> str:
     return f'"{argument}"' if (" " in argument or not argument) else argument
 
 
-def task_xml(python: Path, root: Path, every_minutes: int, *, start: datetime) -> str:
+def _calendar_trigger(item: PrePass, start: datetime) -> str:
+    days = "".join(f"<{_XML_DAYS[d - 1]} />" for d in item.weekdays)
+    return f"""    <CalendarTrigger>
+      <StartBoundary>{start.date().isoformat()}T{item.clock}:00</StartBoundary>
+      <Enabled>true</Enabled>
+      <ScheduleByWeek>
+        <DaysOfWeek>{days}</DaysOfWeek>
+        <WeeksInterval>1</WeeksInterval>
+      </ScheduleByWeek>
+    </CalendarTrigger>
+"""
+
+
+def task_xml(
+    python: Path,
+    root: Path,
+    every_minutes: int,
+    *,
+    start: datetime,
+    pre_pass: Sequence[PrePass] = (),
+) -> str:
     """A Task Scheduler 1.2 definition: hidden, logged-on only, one run at a time."""
     arguments = " ".join(_quote(a) for a in tick_arguments(root))
     return f"""<?xml version="1.0" encoding="UTF-16"?>
@@ -82,7 +151,7 @@ def task_xml(python: Path, root: Path, every_minutes: int, *, start: datetime) -
         <StopAtDurationEnd>false</StopAtDurationEnd>
       </Repetition>
     </TimeTrigger>
-  </Triggers>
+{"".join(_calendar_trigger(item, start) for item in pre_pass)}  </Triggers>
   <Principals>
     <Principal id="Author">
       <LogonType>InteractiveToken</LogonType>
@@ -109,7 +178,25 @@ def task_xml(python: Path, root: Path, every_minutes: int, *, start: datetime) -
 """
 
 
-def launchd_plist(python: Path, root: Path, every_minutes: int) -> str:
+def _calendar_dicts(pre_pass: Sequence[PrePass]) -> str:
+    entries: list[str] = []
+    for item in pre_pass:
+        days = item.weekdays if len(item.weekdays) < 7 else (None,)
+        for day in days:
+            weekday = "" if day is None else f"<key>Weekday</key><integer>{day}</integer>"
+            entries.append(
+                f"    <dict><key>Hour</key><integer>{item.hour}</integer>"
+                f"<key>Minute</key><integer>{item.minute}</integer>{weekday}</dict>"
+            )
+    if not entries:
+        return ""
+    body = "\n".join(entries)
+    return f"  <key>StartCalendarInterval</key>\n  <array>\n{body}\n  </array>\n"
+
+
+def launchd_plist(
+    python: Path, root: Path, every_minutes: int, pre_pass: Sequence[PrePass] = ()
+) -> str:
     items = "\n".join(
         f"    <string>{escape(a)}</string>" for a in [str(python), *tick_arguments(root)]
     )
@@ -123,7 +210,7 @@ def launchd_plist(python: Path, root: Path, every_minutes: int) -> str:
 {items}
   </array>
   <key>StartInterval</key><integer>{every_minutes * 60}</integer>
-  <key>RunAtLoad</key><true/>
+{_calendar_dicts(pre_pass)}  <key>RunAtLoad</key><true/>
   <key>ProcessType</key><string>Background</string>
   <key>StandardErrorPath</key><string>{escape(str(root / "logs" / "tick.err"))}</string>
 </dict>
@@ -174,16 +261,32 @@ def _backup(root: Path, name: str, text: str, now: datetime) -> Path:
 
 
 def install(
-    target: Target, *, every_minutes: int, apply: bool, runner: Runner = system_runner
+    target: Target,
+    *,
+    every_minutes: int | None = None,
+    apply: bool,
+    runner: Runner = system_runner,
 ) -> list[str]:
-    """Show the plan, or (with `apply`) register the tick and check that it is there."""
+    """Show the plan, or (with `apply`) register the tick and check that it is there.
+
+    Without `every_minutes` the profile's `tick.every_minutes` is used.
+    """
+    if every_minutes is None:
+        every_minutes = profile_minutes(target.root)
     _check_minutes(every_minutes)
+    pre_pass = pre_pass_times(target.root, target.now())
+    before = (
+        "  plus once before each pass: " + ", ".join(f"{p.clock} ({p.name})" for p in pre_pass)
+        if pre_pass
+        else "  (no scheduled passes in the profile, so no pre-pass runs)"
+    )
     command = f"{target.python} {' '.join(_quote(a) for a in tick_arguments(target.root))}"
     if target.system == "win32":
         existing = runner(["schtasks", "/Query", "/TN", TASK_NAME, "/XML"])
         lines = [
             f'{"Registering" if apply else "Would register"} the hidden task "{TASK_NAME}": '
             f"every {every_minutes} minutes while you are logged on, one run at a time.",
+            before,
             f"  runs: {command}",
         ]
         if existing.returncode == 0:
@@ -196,7 +299,9 @@ def install(
         target.work_dir.mkdir(parents=True, exist_ok=True)
         definition = target.work_dir / "tick-task.xml"
         definition.write_text(
-            task_xml(target.python, target.root, every_minutes, start=target.now()),
+            task_xml(
+                target.python, target.root, every_minutes, start=target.now(), pre_pass=pre_pass
+            ),
             encoding="utf-16",
         )
         try:
@@ -214,6 +319,7 @@ def install(
         lines = [
             f"{'Writing' if apply else 'Would write'} the LaunchAgent {target.plist_path}: "
             f"every {every_minutes} minutes while you are logged in.",
+            before,
             f"  runs: {command}",
         ]
         if not apply:
@@ -226,7 +332,8 @@ def install(
         (target.root / "logs").mkdir(parents=True, exist_ok=True)
         target.plist_path.parent.mkdir(parents=True, exist_ok=True)
         target.plist_path.write_text(
-            launchd_plist(target.python, target.root, every_minutes), encoding="utf-8"
+            launchd_plist(target.python, target.root, every_minutes, pre_pass),
+            encoding="utf-8",
         )
         domain = f"gui/{target.uid}"
         runner(["launchctl", "bootout", domain, str(target.plist_path)])  # absent is fine
@@ -243,7 +350,9 @@ def install(
         return [*lines, f"Verified: {LAUNCHD_LABEL} is loaded."]
     return [
         f"Run `{command}` every {every_minutes} minutes from your scheduler "
-        "(cron or a systemd timer). It prints nothing; exit status 10 means the agent should wake."
+        "(cron or a systemd timer), and once before each pass. It prints nothing; exit status "
+        "10 means the agent should wake.",
+        before,
     ]
 
 

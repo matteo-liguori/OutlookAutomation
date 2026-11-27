@@ -122,6 +122,15 @@ class UpdatesConfig(Model):
     remote: str = Field(default="origin", min_length=1)
 
 
+class TickConfig(Model):
+    """How often the operating system runs `chamberlain tick` between passes (`schedule install`).
+
+    Each scheduled pass also gets one tick `presync_minutes` before it, so the agent starts on
+    freshly synced mail whatever this interval is."""
+
+    every_minutes: int = Field(default=60, ge=1, le=1440)
+
+
 class ReviewConfig(Model):
     """The harness watching how the agent works outside it (docs/review.md). On by default."""
 
@@ -148,6 +157,7 @@ class Connections(Model):
     """Old mail the owner's rules move to Trash (`chamberlain cleanup`). None by default."""
     updates: UpdatesConfig = UpdatesConfig()
     review: ReviewConfig = ReviewConfig()
+    tick: TickConfig = TickConfig()
     authorised_senders: AuthorisedSenders = AuthorisedSenders()
     live_test: LiveTestConfig = LiveTestConfig()
     """Which sources `chamberlain live-test` may use (docs/live-test.md). Off by default."""

@@ -43,7 +43,10 @@ schedules:                       # scheduled passes; applied at every start
     weekdays: [1, 2, 3, 4, 5]    # 1 = Monday ... 7 = Sunday; default every day
     enabled: true
     presync_minutes: 5           # sync mail folders this long before the pass (default 5, 0 = off);
-                                 # keep it at least as long as the time between two ticks
+                                 # `schedule install` adds one tick at exactly this time
+
+tick:                            # the operating system tick (`chamberlain schedule install`)
+  every_minutes: 60              # housekeeping between passes (default 60); re-run install after a change
 
 mail_sync:                       # how fresh Thunderbird's folders must be when mail is read
   fresh_minutes: 10              # a folder last synced longer ago is synced again (default 10)

@@ -70,7 +70,7 @@ Read the summary and `ROOT/import/report.json`. It is private: do not paste it i
 
 - Agent: `chamberlain setup agent codex --apply` or `chamberlain setup agent claude --apply`
   writes the MCP entry after a backup and checks that it answers. `chamberlain schedule install
-  --apply` registers the hidden five-minute tick. `chamberlain schedule prompts` prints the
+  --apply` registers the hidden hourly tick, plus one run before each pass. `chamberlain schedule prompts` prints the
   agent-app automation prompts for the profile's pass times.
 - Owner: create the agent-app automations from those prompts if the app gives the agent no way to
   create them. Leave them paused until step 10.

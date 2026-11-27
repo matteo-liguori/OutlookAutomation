@@ -6,12 +6,14 @@ This page is for the person setting up Chamberlain on their own computer. The co
 
 ## How a scheduled pass works
 
-1. The operating system scheduler runs `chamberlain tick` every few minutes. It never decides
-   *what* is due; the schedule record in the data root does (`schedules` table, set from your
-   configuration through `chamberlain.runs.schedule.apply_schedules`).
-   Five minutes before a pass is due (`presync_minutes`, set per schedule) that tick also asks
-   Thunderbird to sync every mail folder the scan reads and waits for it, so the agent's pass finds
-   them fresh. The scheduler should therefore tick at least that often. A folder that will not sync
+1. The operating system scheduler runs `chamberlain tick` once an hour (`tick.every_minutes` in
+   the profile, default 60) for housekeeping: reminders, permission timers, recovery, noticing new
+   mail. It never decides *what* is due; the schedule record in the data root does (`schedules`
+   table, set from your configuration through `chamberlain.runs.schedule.apply_schedules`).
+   It also runs once `presync_minutes` (set per schedule, default 5) before each pass. That tick
+   asks Thunderbird to sync every mail folder the scan reads and waits for it, so the agent's pass
+   finds them fresh. `schedule install` creates both from the profile: re-run it after changing
+   pass times. A shorter interval only makes the viewer show new mail sooner between passes. A folder that will not sync
    within the time limit (`mail_sync.time_limit_seconds`, default 5 minutes) is left out, named in
    the report ("Partially verified") and tried again at the next tick. The limit is for all
    mailboxes together within one tool call or tick: they are synced in turn, and a mailbox the
@@ -46,8 +48,8 @@ This page is for the person setting up Chamberlain on their own computer. The co
 ## Installing the tick and the agent automations
 
 ```text
-chamberlain schedule install [--every-minutes 5]          show the plan
-chamberlain schedule install --apply [--every-minutes 5]  register it, then check it is there
+chamberlain schedule install [--every-minutes N]          show the plan
+chamberlain schedule install --apply [--every-minutes N]  register it, then check it is there
 chamberlain schedule uninstall [--apply]                  remove it
 chamberlain schedule prompts                              the agent-app automation text
 ```
@@ -55,8 +57,9 @@ chamberlain schedule prompts                              the agent-app automati
 `install` without `--apply` changes nothing. With it:
 
 - Windows: a hidden Task Scheduler task "Chamberlain tick" runs
-  `pythonw.exe -m chamberlain.surface.cli --data <data root> tick --quiet` every N minutes, only
-  while you are logged on, and skips a run while the last is still going. A task of that name is
+  `pythonw.exe -m chamberlain.surface.cli --data <data root> tick --quiet` every N minutes
+  (default: the profile's `tick.every_minutes`) and once before each pass, only while you are
+  logged on, and skips a run while the last is still going. A task of that name is
   saved under `<data root>/backups/` and replaced.
 - macOS: a LaunchAgent `~/Library/LaunchAgents/uk.chamberlain.tick.plist`, loaded with
   `launchctl`. An existing file is saved first.

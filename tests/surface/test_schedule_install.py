@@ -154,3 +154,57 @@ def test_a_quiet_tick_prints_nothing_and_keeps_the_exit_code(data_root: Path) ->
     status = main(["--data", str(data_root), "tick", "--quiet"], out)
     assert out.getvalue() == ""
     assert status == 0
+
+
+TICK_PROFILE = """version: 1
+timezone: UTC
+tick:
+  every_minutes: 60
+schedules:
+- {name: morning, kind: mail, at: '09:00', presync_minutes: 5}
+- {name: evening, kind: mail, at: '19:00', presync_minutes: 10, weekdays: [1, 2, 3, 4, 5]}
+- {name: quiet, kind: mail, at: '12:00', presync_minutes: 0}
+"""
+
+
+def with_profile(tmp_path: Path, system: str) -> Target:
+    t = target(tmp_path, system)
+    (t.root / "config").mkdir(parents=True)
+    (t.root / "config" / "connections.yaml").write_text(TICK_PROFILE, encoding="utf-8")
+    return t
+
+
+def local_clock(hour: int, minute: int) -> str:
+    moment = datetime(2026, 1, 5, hour, minute, tzinfo=UTC).astimezone()
+    return f"{moment.hour:02d}:{moment.minute:02d}"
+
+
+def test_the_profile_sets_an_hourly_tick_and_one_run_before_each_pass(tmp_path: Path) -> None:
+    runner = FakeRunner()
+    lines = install(with_profile(tmp_path, "win32"), apply=True, runner=runner)
+    assert "every 60 minutes" in lines[0]
+    before = local_clock(8, 55)
+    assert f"{before} (morning)" in lines[1]
+    assert f"{local_clock(18, 50)} (evening)" in lines[1]
+    assert "quiet" not in lines[1], "a pass without a pre-pass sync gets no extra run"
+    xml = runner.xml_seen
+    assert "<Interval>PT60M</Interval>" in xml
+    assert xml.count("<CalendarTrigger>") == 2
+    assert f"T{before}:00</StartBoundary>" in xml
+    assert "<Saturday />" in xml.split("<CalendarTrigger>")[1], "every day for the morning pass"
+    assert "<Saturday />" not in xml.split("<CalendarTrigger>")[2], "weekdays only for evening"
+
+
+def test_the_mac_agent_runs_hourly_and_at_each_pre_pass_time(tmp_path: Path) -> None:
+    t = with_profile(tmp_path, "darwin")
+    install(t, apply=True, runner=FakeRunner())
+    plist = t.plist_path.read_text(encoding="utf-8")
+    assert "<key>StartInterval</key><integer>3600</integer>" in plist
+    assert "<key>StartCalendarInterval</key>" in plist
+    assert plist.count("<key>Hour</key>") == 1 + 5, "one daily entry, five weekday entries"
+
+
+def test_without_a_profile_the_tick_defaults_to_hourly(tmp_path: Path) -> None:
+    lines = install(target(tmp_path, "win32"), apply=False, runner=FakeRunner())
+    assert "every 60 minutes" in lines[0]
+    assert "no scheduled passes" in lines[1]

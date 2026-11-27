@@ -165,7 +165,8 @@ Python; on macOS or Linux use `.venv/bin/python`.
    front page (see [The report](#the-report)). The page keeps
    its token for the tab, so a reload works; a new browser session needs the token link again.
 
-6. Scheduling. `chamberlain schedule install --apply` registers the five-minute tick, and
+6. Scheduling. `chamberlain schedule install --apply` registers the hourly tick (plus one run
+   before each pass), and
    `chamberlain schedule prompts` prints the agent automations for the passes in
    `connections.yaml`. Connect your agent with `chamberlain setup agent codex|claude --apply`.
    See [docs/scheduling.md](docs/scheduling.md) and [docs/agents.md](docs/agents.md).

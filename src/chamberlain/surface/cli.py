@@ -77,7 +77,6 @@ from chamberlain.surface.config_updates import config_migrate, updates
 from chamberlain.surface.migration import migration_command, migration_parser
 from chamberlain.surface.runner import DATA_ENV, configured_caller, data_root
 from chamberlain.surface.schedule_install import (
-    DEFAULT_EVERY_MINUTES,
     automation_prompts,
     default_target,
     install,
@@ -224,7 +223,10 @@ def _parser() -> argparse.ArgumentParser:
     sched.add_argument("action", choices=["install", "uninstall", "prompts"])
     sched.add_argument("--apply", action="store_true", help="do it (default: show the plan)")
     sched.add_argument(
-        "--every-minutes", type=int, default=DEFAULT_EVERY_MINUTES, help="tick interval (default 5)"
+        "--every-minutes",
+        type=int,
+        default=None,
+        help="tick interval in minutes (default: the profile's tick.every_minutes, 60)",
     )
     viewer = commands.add_parser(
         "viewer", help="serve the local viewer on 127.0.0.1 and open it in the browser"
