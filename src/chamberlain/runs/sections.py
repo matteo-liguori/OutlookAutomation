@@ -8,6 +8,7 @@ then left out). All times are shown in the schedule's own zone.
 """
 
 from collections import defaultdict
+from datetime import timedelta
 from zoneinfo import ZoneInfo
 
 from chamberlain.app.context import Context
@@ -31,6 +32,11 @@ UNSETTLED = frozenset(
     {"proposed", "authorised", "prepared", "dispatched", "uncertain", "reconciling"}
 )
 BAD_END = frozenset({"failed_clean", "confirmed_absent", "cancelled", "abandoned"})
+
+
+CATCHING_UP = timedelta(minutes=10)
+"""A stale source whose unread span is no longer than this was only catching up at report time
+(it is read at the next check): disclosed under verification, not raised as an access problem."""
 
 
 def when(value: str | None, zone: ZoneInfo) -> str:
@@ -71,6 +77,19 @@ class Facts:
         return _cell(source.label or source.id)
 
 
+def _gap(source: repo.SourceFact) -> timedelta | None:
+    if not (source.gap_from and source.gap_to):
+        return None
+    return parse(source.gap_to) - parse(source.gap_from)
+
+
+def _catching_up(source: repo.SourceFact) -> bool:
+    """Only behind by a few minutes at report time, which the next check reads."""
+    gap = _gap(source)
+    short = gap is None or gap <= CATCHING_UP
+    return short and source.health in ("ok", "stale") and (source.health == "stale" or bool(gap))
+
+
 def access_problems(facts: Facts) -> str:
     lines: list[str] = []
     for source in facts.sources:
@@ -79,14 +98,20 @@ def access_problems(facts: Facts) -> str:
         if source.health is None:
             lines.append(f"- {who}: it has not been checked yet.")
             facts.gaps.append(f"{source.id} was not checked")
+        elif source.kind == "mail" and _catching_up(source):
+            facts.gaps.append(
+                f"{source.id} was still catching up when this was written (read at the next check)"
+            )
+            continue
         elif source.health != "ok":
-            fresh = when(source.fresh_as_of, facts.zone)
+            fresh = when(source.fresh_as_of, facts.zone) if source.fresh_as_of else "not yet"
             lines.append(
                 f"- {who}: {HEALTH_TEXT.get(source.health, source.health)}. Last checked "
-                f"{checked}; last known fresh {fresh}."
+                f"{checked}; last confirmed fresh {fresh}."
             )
             facts.gaps.append(f"{source.id} is not fully readable")
-        if source.gap_from and source.gap_to:
+        gap = _gap(source)
+        if gap is not None and gap > timedelta(0):
             lines.append(
                 f"- {who}: mail from {when(source.gap_from, facts.zone)} to "
                 f"{when(source.gap_to, facts.zone)} has not been read."
@@ -104,20 +129,25 @@ def access_problems(facts: Facts) -> str:
 
 
 def important_appointments(facts: Facts) -> str:
+    """Only reminders due now, one line each; later ones are summarised in one line."""
     lines: list[str] = []
     today = facts.ctx.clock.now().astimezone(facts.zone).date()
-    for item in appointments.upcoming(facts.ctx):
+    items = appointments.upcoming(facts.ctx)
+    for item in (i for i in items if i.due):
         start = parse(item.start).astimezone(facts.zone)
         days = (start.date() - today).days
         away = "today" if days == 0 else "tomorrow" if days == 1 else f"in {days} days"
-        state = (
-            "Acknowledgement needed: open the viewer and hold the button."
-            if item.due
-            else f"The reminder shows from {when(item.reminder_from, facts.zone)}."
-        )
         lines.append(
             f"- **{_cell(item.title)}** - {start.strftime('%a %d %b %H:%M')} ({away}). "
-            f"Card: {_cell(item.card_title)}. {state}"
+            f"Card: {_cell(item.card_title)}. "
+            "Acknowledgement needed: open the viewer and hold the button."
+        )
+    later = [i for i in items if not i.due]
+    if later:
+        nxt = min(later, key=lambda i: i.reminder_from or i.start)
+        lines.append(
+            f"- {len(later)} later reminder(s) are scheduled; the next shows "
+            f"{when(nxt.reminder_from or nxt.start, facts.zone)}: {_cell(nxt.title)}."
         )
     return "\n".join(lines)
 
