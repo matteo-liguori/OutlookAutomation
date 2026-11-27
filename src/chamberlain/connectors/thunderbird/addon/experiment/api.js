@@ -298,6 +298,15 @@ function headlessOutcome(plan, spec, fields) {
   });
 }
 
+/* A headless save leaves the draft it replaces in place on this Thunderbird (found live,
+ * 2026-11-27: two drafts after a re-save), so the replaced one is removed here once the new one is
+ * saved. It is exactly the draft the harness named, already checked to be open in no composer. */
+function removeReplacedDraft(old) {
+  const folder = old.folder;
+  if (!folder?.msgDatabase?.containsKey(old.messageKey)) return; // msgToReplace already removed it
+  folder.deleteMessages([old], null, true, false, null, false);
+}
+
 async function runHeadless(plan, spec, files) {
   const key = `${Date.now()}-${++headlessCount}`;
   const fields = compFieldsOf(plan, spec);
@@ -306,6 +315,7 @@ async function runHeadless(plan, spec, files) {
   try {
     dir = await attachFiles(fields, files, key);
     const outcome = await headlessOutcome(plan, spec, fields);
+    if (spec.mode === "draft" && plan.replaced) removeReplacedDraft(plan.replaced);
     if (spec.mode === "send" && plan.original) {
       // As a reply from a composer: the original is marked replied, its read state untouched.
       plan.original.folder.addMessageDispositionState(plan.original, Ci.nsIMsgFolder.nsMsgDispositionState_Replied);
