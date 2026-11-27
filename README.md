@@ -161,8 +161,8 @@ Python; on macOS or Linux use `.venv/bin/python`.
    settings are in [docs/configuration.md](docs/configuration.md).
 
 5. Viewer. `chamberlain viewer` opens a local page where you confirm grants, answer requests for larger cards (see
-   [docs/permissions.md](docs/permissions.md#larger-cards)) and read the report, which is the
-   front page (see [The report](#the-report)). The page keeps
+   [docs/permissions.md](docs/permissions.md#larger-cards)) and read the reports. It opens on the
+   calendar, with today's report below it (see [The report](#the-report)). The page keeps
    its token for the tab, so a reload works; a new browser session needs the token link again.
 
 6. Scheduling. `chamberlain schedule install --apply` registers the hourly tick (plus one run
@@ -186,8 +186,9 @@ any Message-ID not found. Messages are looked up in every configured mailbox and
 The cleaner deletes exports after a week: copy the zip elsewhere to keep it.
 ## The report
 
-The written report of each scheduled pass is the first thing the viewer shows. The newest is on
-the front page; earlier ones are one click below it, and the Calendar page shows each day's.
+The written report of each scheduled pass is on the viewer's front page, the Calendar: today's
+reports sit below the calendar, and any earlier day's open from the date list or by clicking a
+day. The Schedule tab lists the pass times and each recent pass's state.
 
 - **Who writes what.** The harness writes the sections it can prove from its own records, when the
   pass ends: access problems per source (red, labelled), important appointments (orange,

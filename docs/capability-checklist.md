@@ -93,7 +93,7 @@ Regression tests include `tests/runs/test_runs.py::test_a_scheduled_session_that
 
 Regression tests include `tests/viewer/test_front_page.py::test_a_scheduled_pass_ends_with_the_owners_report_as_the_front_page`, `tests/viewer/test_front_page.py::test_categories_local_events_and_the_owners_acknowledgement`, `tests/viewer/test_confirm.py::test_g19_decline_revoke_and_keep_are_audited_as_the_human`.
 
-- [ ] Report front page and earlier reports: `tests/viewer/test_front_page.py`, `tests/viewer/test_pages.py`.
+- [ ] Reports on the calendar front page and earlier reports: `tests/viewer/test_front_page.py`, `tests/viewer/test_pages.py`.
 - [ ] Grant confirm/keep/revoke and complex approve/decline/take-back: `tests/viewer/test_confirm.py`, `tests/viewer/test_complex.py`.
 - [ ] Timeline shows uncertain writes as read-only history. `tests/viewer/test_views.py::test_w41_uncertain_history_is_read_only_and_outside_needs_you` covers the viewer surface and refusal of the removed endpoint. Agent and harness settlement remain C3.
 - [ ] Calendar categories, local events, important appointments and hold-to-acknowledge. `tests/viewer/test_front_page.py` checks the authenticated acknowledgement route. `tests/viewer/test_static_scripts.py::test_viewer_scripts_parse_and_acknowledgement_requires_a_continuous_hold` runs the served JavaScript with deterministic pointer, keyboard, visibility and animation-frame events.

@@ -54,49 +54,4 @@
     if (report.note) article.appendChild(el("p", { class: "warn", text: report.note }));
     return article;
   };
-
-  function build() {
-    var page = el("div", { class: "front-page" });
-    var body = el("div", { "aria-live": "polite" });
-    var state = { ticket: 0 };
-
-    function load(run) {
-      var ticket = ++state.ticket;
-      var path = "/api/report" + (run ? "?run=" + encodeURIComponent(run) : "");
-      V.api("GET", path).then(function (data) {
-        if (ticket !== state.ticket) return;
-        V.zone = data.timezone;
-        var nodes = [];
-        data.waiting.forEach(function (w) {
-          nodes.push(el("p", { class: "muted waiting", text: "The " + w.schedule + " pass for " + w.day + " has no report yet (" + w.state + "). It appears here when the assistant finishes." }));
-        });
-        if (data.report) {
-          nodes.push(V.drawReport(data.report));
-        } else {
-          nodes.push(V.empty("No report has been written yet. The first appears here after a scheduled pass."));
-        }
-        if (data.earlier.length) {
-          var list = el("ul", { class: "earlier" });
-          data.earlier.forEach(function (entry) {
-            list.appendChild(el("li", {}, el("button", {
-              class: "act",
-              text: entry.schedule + " · " + entry.day + (entry.state === "incomplete" ? " · partial" : ""),
-              onclick: function () { load(entry.run); window.scrollTo(0, 0); },
-            })));
-          });
-          nodes.push(el("section", { class: "earlier-reports" }, el("h2", { text: "Earlier reports" }), list));
-        }
-        body.replaceChildren.apply(body, nodes);
-        if (V.appointments) V.appointments.check(data.appointments_due);
-      }, function (error) { if (ticket === state.ticket) body.replaceChildren(V.problem(error)); });
-    }
-
-    page.appendChild(el("div", { class: "calendar-heading" }, el("h2", { text: "Report" }),
-      el("button", { class: "act", text: "Refresh", onclick: function () { load(null); } })));
-    page.appendChild(body);
-    load(null);
-    return page;
-  }
-
-  V.register("report", "Report", build, "first");
 })();

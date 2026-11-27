@@ -345,26 +345,16 @@
       data.schedules.forEach(function (s) {
         box.appendChild(el("p", { text: s.name + ": " + s.kind + " at " + s.at_local + " " + s.zone + (s.enabled ? "" : " (off)") }));
       });
-      box.appendChild(el("h2", { text: "Runs and reports" }));
+      box.appendChild(el("h2", { text: "Recent passes" }));
       data.runs.forEach(function (r) {
         var card = el("section", { class: "card" }, el("h3", { text: r.schedule + " on " + r.day }), el("div", { class: r.state === "finished" ? "ok" : "muted", text: r.state }));
         if (r.reports) {
-          card.appendChild(el("button", { class: "act", text: "Read the report", onclick: function () { openReport(r.handle); } }));
+          card.appendChild(el("button", { class: "act", text: "Show in the calendar", onclick: function () { window.ChamberlainViewer.pendingDay = r.day; current = "calendar"; render(); } }));
         }
         box.appendChild(card);
       });
     }, function (error) { box.appendChild(problem(error)); });
     return box;
-  }
-
-  function openReport(handle) {
-    api("GET", "/api/runs/" + handle + "/reports").then(function (data) {
-      var box = el("div", {}, el("h2", { text: data.schedule + " on " + data.day }));
-      data.reports.forEach(function (report) { box.appendChild(el("pre", { text: report.text })); });
-      if (!data.reports.length) box.appendChild(el("p", { class: "muted", text: "The report has expired." }));
-      box.appendChild(el("button", { class: "act", text: "Back", onclick: function () { render(); } }));
-      show(box);
-    }, function (error) { show(problem(error)); });
   }
 
   function storageView() {
@@ -414,7 +404,7 @@
     ["cards", "Cards", cardsView],
     ["timeline", "Timeline", timelineView],
     ["grants", "Grants", grantsView],
-    ["runs", "Runs and reports", runsView],
+    ["runs", "Schedule", runsView],
     ["storage", "Storage", storageView],
     ["notes", "Notes", notesView],
   ];

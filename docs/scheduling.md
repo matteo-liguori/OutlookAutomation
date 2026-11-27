@@ -41,8 +41,8 @@ This page is for the person setting up Chamberlain on their own computer. The co
    appointments, permission reviews, verification) from its records and keeps them with the run
    (35 days). The agent's text is a stored item with a lifetime (30 days unless the agent asks for
    less; 14 days for a note the harness writes). The sweeper removes it, and the run row goes 35
-   days after its day. The report is the viewer's front page; every run is also listed under
-   **Runs and reports**. The layout is `config/report-template.yaml` (see the README, "The
+   days after its day. The report shows below the calendar, the viewer's front page; every run and
+   its state is also listed under **Schedule**. The layout is `config/report-template.yaml` (see the README, "The
    report").
 
 ## Opening the viewer

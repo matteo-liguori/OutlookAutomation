@@ -191,6 +191,7 @@
     failure.hidden = true;
     var reports = el("select", { id: "reports", "aria-label": "Select report date" });
     var reportBox = el("div", { "aria-live": "polite" });
+    var waitingBox = el("div", {});
     var addLocal = el("button", { text: "Add local event" });
     var localDialog = localEventDialog(function (event) { go(civil(event.start.slice(0, 10))); });
     addLocal.addEventListener("click", function () { localDialog.open(state.selected); });
@@ -203,7 +204,7 @@
     page.appendChild(grid);
     page.appendChild(coverage);
     page.appendChild(el("section", { class: "report-panel", "aria-labelledby": "reports-title" },
-      el("div", { class: "calendar-heading" }, el("h2", { id: "reports-title", text: "Reports" }), reports), reportBox));
+      el("div", { class: "calendar-heading" }, el("h2", { id: "reports-title", text: "Reports" }), reports), waitingBox, reportBox));
     page.appendChild(localDialog.node);
 
     function window_() {
@@ -384,9 +385,21 @@
         if (data.report_days.indexOf(current) >= 0) reports.value = current;
         else if (data.report_days.indexOf(data.today) >= 0) reports.value = data.today;
         reports.disabled = !data.report_days.length;
+        if (V.pendingDay && data.report_days.indexOf(V.pendingDay) >= 0) reports.value = V.pendingDay;
+        V.pendingDay = null;
         loadReports();
+        loadWaiting();
         if (V.appointments) V.appointments.check(data.appointments_due);
       }, function (error) { if (ticket === state.ticket) showError(error); });
+    }
+
+    // A pass that has started but not written its report yet is named above the reports.
+    function loadWaiting() {
+      V.api("GET", "/api/report").then(function (data) {
+        waitingBox.replaceChildren.apply(waitingBox, data.waiting.map(function (w) {
+          return el("p", { class: "muted waiting", text: "The " + w.schedule + " pass for " + w.day + " has no report yet (" + w.state + "). It appears here when the assistant finishes." });
+        }));
+      }, function () { waitingBox.replaceChildren(); });
     }
 
     function loadReports() {
@@ -416,9 +429,9 @@
     date.addEventListener("change", function () { if (date.value) go(civil(date.value)); });
     reports.addEventListener("change", loadReports);
 
-    go(civil(iso(new Date())));
+    go(civil(V.pendingDay || iso(new Date())));
     return page;
   }
 
-  V.register("calendar", "Calendar", build, "needs");
+  V.register("calendar", "Calendar", build, "first");
 })();
