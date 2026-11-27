@@ -73,6 +73,32 @@ interface HarnessMailApi {
   findComposers(accountId: string, mailbox: string, messageId: number, internetMessageId: string): Promise<any>;
   closeComposer(tabId: number, accountId: string, mailbox: string): Promise<any>;
   takePrompts(tabId: number): Promise<{ prompts: string[] }>;
+  claimComposer(tabId: number): Promise<{ claimed: boolean }>;
+  countComposers(): Promise<{ own: number; other: number }>;
+  composeHeadless(accountId: string, mailbox: string, spec: HeadlessSpec, files: File[], checkOnly: boolean): Promise<HeadlessDone>;
+}
+
+/** One headless send or draft save (experiment/api.js `composeHeadless`). */
+interface HeadlessSpec {
+  mode: "send" | "draft";
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+  highImportance: boolean;
+  token: string;
+  sentFolderId: string;
+  draftFolderId: string;
+  sentCopy: "client" | "server";
+  replyTo?: number;
+  replaceDraft?: number;
+}
+
+interface HeadlessDone {
+  message_id: string;
+  filed: boolean;
+  prompts: string[];
 }
 
 interface RawCalendar {

@@ -23,7 +23,9 @@ export function createWorld() {
     lists: new Map(),
     latches: [],
     faults: { slow: 0, duplicate: 0, stale: false, staleCallback: false, flipReadOnFull: false, hold: 0, slowCalendar: 0 },
-    counters: { move: 0, send: 0, save: 0, update: 0, full: 0 },
+    counters: { move: 0, send: 0, save: 0, update: 0, full: 0, headless: 0 },
+    submissions: [],
+    ownerComposers: [],
     books: [],
     calendars: new Map(),
     calendarOffline: false,
@@ -392,8 +394,87 @@ export function createWorld() {
         tab_ids: [...world.composers.values()].filter((c) => c.held && c.existingId === messageId).map((c) => c.id),
       }),
       closeComposer: async (tabId) => {
+        // Like experiment/api.js: only a composer the add-on opened (claimed or reopened).
+        const c = tabState(tabId);
+        if (!c.claimed && !c.existingId) throw new Error("chamberlain:account_mismatch:That composer was not opened by Chamberlain.");
         world.composers.delete(tabId);
         return { closed: true };
+      },
+      claimComposer: async (tabId) => {
+        tabState(tabId).claimed = true;
+        return { claimed: true };
+      },
+      countComposers: async () => ({ own: world.composers.size, other: world.ownerComposers.length }),
+      composeHeadless: async (accountId, mailbox, spec, files, checkOnly) => {
+        // Like experiment/api.js: every check first; with checkOnly nothing changes.
+        if (accountId !== ACCOUNT || mailbox.toLowerCase() !== OWNER || world.folders.get(spec.sentFolderId)?.accountId !== accountId) {
+          throw new Error("chamberlain:account_mismatch:");
+        }
+        if (spec.mode === "draft" && world.faults.identityDrafts) {
+          throw new Error(`chamberlain:changed:Thunderbird saves this identity's drafts to ${world.faults.identityDrafts}, not the bound draft folder.`);
+        }
+        const original = spec.replyTo == null ? null : byId(spec.replyTo);
+        const replaced = spec.replaceDraft == null ? null : byId(spec.replaceDraft);
+        if (replaced && [...world.composers.values()].some((c) => c.existingId === replaced.id)) throw new Error("chamberlain:changed:The draft is open in a composer.");
+        if (checkOnly) return { checked: true };
+        world.counters.headless += 1;
+        if (world.faults.slow > 0) {
+          world.faults.slow -= 1;
+          await holdLatch();
+        }
+        const headers = { "x-chamberlain-write-token": [spec.token] };
+        if (original) {
+          headers["in-reply-to"] = ["<" + original.headerMessageId + ">"];
+          headers.references = ["<" + original.headerMessageId + ">"];
+        }
+        const content = {
+          subject: spec.subject,
+          author: OWNER,
+          recipients: [...spec.to],
+          ccList: [...spec.cc],
+          bccList: [...spec.bcc],
+          body: spec.body,
+          read: true,
+          priority: spec.highImportance ? "high" : "normal",
+          attachments: await Promise.all(files.map(async (f) => ({ name: f.name, contentType: f.type, bytes: new Uint8Array(await f.arrayBuffer()) }))),
+          headers,
+        };
+        const prompts = world.faults.fccPrompt ? ["Your message was sent but a copy was not placed in your sent folder (Sent)."] : [];
+        world.faults.fccPrompt = false;
+        if (spec.mode === "send") {
+          world.counters.send += 1;
+          const generated = "sent-" + world.nextGenerated++ + "@fake.example";
+          world.submissions.push({ token: spec.token, recipients: [...spec.to, ...spec.cc, ...spec.bcc] });
+          const filed = !world.faults.noSentCopy && spec.sentCopy !== "server";
+          if (filed) world.add({ ...content, folderId: spec.sentFolderId, headerMessageId: generated });
+          // An Exchange-like server files its own copy of what it accepted.
+          if (world.faults.serverKeepsSent) {
+            // Exchange may store what it accepted re-encoded, so its body need not match byte for byte.
+            const body = world.faults.serverReencodes ? content.body + " (re-encoded by the server)" : content.body;
+            world.add({ ...content, body, folderId: spec.sentFolderId, headerMessageId: generated });
+          }
+          if ([...spec.to, ...spec.cc].some((v) => v.toLowerCase().includes(OWNER))) {
+            world.add({ ...content, bccList: [], read: false, folderId: ACCOUNT + "://INBOX", headerMessageId: generated });
+          }
+          if (world.faults.queueOnly) world.add({ ...content, folderId: "local://Outbox", headerMessageId: generated });
+          if (original) original.replied = true;
+          return { message_id: generated, filed, prompts };
+        }
+        world.counters.save += 1;
+        if (replaced) world.messages = world.messages.filter((m) => m !== replaced);
+        const m = world.add({ ...content, folderId: spec.draftFolderId });
+        const real = m.headerMessageId;
+        if (world.faults.placeholderDraft) {
+          // Like Thunderbird on IMAP: the stored copy has no Message-ID in the index until the
+          // folder syncs; the next folder query "syncs" it under a new session id.
+          m.headers["message-id"] = ["<" + real + ">"];
+          m.headerMessageId = "";
+          world.pendingSync = () => {
+            m.headerMessageId = real;
+            m.id = world.nextId++;
+          };
+        }
+        return { message_id: real, filed: true, prompts };
       },
     },
     tabs: { remove: async (id) => world.composers.delete(id) },

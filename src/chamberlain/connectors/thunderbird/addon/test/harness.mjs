@@ -108,6 +108,8 @@ const controls = {
     else if (fault === "no_sent_copy") world.faults.noSentCopy = true;
     else if (fault === "queue_only") world.faults.queueOnly = true;
     else if (fault === "merge") world.faults.merge = true;
+    else if (fault === "server_keeps_sent") world.faults.serverKeepsSent = true;
+    else if (fault === "server_reencodes") world.faults.serverReencodes = true;
     else return false;
     return true;
   },
@@ -137,6 +139,8 @@ const controls = {
   calendar_count: ({ calendar_id, id }) => (world.calendars.get(calendar_id).items.has(id) ? 1 : 0),
   calendar_text: ({ calendar_id, id }) => world.calendars.get(calendar_id).items.get(id) ?? null,
   counters: () => ({ ...world.counters }),
+  submissions: () => world.submissions.length,
+  owner_composer: ({ name }) => world.ownerComposers.push(name),
   owner: () => OWNER,
 };
 

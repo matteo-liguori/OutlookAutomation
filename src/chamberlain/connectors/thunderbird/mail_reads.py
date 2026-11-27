@@ -289,6 +289,16 @@ class MailReads:
     ) -> M:
         return typed(self.client.call(command, args, payloads=payloads), result)
 
+    def composers(self, source: str) -> tuple[int, int] | None:
+        """Read-only: (composers the add-on opened and left open, every other composer).
+
+        None when the add-on cannot count. The other composers are the owner's own."""
+        self.binding(source)
+        status = self.call(Command.STATUS, protocol.StatusArgs(), protocol.StatusResult)
+        if status.composers_own is None or status.composers_other is None:
+            return None
+        return status.composers_own, status.composers_other
+
     def folders(self, source: str) -> list[Folder]:
         binding = self.binding(source)
         result = self.call(

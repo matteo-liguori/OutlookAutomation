@@ -380,9 +380,11 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx): Promise<ComposeResult> {
     check(file && file.size === spec.size, "hash_mismatch", "An attachment was not fully transferred.");
     files.push(file);
   }
-  const details = composeDetails(a, identity.id, sentFolder);
   let original: TbHeader | null = null;
   if (a.reply_to) original = await locateOne(a, a.reply_to);
+  // Only a draft the owner asked to see opens a window; everything else is composed headless.
+  if (!a.display_only) return composeHeadless(a, ctx, existing, original, files);
+  const details = composeDetails(a, identity.id, sentFolder);
   let tabId: number | null = null;
   try {
     if (existing) {
@@ -391,10 +393,13 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx): Promise<ComposeResult> {
       const opened = await helper.openDraft(a.account_id, a.mailbox, existing.id, existing.headerMessageId);
       tabId = opened.tab_id;
       check((await rawHash(existing.id)) === openingHash, "changed", "The draft changed while it was opened.");
-    } else if (original) {
-      tabId = (await messenger.compose.beginReply(original.id, "replyToSender", details)).id;
     } else {
-      tabId = (await messenger.compose.beginNew(details)).id;
+      tabId = original
+        ? (await messenger.compose.beginReply(original.id, "replyToSender", details)).id
+        : (await messenger.compose.beginNew(details)).id;
+      check(typeof tabId === "number", "not_verified", "The composer did not return a tab.");
+      // This window is the add-on's own from now on: only such a window is ever held or closed.
+      await helper.claimComposer(tabId);
     }
     check(typeof tabId === "number", "not_verified", "The composer did not return a tab.");
     const openedFrom = existing ?? original;
@@ -408,14 +413,10 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx): Promise<ComposeResult> {
     }
     // Autosave off and the bound Sent folder re-applied on every composer, reopened drafts and replies included.
     // A send never saves a draft, so its Drafts setting does not matter ("" skips that check).
-    await helper.holdComposer(tabId, a.account_id, a.mailbox, a.mode === "send" ? "" : a.draft_folder_id, a.sent_folder_id);
+    await helper.holdComposer(tabId, a.account_id, a.mailbox, a.draft_folder_id, a.sent_folder_id);
     for (const file of files) await messenger.compose.addAttachment(tabId, { file });
     await verifyComposer(tabId, a, identity.id, files);
     markMutation(ctx);
-    if (a.mode === "send") {
-      await messenger.compose.sendMessage(tabId, { mode: "sendNow" });
-      return { attachment_bytes_verified: true, dialogs: await answered(tabId), old_copies_remaining: 0 };
-    }
     const saved = await messenger.compose.saveMessage(tabId, { mode: "draft" });
     return await finishDraft(a, tabId, saved, await answered(tabId));
   } catch (error) {
@@ -424,11 +425,56 @@ async function cmdCompose(a: ComposeArgs, ctx: Ctx): Promise<ComposeResult> {
   }
 }
 
+/**
+ * A send, a draft save or a draft update with no window (nsIMsgSend in the helper). The helper
+ * first checks everything without changing anything, so a refusal proves nothing happened.
+ */
+async function composeHeadless(
+  a: ComposeArgs, ctx: Ctx, existing: TbHeader | null, original: TbHeader | null, files: File[],
+): Promise<ComposeResult> {
+  const helper = messenger.chamberlainMail;
+  check(typeof helper?.composeHeadless === "function", "unsupported", "The headless composer helper is not installed.");
+  const spec: HeadlessSpec = {
+    mode: a.mode === "send" ? "send" : "draft",
+    to: [...a.to],
+    cc: [...a.cc],
+    bcc: [...a.bcc],
+    subject: a.subject,
+    body: a.body,
+    highImportance: a.high_importance,
+    token: a.token,
+    sentFolderId: a.sent_folder_id,
+    draftFolderId: a.draft_folder_id,
+    sentCopy: a.sent_copy ?? "client",
+  };
+  if (original) spec.replyTo = original.id;
+  if (existing) spec.replaceDraft = existing.id;
+  await helper.composeHeadless(a.account_id, a.mailbox, spec, files, true);
+  if (existing) check((await rawHash(existing.id)) === a.expected_raw_sha256, "changed", "The draft changed before it was replaced.");
+  markMutation(ctx);
+  const done = await helper.composeHeadless(a.account_id, a.mailbox, spec, files, false);
+  if (a.mode === "send") return { attachment_bytes_verified: true, dialogs: done.prompts, old_copies_remaining: 0 };
+  return await finishDraft(a, null, { messages: [await savedDraft(a, done.message_id)] }, done.prompts);
+}
+
+/** The draft a headless save made, found in the bound draft folder by its Message-ID. */
+async function savedDraft(a: ComposeArgs, messageId: string): Promise<TbHeader> {
+  const mid = bare(messageId);
+  if (!mid) unverifiedDraft("The saved draft has no Message-ID.");
+  for (let attempt = 0; attempt < TUNING.saveAttempts; attempt++) {
+    const copies = await queryExact(a, a.draft_folder_id, mid);
+    if (copies.complete && copies.messages.length === 1) return copies.messages[0];
+    if (copies.messages.length > 1) unverifiedDraft("More than one copy of the saved draft is in the draft folder.");
+    await sleep(TUNING.savePollMs);
+  }
+  return unverifiedDraft("The saved draft could not be found by its Message-ID.");
+}
+
 function unverifiedDraft(message: string): never {
   return fail("not_verified", message, "possible");
 }
 
-async function finishDraft(a: ComposeArgs, tabId: number, saved: { messages?: TbHeader[] }, dialogs: string[]): Promise<ComposeResult> {
+async function finishDraft(a: ComposeArgs, tabId: number | null, saved: { messages?: TbHeader[] }, dialogs: string[]): Promise<ComposeResult> {
   if (saved?.messages?.length !== 1) return unverifiedDraft("The draft save was not verified.");
   const returned = saved.messages[0];
   if (returned.folder?.accountId !== a.account_id || returned.folder?.id !== a.draft_folder_id) unverifiedDraft("The draft was saved in the wrong folder.");
@@ -469,7 +515,7 @@ async function finishDraft(a: ComposeArgs, tabId: number, saved: { messages?: Tb
       await sleep(TUNING.savePollMs);
     }
   }
-  if (!a.display_only) await closeQuietly(tabId, a);
+  if (tabId !== null && !a.display_only) await closeQuietly(tabId, a);
   return { header: header(indexed), raw_sha256: raw, attachment_bytes_verified: true, old_copies_remaining: remaining, dialogs };
 }
 

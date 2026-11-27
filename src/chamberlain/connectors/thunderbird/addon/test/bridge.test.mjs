@@ -576,27 +576,86 @@ test("P-15 send files the Sent copy with the bound folder and carries the token 
   const sent = world.find("<tok-1@chamberlain.local>", SENT);
   assert.equal(sent.priority, "high");
   assert.ok(sent.headers["x-chamberlain-write-token"]);
-  assert.equal(world.composers.size, 0, "a submitted composer is gone");
+  assert.equal(world.composers.size, 0, "a send opens no composer");
 });
 
-test("R8 a manual edit of the managed composer invalidates the send", async () => {
+test("H-1 a send is one headless submission: no window, one Sent copy, nothing left open", async () => {
+  const { addon, world } = setup();
+  world.ownerComposers.push("the owner's own unsent reply");
+  const opened = [];
+  const beginNew = world.messenger.compose.beginNew;
+  world.messenger.compose.beginNew = async (details) => { opened.push(details); return beginNew(details); };
+  const res = await call(addon, "compose", compose({ to: ["paired@example.org"] }));
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  assert.deepEqual(opened, [], "no composer window is opened for a send");
+  assert.equal(world.submissions.length, 1);
+  assert.equal(world.copies("<tok-1@chamberlain.local>", SENT), 1);
+  const status = await call(addon, "status", {});
+  assert.equal(status.result.composers_own, 0);
+  assert.equal(status.result.composers_other, 1, "the owner's composer is counted, never touched");
+  assert.deepEqual(world.ownerComposers, ["the owner's own unsent reply"]);
+});
+
+test("H-2 sent_copy server files no client copy; the server's own copy is the only one", async () => {
+  const { addon, world } = setup();
+  world.faults.serverKeepsSent = true;
+  const res = await call(addon, "compose", compose({ sent_copy: "server", to: ["paired@example.org"] }));
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  assert.equal(world.copies("<tok-1@chamberlain.local>", SENT), 1);
+  const client = await call(addon, "compose", compose({ to: ["paired@example.org"], token: "<tok-2@chamberlain.local>" }));
+  assert.equal(client.ok, true);
+  assert.equal(world.copies("<tok-2@chamberlain.local>", SENT), 2, "a client copy on such a server makes two");
+});
+
+test("H-3 a headless reply carries the reference headers and marks the original replied, not read", async () => {
+  const { addon, world } = setup();
+  world.add({ folderId: INBOX, headerMessageId: "orig@x", read: false, subject: "Question" });
+  const res = await call(addon, "compose", compose({ subject: "Re: Question", reply_to: ref(INBOX, "orig@x") }));
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  const sent = world.find("<tok-1@chamberlain.local>", SENT);
+  assert.deepEqual(sent.headers["in-reply-to"], ["<orig@x>"]);
+  assert.equal(world.find("orig@x").replied, true);
+  assert.equal(world.find("orig@x").read, false);
+});
+
+test("H-4 a refusal by the headless helper's checks proves nothing was sent", async () => {
+  const { addon, world } = setup();
+  world.faults.identityDrafts = "imap://owner@example/Elsewhere";
+  const res = await call(addon, "compose", compose({ mode: "draft_save" }));
+  assert.equal(res.ok, false);
+  assert.equal(res.error.mutation, "none");
+  assert.equal(world.counters.headless, 0);
+});
+
+test("H-5 attachments reach the headless send byte for byte", async () => {
+  const { addon, world } = setup();
+  const data = Buffer.from("attached bytes");
+  const spec = { key: "k1", name: "notes.txt", size: data.length, sha256: sha(data), content_type: "text/plain", chunks: 1 };
+  const res = await call(addon, "compose", compose({ attachments: [spec] }), { chunks: [{ name: "k1", index: 0, data: data.toString("base64"), sha256: sha(data) }] });
+  assert.equal(res.ok, true, JSON.stringify(res.error));
+  const sent = world.find("<tok-1@chamberlain.local>", SENT);
+  assert.equal(sent.attachments[0].name, "notes.txt");
+  assert.equal(Buffer.from(sent.attachments[0].bytes).toString(), "attached bytes");
+});
+
+test("R8 a manual edit of a draft shown to the owner invalidates the save", async () => {
   const { addon, world } = setup();
   const real = world.messenger.compose.getComposeDetails;
   world.messenger.compose.getComposeDetails = async (id) => ({ ...(await real(id)), plainTextBody: "edited by the user" });
-  const res = await call(addon, "compose", compose());
+  const res = await call(addon, "compose", compose({ mode: "draft_save", display_only: true }));
   assert.equal(res.error.code, "changed");
   assert.equal(res.error.mutation, "none");
-  assert.equal(world.counters.send, 0);
-  assert.equal(world.composers.size, 0, "the failed composer is closed");
+  assert.equal(world.counters.save, 0);
+  assert.equal(world.composers.size, 0, "the failed composer, the add-on's own, is closed");
 });
 
-test("R8 the bound Sent folder is enforced on the composer", async () => {
+test("R8 the bound Sent folder is enforced on a composer shown to the owner", async () => {
   const { addon, world } = setup();
   const real = world.messenger.compose.getComposeDetails;
   world.messenger.compose.getComposeDetails = async (id) => ({ ...(await real(id)), overrideDefaultFccFolder: { id: ACCOUNT + "://Wrong" } });
-  const res = await call(addon, "compose", compose());
+  const res = await call(addon, "compose", compose({ mode: "draft_save", display_only: true }));
   assert.equal(res.error.code, "changed");
-  assert.equal(world.counters.send, 0);
+  assert.equal(world.counters.save, 0);
 });
 
 test("R8 an identity whose Drafts setting is another folder still sends; a draft save names the folder", async () => {
@@ -624,7 +683,7 @@ test("R8 a reply restores the unread flag Thunderbird cleared on the original", 
 test("P-15 a stale callback from saveMessage is ignored: the draft is re-read by id", async () => {
   const { addon, world } = setup();
   world.faults.staleCallback = true;
-  const res = await call(addon, "compose", compose({ mode: "draft_save" }));
+  const res = await call(addon, "compose", compose({ mode: "draft_save", display_only: true }));
   assert.equal(res.ok, true, JSON.stringify(res.error));
   assert.equal(res.result.header.read, true, "the flag comes from a fresh read, not the callback");
   assert.notEqual(res.result.header.internet_message_id, "stale-callback");
@@ -646,6 +705,19 @@ test("P-9 draft_update checks the old raw hash before opening anything", async (
   const stale = await call(addon, "compose", compose({ mode: "draft_update", draft, expected_raw_sha256: "0".repeat(64), token: "<tok-2@chamberlain.local>" }));
   assert.equal(stale.error.code, "changed");
   assert.equal(stale.error.mutation, "none");
+  assert.equal(world.composers.size, 0);
+});
+
+test("H-6 draft_save and draft_update are headless: the old draft is replaced, no window opens", async () => {
+  const { addon, world } = setup();
+  const saved = await call(addon, "compose", compose({ mode: "draft_save" }));
+  assert.equal(saved.ok, true, JSON.stringify(saved.error));
+  assert.equal(world.composers.size, 0);
+  const draft = ref(DRAFTS, saved.result.header.internet_message_id);
+  const updated = await call(addon, "compose", compose({ mode: "draft_update", draft, expected_raw_sha256: saved.result.raw_sha256, body: "Second.", token: "<tok-2@chamberlain.local>" }));
+  assert.equal(updated.ok, true, JSON.stringify(updated.error));
+  assert.equal(updated.result.old_copies_remaining, 0);
+  assert.equal(world.copies(saved.result.header.internet_message_id, DRAFTS), 0);
   assert.equal(world.composers.size, 0);
 });
 

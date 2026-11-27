@@ -1,7 +1,7 @@
 /* Narrow privileged helpers (bridge contract B-3): named functions, no generic execute.
  * Every function re-verifies that the account owns the sender identity. Runs only inside
  * Thunderbird; the fake used by the tests lives in test/fake_thunderbird.mjs. */
-/* global ChromeUtils, Ci, Components, Services */
+/* global ChromeUtils, Cc, Ci, Components, IOUtils, PathUtils, Services */
 var { ExtensionCommon } = ChromeUtils.importESModule("resource://gre/modules/ExtensionCommon.sys.mjs");
 var { setTimeout, clearTimeout } = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
 var { MailServices } = ChromeUtils.importESModule("resource:///modules/MailServices.sys.mjs");
@@ -58,6 +58,16 @@ function composeWindow(context, tabId) {
   return context.extension.tabManager.get(tabId).nativeTab;
 }
 
+/* Composer windows this add-on opened, tracked by identity. Only these are ever held, edited or
+ * closed; the owner's own composers are only ever counted, or read to refuse a change. */
+const ownWindows = new WeakSet();
+
+function ownWindow(context, tabId) {
+  const win = composeWindow(context, tabId);
+  need(win && ownWindows.has(win), "account_mismatch", "That composer was not opened by Chamberlain.");
+  return win;
+}
+
 /* A Thunderbird prompt on a composer the harness holds must never wait for a click: a
  * "copy not placed in your Sent folder" dialog once held the only write slot until someone
  * clicked it (found live, 2026-11-25). Such a prompt is answered at once with its safe
@@ -65,23 +75,34 @@ function composeWindow(context, tabId) {
  * result, so the harness reports what Thunderbird asked and checks the outcome itself. */
 const answeredPrompts = new Map(); // tab id -> prompt texts
 
-function heldOpener(dialogWindow) {
+/* A headless send has no window of its own. Without a parent, Thunderbird parents its prompts on
+ * the most recent composer, which may be the owner's. The add-on passes the hidden window
+ * instead, and answers prompts parented there only while a headless request of its own runs. */
+const headlessPrompts = new Map(); // request key -> prompt texts
+
+function hiddenWindow() {
+  return Services.appShell.hiddenDOMWindow;
+}
+
+function promptOwner(dialogWindow) {
+  const hidden = headlessPrompts.size ? hiddenWindow() : null;
   let win = dialogWindow.opener;
   for (let i = 0; win && i < 3; i++) {
-    if (win.__chamberlainHeld) return win;
+    if (win.__chamberlainHeld && ownWindows.has(win)) return { list: answeredPrompts, key: win.__chamberlainTab };
+    if (hidden && win === hidden) return { list: headlessPrompts, key: [...headlessPrompts.keys()][0] };
     win = win.opener;
   }
   return null;
 }
 
 function answerPrompt(dialogWindow) {
-  const held = heldOpener(dialogWindow);
-  if (!held) return false;
+  const owner = promptOwner(dialogWindow);
+  if (!owner) return false;
   const doc = dialogWindow.document;
   const text = String(doc.getElementById("infoBody")?.textContent ?? doc.title ?? "").trim().slice(0, 500);
-  const list = answeredPrompts.get(held.__chamberlainTab) ?? [];
+  const list = owner.list.get(owner.key) ?? [];
   list.push(text);
-  answeredPrompts.set(held.__chamberlainTab, list);
+  owner.list.set(owner.key, list);
   const dialog = doc.querySelector("dialog");
   const cancel = dialog?.getButton?.("cancel");
   if (cancel && !cancel.hidden) dialog.cancelDialog();
@@ -101,6 +122,189 @@ const promptObserver = {
     }, 0);
   },
 };
+
+/* --- headless composition (no window) -------------------------------------------------------
+ * A send or a draft save is built as nsIMsgCompFields and handed to nsIMsgSend directly, so no
+ * composer window opens. What the window path guaranteed is kept: the sender identity, the
+ * write token header, References (Thunderbird derives In-Reply-To from them), the Replied flag
+ * on the original, attachments, priority, and the Sent copy in the bound folder or none. */
+const HEADLESS_TIMEOUT_MS = 40000;
+const FCC_WAIT_MS = 20000;
+
+function headlessPlan(context, accountId, mailbox, spec, files) {
+  const account = ownerAccount(accountId, mailbox);
+  const identities = [...account.identities].filter((i) => i.email.toLowerCase() === mailbox.toLowerCase());
+  need(identities.length === 1, "account_mismatch", "The sender identity is missing or ambiguous.");
+  const identity = identities[0];
+  need(spec.mode === "send" || spec.mode === "draft", "bad_request");
+  if (spec.mode === "send") need(!Services.io.offline, "client_offline");
+  need(Array.isArray(files) && files.length <= 50, "bad_request");
+  const sent = getFolder(spec.sentFolderId);
+  need(sent.accountKey === accountId && sent.folder.canFileMessages, "account_mismatch", "The bound Sent folder is not in this account.");
+  if (spec.mode === "draft") {
+    const draft = getFolder(spec.draftFolderId);
+    need(draft.accountKey === accountId && draft.folder.canFileMessages, "account_mismatch", "The bound draft folder is not in this account.");
+    const uses = identity.getUnicharAttribute("draft_folder");
+    need(uses === draft.folder.URI, "changed", `Thunderbird saves this identity's drafts to ${uses}, not the bound draft folder ${draft.folder.URI}. Change Drafts in the account's Copies & Folders settings, or the bound folder.`);
+  }
+  const header = (id) => {
+    const h = context.extension.messageManager.get(id);
+    need(h && h.folder.server.key === account.incomingServer.key, "account_mismatch");
+    return h;
+  };
+  const original = spec.replyTo == null ? null : header(spec.replyTo);
+  const replaced = spec.replaceDraft == null ? null : header(spec.replaceDraft);
+  if (replaced) {
+    need(replaced.folder.getFlag(Ci.nsMsgFolderFlags.Drafts), "account_mismatch");
+    const uri = replaced.folder.getUriForMsg(replaced);
+    // A draft open in any composer, the owner's included, is never replaced under it (read only).
+    for (const win of Services.wm.getEnumerator("msgcompose")) {
+      need(win.gMsgCompose?.originalMsgURI !== uri && win.gMsgCompose?.compFields?.draftId?.split("?")[0] !== uri, "changed", "The draft is open in a composer.");
+    }
+  }
+  return { account, identity, sentFolder: sent.folder, original, replaced };
+}
+
+function compFieldsOf(plan, spec) {
+  const fields = Cc["@mozilla.org/messengercompose/composefields;1"].createInstance(Ci.nsIMsgCompFields);
+  fields.from = MailServices.headerParser.makeMimeAddress(plan.identity.fullName, plan.identity.email);
+  fields.to = spec.to.join(", ");
+  fields.cc = spec.cc.join(", ");
+  fields.bcc = spec.bcc.join(", ");
+  fields.subject = spec.subject;
+  fields.body = spec.body;
+  fields.forcePlainText = true;
+  fields.useMultipartAlternative = false;
+  fields.characterSet = "UTF-8";
+  if (spec.highImportance) fields.priority = "High";
+  fields.setRawHeader("X-Chamberlain-Write-Token", spec.token);
+  // "nocopy://" files no client copy: the server keeps its own (sent_copy: server).
+  fields.fcc = spec.mode === "send" ? (spec.sentCopy === "server" ? "nocopy://" : plan.sentFolder.URI) : "";
+  fields.fcc2 = "";
+  if (plan.original) {
+    const references = String(plan.original.getStringProperty("references") ?? "").trim();
+    const id = String(plan.original.messageId).replace(/^<|>$/g, "");
+    fields.references = (references ? references + " " : "") + `<${id}>`;
+  }
+  return fields;
+}
+
+async function attachFiles(fields, files, key) {
+  if (!files.length) return null;
+  const dir = PathUtils.join(PathUtils.tempDir, `chamberlain-${key}`);
+  await IOUtils.makeDirectory(dir, { ignoreExisting: true, permissions: 0o700 });
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const path = PathUtils.join(dir, `a${i + 1}`); // the sender's file name never becomes a path
+    await IOUtils.write(path, new Uint8Array(await file.arrayBuffer()));
+    const attachment = Cc["@mozilla.org/messengercompose/attachment;1"].createInstance(Ci.nsIMsgAttachment);
+    attachment.url = PathUtils.toFileURI(path);
+    attachment.name = file.name;
+    attachment.size = file.size;
+    attachment.contentType = file.type || "application/octet-stream";
+    attachment.temporary = true;
+    fields.addAttachment(attachment);
+  }
+  return dir;
+}
+
+let headlessCount = 0;
+
+/** One submission or one draft save. Resolves after Thunderbird reports the send (or the save)
+ * and, for a client Sent copy, its filing; a failure after the call may have sent. */
+function headlessOutcome(plan, spec, fields) {
+  const sending = spec.mode === "send";
+  return new Promise((resolve, reject) => {
+    let stopped = null;
+    let copied = !sending || fields.fcc === "nocopy://";
+    let fccTimer = null;
+    const failed = (code, text) => {
+      clearTimeout(timer);
+      clearTimeout(fccTimer);
+      reject(new ExtensionUtils.ExtensionError(`chamberlain:${code}:${text}`));
+    };
+    const timer = setTimeout(() => failed("timeout", "Thunderbird did not report the result in time."), HEADLESS_TIMEOUT_MS);
+    const finish = () => {
+      if (stopped === null || !copied) return;
+      clearTimeout(timer);
+      clearTimeout(fccTimer);
+      resolve(stopped);
+    };
+    const listener = {
+      QueryInterface: ChromeUtils.generateQI(["nsIMsgSendListener", "nsIMsgCopyServiceListener"]),
+      onStartSending() {},
+      onSendProgress() {},
+      onProgress() {},
+      onStatus() {},
+      onGetDraftFolderURI() {},
+      onSendNotPerformed(msgId, status) {
+        failed("timeout", `Thunderbird did not send (${status}).`);
+      },
+      onTransportSecurityError() {},
+      onStopSending(msgId, status) {
+        if (!Components.isSuccessCode(status)) {
+          failed("timeout", `Thunderbird reported a failure (${status}); the server may still have the message.`);
+          return;
+        }
+        stopped = { messageId: String(msgId || fields.messageId || ""), filed: copied && sending && fields.fcc !== "nocopy://" };
+        if (!copied) {
+          fccTimer = setTimeout(() => {
+            copied = true;
+            stopped.filed = false;
+            finish();
+          }, FCC_WAIT_MS);
+        }
+        finish();
+      },
+      onStartCopy() {},
+      setMessageKey() {},
+      getMessageId() {
+        return null;
+      },
+      onStopCopy(status) {
+        const ok = Components.isSuccessCode(status);
+        if (!sending && stopped === null) {
+          // A draft save reports its result through the copy into the Drafts folder.
+          if (!ok) {
+            failed("timeout", `The draft was not saved (${status}).`);
+            return;
+          }
+          stopped = { messageId: String(fields.messageId || ""), filed: true };
+        } else if (stopped) {
+          stopped.filed = ok;
+        }
+        copied = true;
+        finish();
+      },
+    };
+    const sender = Cc["@mozilla.org/messengercompose/send;1"].createInstance(Ci.nsIMsgSend);
+    const originalUri = plan.original ? plan.original.folder.getUriForMsg(plan.original) : "";
+    const type = plan.original ? Ci.nsIMsgCompType.ReplyToSender : Ci.nsIMsgCompType.New;
+    const mode = sending ? Ci.nsIMsgSend.nsMsgDeliverNow : Ci.nsIMsgSend.nsMsgSaveAsDraft;
+    Promise.resolve()
+      .then(() => sender.createAndSendMessage(null, plan.identity, plan.account.key, fields, false, false, mode, plan.replaced, "text/plain", spec.body, hiddenWindow(), null, listener, null, originalUri, type))
+      .catch((error) => failed("timeout", String(error?.message ?? error).slice(0, 200)));
+  });
+}
+
+async function runHeadless(plan, spec, files) {
+  const key = `${Date.now()}-${++headlessCount}`;
+  const fields = compFieldsOf(plan, spec);
+  headlessPrompts.set(key, []);
+  let dir = null;
+  try {
+    dir = await attachFiles(fields, files, key);
+    const outcome = await headlessOutcome(plan, spec, fields);
+    if (spec.mode === "send" && plan.original) {
+      // As a reply from a composer: the original is marked replied, its read state untouched.
+      plan.original.folder.addMessageDispositionState(plan.original, Ci.nsIMsgFolder.nsMsgDispositionState_Replied);
+    }
+    return { message_id: outcome.messageId.replace(/^<|>$/g, ""), filed: outcome.filed, prompts: headlessPrompts.get(key) ?? [] };
+  } finally {
+    headlessPrompts.delete(key);
+    if (dir) IOUtils.remove(dir, { recursive: true, ignoreAbsent: true }).catch(() => undefined);
+  }
+}
 
 var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
   onShutdown() {
@@ -174,9 +378,16 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           });
           target.folder.markMessagesRead(headers, read);
         },
+        async claimComposer(tabId) {
+          // Called at once on a composer the add-on itself just opened (beginNew, beginReply).
+          const win = composeWindow(context, tabId);
+          need(win?.gMsgCompose, "not_found", "No composer has that tab.");
+          ownWindows.add(win);
+          return { claimed: true };
+        },
         async holdComposer(tabId, accountId, mailbox, draftFolderId, sentFolderId) {
           const account = ownerAccount(accountId, mailbox);
-          const win = composeWindow(context, tabId);
+          const win = ownWindow(context, tabId);
           need(win.gMsgCompose && [...account.identities].some((i) => i.key === win.gCurrentIdentity.key && i.email.toLowerCase() === mailbox.toLowerCase()), "account_mismatch");
           need(!win.gSendOperationInProgress && !win.gSaveOperationInProgress, "busy");
           win.clearTimeout(win.gAutoSaveTimeout);
@@ -223,6 +434,7 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
             };
             look();
           });
+          ownWindows.add(win);
           win.clearTimeout(win.gAutoSaveTimeout);
           win.gAutoSaveTimeout = null;
           return { tab_id: context.extension.tabManager.convert(win).id };
@@ -240,7 +452,7 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           const uri = h.folder.getUriForMsg(h);
           const ids = [];
           for (const win of Services.wm.getEnumerator("msgcompose")) {
-            if (win.__chamberlainHeld && (win.gMsgCompose?.originalMsgURI === uri || win.gMsgCompose?.compFields?.draftId?.split("?")[0] === uri)) {
+            if (win.__chamberlainHeld && ownWindows.has(win) && (win.gMsgCompose?.originalMsgURI === uri || win.gMsgCompose?.compFields?.draftId?.split("?")[0] === uri)) {
               ids.push(context.extension.tabManager.convert(win).id);
             }
           }
@@ -248,14 +460,31 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
         },
         async closeComposer(tabId, accountId, mailbox) {
           ownerAccount(accountId, mailbox);
-          const win = composeWindow(context, tabId);
-          need(win.__chamberlainHeld || win.gMsgCompose, "account_mismatch");
+          // Only a composer this add-on opened: never one of the owner's own windows.
+          const win = ownWindow(context, tabId);
           need(!win.gSendOperationInProgress && !win.gSaveOperationInProgress, "busy");
           win.gContentChanged = false;
           win.gMsgCompose.bodyModified = false;
           win.gAutoSaveKickedIn = false;
           win.close();
           return { closed: true };
+        },
+        async countComposers() {
+          // Read-only: composers this add-on opened that are still open, and all the others.
+          let own = 0;
+          let other = 0;
+          for (const win of Services.wm.getEnumerator("msgcompose")) {
+            if (win.closed) continue;
+            if (ownWindows.has(win)) own++;
+            else other++;
+          }
+          return { own, other };
+        },
+        async composeHeadless(accountId, mailbox, spec, files, checkOnly) {
+          // checkOnly runs every check and changes nothing, so a refusal proves no mutation.
+          const plan = headlessPlan(context, accountId, mailbox, spec, files);
+          if (checkOnly) return { checked: true };
+          return runHeadless(plan, spec, files);
         },
       },
     };

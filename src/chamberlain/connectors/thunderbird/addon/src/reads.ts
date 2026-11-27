@@ -413,5 +413,12 @@ async function cmdContactRead(a: ContactReadArgs): Promise<ContactReadResult> {
 }
 
 async function cmdStatus(): Promise<StatusResult> {
-  return { addon_version: ADDON_VERSION, write_busy: writeBusy, calendar_available: calendarSupported() };
+  const status: StatusResult = { addon_version: ADDON_VERSION, write_busy: writeBusy, calendar_available: calendarSupported() };
+  try {
+    const counted = await messenger.chamberlainMail?.countComposers();
+    if (counted) Object.assign(status, { composers_own: counted.own, composers_other: counted.other });
+  } catch {
+    // Counting is a courtesy for checks; the status stands without it.
+  }
+  return status;
 }

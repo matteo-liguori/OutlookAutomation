@@ -271,6 +271,10 @@ class StatusResult(Model):
     addon_version: str
     write_busy: bool
     calendar_available: bool
+    composers_own: int | None = None
+    """Composer windows the add-on opened that are still open (None: the add-on cannot count)."""
+    composers_other: int | None = None
+    """Every other composer window: the owner's own. Counted only, never touched."""
 
 
 class FoldersResult(Model):

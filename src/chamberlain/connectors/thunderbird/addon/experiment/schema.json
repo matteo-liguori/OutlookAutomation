@@ -93,6 +93,46 @@
         ]
       },
       {
+        "name": "claimComposer",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "tabId", "type": "integer" }
+        ]
+      },
+      {
+        "name": "countComposers",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      },
+      {
+        "name": "composeHeadless",
+        "type": "function",
+        "async": true,
+        "parameters": [
+          { "name": "accountId", "type": "string" },
+          { "name": "mailbox", "type": "string" },
+          { "name": "spec", "type": "object", "properties": {
+            "mode": { "type": "string", "enum": ["send", "draft"] },
+            "to": { "type": "array", "items": { "type": "string" } },
+            "cc": { "type": "array", "items": { "type": "string" } },
+            "bcc": { "type": "array", "items": { "type": "string" } },
+            "subject": { "type": "string" },
+            "body": { "type": "string" },
+            "highImportance": { "type": "boolean" },
+            "token": { "type": "string" },
+            "sentFolderId": { "type": "string" },
+            "draftFolderId": { "type": "string" },
+            "sentCopy": { "type": "string", "enum": ["client", "server"] },
+            "replyTo": { "type": "integer", "optional": true },
+            "replaceDraft": { "type": "integer", "optional": true }
+          } },
+          { "name": "files", "type": "array", "items": { "type": "object", "isInstanceOf": "File", "additionalProperties": true } },
+          { "name": "checkOnly", "type": "boolean" }
+        ]
+      },
+      {
         "name": "closeComposer",
         "type": "function",
         "async": true,

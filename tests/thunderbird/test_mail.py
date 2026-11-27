@@ -12,7 +12,8 @@ from thunderbird_rig import ACCOUNT, MAILBOX, Stack
 
 from chamberlain.connectors.thunderbird import protocol
 from chamberlain.connectors.thunderbird.identity import encode_locator
-from chamberlain.connectors.thunderbird.mail_reads import ThunderbirdBinding
+from chamberlain.connectors.thunderbird.mail import ThunderbirdMail
+from chamberlain.connectors.thunderbird.mail_reads import MailLimits, ThunderbirdBinding
 from chamberlain.connectors.thunderbird.mail_writes import ALLOW_DUPLICATE_REF, DISPLAY_ONLY_REF
 from chamberlain.domain.canonical import sha256_bytes
 from chamberlain.domain.capabilities import CapabilityName, HealthState
@@ -557,3 +558,45 @@ def test_reconcile_legacy_move_missing_baseline_is_unknown(stack: Stack) -> None
     result = stack.mail.reconcile(prepared, "legacy")
     assert result.status is ReconcileStatus.UNKNOWN
     assert "baseline" in result.detail
+
+
+# --- headless sends and one Sent copy ------------------------------------------------------
+
+
+def server_copy_mail(stack: Stack) -> ThunderbirdMail:
+    """The same mailbox configured with `sent_copy: server`, as for Exchange."""
+    binding = stack.mail.binding(SOURCE).model_copy(update={"sent_copy": "server"})
+    return ThunderbirdMail(
+        stack.client,
+        {SOURCE: binding},
+        stack.clock,
+        limits=MailLimits(sample_interval_seconds=0),
+        sleep=lambda seconds: None,
+    )
+
+
+def test_c_sent_copy_server_files_no_client_copy_and_reconcile_finds_the_servers(
+    stack: Stack,
+) -> None:
+    stack.control("inject", fault="server_keeps_sent")
+    stack.control("inject", fault="server_reencodes")
+    mail = server_copy_mail(stack)
+    intent = send_intent(stack, to="paired@example.org")
+    prepared = mail.prepare(intent, {})
+    applied(mail.dispatch(prepared, "k", {}))
+    assert stack.control("submissions") == 1
+    assert stack.control("copies", id=intent.message_id, folder_id=ACCOUNT + "://Sent") == 1
+    settled = mail.reconcile(prepared, "k")
+    assert settled.status is ReconcileStatus.PRESENT, "found by its token though the body differs"
+    # Read as a client copy, the re-encoded server copy would not match on content.
+    as_client = prepared.model_copy(update={"data": {**prepared.data, "sent_copy": "client"}})
+    assert stack.mail.reconcile(as_client, "k").status is not ReconcileStatus.PRESENT
+
+
+def test_h_a_send_leaves_no_composer_and_the_owners_are_only_counted(stack: Stack) -> None:
+    stack.control("owner_composer", name="the owner's own reply")
+    assert stack.mail.composers(SOURCE) == (0, 1)
+    intent = send_intent(stack)
+    applied(stack.mail.dispatch(stack.mail.prepare(intent, {}), "k", {}))
+    assert stack.mail.composers(SOURCE) == (0, 1)
+    assert stack.control("counters")["headless"] == 1

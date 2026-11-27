@@ -155,18 +155,30 @@ captures the flag before and after and fails with `changed` if it moved):
 
 **Writes**: `compose`, `change`, `draft_discard`. Each performs one logical mutation.
 
-- `compose` with mode `send` applies the bound Sent folder explicitly (also on
-  replies), verifies the composer against the request (sender, subject, body,
-  recipients, Sent folder, priority, attachment bytes), then submits. It adds
-  the header `X-Chamberlain-Write-Token: <token>`. Thunderbird does not let an
-  add-on choose `Message-ID` (R1): the connector declares
+- `compose` is headless unless `display_only` is set: the add-on builds the message
+  (`nsIMsgCompFields`) and hands it to `nsIMsgSend` in the experiment API, so no composer
+  window opens. The helper first runs every check without changing anything (sender
+  identity, bound folders, the identity's Drafts setting, a draft open in any composer), so
+  a refusal proves nothing happened. The message carries the header
+  `X-Chamberlain-Write-Token: <token>`, the priority, the attachments (written to a private
+  temporary folder, deleted after the send), and on a reply `References` (Thunderbird derives
+  `In-Reply-To` from them). Prompts Thunderbird raises are parented on the hidden window,
+  never on a composer, and answered at once with their safe button while the request runs.
+  Thunderbird does not let an add-on choose `Message-ID` (R1): the connector declares
   `message_id_honoured: 0` and reconciles by content (section 6).
-- `compose` with mode `draft_save` or `draft_update` saves into the bound draft folder with
-  autosave paused in the managed composer; a manual edit by the user fails the
-  composer verification (`changed`). `draft_update` first checks the existing
-  draft's raw hash equals `expected_raw_sha256`, reopens it through the
-  experiment API, rewrites it, saves, and reports how many copies of the old
-  draft remain. `display_only` leaves the composer open.
+- `compose` with mode `send` files the Sent copy in the bound Sent folder, or none when
+  `sent_copy` is `server` (the server keeps its own; reconcile then knows it by sender,
+  subject, recipients and the write token). A reply marks the original replied and leaves
+  its read state alone.
+- `compose` with mode `draft_save` or `draft_update` saves into the bound draft folder.
+  `draft_update` first checks the existing draft's raw hash equals `expected_raw_sha256`,
+  saves the new draft in its place, and reports how many copies of the old draft remain.
+  `display_only` (a draft the owner asked to see) instead opens a composer window, verifies
+  it against the request (a manual edit fails it, `changed`), saves and leaves it open.
+- The add-on holds, edits and closes only composer windows it opened itself, tracked by
+  identity; it never acts on the owner's own composers. `status` reports how many composers
+  it opened are still open (`composers_own`) and how many others exist (`composers_other`),
+  counting only.
 - `draft_discard` closes a managed composer for the draft if the draft's raw
   hash still equals `expected_raw_sha256` and the composer is unmodified. It
   NEVER deletes saved mail (R8).
