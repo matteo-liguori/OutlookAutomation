@@ -292,3 +292,15 @@ def test_every_sent_folder_is_cleaned_as_on_exchange(rig: Rig) -> None:
     rig.tick()
     assert rig.health() == "ok"
     assert rig.copies("f-sent-items") == []
+
+
+def test_two_copies_of_one_message_in_a_folder_are_left_and_do_not_block(rig: Rig) -> None:
+    rig.grant()
+    marked = f"{DELIVERY_MARK} {MAIL} 20260105T050000Z"
+    for _ in range(2):
+        rig.fake.mail.add_message(
+            MAIL, folder_id="f-sent", internet_message_id="<twin@x>", subject=marked, sender=ME
+        )
+    rig.tick()
+    assert rig.health() == "ok", "the probe still ran and was cleaned up"
+    assert rig.copies("f-sent") == [marked, marked]

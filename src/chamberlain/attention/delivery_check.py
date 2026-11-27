@@ -235,17 +235,30 @@ def _await(ctx: Context, source: str, subject: str, deadline: datetime) -> datet
     return None
 
 
+def _movable(found: list[MessageSummary]) -> list[MessageSummary]:
+    """The copies the write engine can move. Two copies of one message in one folder (Exchange
+    saving its own Sent copy beside Thunderbird's) are never moved: the engine refuses to choose
+    between them. They stay where they are, logged, and do not count as left over."""
+    seen: dict[tuple[str, str], int] = {}
+    for m in found:
+        key = (m.folder_id, m.internet_message_id)
+        seen[key] = seen.get(key, 0) + 1
+    twins = [m for m in found if seen[(m.folder_id, m.internet_message_id)] > 1]
+    if twins:
+        log.info("%d duplicate delivery-check copies stay in their folder", len(twins))
+    return [m for m in found if seen[(m.folder_id, m.internet_message_id)] == 1]
+
+
 def _clean(ctx: Context, engine: Engine, source: str, grant: str) -> tuple[bool, bool]:
     """Move every copy of this mailbox's delivery-check mail (Inbox, Sent) to Trash.
 
     One `mail.trash` write per folder per pass. Returns (none is left, an Inbox copy was moved).
     A failure is logged and left for the next sweep (the record still names the message)."""
-    roles = (FolderRole.INBOX, FolderRole.SENT)
     inbox_moved = False
     try:
         for _ in range(CLEANUP_PASSES):
             inbox = _marked(ctx, source, FolderRole.INBOX)
-            found = inbox + _marked(ctx, source, FolderRole.SENT)
+            found = _movable(inbox + _marked(ctx, source, FolderRole.SENT))
             if not found:
                 return True, inbox_moved
             by_folder: dict[str, list[MessageSummary]] = {}
@@ -269,7 +282,8 @@ def _clean(ctx: Context, engine: Engine, source: str, grant: str) -> tuple[bool,
                 inbox_moved = inbox_moved or (moved and copies[0] in inbox)
             if not progress:
                 return False, inbox_moved
-        return not any(_marked(ctx, source, role) for role in roles), inbox_moved
+        left = _marked(ctx, source, FolderRole.INBOX) + _marked(ctx, source, FolderRole.SENT)
+        return not _movable(left), inbox_moved
     except Exception:
         log_failure(log, "moving the delivery-check message of %s to Trash failed", source)
         return False, inbox_moved
