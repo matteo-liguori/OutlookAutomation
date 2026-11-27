@@ -87,6 +87,10 @@ class ThunderbirdBinding(Model):
     sent_folder_id: str = Field(min_length=1)
     draft_folder_id: str = Field(min_length=1)
     trash_folder_id: str = Field(min_length=1)
+    sent_copy: Literal["client", "server"] = "client"
+    """Who files the Sent copy of a send. `client`: Thunderbird files it in the bound Sent
+    folder. `server`: the mail server keeps its own copy (Exchange and Office 365 usually do),
+    so Thunderbird files none and a send leaves one copy, not two."""
 
     @property
     def account(self) -> _AccountFields:

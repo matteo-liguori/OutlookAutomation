@@ -15,6 +15,7 @@ from chamberlain.attention.collect import source_health
 from chamberlain.attention.hooks import HOOKS as _HOOKS
 from chamberlain.attention.overrides import apply_overrides
 from chamberlain.attention.rules import Rule, load_rules, rule_problems
+from chamberlain.attention.sent_copies import sent_copy_checks
 from chamberlain.attention.tuning import GUIDE_PAGE
 from chamberlain.attention.work import work_item
 from chamberlain.domain.capabilities import HealthState
@@ -290,6 +291,7 @@ HANDLERS: dict[ToolName, Handler] = {
 DOCTOR_CHECKS: list[tuple[DoctorCheck, DoctorCheckFn]] = [
     (DoctorCheck.GUIDANCE, guidance_checks),
     (DoctorCheck.SOURCES, source_checks),
+    (DoctorCheck.SOURCES, sent_copy_checks),
 ]
 """Checks this track contributes to `doctor`."""
 

@@ -247,6 +247,7 @@ class ThunderbirdMail(MailReads):
             inbox_folder_id=binding.inbox_folder_id if everyone == {own} else None,
             draft=draft,
             expected_raw_sha256=expected,
+            sent_copy=binding.sent_copy if isinstance(intent, MailSend) else "client",
         )
         if isinstance(intent, MailSend) and refs.get(ALLOW_DUPLICATE_REF) != "1":
             plan.check_duplicates(self, binding)

@@ -395,7 +395,10 @@ class ComposeArgs(AccountArgs, _Recipients):
     attachments: tuple[AttachmentSpec, ...] = ()
     reply_to: MessageRef | None = None
     display_only: bool = False
-    """Leave the saved draft's composer open (drafts only)."""
+    """Open the saved draft in a composer window for the owner (drafts only). Otherwise no
+    window opens: the add-on composes headless."""
+    sent_copy: Literal["client", "server"] = "client"
+    """A send: `server` files no client copy, because the server keeps its own."""
 
     draft: MessageRef | None = None
     expected_raw_sha256: Hex64 | None = None

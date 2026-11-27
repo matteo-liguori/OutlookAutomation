@@ -13,7 +13,7 @@ from typing import cast
 
 from pydantic import JsonValue
 
-from chamberlain.connectors.fake.world import FakeWorld, Fault, StoredMail, text
+from chamberlain.connectors.fake.world import FakeWorld, Fault, StoredMail, Submission, text
 from chamberlain.domain.canonical import sha256_bytes, sha256_text
 from chamberlain.domain.capabilities import (
     Capability,
@@ -166,6 +166,23 @@ class FakeMail:
         """Make a send to the mailbox's own address also arrive in its Inbox."""
         (self._world.delivers_to_self.add if on else self._world.delivers_to_self.discard)(source)
 
+    def set_address(self, source: str, address: str) -> None:
+        """The mailbox's own address: its sender, and where mail to it is delivered."""
+        self._world.mail_addresses[source] = address.lower()
+
+    def act_like_exchange(self, source: str, on: bool = True) -> None:
+        """The server saves its own Sent copy of every message it accepts."""
+        (self._world.server_keeps_sent.add if on else self._world.server_keeps_sent.discard)(source)
+
+    def set_sent_copy(self, source: str, mode: str) -> None:
+        """`client` (default): the client files the Sent copy. `server`: it files none."""
+        self._world.sent_copy[source] = mode
+
+    def sent_copies(self, source: str, internet_message_id: str) -> int:
+        """Copies of one message in the source's Sent folder."""
+        folder = self._world.folder_by_role(source, FolderRole.SENT).id
+        return len(self._matching(source, internet_message_id, folder))
+
     def stick_folder(self, source: str, folder_id: str, stuck: bool = True) -> None:
         """Make a folder's sync never finish (or finish again)."""
         folders = self._world.stuck_folders.setdefault(source, set())
@@ -308,6 +325,9 @@ class FakeMail:
         match intent:
             case MailSend() | MailDraftSave() | MailDraftUpdate():
                 data = self._compose_data(intent)
+                if isinstance(intent, MailSend):
+                    data["sent_copy"] = self._world.sent_copy.get(source, "client")
+                data["display_only"] = refs.get("_display_only") == "1"
                 token = intent.message_id
                 if token is None:
                     raise ChamberlainError(
@@ -496,7 +516,7 @@ class FakeMail:
                 folder_id=world.folder_by_role(source, role).id,
                 internet_message_id=prepared.reconcile_token or "",
                 subject=text(data, "subject"),
-                sender=Address(address="owner@example.org"),
+                sender=Address(address=self._address(source)),
                 to=tuple(Address(address=a) for a in _texts(data, "to")),
                 cc=tuple(Address(address=a) for a in _texts(data, "cc")),
                 date=world.clock.now(),
@@ -505,7 +525,12 @@ class FakeMail:
                 attachments=attachments,
                 raw_sha256=text(data, "raw_sha256"),
             )
-            world.mail[source].append(stored)
+            if kind is _K.MAIL_SEND:
+                stored = self._submit(source, stored, data)
+            else:
+                world.mail[source].append(stored)
+                if data.get("display_only") is True:
+                    world.open_composers += 1
             if (
                 kind is _K.MAIL_SEND
                 and source in world.delivers_to_self
@@ -560,6 +585,40 @@ class FakeMail:
                 code = ErrorCode.REMOTE_AMBIGUOUS if found else ErrorCode.REQUEST_UNKNOWN_HANDLE
                 results.append(ItemResult(locator=locator, ok=False, code=code))
         return ProviderReceipt(verification=_VERIFIED, items=tuple(results))
+
+    def _submit(
+        self, source: str, client_copy: StoredMail, data: Mapping[str, JsonValue]
+    ) -> StoredMail:
+        """One submission: the Sent copies the client and the server file, and delivery to
+        other fake mailboxes. Returns the Sent copy the receipt names."""
+        world = self._world
+        recipients = tuple(
+            a.lower() for a in (*_texts(data, "to"), *_texts(data, "cc"), *_texts(data, "bcc"))
+        )
+        world.submissions.append(Submission(source, client_copy.internet_message_id, recipients))
+        copies: list[StoredMail] = []
+        if data.get("sent_copy", "client") == "client":
+            copies.append(client_copy)
+        if source in world.server_keeps_sent:
+            copies.append(
+                replace(client_copy, uid=world.next_uid(), session_id=world.next_session_id())
+            )
+        world.mail[source].extend(copies)
+        for other, address in world.mail_addresses.items():
+            if other != source and address in recipients and other in world.mail:
+                world.mail[other].append(
+                    replace(
+                        client_copy,
+                        uid=world.next_uid(),
+                        session_id=world.next_session_id(),
+                        folder_id=world.folder_by_role(other, FolderRole.INBOX).id,
+                        unread=True,
+                    )
+                )
+        return copies[0] if copies else client_copy
+
+    def _address(self, source: str) -> str:
+        return self._world.mail_addresses.get(source, "owner@example.org")
 
     def _move_settled(self, prepared: Prepared) -> bool:
         """Exactly one copy at the destination and none at the source (P-14)."""

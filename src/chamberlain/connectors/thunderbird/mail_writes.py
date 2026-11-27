@@ -1,7 +1,7 @@
 """Typed Thunderbird write plans. Each shape dispatches once and reconciles from copy facts."""
 
 from collections.abc import Mapping
-from typing import Final
+from typing import Final, Literal
 
 from pydantic import Field
 
@@ -97,6 +97,7 @@ class ComposePlan(Model):
     inbox_folder_id: str | None
     draft: MessageRef | None = None
     expected_raw_sha256: str | None = None
+    sent_copy: Literal["client", "server"] = "client"
 
     def dispatch(
         self,
@@ -182,7 +183,10 @@ class ComposePlan(Model):
             scope = observed.get(place)
             if scope is None:
                 continue
-            found = [copy for copy in scope.copies if _matches(copy, self.fingerprint, place)]
+            server = self.sent_copy == "server" and place == "sent"
+            found = [
+                copy for copy in scope.copies if _matches(copy, self.fingerprint, place, server)
+            ]
             if not found:
                 continue
             if sending and place in ("drafts", "outbox"):
@@ -512,10 +516,22 @@ def by_id(scope: protocol.CopyScopeResult) -> dict[str, list[Header]]:
     return by_id
 
 
-def _matches(copy: protocol.CopyFact, want: Fingerprint, place: str) -> bool:
+def _matches(
+    copy: protocol.CopyFact, want: Fingerprint, place: str, server_copy: bool = False
+) -> bool:
+    """The copy is this write's. The server's own Sent copy may re-encode the body, so it is
+    recognised by sender, subject, recipients and the write token instead of the body hash."""
+
     def addresses(values: tuple[str, ...]) -> tuple[str, ...]:
         return tuple(sorted(value.lower() for value in values))
 
+    if server_copy and want.token and copy.token == want.token:
+        return (
+            parse_address(copy.header.author).address.lower() == want.sender.lower()
+            and normalise_subject(copy.subject or "") == normalise_subject(want.subject)
+            and addresses(copy.to) == want.to
+            and addresses(copy.cc) == want.cc
+        )
     return (
         parse_address(copy.header.author).address.lower() == want.sender.lower()
         and normalise_subject(copy.subject or "") == normalise_subject(want.subject)

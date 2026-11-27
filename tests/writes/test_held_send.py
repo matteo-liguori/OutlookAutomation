@@ -16,7 +16,7 @@ from chamberlain.writes import repo
 from chamberlain.writes.confirm import ConfirmationApp, Response
 from chamberlain.writes.held import ACTOR
 from chamberlain.writes.models import GrantRow, OperationRow, Proposal
-from support.write_rig import WriteRig
+from support.write_rig import MAIL, WriteRig
 
 ORIGIN = "http://127.0.0.1:5555"
 TOKEN = "t" * 43
@@ -189,3 +189,63 @@ def test_w49_the_confirmation_page_shows_everything_that_will_be_sent(rig: Write
     ):
         assert part in shown
     assert IntentKind.MAIL_SEND.value == "mail.send"
+
+
+# --- the whole round trip in the fake world -------------------------------------------------
+
+OTHER = "mail:paired"
+
+
+def two_mailboxes(rig: WriteRig, *, exchange: bool, sent_copy: str) -> None:
+    """The sender and a paired mailbox the owner controls, as the live test's cross pair."""
+    rig.fake.mail.add_source(OTHER)
+    rig.fake.mail.set_address(MAIL, "owner@example.org")
+    rig.fake.mail.set_address(OTHER, "paired@example.org")
+    rig.fake.mail.act_like_exchange(MAIL, exchange)
+    rig.fake.mail.set_sent_copy(MAIL, sent_copy)
+    rig.fake.world.owner_composers.append("the owner's own unsent reply")
+    rig.fake.mail.add_message(
+        MAIL, folder_id="f-drafts", internet_message_id="<owner-draft@example.org>"
+    )
+
+
+@pytest.mark.parametrize(("exchange", "sent_copy"), [(False, "client"), (True, "server")])
+def test_d_approve_then_send_one_submission_one_arrival_one_sent_copy(
+    rig: WriteRig, exchange: bool, sent_copy: str
+) -> None:
+    two_mailboxes(rig, exchange=exchange, sent_copy=sent_copy)
+    action = owner_action(rig)
+    proposal = held(rig, action, to=("paired@example.org",), body="Approved words.")
+    reply = confirm(rig, proposal.grant.handle, proposal.content_sha256)
+    assert reply.body["send"]["result"] == "sent"
+    world = rig.fake.world
+    assert len(world.submissions) == 1
+    token = world.submissions[0].token
+    assert rig.fake.mail.sent_copies(MAIL, token) == 1
+    assert rig.fake.mail.copies(OTHER, token, "f-inbox") == 1
+    assert world.open_composers == 0
+    assert world.owner_composers == ["the owner's own unsent reply"]
+    assert rig.fake.mail.copies(MAIL, "<owner-draft@example.org>", "f-drafts") == 1
+    # Confirming again, or the agent's `do`, never submits a second time.
+    confirm(rig, proposal.grant.handle, proposal.content_sha256)
+    rig.engine().do(proposal.operation.handle)
+    assert len(world.submissions) == 1
+
+
+def test_c_a_client_copy_on_an_exchange_like_server_leaves_two_and_doctor_says_so(
+    rig: WriteRig,
+) -> None:
+    from chamberlain.attention.sent_copies import sent_copy_checks
+
+    two_mailboxes(rig, exchange=True, sent_copy="client")
+    assert sent_copy_checks(rig.engine().ctx)[0].status == "ok"
+    action = owner_action(rig)
+    proposal = held(rig, action, to=("paired@example.org",))
+    confirm(rig, proposal.grant.handle, proposal.content_sha256)
+    token = rig.fake.world.submissions[0].token
+    assert len(rig.fake.world.submissions) == 1
+    assert rig.fake.mail.sent_copies(MAIL, token) == 2
+    check = sent_copy_checks(rig.engine().ctx)[0]
+    assert check.status == "warn"
+    assert check.fix is not None
+    assert "sent_copy: server" in check.fix

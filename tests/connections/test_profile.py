@@ -284,7 +284,7 @@ def test_s16_the_stored_binding_of_every_kind_keeps_its_field_order() -> None:
     assert stored == {
         "mail:work": '{"label":"Work",' + head + ',"kind":"thunderbird","account_id":"a1",'
         '"mailbox":"me@x.org","inbox_folder_id":"i","sent_folder_id":"s",'
-        '"draft_folder_id":"d","trash_folder_id":"t"}',
+        '"draft_folder_id":"d","trash_folder_id":"t","sent_copy":"client"}',
         "contacts:book": '{"label":"",' + head + ',"kind":"thunderbird_contacts",'
         '"address_book_ids":["b1","b2"]}',
         "calendar:owl": '{"label":"","enabled":true,"commitments":false,"test_only":false,'

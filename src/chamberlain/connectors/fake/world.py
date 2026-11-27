@@ -111,6 +111,15 @@ class StoredContact:
 
 
 @dataclass(frozen=True)
+class Submission:
+    """One message handed to the mail server (the SMTP submission of a send)."""
+
+    source: str
+    token: str
+    recipients: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class DispatchRecord:
     """One call to `dispatch`. Tests assert no key appears twice (W-8)."""
 
@@ -148,6 +157,19 @@ class FakeWorld:
         """Mail sources where a send addressed to the mailbox's own address also lands in the
         Inbox (a working round trip). Off by default: a send leaves only a Sent copy."""
         self.dispatch_log: list[DispatchRecord] = []
+        self.mail_addresses: dict[str, str] = {}
+        """Mail source to its own address; a send to it from another fake source arrives in
+        its Inbox. Unset: `owner@example.org`, with no delivery between sources."""
+        self.server_keeps_sent: set[str] = set()
+        """Mail sources whose server saves its own Sent copy of each submission (Exchange)."""
+        self.sent_copy: dict[str, str] = {}
+        """Mail source to `client` (the client files the Sent copy, the default) or `server`."""
+        self.submissions: list[Submission] = []
+        """Every message handed to a server, in order: one per send that went out."""
+        self.open_composers = 0
+        """Composer windows the harness opened and left open (only a display-only draft does)."""
+        self.owner_composers: list[str] = []
+        """Composers the owner has open themselves (test-seeded). The harness never touches them."""
         self.outbox: dict[str, set[str]] = {}
         """Per mail source, the Message-ID tokens of sends held in the client's Outbox."""
         self._armed: dict[Fault, int] = {}

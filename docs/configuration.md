@@ -17,6 +17,8 @@ sources:                         # id prefix gives the role: mail:, calendar:, c
     account_id: account1
     inbox_folder_id: account1://INBOX
     # sent, drafts and trash folder ids as written by `chamberlain import` or setup
+    sent_copy: client            # default client: Thunderbird files the Sent copy. server: the
+                                 # server keeps its own copy, so Thunderbird files none (see below)
   calendar:primary:
     kind: google                 # or caldav, owl
     account: you@example.com
@@ -106,6 +108,15 @@ most once per mailbox in 3 hours, never for `test_only` sources, and only with a
 permission for the mailbox that your click in the viewer confirms (see
 [permissions](permissions.md)). Without that permission the harness proposes it once and sends
 nothing. Set `delivery_check: false` to turn the fallback off.
+
+### `sent_copy`: one copy in Sent
+
+Thunderbird puts a copy of every message it sends in the bound Sent folder. Exchange and Office
+365 usually save their own copy as well when they accept a message, so each send then shows two
+copies with the same Message-ID (Gmail merges them into one). Set `sent_copy: server` on such a
+mailbox: Thunderbird then files no copy, and the harness checks the send by finding the server's
+copy in Sent after a folder sync. `chamberlain doctor` warns (`sources.sent_copies`) when a
+mailbox's recent Sent mail holds two copies of one message.
 
 ### `read_state`: marking mail read
 
