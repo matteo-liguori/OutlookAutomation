@@ -56,7 +56,10 @@ def make_handlers(pause: Callable[[float], None] | None = None) -> dict[ToolName
         eng = engine(ctx)
         if request.intent is not None:
             proposal = eng.propose_intent(
-                request.intent, card=request.card, evidence=request.evidence
+                request.intent,
+                card=request.card,
+                evidence=request.evidence,
+                hold_for=request.action,
             )
         elif request.redo_of is not None:
             proposal = resend.propose_redo(

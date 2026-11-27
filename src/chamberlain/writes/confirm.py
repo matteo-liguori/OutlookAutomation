@@ -15,7 +15,7 @@ import re
 import secrets
 import stat
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -31,6 +31,7 @@ from chamberlain.domain.timefmt import parse
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
 from chamberlain.writes import repo
 from chamberlain.writes.grants import GrantService
+from chamberlain.writes.held import send_approved
 from chamberlain.writes.models import GrantRow, WritePolicy
 from chamberlain.writes.render import describe_intent, describe_scope
 
@@ -205,6 +206,12 @@ class ConfirmationApp:
             data = _json(body)
             if action == "confirm":
                 grant = confirm_grant(ctx, handle, data, self._policy)
+                sent = send_approved(ctx, grant, self._policy)
+                if sent is not None:
+                    # The approved send went (or was tried) in this request: show its result.
+                    answer = _grant_json(_grant(ctx, handle))
+                    answer["send"] = asdict(sent)
+                    return Response(200, answer)
             elif action == "decline":
                 grant = decline_grant(ctx, handle, self._policy)
             elif action == "revoke":
@@ -281,6 +288,10 @@ def grant_detail(ctx: Context, handle: str) -> dict[str, Any]:
         detail["operation"] = shown.handle
         detail["intent"] = json.loads(shown.intent_json or "{}")
         detail["rendered"] = describe_intent(intent, limit=None, refs=shown.refs())[0]
+        if intent.kind is IntentKind.MAIL_SEND and grant.state is GrantState.PROPOSED:
+            detail["rendered"] = (
+                "Confirming sends this message at once, exactly as shown.\n\n" + detail["rendered"]
+            )
     elif grant.confirmed_via == "import":
         detail["rendered"] = _imported_wording(ctx, grant)
     return detail

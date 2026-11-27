@@ -77,11 +77,12 @@ def insert_grant(
     supersedes: str | None,
     proposed_by: str | None,
     proposed_at: str,
+    action: str | None = None,
 ) -> None:
     db.execute(
         "INSERT INTO grants (handle, kind, state, source_id, title, summary, requirement, "
-        "content_sha256, scope_json, card, supersedes, proposed_by, proposed_at) "
-        "VALUES (?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "content_sha256, scope_json, card, supersedes, proposed_by, proposed_at, action) "
+        "VALUES (?, ?, 'proposed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             handle,
             kind.value,
@@ -95,6 +96,7 @@ def insert_grant(
             supersedes,
             proposed_by,
             proposed_at,
+            action,
         ),
     )
 
@@ -143,6 +145,17 @@ def proposed_one_off(
     row = db.execute(
         "SELECT * FROM grants WHERE kind = 'one_off' AND state = 'proposed' "
         "AND source_id = ? AND content_sha256 = ? ORDER BY proposed_at DESC LIMIT 1",
+        (source_id, content_sha256),
+    ).fetchone()
+    return None if row is None else _grant(row)
+
+
+def held_one_off(db: sqlite3.Connection, source_id: str, content_sha256: str) -> GrantRow | None:
+    """The live one-off that holds this exact send for the owner's approval, if any."""
+    row = db.execute(
+        "SELECT * FROM grants WHERE kind = 'one_off' AND action IS NOT NULL "
+        "AND state IN ('proposed', 'active') AND source_id = ? AND content_sha256 = ? "
+        "ORDER BY proposed_at DESC LIMIT 1",
         (source_id, content_sha256),
     ).fetchone()
     return None if row is None else _grant(row)

@@ -28,7 +28,7 @@ def test_config_migrate_previews_unless_apply_is_explicit(
         "mode": "preview",
         "profile": None,
         "store_version": BASELINE_VERSION,
-        "pending": [280, 290],
+        "pending": [280, 290, 300],
         "applied": [],
         "backup": None,
     }
@@ -39,5 +39,5 @@ def test_config_migrate_previews_unless_apply_is_explicit(
     assert main([*command, "--apply"], apply) == 0
     result = json.loads(apply.getvalue())
     assert result["mode"] == "apply"
-    assert result["applied"] == [280, 290]
+    assert result["applied"] == [280, 290, 300]
     assert (Path(result["backup"]) / "pre-migration-0280.sqlite3").is_file()

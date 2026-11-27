@@ -186,8 +186,8 @@ The viewer marks it "Waiting for you", and the report lists it at the top (migra
 
 ### propose
 
-Request: either `intent` (a `WriteIntent`, 04) with optional `card` and
-`evidence[]`; or `standing` (a `StandingScope`, 05) to ask for a standing
+Request: either `intent` (a `WriteIntent`, 04) with optional `card`,
+`evidence[]` and `action` (a reply held for the owner's approval, W-48); or `standing` (a `StandingScope`, 05) to ask for a standing
 grant; or `operation` plus `approval_evidence` to attach the user's in-chat
 approval to an earlier proposal.
 Response: `operation?`, `grant?`, `state`, `requirement` (`none` |

@@ -77,7 +77,7 @@ def test_the_migration_gives_existing_actions_for_owner_0(tmp_path: Path) -> Non
                 "('act_aaaaaaaa', 'card_aaaaaaaa', 'Old step', '2026-01-01T00:00:00Z', "
                 "'2026-01-01T00:00:00Z')"
             )
-        assert migrate(connection, clock, backup_dir=tmp_path / "backups") == [290]
+        assert migrate(connection, clock, backup_dir=tmp_path / "backups") == [290, 300]
         row = connection.execute("SELECT for_owner FROM actions").fetchone()
         assert row["for_owner"] == 0
         frozen = [r["name"] for r in connection.execute("PRAGMA table_info(run_reports)")]

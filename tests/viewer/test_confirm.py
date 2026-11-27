@@ -49,7 +49,9 @@ def test_g19_the_viewer_shows_the_exact_content_a_wrong_hash_is_409_and_the_righ
     shown = rig.call("GET", f"/api/grants/{handle}").body["content_sha256"]
     done = rig.call("POST", f"/api/grants/{handle}/confirm", {"content_sha256": shown})
     assert done.status == 200
-    assert done.body["state"] == "active"
+    # A confirmed one-off send goes at once (W-49): the grant is spent by its one use.
+    assert done.body["state"] == "spent"
+    assert done.body["send"]["result"] == "sent"
     assert repo.known_recipients(rig.ctx.db, "mail:test") == {"stranger@example.org"}
     assert proposal.operation is not None
     assert rig.engine().do(proposal.operation.handle).state is OperationState.CONFIRMED

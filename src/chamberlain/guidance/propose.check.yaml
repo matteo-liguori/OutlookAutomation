@@ -1,11 +1,14 @@
 id: propose.check
-version: 2
+version: 3
 title: Proposing a change
 when: {tool: propose}
 text: >
   Say exactly what you will do and check it against the request:
   recipients, attachments, times, wording. If the user must confirm, say
-  what it would do and wait. A permission covers one thing only.
-max_chars: 200
+  what it would do and wait. A permission covers one thing only. A reply
+  for the owner to approve is the exact mail.send proposed with action
+  (their action): it is sent when they confirm. Use mail.draft_save only
+  when they ask for a draft in their mail program.
+max_chars: 400
 once_per: session
 priority: 60

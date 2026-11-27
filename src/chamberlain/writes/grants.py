@@ -61,8 +61,10 @@ class GrantService:
         requirement: Requirement,
         card: str | None,
         actor: str,
+        action: str | None = None,
     ) -> GrantRow:
-        """A one-off grant bound to exactly one content hash (G-3)."""
+        """A one-off grant bound to exactly one content hash (G-3). With `action`, it holds a
+        drafted send for the owner: only their confirmation in the viewer releases it."""
         return self._create(
             GrantKind.ONE_OFF,
             source_id=source_id,
@@ -72,6 +74,7 @@ class GrantService:
             requirement=requirement,
             card=card,
             actor=actor,
+            action=action,
         )
 
     def propose_standing(
@@ -113,6 +116,7 @@ class GrantService:
         actor: str,
         scope_json: str | None = None,
         supersedes: str | None = None,
+        action: str | None = None,
     ) -> GrantRow:
         handle = new_handle(HandleKind.GRANT)
         with transaction(self._db):
@@ -130,6 +134,7 @@ class GrantService:
                 supersedes=supersedes,
                 proposed_by=actor,
                 proposed_at=stamp(self._clock),
+                action=action,
             )
             self._audit.append(
                 actor=actor,

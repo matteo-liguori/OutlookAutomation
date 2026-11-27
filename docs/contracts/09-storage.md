@@ -123,6 +123,9 @@ Column definitions are in `0270_baseline.sql`; that file is normative.
   option; there is no default inside the repository, and tests always use a
   temporary directory.
 
+Migration 0300 adds `grants.action`: the owner's card action a held send waits on (W-48);
+existing grants name none.
+
 Migration 0290 adds `actions.for_owner` (0 for existing actions) and `run_reports.frozen_at`
 (set when the next scheduled pass starts and freezes the report).
 

@@ -387,6 +387,24 @@ text below says "send" where the rule is about sends only.
   reported by the assistant and not checked by the harness. The viewer's timeline shows each one with
   its card, and the viewer's grant page lists the uses of a standing permission.
 
+## Replies held for the owner (W-48, W-49)
+
+- **W-48** A drafted reply waits in Chamberlain, not in the mail client. The agent proposes the exact
+  `mail.send` with `action`: the open action for the owner ("Approve the reply to <who>: <gist>") on
+  the card. That makes a one-off grant bound to the content hash and to the action, needing the
+  owner's confirmation. No standing grant releases a held send: only that one-off authorises it, and
+  `do` is refused until the owner confirms. `mail.draft_save` is for a draft the owner asked to have
+  in the mail client.
+- **W-49** Confirming sends at once. When the owner confirms a one-off grant for a `mail.send` in the
+  viewer, the confirm request itself sends the stored intent once through the engine (actor
+  `system:approved-send`, the grant pinned, its idempotency key from the grant), and answers with the
+  result. Nothing is re-rendered from the agent. A second confirmation, or `do` afterwards, finds the
+  operation settled and sends nothing. On success the linked action is finished with "Sent as
+  approved at HH:MM (local)". A failure or an uncertain outcome leaves the action open with a note
+  saying why (an uncertain send is reconciled, never sent again). Without a linked action the send
+  still goes. The viewer is busy while it sends: seconds normally, up to about a minute when the
+  outcome has to be settled.
+
 ## Owner-directed clean-up and export
 
 Mail clean-up is optional and off by default. `cleanup plan|grant|run` supports

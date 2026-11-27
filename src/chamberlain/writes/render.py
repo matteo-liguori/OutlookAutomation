@@ -124,6 +124,10 @@ def describe_intent(
         lines.append("Subject: " + intent.subject)
         for attachment in intent.attachments:
             lines.append(f"Attachment: {attachment.filename} sha256 {attachment.sha256}")
+        if intent.high_importance:
+            lines.append("Importance: high")
+        if intent.reply_to is not None:
+            lines.append("In reply to: " + intent.reply_to)
         body = intent.body
     if isinstance(intent, MailMove | MailTrash):
         lines.append(f"Messages: {len(intent.messages)} from one folder")

@@ -595,6 +595,14 @@ class ProposeRequest(ToolRequest):
     """Send an uncertain send again after the harness reported it missing (W-38)."""
     card: CardHandle | None = None
     evidence: tuple[EvidenceHandle, ...] = ()
+    action: ActionHandle | None = Field(
+        default=None,
+        description=(
+            "A reply drafted for the owner's approval: the open action for the owner that asks "
+            "them to approve it. The exact mail.send then waits for their confirmation in the "
+            "viewer, and Chamberlain sends it once confirmed and finishes the action."
+        ),
+    )
 
     @model_validator(mode="after")
     def _one_mode(self) -> Self:
@@ -605,6 +613,8 @@ class ProposeRequest(ToolRequest):
             raise ValueError("give exactly one of intent, standing, operation or redo_of")
         if (self.operation is None) != (self.approval_evidence is None):
             raise ValueError("operation and approval_evidence go together")
+        if self.action is not None and self.intent is None:
+            raise ValueError("action goes with intent")
         return self
 
 

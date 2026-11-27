@@ -57,7 +57,7 @@ def test_config_migrate_proves_preview_and_retains_db_and_exact_yaml_backup(
     assert preview.profile == profile
     assert preview.store_version == BASELINE_VERSION
     current = discover()[-1].version
-    assert preview.pending == (280, 290)
+    assert preview.pending == (280, 290, 300)
     assert preview.applied == ()
     assert preview.backup is None
     assert database.read_bytes() == original

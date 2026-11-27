@@ -59,7 +59,7 @@ from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import OperationView
 from chamberlain.store.db import transaction
 from chamberlain.store.migrate import stamp
-from chamberlain.writes import kinds, outside, repo, resend
+from chamberlain.writes import held, kinds, outside, repo, resend
 from chamberlain.writes.authorise import (
     Allow,
     Decision,
@@ -278,15 +278,22 @@ class Engine:
         *,
         card: str | None = None,
         evidence: tuple[str, ...] = (),
+        hold_for: str | None = None,
     ) -> Proposal:
-        """Store a complete intent and report the authority it needs (W-1, W-18, W-19)."""
+        """Store a complete intent and report the authority it needs (W-1, W-18, W-19).
+
+        `hold_for` names the owner's card action a drafted send waits on (W-48): the send is
+        held for the owner's confirmation in the viewer even when a standing grant covers it.
+        """
+        if hold_for is not None:
+            card = held.check_hold(self.db, intent, card, hold_for)
         if isinstance(intent, OutsideAction):
             # No connector stands behind it: nothing to locate, complete or limit (W-44).
             outside.check_outside(self, intent, card)
             completed, located = intent, kinds.Located()
         else:
             completed, located = kinds.prepare_intent(self.ctx, intent, card)
-        return self.propose_completed(completed, located, card, evidence)
+        return self.propose_completed(completed, located, card, evidence, hold_for=hold_for)
 
     def propose_completed(
         self,
@@ -296,15 +303,20 @@ class Engine:
         evidence: tuple[str, ...],
         *,
         redo: OperationRow | None = None,
+        hold_for: str | None = None,
     ) -> Proposal:
         """One storage and duplicate-check path for fresh proposals and authorised resends."""
         refs = located.to_refs()
         sha = intent_hash(intent)
         existing = self._existing(intent, sha, card, redo)
         if existing is not None:
+            if hold_for is not None:
+                held.hold_existing(self, existing, intent, hold_for)
             return self.proposal_for(existing, intent)
         handle = new_handle(HandleKind.OPERATION)
         decision = self.decide(intent, handle, sha, card, reserved=None, located=located, redo=redo)
+        if hold_for is not None:
+            decision = Deny(ErrorCode.GRANT_REQUIRED, Requirement.HUMAN_CONFIRMATION)
         if redo is not None and isinstance(decision, Deny):
             raise ChamberlainError(
                 decision.code,
@@ -336,7 +348,9 @@ class Engine:
             self.insert_proposal(
                 intent, handle, sha, card, refs, redo_of=redo.handle if redo else None
             )
-            if (
+            if hold_for is not None:
+                held.propose_held(self, intent, sha, card, hold_for)
+            elif (
                 isinstance(decision, Deny)
                 and repo.proposed_one_off(self.db, intent.source, sha) is None
             ):
@@ -629,7 +643,11 @@ class Engine:
     ) -> Decision:
         grants = self._grants_for(intent.source, reserved, redo)
         pinned = reserved if redo is None else redo.grant
-        return authorise(
+        holding = None if redo is not None else repo.held_one_off(self.db, intent.source, sha)
+        if holding is not None:
+            # A held send waits for the owner: no standing grant may release it (W-48).
+            grants = [g for g in grants if g.handle == holding.handle]
+        decision = authorise(
             intent,
             OperationFacts(handle, sha, card, pinned),
             grants,
@@ -637,6 +655,9 @@ class Engine:
             self.policy,
             self.ctx.clock.now(),
         )
+        if holding is not None and isinstance(decision, Deny):
+            return Deny(decision.code, Requirement.HUMAN_CONFIRMATION)
+        return decision
 
     # --- do -----------------------------------------------------------------------
 

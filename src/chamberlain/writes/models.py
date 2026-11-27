@@ -72,6 +72,8 @@ class GrantRow:
     last_reviewed_at: datetime | None
     ended_at: datetime | None
     compacted_at: datetime | None
+    action: str | None = None
+    """A held send: the card action, waiting for the owner, that asks them to approve it."""
 
     def covers(self, source: str) -> bool:
         """True when this grant is for `source`: its own, or one its scope lists (G-26)."""

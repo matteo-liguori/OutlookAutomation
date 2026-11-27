@@ -155,7 +155,13 @@
             class: "act primary",
             text: "Confirm exactly this",
             onclick: function () {
-              post("/api/grants/" + handle + "/confirm", { content_sha256: grant.content_sha256 }, function () { render(); });
+              post("/api/grants/" + handle + "/confirm", { content_sha256: grant.content_sha256 }, function (result) {
+                render();
+                // An approved send goes at once; say what happened to it.
+                if (result && result.send) {
+                  main.insertBefore(el("p", { class: result.send.result === "sent" ? "ok" : "warn", text: result.send.message }), main.firstChild);
+                }
+              });
             },
           })
         );
