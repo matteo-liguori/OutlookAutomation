@@ -113,8 +113,15 @@ def start(ctx: Context, request: StartRequest) -> Result:
         or None,
         waiting_more=max(0, len(asks) - OWNER_ASKS_MAX),
         live_report=None if live is None else live.handle,
+        live_report_text=None
+        if live is None
+        else _newest(runs_repo.report_handles(ctx.db, live.handle)),
     )
     return Result(response, next=(work[0].next,) if work else ())
+
+
+def _newest(handles: list[str]) -> str | None:
+    return handles[-1] if handles else None
 
 
 def _on_start(ctx: Context, agent: str) -> tuple[str, ...]:

@@ -122,6 +122,8 @@ class StartResponse(Model):
     """Asks waiting beyond those listed; the latest report lists every one."""
     live_report: RunHandle | None = None
     """Not in a scheduled pass: the run whose report the owner reads now and you may rewrite."""
+    live_report_text: ArtifactHandle | None = None
+    """With `live_report`: the stored text of that report now; open it before rewriting it."""
 
 
 class NextRequest(ToolRequest):

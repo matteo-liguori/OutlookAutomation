@@ -4,8 +4,9 @@ title: The latest report is still open
 when: {result: data.live_report != null}
 text: >
   The latest pass report stays open until the next pass. When you and the
-  owner settle something it mentions, keep your whole rewritten text as an
-  artifact owned by the live run; the newest text wins.
-max_chars: 220
+  owner settle something it mentions, open its current text from the start
+  reply, rewrite it whole and keep it as an artifact owned by the run the
+  start reply names. The newest text replaces the old.
+max_chars: 280
 once_per: session
 priority: 60

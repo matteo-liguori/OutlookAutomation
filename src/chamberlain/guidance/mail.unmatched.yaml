@@ -8,8 +8,9 @@ text: >
   The owner's part (a reply to approve, a question, a decision): an action
   for the owner, titled with the ask itself. Covered by a grant or standing
   permission: do it, then finish the action with the outcome. Outside these
-  tools: do it if allowed and finish it, else leave it for the owner.
-  Routine mail needs no card.
-max_chars: 480
+  tools (a portal, a website): log the action, do it if allowed and finish
+  it with the outcome, or mark it for the owner if only they can. Routine
+  mail needs no card.
+max_chars: 540
 once_per: session
 priority: 40

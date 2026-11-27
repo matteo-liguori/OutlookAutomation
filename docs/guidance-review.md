@@ -4,7 +4,7 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-48 rules, about 9,700 characters in total (budget 12,000; the gate keeps it under 85% of that).
+48 rules, about 9,900 characters in total (budget 12,000; the gate keeps it under 85% of that).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
@@ -160,9 +160,9 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 ## report.live: The latest report is still open
 
-- Trigger: `{'result': 'data.live_report != null'}`; shown session; priority 60; cap 220 chars
+- Trigger: `{'result': 'data.live_report != null'}`; shown session; priority 60; cap 280 chars
 
-> The latest pass report stays open until the next pass. When you and the owner settle something it mentions, keep your whole rewritten text as an artifact owned by the live run; the newest text wins.
+> The latest pass report stays open until the next pass. When you and the owner settle something it mentions, open its current text from the start reply, rewrite it whole and keep it as an artifact owned by the run the start reply names. The newest text replaces the old.
 
 ## card.over_cap: A card is too big
 
@@ -250,9 +250,9 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 ## mail.unmatched: New mail to triage
 
-- Trigger: `{'event': 'mail.new_unmatched', 'reason': 'received'}`; shown session; priority 40; cap 480 chars
+- Trigger: `{'event': 'mail.new_unmatched', 'reason': 'received'}`; shown session; priority 40; cap 540 chars
 
-> Open only what you need; suggested cards are guesses. A message that needs anything done becomes an action on its card as you read it, never a note. The owner's part (a reply to approve, a question, a decision): an action for the owner, titled with the ask itself. Covered by a grant or standing permission: do it, then finish the action with the outcome. Outside these tools: do it if allowed and finish it, else leave it for the owner. Routine mail needs no card.
+> Open only what you need; suggested cards are guesses. A message that needs anything done becomes an action on its card as you read it, never a note. The owner's part (a reply to approve, a question, a decision): an action for the owner, titled with the ask itself. Covered by a grant or standing permission: do it, then finish the action with the outcome. Outside these tools (a portal, a website): log the action, do it if allowed and finish it with the outcome, or mark it for the owner if only they can. Routine mail needs no card.
 
 ## mail.sent: Mail the owner sent elsewhere
 

@@ -60,7 +60,8 @@ lines of what the harness just did by itself, for the report: the owner's mail c
 docs/cleanup.md; empty when nothing happened), `waiting_for_you[]?` (at most 5 open actions
 waiting for the owner, oldest first: `{action, card, title, since}`; absent when none),
 `waiting_more` (how many more wait; the report lists every one), `live_report?` (not for a
-scheduled start: the run whose report is live, which the agent may rewrite with `keep`).
+scheduled start: the run whose report is live, which the agent may rewrite with `keep`) and
+`live_report_text?` (the stored item holding that report's current text).
 
 `WorkItem` is `{event, kind, subject?, summary, next}`: one event, one
 harness-written line of at most 160 characters, one exact tool call.

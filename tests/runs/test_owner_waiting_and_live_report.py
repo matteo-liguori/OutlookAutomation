@@ -9,7 +9,7 @@ any session may replace its text, and the next pass's start freezes it.
 from typing import Any
 
 import pytest
-from runs_rig import Rig
+from runs_rig import MAIL, Rig
 
 from chamberlain.app.wiring import COMPACTORS, run_tick
 from chamberlain.limits import ACTION_TITLE_MAX
@@ -141,12 +141,31 @@ def test_owner_waiting_leads_a_start_only_when_something_waits(rig: Rig) -> None
     scheduled = rig.start(purpose="scheduled", scheduled_day="2026-01-05")
     assert "text" in guidance(scheduled)["owner.waiting"]  # any purpose
 
-    # Many long asks: the start still fits, lists the oldest and says how many more there are.
+    # Many long asks beside a full list of work: the start still fits, lists the oldest asks
+    # and says how many more there are, and the rule comes in full.
     for number in range(OWNER_ASKS_MAX + 2):
         rig.clock.advance(minutes=1)
         ask(rig, f"{number:02d} " + "x" * (ACTION_TITLE_MAX - 3))
+    due = rig.call("card", op="create", fields={"title": "Chores " + "y" * 60})
+    for number in range(6):
+        rig.call(
+            "card",
+            op="add_action",
+            card=due["data"]["card"]["handle"],
+            action_fields={
+                "title": f"Chore {number} " + "z" * 140,
+                "due_at": "2026-01-05T06:00:00Z",
+            },
+        )
+    for number in range(8):
+        rig.fake.mail.add_message(
+            MAIL, internet_message_id=f"<m{number}@x>", subject="s" * 150, date=rig.clock.now()
+        )
+    rig.clock.advance(minutes=1)
+    run_tick(rig.app)
     full = chat(rig)
     assert full["ok"], full
+    assert len(full["data"]["work"]) >= 3
     assert full["data"]["waiting_for_you"][0]["title"] == ASK
     assert len(full["data"]["waiting_for_you"]) == OWNER_ASKS_MAX
     assert full["data"]["waiting_more"] == 3
@@ -161,7 +180,9 @@ def test_the_live_report_recomposes_takes_new_text_and_freezes_at_the_next_pass(
     # report.live rides with a chat's start, never with a scheduled one.
     started = chat(rig)
     assert started["data"]["live_report"] == first.handle
-    assert "keep your whole rewritten text" in guidance(started)["report.live"]["text"]
+    assert "rewrite it whole" in guidance(started)["report.live"]["text"]
+    current = rig.call("open", handle=started["data"]["live_report_text"], part="body")
+    assert current["data"]["content"]["text"] == "v1: nothing waits."
     rig.session = None
     scheduled = rig.start(purpose="scheduled", scheduled_day=first.day)
     assert "live_report" not in scheduled["data"]
