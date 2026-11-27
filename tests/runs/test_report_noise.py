@@ -96,3 +96,20 @@ def test_only_due_reminders_ask_for_acknowledgement(monkeypatch: pytest.MonkeyPa
     assert "Dentist" in lines[0]
     assert "Acknowledgement needed" in lines[0]
     assert lines[1].startswith("- 2 later reminder(s) are scheduled; the next shows Thu 24 Dec")
+    assert not lines[1].endswith("..")
+
+
+def test_with_nothing_due_the_acknowledgement_section_is_left_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    later = Appointment(
+        "act_x",
+        "card_x",
+        "Important dates",
+        "Anniversary.",
+        "2027-01-24T00:00:00Z",
+        "2026-12-24T09:00:00Z",
+        False,
+    )
+    monkeypatch.setattr(appointments, "upcoming", lambda ctx: [later])
+    assert sections.important_appointments(Facts([])) == ""  # type: ignore[arg-type]

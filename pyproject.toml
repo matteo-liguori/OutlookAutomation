@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "chamberlain"
-version = "2.1.3"
+version = "2.1.4"
 description = "A local mail and calendar harness for AI agents: typed tools, verified writes, bounded memory."
 readme = "README.md"
 requires-python = ">=3.12"

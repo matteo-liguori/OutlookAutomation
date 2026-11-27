@@ -143,11 +143,12 @@ def important_appointments(facts: Facts) -> str:
             "Acknowledgement needed: open the viewer and hold the button."
         )
     later = [i for i in items if not i.due]
-    if later:
+    if lines and later:
+        # Only beside a due one: on its own it would sit under "acknowledgement required".
         nxt = min(later, key=lambda i: i.reminder_from or i.start)
         lines.append(
             f"- {len(later)} later reminder(s) are scheduled; the next shows "
-            f"{when(nxt.reminder_from or nxt.start, facts.zone)}: {_cell(nxt.title)}."
+            f"{when(nxt.reminder_from or nxt.start, facts.zone)}: {_cell(nxt.title).rstrip('.')}."
         )
     return "\n".join(lines)
 
