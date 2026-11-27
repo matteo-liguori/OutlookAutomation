@@ -38,6 +38,7 @@ import io
 import json
 import os
 import sys
+import webbrowser
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
@@ -82,6 +83,7 @@ from chamberlain.surface.schedule_install import (
     install,
     uninstall,
 )
+from chamberlain.surface.viewer import presence as viewer_presence
 from chamberlain.surface.viewer.server import launch
 from chamberlain.writes.seed import DEFAULT_MONTHS, seed_all
 
@@ -524,6 +526,17 @@ def _viewer(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     print_url = args.print_url or (
         os.environ.get(CLAUDE_CODE_ENV) == "1" and not args.browser and not args.no_open
     )
+    running = viewer_presence.running_url(root)
+    if running is not None and args.port == 0:
+        # One viewer per data root: show the running one instead of starting a second.
+        if print_url:
+            out.write(f"Viewer (already running): {running}\n")
+        elif not args.no_open:
+            webbrowser.open(running)
+            out.write("The viewer is already running; it has been opened in your browser.\n")
+        else:
+            out.write("The viewer is already running.\n")
+        return EXIT_OK
     viewer = launch(
         root,
         port=args.port,

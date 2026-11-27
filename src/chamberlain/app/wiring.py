@@ -1,5 +1,6 @@
 """Assemble the app, its handlers and tick steps over one store (S-18, A-6)."""
 
+import logging
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -31,7 +32,9 @@ from chamberlain.runs import plan as run_plan
 from chamberlain.runs import updates as run_updates
 from chamberlain.runs.updates import TagLister
 from chamberlain.schema.base import ToolName
+from chamberlain.schema.safelog import log_failure
 from chamberlain.store.migrate import open_store
+from chamberlain.surface.viewer import presence as viewer_presence
 from chamberlain.writes import maintenance as write_maintenance
 from chamberlain.writes.handlers import DOCTOR_CHECKS as WRITE_DOCTOR_CHECKS
 from chamberlain.writes.handlers import make_handlers
@@ -63,11 +66,17 @@ def app_handlers() -> dict[ToolName, Handler]:
     }
 
 
+log = logging.getLogger("chamberlain.app")
+LIVE_TEST_AGENT = "live-test"
+"""The agent name `chamberlain live-test` starts its sessions with."""
+
+
 def tick_steps(
     *,
     update_lister: TagLister | None = None,
     review: ReviewSettings | None = None,
     cleanup: CleanupConfig | None = None,
+    open_viewer: bool = False,
 ) -> TickSteps:
     """What the tick runs on every call (`always`), when due (`extra`) and what `start`
     runs before offering work (`on_start`)."""
@@ -96,6 +105,18 @@ def tick_steps(
             return [] if report is None else report.summary()
 
         on_start.append(clean_up_mail)
+    if open_viewer:
+
+        def show_the_viewer(ctx: Context, agent: str) -> list[str]:
+            if agent == LIVE_TEST_AGENT:
+                return []  # a test run must not open browser tabs
+            try:
+                viewer_presence.open_viewer(ctx.data_root)
+            except Exception:
+                log_failure(log, "opening the viewer at session start failed")
+            return []
+
+        on_start.append(show_the_viewer)
     return TickSteps(always=tuple(always), extra=tuple(extra), on_start=tuple(on_start))
 
 
@@ -109,6 +130,7 @@ def build_app(
     update_lister: TagLister | None = None,
     review: ReviewSettings | None = None,
     cleanup: CleanupConfig | None = None,
+    open_viewer: bool = False,
 ) -> App:
     """Open the store under `data_root` and assemble the app (S-18).
 
@@ -125,7 +147,9 @@ def build_app(
         sources=sources or SourceRouter(),
         services=Services.bind(db, the_clock, data_root, policy=configured_policy, budgets=budgets),
         write_policy=configured_policy,
-        tick_steps=tick_steps(update_lister=update_lister, review=review, cleanup=cleanup),
+        tick_steps=tick_steps(
+            update_lister=update_lister, review=review, cleanup=cleanup, open_viewer=open_viewer
+        ),
     )
     return App(context, app_handlers(), attention_handlers.HOOKS)
 

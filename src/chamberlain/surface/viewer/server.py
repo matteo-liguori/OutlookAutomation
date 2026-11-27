@@ -21,6 +21,7 @@ from chamberlain.app.core import App
 from chamberlain.connections import load_connections, open_app, policy_of
 from chamberlain.dataroot import refuse_inside_checkout
 from chamberlain.ports.clock import Clock
+from chamberlain.surface.viewer import presence
 from chamberlain.surface.viewer.app import ViewerApp
 from chamberlain.writes.confirm import create_token
 from chamberlain.writes.models import WritePolicy
@@ -105,6 +106,7 @@ class Viewer:
     def close(self) -> None:
         """Release the port and retire the token."""
         self._server.server_close()
+        presence.forget(self._data_root)
         with contextlib.suppress(OSError):
             (self._data_root / "run" / TOKEN_FILE).unlink()
 
@@ -149,6 +151,7 @@ def launch(
         return open_app(data_root, clock=clock)
 
     viewer = Viewer(server, data_root, token, app_factory or configured_app, policy)
+    presence.record(data_root, viewer.port)
     if out is not None and not print_url:
         out.write(f"Viewer: {viewer.url}\n")
     show = opener or webbrowser.open

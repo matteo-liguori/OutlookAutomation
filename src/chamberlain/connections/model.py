@@ -122,6 +122,14 @@ class UpdatesConfig(Model):
     remote: str = Field(default="origin", min_length=1)
 
 
+class ViewerConfig(Model):
+    """The local viewer (`chamberlain viewer`)."""
+
+    open_on_start: bool = False
+    """Open the viewer in the owner's browser whenever an agent session starts (a scheduled pass,
+    a follow-up or a chat). One viewer is reused; it keeps running after the session ends."""
+
+
 class TickConfig(Model):
     """How often the operating system runs `chamberlain tick` between passes (`schedule install`).
 
@@ -158,6 +166,7 @@ class Connections(Model):
     updates: UpdatesConfig = UpdatesConfig()
     review: ReviewConfig = ReviewConfig()
     tick: TickConfig = TickConfig()
+    viewer: ViewerConfig = ViewerConfig()
     authorised_senders: AuthorisedSenders = AuthorisedSenders()
     live_test: LiveTestConfig = LiveTestConfig()
     """Which sources `chamberlain live-test` may use (docs/live-test.md). Off by default."""

@@ -45,6 +45,14 @@ This page is for the person setting up Chamberlain on their own computer. The co
    **Runs and reports**. The layout is `config/report-template.yaml` (see the README, "The
    report").
 
+## Opening the viewer
+
+`chamberlain viewer` opens the viewer in your browser, already signed in (the token travels in
+the address, never in output). A viewer that is already running is reused, not started twice.
+With `viewer: open_on_start: true` in the profile, every agent session start (a scheduled pass,
+a follow-up or a chat) opens it too; the viewer then keeps running after the session ends.
+Live-test sessions never open it.
+
 ## Installing the tick and the agent automations
 
 ```text

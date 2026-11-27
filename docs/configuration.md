@@ -48,6 +48,9 @@ schedules:                       # scheduled passes; applied at every start
 tick:                            # the operating system tick (`chamberlain schedule install`)
   every_minutes: 60              # housekeeping between passes (default 60); re-run install after a change
 
+viewer:
+  open_on_start: false           # open the viewer in your browser whenever an agent session starts
+
 mail_sync:                       # how fresh Thunderbird's folders must be when mail is read
   fresh_minutes: 10              # a folder last synced longer ago is synced again (default 10)
   time_limit_seconds: 300        # all syncing in one call gives up after this long and goes on (default 300)

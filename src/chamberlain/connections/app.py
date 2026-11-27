@@ -82,6 +82,7 @@ def open_app(
         update_lister=_update_lister(connections),
         review=_review(connections),
         cleanup=connections.cleanup,
+        open_viewer=connections.viewer.open_on_start,
     )
     try:
         with transaction(app.context.db) as db:
