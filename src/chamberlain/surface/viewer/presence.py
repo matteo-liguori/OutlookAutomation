@@ -99,11 +99,13 @@ def open_viewer(
     opener: Opener = webbrowser.open,
     spawn: Spawner = _spawn_detached,
     answers: Callable[[int], bool] | None = None,
+    grant: str | None = None,
 ) -> str:
-    """Show the viewer in the browser. Returns "reused" or "started"; never the token."""
+    """Show the viewer in the browser, on `grant` when given (a running viewer only; a new one
+    opens on its front page). Returns "reused" or "started"; never the token."""
     url = running_url(data_root, answers=answers)
     if url is not None:
-        opener(url)
+        opener(url if grant is None else f"{url}&grant={grant}")
         return "reused"
     spawn(
         [

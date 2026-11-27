@@ -148,9 +148,9 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 ## propose.check: Proposing a change
 
-- Trigger: `{'tool': 'propose'}`; shown session; priority 60; cap 200 chars
+- Trigger: `{'tool': 'propose'}`; shown session; priority 60; cap 470 chars
 
-> Say exactly what you will do and check it against the request: recipients, attachments, times, wording. If the user must confirm, say what it would do and wait. A permission covers one thing only.
+> Say exactly what you will do and check it against the request: recipients, attachments, times, wording. A permission covers one thing only. In a chat, show a reply's whole text and revise it with the owner; on their yes, propose the exact mail.send: the viewer opens on it and their click sends it. In a scheduled pass, propose it with action (their action) so it waits on the card. Use mail.draft_save only when they ask for a draft in their mail program.
 
 ## source.stale: A source is out of date
 

@@ -102,10 +102,16 @@ class TickSteps:
     on_start: tuple["StartStep", ...] = ()
     """When an agent calls `start`, before its work is offered: the owner's mail clean-up.
     Each returns lines for the agent's report; a failing step never fails `start`."""
+    show_held: "ShowHeld | None" = None
+    """Opens the viewer on a reply held for the owner's click, when one is proposed during a
+    chat (W-49). None when the profile does not open the viewer (`viewer.open_on_start`)."""
 
 
 StartStep = Callable[["Context", str], list[str]]
 """`(context, the starting agent's name)` -> report lines."""
+
+ShowHeld = Callable[["Context", str, str], bool]
+"""`(context, the session's agent, grant handle)` -> whether the viewer was opened on it."""
 
 
 @dataclass

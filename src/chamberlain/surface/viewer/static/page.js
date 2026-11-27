@@ -34,6 +34,8 @@
   } else {
     token = rememberedToken();
   }
+  // `grant=` names a reply held for the owner's click: open it once the page is drawn.
+  var pendingGrant = /^[a-z]+_[0-9a-f]+$/.test(hash.get("grant") || "") ? hash.get("grant") : null;
   history.replaceState(null, "", window.location.pathname);
 
   var main = document.getElementById("main");
@@ -434,6 +436,7 @@
       tabsBar.appendChild(button);
     });
     render();
+    if (pendingGrant) openGrant(pendingGrant);
   }
 
   // calendar.js registers its page here, after the second tab (`after` names the tab before it).

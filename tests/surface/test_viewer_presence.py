@@ -104,3 +104,38 @@ def test_the_viewer_command_reuses_a_running_viewer_and_prints_no_token(
 
 
 _ = Context  # the step's real argument type
+
+
+def test_a_held_reply_opens_the_running_viewer_on_its_grant(tmp_path: Path) -> None:
+    opened: list[str] = []
+    running_viewer(tmp_path)
+    presence.open_viewer(
+        tmp_path,
+        opener=opened.append,
+        spawn=lambda a: None,
+        answers=lambda p: True,
+        grant="grt_ab12",
+    )
+    assert opened == ["http://127.0.0.1:51234/#token=tok-123&grant=grt_ab12"]
+
+
+def test_show_held_skips_the_live_test_and_is_off_unless_the_profile_opens_the_viewer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[Path, str | None]] = []
+
+    def fake_open(root: Path, *, grant: str | None = None) -> str:
+        calls.append((root, grant))
+        return "reused"
+
+    monkeypatch.setattr(presence, "open_viewer", fake_open)
+
+    class Ctx:
+        data_root = tmp_path
+
+    assert tick_steps().show_held is None
+    show = tick_steps(open_viewer=True).show_held
+    assert show is not None
+    assert show(Ctx(), "codex", "grt_1") is True  # type: ignore[arg-type]
+    assert show(Ctx(), LIVE_TEST_AGENT, "grt_2") is False  # type: ignore[arg-type]
+    assert calls == [(tmp_path, "grt_1")]

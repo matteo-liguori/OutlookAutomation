@@ -46,6 +46,22 @@ def _propose_response(proposal: Proposal) -> ProposeResponse:
     )
 
 
+def _session_agent(ctx: Context) -> str:
+    row = ctx.db.execute("SELECT agent FROM sessions WHERE handle = ?", (ctx.session,)).fetchone()
+    return "" if row is None else str(row[0])
+
+
+def _held_in_chat(ctx: Context, request: ProposeRequest, proposal: Proposal) -> bool:
+    """A reply waiting for the owner's click, proposed in a chat rather than a scheduled pass:
+    the viewer opens on it, so "yes" in the chat is one click away (W-49)."""
+    if ctx.tick_steps.show_held is None or ctx.session is None or proposal.grant is None:
+        return False
+    if proposal.ready or request.intent is None or request.intent.kind is not IntentKind.MAIL_SEND:
+        return False
+    row = ctx.db.execute("SELECT purpose FROM sessions WHERE handle = ?", (ctx.session,)).fetchone()
+    return row is not None and str(row[0]) != "scheduled"
+
+
 def make_handlers(pause: Callable[[float], None] | None = None) -> dict[ToolName, Handler]:
     """Handlers use each call's context. `pause` replaces waiting on the clock (tests)."""
 
@@ -80,7 +96,14 @@ def make_handlers(pause: Callable[[float], None] | None = None) -> dict[ToolName
                     why="Permission is in place; execute it once.",
                 ),
             )
-        return Result(_propose_response(proposal), next=steps)
+        response = _propose_response(proposal)
+        if _held_in_chat(ctx, request, proposal):
+            assert ctx.tick_steps.show_held is not None
+            assert proposal.grant is not None
+            agent = _session_agent(ctx)
+            opened = ctx.tick_steps.show_held(ctx, agent, proposal.grant.handle)
+            response = response.model_copy(update={"opened_in_viewer": opened})
+        return Result(response, next=steps)
 
     def do(ctx: Context, request: DoRequest) -> Result:
         eng = engine(ctx)

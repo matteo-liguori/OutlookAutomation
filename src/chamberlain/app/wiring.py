@@ -119,6 +119,20 @@ def tick_steps(
             return []
 
         on_start.append(show_the_viewer)
+
+        def show_held(ctx: Context, agent: str, grant: str) -> bool:
+            if agent == LIVE_TEST_AGENT:
+                return False  # a test run must not open browser tabs
+            try:
+                viewer_presence.open_viewer(ctx.data_root, grant=grant)
+            except Exception:
+                log_failure(log, "opening the viewer on a held reply failed")
+                return False
+            return True
+
+        return TickSteps(
+            always=tuple(always), extra=tuple(extra), on_start=tuple(on_start), show_held=show_held
+        )
     return TickSteps(always=tuple(always), extra=tuple(extra), on_start=tuple(on_start))
 
 

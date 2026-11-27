@@ -249,3 +249,38 @@ def test_c_a_client_copy_on_an_exchange_like_server_leaves_two_and_doctor_says_s
     assert check.status == "warn"
     assert check.fix is not None
     assert "sent_copy: server" in check.fix
+
+
+@pytest.mark.parametrize(("purpose", "opens"), [("interactive", True), ("scheduled", False)])
+def test_w49_a_reply_proposed_in_a_chat_opens_the_viewer_on_it(
+    rig: WriteRig, purpose: str, opens: bool
+) -> None:
+    from dataclasses import replace
+
+    from chamberlain.app.context import TickSteps
+    from chamberlain.schema.base import ToolName
+    from chamberlain.schema.tools import ProposeRequest, ProposeResponse
+    from chamberlain.writes.handlers import make_handlers
+    from support.write_rig import SESSION
+
+    rig.db.execute(
+        "INSERT OR REPLACE INTO sessions (handle, agent, purpose, started_at, last_seen_at) "
+        "VALUES (?, 'codex', ?, '2026-01-05T06:00:00Z', '2026-01-05T06:00:00Z')",
+        (SESSION, purpose),
+    )
+    rig.db.commit()
+    shown: list[tuple[str, str]] = []
+
+    def show(_ctx: Any, agent: str, grant: str) -> bool:
+        shown.append((agent, grant))
+        return True
+
+    ctx = replace(rig.engine().ctx, tick_steps=TickSteps(show_held=show))
+    request = ProposeRequest(intent=rig.send(to=("stranger@example.org",)))
+    result = make_handlers()[ToolName.PROPOSE](ctx, request)
+    data = result.data
+    assert isinstance(data, ProposeResponse)
+    assert data.grant is not None
+    assert data.opened_in_viewer is opens
+    assert shown == ([("codex", data.grant)] if opens else [])
+    assert rig.sent_copies() == 0, "nothing is sent before the click"

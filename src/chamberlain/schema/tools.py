@@ -627,6 +627,8 @@ class ProposeResponse(Model):
     ready: bool
     content_sha256: Sha256
     preview: Content
+    opened_in_viewer: bool = False
+    """The viewer was opened on this grant for the owner's click (a reply held in a chat)."""
 
 
 class DoRequest(ToolRequest):
