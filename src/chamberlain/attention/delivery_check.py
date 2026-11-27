@@ -26,7 +26,7 @@ from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.intents import MailSend, MailTrash
 from chamberlain.domain.mail import FolderRole, MailQuery, MessageSummary
 from chamberlain.domain.operations import OperationState
-from chamberlain.domain.testmark import DELIVERY_MARK, carries_delivery_mark
+from chamberlain.domain.testmark import DELIVERY_MARK, is_delivery_check
 from chamberlain.domain.timefmt import parse, ts
 from chamberlain.ports.health import active_health_checks_allowed
 from chamberlain.ports.sync import FolderSync
@@ -35,6 +35,7 @@ from chamberlain.store.db import transaction
 from chamberlain.store.schema import DELIVERY_CHECK_KEY, get_state, set_state
 from chamberlain.writes import delivery_check as grants
 from chamberlain.writes.core import Engine
+from chamberlain.writes.repo import own_addresses
 
 log = logging.getLogger("chamberlain.attention")
 
@@ -120,7 +121,7 @@ def _probe(ctx: Context, source: str, health: SourceHealth, limit: timedelta) ->
     with transaction(ctx.db):
         before = records(ctx.db).get(source, Record())
         if before.last_at and started - parse(before.last_at) < PROBE_EVERY:
-            return health
+            return _held(ctx, source, health, before)
         _save(ctx, source, Record(ts(started), before.pending, before.result, before.result_at))
     engine = Engine(ctx)
     if before.pending and not _clean(ctx, engine, source, grant.handle):
@@ -155,6 +156,16 @@ def _probe(ctx: Context, source: str, health: SourceHealth, limit: timedelta) ->
     return health.model_copy(update={"state": HealthState.OK, "fresh_as_of": arrived})
 
 
+def _held(ctx: Context, source: str, health: SourceHealth, record: Record) -> SourceHealth:
+    """Between probes, a check that saw its message arrive still vouches for the mailbox: `ok`,
+    fresh as of that arrival (never later), so one busy moment is not an access problem."""
+    if record.result != "arrived" or not record.result_at or record.pending:
+        return health
+    arrived = parse(record.result_at)
+    repo.write_health(ctx.db, source, HealthState.OK, ts(ctx.clock.now()), record.result_at)
+    return health.model_copy(update={"state": HealthState.OK, "fresh_as_of": arrived})
+
+
 def _marked(
     ctx: Context, source: str, role: FolderRole, subject: str | None = None
 ) -> list[MessageSummary]:
@@ -164,10 +175,11 @@ def _marked(
     if folder is None:
         return []
     page = port.search(source, MailQuery(folder_id=folder, text=subject or DELIVERY_MARK))
+    own = own_addresses(ctx.db, source)
     return [
         m
         for m in page.items
-        if carries_delivery_mark(m.subject)
+        if is_delivery_check(m.subject, m.sender.address, own)
         and f" {source} " in m.subject
         and (subject is None or m.subject.strip() == subject)
     ]

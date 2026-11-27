@@ -32,12 +32,13 @@ from chamberlain.attention.tuning import (
 from chamberlain.domain.capabilities import HealthState
 from chamberlain.domain.handles import HandleKind
 from chamberlain.domain.mail import FolderRole, MailQuery, MessageSummary, message_key
-from chamberlain.domain.testmark import carries_delivery_mark
+from chamberlain.domain.testmark import is_delivery_check
 from chamberlain.domain.timefmt import parse, ts
 from chamberlain.memory.refs import existing_handles, remember_many
 from chamberlain.ports.mail import MailPort
 from chamberlain.schema.safelog import log_failure
 from chamberlain.store.db import transaction
+from chamberlain.writes.repo import own_addresses
 
 log = logging.getLogger("chamberlain.attention")
 
@@ -237,10 +238,11 @@ def _read(
         port = ctx.sources.mail_port(source)
         roles = {f.id: f.role for f in port.folders(source)}
         skipped = frozenset(i for i, role in roles.items() if role in MAIL_SKIPPED_ROLES)
+        own = own_addresses(ctx.db, source)
 
         def take(items: list[MessageSummary]) -> None:
             for item in items:
-                if carries_delivery_mark(item.subject):
+                if is_delivery_check(item.subject, item.sender.address, own):
                     continue  # the fallback delivery check's own message: never mail to handle
                 if item.folder_id not in skipped:
                     key = message_key(item.internet_message_id, item.locator)

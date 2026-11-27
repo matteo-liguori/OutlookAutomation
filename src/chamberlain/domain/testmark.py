@@ -46,3 +46,9 @@ DELIVERY_MARK = "CHAMBERLAIN DELIVERY CHECK"
 def carries_delivery_mark(subject: str) -> bool:
     """True for `CHAMBERLAIN DELIVERY CHECK <source> <time>` after any `Re:` or `Fwd:` prefixes."""
     return _REPLY_PREFIX.sub("", subject, count=1).lstrip().startswith(DELIVERY_MARK + " ")
+
+
+def is_delivery_check(subject: str, sender: str, own: frozenset[str]) -> bool:
+    """A delivery-check message: the mark, sent by the mailbox itself. Anyone else's mail with
+    the same subject is ordinary mail, so the mark cannot hide mail or send it to Trash."""
+    return carries_delivery_mark(subject) and sender.lower() in own

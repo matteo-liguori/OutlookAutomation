@@ -143,14 +143,36 @@ def test_the_probe_message_never_becomes_mail_seen(rig: Rig) -> None:
     rig.grant()
     rig.fake.world.health_override.pop(MAIL)  # healthy: the scan reads everything
     rig.tick()
-    rig.fake.mail.add_message(
-        MAIL, internet_message_id="<probe@x>", subject=f"{DELIVERY_MARK} {MAIL} 20260105T060000Z"
-    )
+    marked = f"{DELIVERY_MARK} {MAIL} 20260105T060000Z"
+    rig.fake.mail.add_message(MAIL, internet_message_id="<probe@x>", subject=marked, sender=ME)
     rig.fake.mail.add_message(MAIL, internet_message_id="<real@x>", subject="Real mail")
+    # Someone else's mail with the same subject is ordinary mail: the mark cannot hide it.
+    rig.fake.mail.add_message(MAIL, internet_message_id="<copycat@x>", subject=marked)
     rig.clock.advance(minutes=10)
     rig.tick()
     seen = rig.rows("SELECT message_key FROM mail_seen")
-    assert [r["message_key"] for r in seen] == ["real@x"]
+    assert sorted(r["message_key"] for r in seen) == ["copycat@x", "real@x"]
+
+
+def test_cleanup_never_trashes_someone_elses_marked_mail(rig: Rig) -> None:
+    rig.grant()
+    marked = f"{DELIVERY_MARK} {MAIL} 20260105T050000Z"
+    rig.fake.mail.add_message(MAIL, internet_message_id="<copycat@x>", subject=marked)
+    rig.tick()
+    assert rig.health() == "ok"
+    assert rig.copies("f-inbox") == [marked]
+
+
+def test_a_confirmed_mailbox_stays_ok_until_the_next_probe_is_due(rig: Rig) -> None:
+    rig.grant()
+    rig.tick()
+    arrived = rig.rows("SELECT fresh_as_of FROM source_health WHERE source_id = ?", MAIL)[0][0]
+    rig.clock.advance(hours=1)
+    rig.tick()
+    assert rig.health() == "ok", "still vouched for by the check an hour ago"
+    again = rig.rows("SELECT fresh_as_of FROM source_health WHERE source_id = ?", MAIL)[0][0]
+    assert again == arrived, "fresh only as of the arrival, never later"
+    assert rig.sends() == 1
 
 
 def test_stale_with_no_grant_proposes_once_and_never_sends(rig: Rig) -> None:
@@ -199,7 +221,9 @@ def test_a_later_probe_after_a_crash_only_cleans_up_first(rig: Rig) -> None:
     rig.tick()
     stray = delivery_check.records(rig.ctx.db)[MAIL].pending
     assert stray
-    rig.fake.mail.add_message(MAIL, internet_message_id="<late@x>", subject=stray)  # arrives late
+    rig.fake.mail.add_message(
+        MAIL, internet_message_id="<late@x>", subject=stray, sender=ME
+    )  # late
     rig.clock.advance(hours=4)
     rig.fake.mail.deliver_self_sends(MAIL)
     rig.tick()
