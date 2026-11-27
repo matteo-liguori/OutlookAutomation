@@ -1,6 +1,7 @@
 """MCP over stdio, end to end: list the tools and call one (docs/contracts/02-tools.md, T-15)."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -59,3 +60,23 @@ def test_the_server_over_a_real_stdio_process_on_a_minimal_profile(data_root: Pa
         server.wait(timeout=30)
         stdout.close()
     assert server.returncode == 0
+
+
+def test_unicode_stdio_with_a_legacy_windows_pipe_encoding(data_root: Path) -> None:
+    messages = [
+        {"jsonrpc": "2.0", "id": "mail-📨", "method": "initialize"},
+        {"jsonrpc": "2.0", "id": 2, "method": "ping"},
+    ]
+    wire = "".join(json.dumps(message, ensure_ascii=False) + NEWLINE for message in messages)
+    server = subprocess.run(
+        [sys.executable, "-m", "chamberlain.surface.mcp_server", "--data", str(data_root)],
+        input=wire,
+        capture_output=True,
+        encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "cp1252"},
+        timeout=30,
+        check=True,
+    )
+    first, second = map(json.loads, server.stdout.splitlines())
+    assert first["id"] == messages[0]["id"]
+    assert second == {"jsonrpc": "2.0", "id": 2, "result": {}}

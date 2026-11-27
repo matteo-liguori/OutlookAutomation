@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any, TextIO
 
@@ -105,6 +106,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     except ChamberlainError as error:
         sys.stderr.write(f"{error.message} {error.fix}\n")
         return 2
+    # MCP uses UTF-8 even when Windows gives redirected stdio a legacy code page.
+    for stream in (sys.stdin, sys.stdout):
+        if isinstance(stream, TextIOWrapper):
+            stream.reconfigure(encoding="utf-8")
     serve(sys.stdin, sys.stdout, configured_caller(Path(data)))
     return 0
 
