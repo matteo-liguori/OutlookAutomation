@@ -95,7 +95,9 @@ def test_only_due_reminders_ask_for_acknowledgement(monkeypatch: pytest.MonkeyPa
     assert len(lines) == 2
     assert "Dentist" in lines[0]
     assert "Acknowledgement needed" in lines[0]
-    assert lines[1].startswith("- 2 later reminder(s) are scheduled; the next shows Thu 24 Dec")
+    assert lines[1].startswith(
+        "- 2 more important date(s) coming up; the next reminder shows Thu 24 Dec"
+    )
     assert not lines[1].endswith("..")
 
 

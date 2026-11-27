@@ -23,7 +23,7 @@ from chamberlain.runs import appointments, compose
 from chamberlain.runs import repo as runs_repo
 from chamberlain.runs import report_repo as local_repo
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
-from chamberlain.surface.viewer.report_api import due_appointments
+from chamberlain.surface.viewer.report_api import appointment_line, due_appointments
 from chamberlain.surface.viewer.views import pick
 from chamberlain.writes import repo as writes_repo
 
@@ -265,15 +265,12 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
                 "note": note,
             }
         )
-    everything = appointments.upcoming(ctx)
-    wanted = [a for a in everything if ts(window.start) <= a.start < ts(window.end)]
-    important_handles = {a.action for a in everything}
+    everything = appointments.dates(ctx)
+    wanted = [d for d in everything if ts(window.start) <= d.start < ts(window.end)]
+    important_handles = {r.action for d in everything for r in d.reminders}
     marks = [
-        {
-            **pick(a, "action", "start", "title", "card", "card_title", "due"),
-            "day": _stored_to_local(a.start, tz).date().isoformat(),
-        }
-        for a in wanted
+        {**appointment_line(d), "day": _stored_to_local(d.start, tz).date().isoformat()}
+        for d in wanted
     ]
     dated = [
         {

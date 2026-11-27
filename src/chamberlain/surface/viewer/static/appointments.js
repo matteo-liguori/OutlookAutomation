@@ -114,10 +114,16 @@
     stop();
     current = item;
     parts.title.textContent = item.title;
-    parts.details.replaceChildren(
-      el("p", { text: "Starts " + (V.local ? V.local(item.start) : item.start) + "." }),
-      el("p", { class: "muted", text: "Card: " + item.card_title })
-    );
+    var at = function (stamp) { return V.local ? V.local(stamp) : stamp; };
+    var details = [
+      el("p", { text: "Starts " + at(item.start) + "." }),
+      el("p", { class: "muted", text: "Card: " + item.card_title }),
+    ];
+    var times = (item.reminders || []).filter(function (r) { return r.at; });
+    if (times.length) {
+      details.push(el("p", { class: "muted", text: "Reminders: " + times.map(function (r) { return at(r.at) + (r.due ? " (now)" : ""); }).join(", ") + "." }));
+    }
+    parts.details.replaceChildren.apply(parts.details, details);
     parts.ack.hidden = !item.due;
     parts.close.hidden = !!item.due;
     parts.kicker.textContent = item.due ? "IMPORTANT APPOINTMENT — ACKNOWLEDGEMENT REQUIRED" : "IMPORTANT APPOINTMENT";

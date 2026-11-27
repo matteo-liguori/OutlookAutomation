@@ -220,3 +220,45 @@ def _window() -> Any:
     return CalendarQuery(
         start=datetime(2026, 1, 1, tzinfo=UTC), end=datetime(2026, 2, 1, tzinfo=UTC), limit=50
     )
+
+
+def test_reminders_of_one_date_are_one_mark_one_popup_and_one_acknowledgement(rig: Rig) -> None:
+    add_sources(rig)
+    session = tools(rig, "start", agent="agent").data.session
+    card = tools(rig, "card", session=session, op="create", fields={"title": "Dates"})
+    handle = card.data.card.handle
+    start = (rig.clock.now() + timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    stamp = "%Y-%m-%dT%H:%M:%SZ"
+    for words, back in (("three weeks", 3), ("two weeks", 1), ("one week", -2)):
+        tools(
+            rig,
+            "card",
+            session=session,
+            op="add_action",
+            card=handle,
+            action_fields={
+                "title": f"Party: The party is {words} away, on 11 January. "
+                "Acknowledge this reminder when seen.",
+                "important": True,
+                "due_at": start,
+                "snooze_until": (rig.clock.now() - timedelta(days=back)).strftime(stamp),
+            },
+        )
+    marks = get(rig, "/api/calendar?start=2026-01-03&until=2026-01-17")["important"]
+    assert len(marks) == 1, "three reminders, one date"
+    [mark] = marks
+    assert (mark["title"], mark["due"]) == ("The party", True)
+    assert [r["due"] for r in mark["reminders"]] == [True, True, False]
+    [popup] = get(rig, "/api/report")["appointments_due"]
+    assert popup["action"] == mark["action"]
+
+    post(rig, f"/api/appointments/{mark['action']}/acknowledge")
+    states = [
+        r["state"]
+        for r in rig.rows("SELECT state FROM actions WHERE card = ? ORDER BY snooze_until", handle)
+    ]
+    assert states == ["done", "done", "open"], "both due reminders are cleared; the later one stays"
+    assert get(rig, "/api/report")["appointments_due"] == []
+    [later] = get(rig, "/api/calendar?start=2026-01-03&until=2026-01-17")["important"]
+    assert later["due"] is False
+    assert later["next_reminder"] is not None

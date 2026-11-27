@@ -28,12 +28,16 @@ _LOCAL_REMOVE = re.compile(r"^/api/local-events/(local_[a-z0-9]{8,32})/remove$")
 _RUN = re.compile(r"^run_[a-z0-9]{8,32}$")
 
 
-def appointment_line(item: appointments.Appointment) -> dict[str, Any]:
-    return pick(item, "action", "card", "card_title", "title", "start", "reminder_from", "due")
+def appointment_line(item: appointments.ImportantDate) -> dict[str, Any]:
+    """One important date: the reminder to acknowledge (`action`) and every reminder time."""
+    return {
+        **pick(item, "action", "card", "card_title", "title", "start", "due", "next_reminder"),
+        "reminders": [{"at": r.reminder_from, "due": r.due} for r in item.reminders],
+    }
 
 
 def due_appointments(ctx: Context) -> list[dict[str, Any]]:
-    return [appointment_line(a) for a in appointments.upcoming(ctx) if a.due]
+    return [appointment_line(d) for d in appointments.dates(ctx) if d.due]
 
 
 def _has_report(ctx: Context, run: RunRow) -> bool:

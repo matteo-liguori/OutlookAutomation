@@ -222,7 +222,8 @@ chamberlain live-test run                    # everything that can run
 chamberlain live-test run --dry-run          # show the plan; touch nothing
 chamberlain live-test run --approve-calendar-edits
 chamberlain live-test sweep                  # remove marked items left by an earlier run
-```
+``` Several reminders for one date (a month, three weeks and a week before) are one date: one
+  calendar mark, one pop-up at a time, and acknowledging it clears every reminder due so far.
 
 - **What it does.** Sends marked mail between accounts you own, files, marks and trashes it,
   saves drafts, makes marked calendar events, removes everything it made, and gives a score.
