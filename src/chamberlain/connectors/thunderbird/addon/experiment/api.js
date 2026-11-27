@@ -76,12 +76,20 @@ function ownWindow(context, tabId) {
 const answeredPrompts = new Map(); // tab id -> prompt texts
 
 /* A headless send has no window of its own. Without a parent, Thunderbird parents its prompts on
- * the most recent composer, which may be the owner's. The add-on passes the hidden window
- * instead, and answers prompts parented there only while a headless request of its own runs. */
+ * the most recent composer, which may be the owner's. The add-on passes a window that is never a
+ * composer instead: the hidden window where Thunderbird still has one, else the main mail window
+ * (found live, 2026-11-27: this Thunderbird has no hidden window). Prompts parented there are
+ * answered only while a headless request of its own runs. */
 const headlessPrompts = new Map(); // request key -> prompt texts
 
 function hiddenWindow() {
-  return Services.appShell.hiddenDOMWindow;
+  try {
+    const hidden = Services.appShell.hiddenDOMWindow;
+    if (hidden) return hidden;
+  } catch {
+    // No hidden window in this Thunderbird.
+  }
+  return Services.wm.getMostRecentWindow("mail:3pane");
 }
 
 function promptOwner(dialogWindow) {
