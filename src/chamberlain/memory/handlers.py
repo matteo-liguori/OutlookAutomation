@@ -286,6 +286,7 @@ def card(ctx: Context, request: CardRequest) -> Result:
                 due_at=_stored(new.due_at),
                 snooze_until=_stored(new.snooze_until),
                 important=bool(new.important),
+                for_owner=bool(new.for_owner),
             )
         case CardOp.UPDATE_ACTION:
             if action_fields is None or not action_fields.model_fields_set:
@@ -304,6 +305,7 @@ def card(ctx: Context, request: CardRequest) -> Result:
                 set_due="due_at" in action_fields.model_fields_set,
                 set_snooze="snooze_until" in action_fields.model_fields_set,
                 important=action_fields.important,
+                for_owner=action_fields.for_owner,
             )
         case CardOp.FINISH_ACTION:
             view = service.finish_action(

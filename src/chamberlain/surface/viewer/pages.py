@@ -356,7 +356,7 @@ def cards(ctx: Context) -> dict[str, Any]:
         ctx.db,
         f"a.card IN ({', '.join('?' for _ in details)})",
         tuple(c.handle for c in details),
-        "a.due_at IS NULL, a.due_at, a.handle",
+        "a.for_owner DESC, a.due_at IS NULL, a.due_at, a.handle",
     ):
         by_card.setdefault(action.card, []).append(action)
     items: list[dict[str, Any]] = []
@@ -383,7 +383,8 @@ def cards(ctx: Context) -> dict[str, Any]:
                 "updated_at": card.updated_at,
                 "open_actions": len(actions),
                 "actions": [
-                    pick(a, "title", "due_at", "snooze_until") for a in actions[:PREVIEW_ACTIONS]
+                    pick(a, "title", "due_at", "snooze_until", "for_owner")
+                    for a in actions[:PREVIEW_ACTIONS]
                 ],
             }
         )

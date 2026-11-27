@@ -199,6 +199,8 @@ class ActionView(Model):
     snooze_until: Timestamp | None = None
     important: bool = False
     """An important appointment: the owner acknowledges each reminder in the viewer."""
+    for_owner: bool = False
+    """Waiting for the owner: their answer, decision or something only they can do."""
     outcome: str | None = Field(default=None, max_length=OUTCOME_MAX)
     notes: tuple[NoteView, ...] = ()
 
@@ -491,6 +493,15 @@ class CardFields(Model):
     rules: str | None = Field(default=None, max_length=CARD_RULES_MAX)
 
 
+FOR_OWNER_TEXT = (
+    "Waiting for you (the owner must do or answer this): a reply to approve, information only "
+    "they have, a decision, or something only they can do. The title is then the ask itself, "
+    "specific enough to act on without opening anything, for example: Diana (solicitor, 27 Nov "
+    "14:08) asks which Swiss university Giulia graduated from. Finish it with an outcome that "
+    "records the owner's answer or decision."
+)
+
+
 class ActionFields(Model):
     title: str | None = Field(default=None, min_length=1, max_length=ACTION_TITLE_MAX)
     due_at: Timestamp | None = None
@@ -498,6 +509,10 @@ class ActionFields(Model):
     important: bool | None = None
     """Mark an appointment reminder important (you decide, from the card's rules and context);
     due_at is the appointment's start and snooze_until when this reminder surfaces."""
+    for_owner: bool | None = Field(
+        default=None,
+        description=FOR_OWNER_TEXT,
+    )
 
 
 _NEEDS_CARD = frozenset({CardOp.UPDATE, CardOp.CLOSE, CardOp.REOPEN, CardOp.ADD_ACTION})

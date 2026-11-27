@@ -99,6 +99,7 @@ class CardService:
             due_at=repo.opt(row, "due_at", parse),
             snooze_until=repo.opt(row, "snooze_until", parse),
             important=bool(row["important"]),
+            for_owner=bool(row["for_owner"]),
             outcome=repo.opt(row, "outcome"),
             notes=notes,
         )
@@ -254,6 +255,7 @@ class CardService:
         due_at: str | None,
         snooze_until: str | None,
         important: bool = False,
+        for_owner: bool = False,
     ) -> CardView:
         self._open_card(card, expected_version)
         if len(title) > ACTION_TITLE_MAX:
@@ -281,6 +283,7 @@ class CardService:
                 snooze_until=snooze_until,
                 now=ts(now),
                 important=important,
+                for_owner=for_owner,
             )
             repo.bump_card(self._db, card, ts(now))
             view = self.view(card)
@@ -300,6 +303,7 @@ class CardService:
         set_due: bool,
         set_snooze: bool,
         important: bool | None = None,
+        for_owner: bool | None = None,
     ) -> CardView:
         """Replace the named fields of an open action."""
         row = self._action(action)
@@ -317,6 +321,7 @@ class CardService:
                 snooze_until=snooze_until if set_snooze else row["snooze_until"],
                 now=ts(now),
                 important=important,
+                for_owner=for_owner,
             )
             repo.bump_card(self._db, card, ts(now))
             view = self.view(card)
@@ -326,7 +331,10 @@ class CardService:
         return self.view(card)
 
     def finish_action(self, action: str, expected_version: int | None, outcome: str) -> CardView:
-        """Finish: notes deleted, holds released, outcome line kept 90 days."""
+        """Finish: notes deleted, holds released, outcome line kept 90 days.
+
+        Every finish needs an outcome; for an action waiting for the owner it records their
+        answer or decision."""
         row = self._action(action)
         card = str(row["card"])
         self._open_card(card, expected_version)

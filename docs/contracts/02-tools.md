@@ -159,13 +159,19 @@ Response: `handle`, `released`, `deleted`, `remaining_owners`.
 Request: `op` (`create` | `update` | `close` | `reopen` | `add_action` |
 `update_action` | `finish_action`), `card?`, `action?`, `expected_version?`,
 `fields? {title, goal, position, rules}`, `action_fields? {title, due_at,
-snooze_until}`, `outcome?` (240 chars, required for `close` and
+snooze_until, important, for_owner}`, `outcome?` (240 chars, required for `close` and
 `finish_action`), `complex_reason?` (240 chars; only with `op: update` and no
 `fields`: asks the owner for a larger limit, M-36). `CardView` also carries
 `context?` (the handle of notes carried over from the old harness, M-35) and
 `complex?` (`pending`, `approved` or `declined`); neither counts against the
 card's size.
 Response: `card` (`CardView` with its open actions and `version`).
+
+`important` marks an appointment reminder the owner acknowledges in the viewer. `for_owner`
+marks an action waiting for the owner: a reply to approve, information only they have, a
+decision, or something only they can do. Its title is the ask itself, specific enough to act on
+without opening anything; finishing it records the owner's answer or decision as the outcome.
+The viewer marks it "Waiting for you", and the report lists it at the top (migration 0290).
 
 - **T-12** Updates replace fields. There is no append (M-14). An update that
   exceeds a cap is refused with `card.over_cap` and a `fix` naming the field

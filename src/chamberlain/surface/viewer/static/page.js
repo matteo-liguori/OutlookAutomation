@@ -299,7 +299,10 @@
         if (c.actions.length) {
           var preview = el("div", { class: "action-preview" });
           c.actions.forEach(function (a) {
-            preview.appendChild(el("div", { class: "action-line", text: (a.due_at ? day(a.due_at) + ": " : "") + a.title }));
+            var line = el("div", { class: "action-line" + (a.for_owner ? " for-owner" : "") });
+            if (a.for_owner) line.appendChild(el("span", { class: "badge attention", text: "Waiting for you" }));
+            line.appendChild(document.createTextNode((a.for_owner ? " " : "") + (a.due_at ? day(a.due_at) + ": " : "") + a.title));
+            preview.appendChild(line);
           });
           if (c.open_actions > c.actions.length) preview.appendChild(el("span", { class: "more", text: "and " + (c.open_actions - c.actions.length) + " more" }));
           card.appendChild(preview);

@@ -370,11 +370,12 @@ def insert_action(
     snooze_until: str | None,
     now: str,
     important: bool = False,
+    for_owner: bool = False,
 ) -> None:
     db.execute(
-        "INSERT INTO actions (handle, card, title, due_at, snooze_until, important, "
-        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (handle, card, title, due_at, snooze_until, int(important), now, now),
+        "INSERT INTO actions (handle, card, title, due_at, snooze_until, important, for_owner, "
+        "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (handle, card, title, due_at, snooze_until, int(important), int(for_owner), now, now),
     )
 
 
@@ -402,11 +403,21 @@ def update_action(
     snooze_until: str | None,
     now: str,
     important: bool | None = None,
+    for_owner: bool | None = None,
 ) -> None:
     db.execute(
         "UPDATE actions SET title = ?, due_at = ?, snooze_until = ?, "
-        "important = coalesce(?, important), updated_at = ? WHERE handle = ?",
-        (title, due_at, snooze_until, None if important is None else int(important), now, handle),
+        "important = coalesce(?, important), for_owner = coalesce(?, for_owner), "
+        "updated_at = ? WHERE handle = ?",
+        (
+            title,
+            due_at,
+            snooze_until,
+            None if important is None else int(important),
+            None if for_owner is None else int(for_owner),
+            now,
+            handle,
+        ),
     )
 
 
@@ -1002,6 +1013,8 @@ class ActionLine:
     title: str
     due_at: str | None
     snooze_until: str | None
+    for_owner: bool = False
+    created_at: str = ""
 
 
 def action_lines(
@@ -1013,9 +1026,10 @@ def action_lines(
 ) -> list[ActionLine]:
     """Open actions with their card's title; `where` and `order` are the caller's own SQL."""
     rows = db.execute(
-        "SELECT a.handle, a.card, c.title AS card_title, a.title, a.due_at, a.snooze_until "
-        f"FROM actions a JOIN cards c ON c.handle = a.card WHERE a.state = 'open' AND {where} "
+        "SELECT a.handle, a.card, c.title AS card_title, a.title, a.due_at, a.snooze_until, "
+        "a.for_owner, a.created_at FROM actions a JOIN cards c ON c.handle = a.card "
+        f"WHERE a.state = 'open' AND {where} "
         f"ORDER BY {order} LIMIT ?",
         (*params, limit),
     )
-    return [ActionLine(*row) for row in rows]
+    return [ActionLine(r[0], r[1], r[2], r[3], r[4], r[5], bool(r[6]), str(r[7])) for r in rows]
