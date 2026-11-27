@@ -178,6 +178,11 @@ class FakeMail:
         """`client` (default): the client files the Sent copy. `server`: it files none."""
         self._world.sent_copy[source] = mode
 
+    def composers(self, source: str) -> tuple[int, int]:
+        """Read-only, as the Thunderbird bridge's status: (the harness's, the owner's)."""
+        self._world.require_source(self._world.mail, source)
+        return self._world.open_composers, len(self._world.owner_composers)
+
     def sent_copies(self, source: str, internet_message_id: str) -> int:
         """Copies of one message in the source's Sent folder."""
         folder = self._world.folder_by_role(source, FolderRole.SENT).id

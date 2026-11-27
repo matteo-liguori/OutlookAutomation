@@ -11,6 +11,7 @@ from chamberlain.domain.mail import FolderRole, folded_message_id
 from chamberlain.livetest.authority import scratch_folder
 from chamberlain.livetest.lab import JSON, Lab, ScenarioFailure, ScenarioSkip, text_of
 from chamberlain.livetest.registry import Scope, Target, scenario
+from chamberlain.writes import repo
 
 NOT_OWNED = "someone@example.invalid"
 """A reserved address no one owns. A send to it must be refused before anything is sent."""
@@ -603,3 +604,110 @@ def watermark_suggestion(lab: Lab, t: Target) -> None:
 )
 def outbox_queued(lab: Lab, t: Target) -> None:
     raise ScenarioSkip("manual scenario: it cannot be forced safely; the steps are in the report")
+
+
+OWNER_CONFIRM_SECONDS = 900
+"""How long `mail.approved_send` waits for the owner to confirm the held reply in the viewer."""
+
+
+def _owner_action(lab: Lab, title: str) -> str:
+    """An action on the test card waiting for the owner; finished in cleanup if still open."""
+    card = lab.ok(
+        "card",
+        op="add_action",
+        card=lab.card,
+        action_fields={"title": title, "for_owner": True},
+    )["card"]
+    action = next(str(a["handle"]) for a in card["actions"] if a["title"] == title)
+    lab.defer(
+        f"finish the test action {action}",
+        lambda: lab.call("card", op="finish_action", action=action, outcome="Live test cleanup."),
+    )
+    return action
+
+
+def _dispatched(lab: Lab, source: str, content_sha256: str) -> int:
+    """Operations for this exact content that were handed to the mail client (read only)."""
+    return sum(
+        1
+        for op in repo.operations_by_hash(lab.app.context.db, source, content_sha256)
+        if op.dispatched_at is not None
+    )
+
+
+def _composers(lab: Lab, source: str) -> tuple[int, int] | None:
+    lab.used_probe("composer windows open (the harness's and the owner's)")
+    return lab.env.probe.composers(source)
+
+
+@scenario(
+    "mail.approved_send",
+    "mail",
+    "A reply held for the owner goes once, headless, when they confirm it",
+    Scope.PAIR,
+    needs=("mail.send",),
+    needs_other=("mail.search",),
+    alone=True,  # waits for the owner's click in the viewer
+)
+def approved_send(lab: Lab, t: Target) -> None:
+    subject = _pair(lab, t, "approved_send")
+    action = _owner_action(lab, f"Approve the reply to {t.other_tag}: live test {lab.run_id}")
+    before = _composers(lab, t.source)
+    dispatches = lab.env.dispatches()
+    intent = _send_intent(lab, t.source, lab.config.address_of(t.other), subject, "approved send")
+    proposed = lab.call("propose", intent=intent, card=lab.card, action=action)
+    if not proposed.ok:
+        raise ScenarioFailure(f"propose of the held reply failed: {proposed.code}")
+    held = proposed.data
+    operation, grant = str(held["operation"]), str(held["grant"])
+    lab.check(not held["ready"], "a reply held for the owner was ready without their click")
+    lab.check(
+        held["requirement"] == "human_confirmation",
+        f"the held reply needs {held['requirement']}, not the owner's confirmation",
+    )
+    lab.check(not lab.call("do", operation=operation).ok, "do sent the reply before the owner")
+    if lab.env.owner_confirms is not None:
+        lab.env.owner_confirms(grant)
+    else:
+        lab.env.notify(
+            f"Live test: open the viewer and confirm grant {grant} (the held reply "
+            f"'{subject}'). Waiting up to {OWNER_CONFIRM_SECONDS // 60} minutes."
+        )
+    lab.wait_until(
+        "the owner's confirmation and the approved send",
+        lambda: (
+            True
+            if str(lab.ok("open", handle=operation)["view"]["state"])
+            not in ("proposed", "authorised")
+            else None
+        ),
+        seconds=OWNER_CONFIRM_SECONDS,
+    )
+    state = _state_after(lab, operation)
+    lab.check(state == "confirmed", f"the approved send ended {state}, not confirmed")
+    content = str(held["content_sha256"])
+    sent = _dispatched(lab, t.source, content)
+    lab.check(sent == 1, f"expected one submission of the approved text, found {sent}")
+    after_dispatches = lab.env.dispatches()
+    if dispatches is not None and after_dispatches is not None:
+        lab.check(after_dispatches - dispatches == 1, "the client received more than one write")
+    lab.arrival(t.other, subject)
+    received = _count(lab, t.other, subject, FolderRole.INBOX)
+    lab.check(received == 1, f"expected one copy at the recipient, found {received}")
+    _one_sent(lab, t.source, subject, "the sender's Sent")
+    finished = lab.app.context.db.execute(
+        "SELECT state, outcome FROM actions WHERE handle = ?", (action,)
+    ).fetchone()
+    lab.check(
+        finished is not None
+        and finished["state"] == "done"
+        and str(finished["outcome"]).startswith("Sent as approved at "),
+        "the owner's action was not finished with the send's outcome",
+    )
+    after = _composers(lab, t.source)
+    if before is None or after is None:
+        raise ScenarioFailure(
+            "the mail client cannot count composer windows (update the add-on to 3.1.0 or later)"
+        )
+    lab.check(after[0] == 0, f"the harness left {after[0]} composer window(s) open")
+    lab.check(after[1] == before[1], "the number of the owner's own composer windows changed")

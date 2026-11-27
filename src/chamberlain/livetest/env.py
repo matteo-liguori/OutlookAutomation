@@ -12,7 +12,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from chamberlain.app.context import Context
 from chamberlain.domain.calendar import CalendarEvent, CalendarQuery
@@ -86,6 +86,10 @@ class Probe(Protocol):
 
     def answers(self, source: str, locator: str) -> dict[str, str]:
         """`{address: answer}` the calendar holds for an event's guests (empty if unknown)."""
+        ...
+
+    def composers(self, source: str) -> tuple[int, int] | None:
+        """(composers the harness opened and left open, the owner's own), or None if unknown."""
         ...
 
 
@@ -178,6 +182,16 @@ class PortProbe:
     def in_reply_to(self, source: str, copy: MailCopy) -> str:
         return self._ctx.sources.mail_port(source).read(source, copy.locator).in_reply_to
 
+    def composers(self, source: str) -> tuple[int, int] | None:
+        reader = getattr(self._ctx.sources.mail_port(source), "composers", None)
+        if not callable(reader):
+            return None
+        try:
+            counted = reader(source)
+        except ChamberlainError:
+            return None
+        return cast("tuple[int, int] | None", counted)
+
     def answers(self, source: str, locator: str) -> dict[str, str]:
         event = self.read_event(source, locator)
         return {str(p.address): p.response.value for p in event.participants}
@@ -220,3 +234,8 @@ class Environment:
     probe: Probe
     dispatches: Callable[[], int | None] = field(default=lambda: None)
     """How many writes reached the provider so far, when the environment can count them."""
+    owner_confirms: Callable[[str], None] | None = None
+    """The self-test's stand-in for the owner's click in the viewer, given a grant handle. It
+    is set by the tests only; a live run has none and waits for the owner to confirm."""
+    notify: Callable[[str], None] = field(default=lambda text: None)
+    """Tell the person running the test something they must do now."""

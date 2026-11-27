@@ -1,6 +1,7 @@
 """Fixtures for the live-test self-test: the fake world, and the test playing the owner."""
 
-from collections.abc import Iterator
+import json
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -19,7 +20,7 @@ from chamberlain.livetest.fakeworld import (
     build_fake_lab,
 )
 from chamberlain.livetest.runner import RunOptions, open_lab
-from chamberlain.writes.confirm import confirm_grant
+from chamberlain.writes.confirm import ConfirmationApp, confirm_grant
 from chamberlain.writes.core import Engine
 
 
@@ -95,9 +96,31 @@ def seed_owner_state(lab: FakeLab, *, competing_card_to: str = "friend@example.t
     return OwnerState(foreign.handle, subjects, title)
 
 
+VIEWER_ORIGIN = "http://127.0.0.1:5555"
+VIEWER_TOKEN = "v" * 43
+
+
+def owner_clicks(lab: FakeLab) -> Callable[[str], None]:
+    """The owner confirming a held reply in the viewer: the real confirm endpoint, which sends."""
+
+    def click(grant: str) -> None:
+        ctx: Context = lab.app.context
+        row = ctx.db.execute("SELECT content_sha256 FROM grants WHERE handle = ?", (grant,))
+        shown = row.fetchone()["content_sha256"]
+        viewer = ConfirmationApp(lambda: ctx, token=VIEWER_TOKEN, origin=VIEWER_ORIGIN)
+        headers = {"Host": "127.0.0.1:5555", "X-Chamberlain-Token": VIEWER_TOKEN}
+        headers["Origin"] = VIEWER_ORIGIN
+        body = json.dumps({"content_sha256": shown}).encode()
+        reply = viewer.handle("POST", f"/api/grants/{grant}/confirm", headers, body)
+        assert reply.status == 200, reply.body
+
+    return click
+
+
 @pytest.fixture
 def lab(tmp_path: Path) -> Iterator[FakeLab]:
     built = build_fake_lab(tmp_path / "data")
+    built.env.owner_confirms = owner_clicks(built)
     try:
         yield built
     finally:

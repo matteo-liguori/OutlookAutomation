@@ -113,6 +113,7 @@ Mail, once per mailbox unless noted:
 | `mail.find_by_message_id` | `find` shows one hit per Message-ID across folders. |
 | `mail.repeat_do` | Repeating `do` or `propose` never sends twice. |
 | `mail.refuse_non_owned` | A send to a stranger is refused and nothing is sent. |
+| `mail.approved_send` (per pair) | A reply held for you is refused by `do`, then sent once when you confirm it in the viewer: one submission, one copy at the recipient, one in Sent, the action finished, no composer left open and your own composers untouched. It waits up to 15 minutes for your click and says which grant to confirm. Runs alone. |
 | `mail.watermark_suggestion` (per pair) | Arriving mail is picked up and the reply gets the test card as its suggested card. |
 | `mail.fault_lost_response` | After a dropped response the send settles or stays uncertain, with exactly one Sent copy. |
 | `mail.outbox_queued` | Manual: the steps are in the report. Always skipped. |

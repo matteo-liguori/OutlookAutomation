@@ -206,3 +206,27 @@ def test_scenarios_side_by_side_run_green_and_writes_take_turns(lab: FakeLab) ->
     assert [(r.id, r.reason) for r in report.results if r.status is Status.FAIL] == []
     assert report.leftovers == ()
     assert report.score.percent == 100
+
+
+def test_the_approved_send_goes_once_when_the_owner_confirms(lab: FakeLab) -> None:
+    lab.provider.world.owner_composers.append("the owner's own unsent reply")
+    report = run_all(lab, only=("mail.approved_send",))
+    results = {r.id: r for r in report.results}
+    assert results, "the scenario is planned for each pair"
+    for result in results.values():
+        assert result.status.value == "pass", result.reason
+    assert lab.provider.world.owner_composers == ["the owner's own unsent reply"]
+    assert lab.provider.world.open_composers == 0
+
+
+def test_the_approved_send_waits_for_the_owner_and_never_sends_alone(lab: FakeLab) -> None:
+    lab.env.owner_confirms = None
+    told: list[str] = []
+    lab.env.notify = told.append
+    report = run_all(lab, only=("mail.approved_send",))
+    assert report.results
+    for result in report.results:
+        assert result.status.value == "fail"
+        assert "confirmation" in result.reason
+    assert any("confirm grant" in text for text in told)
+    assert lab.provider.world.submissions == []

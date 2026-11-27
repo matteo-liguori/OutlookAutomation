@@ -5,6 +5,7 @@ surface (`surface/cli.py`) calls `main` and prints what it returns.
 """
 
 import json
+import sys
 import time
 from collections.abc import Callable
 from dataclasses import replace
@@ -46,6 +47,7 @@ def real_environment(app: App, data_root: Path, bridge_dir: str | None) -> Envir
         sleep=time.sleep,
         faults=FileFaultInjector(data_root, None if bridge_dir is None else Path(bridge_dir)),
         probe=PortProbe(app.context),
+        notify=lambda text: print(text, file=sys.stderr, flush=True),
     )
 
 
