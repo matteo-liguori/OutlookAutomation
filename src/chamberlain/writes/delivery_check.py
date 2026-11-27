@@ -8,12 +8,13 @@ and Sent folders. The harness proposes the grant once and never confirms it.
 
 import logging
 import sqlite3
+from collections.abc import Iterable
 
 from chamberlain.app.context import Context
 from chamberlain.domain.canonical import content_hash
 from chamberlain.domain.grants import GrantKind, GrantState, StandingScope
 from chamberlain.domain.intents import IntentKind
-from chamberlain.domain.mail import FolderRole
+from chamberlain.domain.mail import Folder, FolderRole
 from chamberlain.writes import repo
 from chamberlain.writes.grants import GrantService
 from chamberlain.writes.models import GrantRow
@@ -32,14 +33,19 @@ def own_address(db: sqlite3.Connection, source: str) -> str | None:
     return found[0] if found else None
 
 
+def folders_of(folders: Iterable[Folder], role: FolderRole) -> list[str]:
+    """Every folder id with this role, in the client's order."""
+    return [f.id for f in folders if f.role is role]
+
+
 def scope_for(ctx: Context, source: str) -> StandingScope | None:
     """The scope for one mailbox, or None when its address or Inbox/Sent folders are unknown."""
     address = own_address(ctx.db, source)
     if address is None:
         return None
-    roles = {f.role: f.id for f in ctx.sources.mail_port(source).folders(source)}
-    inbox, sent = roles.get(FolderRole.INBOX), roles.get(FolderRole.SENT)
-    if inbox is None or sent is None:
+    folders = ctx.sources.mail_port(source).folders(source)
+    inbox, sent = folders_of(folders, FolderRole.INBOX), folders_of(folders, FolderRole.SENT)
+    if not inbox or not sent:
         return None
     return StandingScope(
         source=source,
@@ -50,7 +56,7 @@ def scope_for(ctx: Context, source: str) -> StandingScope | None:
             "message from this mailbox to itself, see it arrive, then move it to Trash."
         ),
         recipients=frozenset({address}),
-        folders=frozenset({inbox, sent}),
+        folders=frozenset(inbox + sent),
         max_per_day=MAX_PER_DAY,
     )
 

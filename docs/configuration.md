@@ -61,7 +61,7 @@ mail_sync:                       # how fresh Thunderbird's folders must be when 
   fresh_minutes: 10              # a folder last synced longer ago is synced again (default 10)
   time_limit_seconds: 300        # all syncing in one call gives up after this long and goes on (default 300)
   delivery_check: true           # a stale mailbox gets a fallback delivery check (default true)
-  delivery_check_seconds: 120    # how long that check waits for its message (default 120)
+  delivery_check_seconds: 300    # how long that check waits for its message (default 300)
 
 authorised_senders:              # who may instruct by email (see docs/permissions.md)
   owner: [you@example.com]       # a verified email from these counts like chat

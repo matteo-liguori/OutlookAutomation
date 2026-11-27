@@ -48,6 +48,9 @@ CLEANUP_PASSES = 3
 FAILED_NOTE_FOR = timedelta(hours=6)
 """How long a failed check is still named in the report's access-problem line."""
 
+GIVE_UP_AFTER = timedelta(hours=24)
+"""A message that never turned up in the Inbox stops being looked for after this."""
+
 sleep: Callable[[float], None] = time.sleep
 """The wait between arrival polls (tests replace it)."""
 
@@ -95,12 +98,14 @@ def confirm(ctx: Context, source: str, health: SourceHealth) -> SourceHealth:
     try:
         wait = sync.settings(ctx)
         if (
-            health.state is not HealthState.STALE
-            or not ctx.sources.hide_test_marked
+            not ctx.sources.hide_test_marked
             or source not in ctx.sources.daily_mail()
             or not wait.delivery_check
             or not active_health_checks_allowed()
         ):
+            return health
+        _sweep(ctx, source)
+        if health.state is not HealthState.STALE:
             return health
         return _probe(ctx, source, health, wait.delivery_seconds)
     except Exception:
@@ -124,7 +129,7 @@ def _probe(ctx: Context, source: str, health: SourceHealth, limit: timedelta) ->
             return _held(ctx, source, health, before)
         _save(ctx, source, Record(ts(started), before.pending, before.result, before.result_at))
     engine = Engine(ctx)
-    if before.pending and not _clean(ctx, engine, source, grant.handle):
+    if before.pending and not _clean(ctx, engine, source, grant.handle)[0]:
         log.info("The earlier delivery-check message in %s is still not in Trash", source)
         return health  # recovery only cleans up: never another send on top of it
     subject = f"{DELIVERY_MARK} {source} {started:%Y%m%dT%H%M%SZ}"
@@ -146,14 +151,34 @@ def _probe(ctx: Context, source: str, health: SourceHealth, limit: timedelta) ->
         return health
     arrived = _await(ctx, source, subject, started + limit)
     now = ts(ctx.clock.now())
-    cleaned = _clean(ctx, engine, source, grant.handle)
-    keep = None if arrived and cleaned else subject
+    cleaned, _ = _clean(ctx, engine, source, grant.handle)
+    keep = None if arrived and cleaned else subject  # a late arrival is swept at a later tick
     if arrived is None:
         _save(ctx, source, Record(ts(started), keep, "missing", now))
         return health
     _save(ctx, source, Record(ts(started), keep, "arrived", ts(arrived)))
     repo.write_health(ctx.db, source, HealthState.OK, now, ts(arrived))
     return health.model_copy(update={"state": HealthState.OK, "fresh_as_of": arrived})
+
+
+def _sweep(ctx: Context, source: str) -> None:
+    """At every health check while a probe message may still be about (it arrived after the
+    wait, or its cleanup failed): move it to Trash. Searches only, unless something is found."""
+    record = records(ctx.db).get(source, Record())
+    if not record.pending:
+        return
+    scope = grants.scope_for(ctx, source)
+    grant = grants.active_grant(ctx, scope) if scope is not None else None
+    if grant is None:
+        return
+    cleaned, inbox = _clean(ctx, Engine(ctx), source, grant.handle)
+    stamp = record.result_at or record.last_at
+    expired = stamp is not None and ctx.clock.now() - parse(stamp) > GIVE_UP_AFTER
+    if cleaned and (inbox or record.result == "arrived" or expired):
+        with transaction(ctx.db):
+            current = records(ctx.db).get(source, Record())
+            if current.pending == record.pending:
+                _save(ctx, source, Record(current.last_at, None, current.result, current.result_at))
 
 
 def _held(ctx: Context, source: str, health: SourceHealth, record: Record) -> SourceHealth:
@@ -169,16 +194,17 @@ def _held(ctx: Context, source: str, health: SourceHealth, record: Record) -> So
 def _marked(
     ctx: Context, source: str, role: FolderRole, subject: str | None = None
 ) -> list[MessageSummary]:
-    """This mailbox's delivery-check copies in the folder of `role`."""
+    """This mailbox's delivery-check copies in every folder of `role` (Exchange can show two
+    Sent folders, as KCL does: "Sent" and "Sent Items")."""
     port = ctx.sources.mail_port(source)
-    folder = next((f.id for f in port.folders(source) if f.role is role), None)
-    if folder is None:
-        return []
-    page = port.search(source, MailQuery(folder_id=folder, text=subject or DELIVERY_MARK))
     own = own_addresses(ctx.db, source)
+    items: list[MessageSummary] = []
+    for folder in grants.folders_of(port.folders(source), role):
+        query = MailQuery(folder_id=folder, text=subject or DELIVERY_MARK)
+        items.extend(port.search(source, query).items)
     return [
         m
-        for m in page.items
+        for m in items
         if is_delivery_check(m.subject, m.sender.address, own)
         and f" {source} " in m.subject
         and (subject is None or m.subject.strip() == subject)
@@ -188,13 +214,13 @@ def _marked(
 def _await(ctx: Context, source: str, subject: str, deadline: datetime) -> datetime | None:
     """The time the message was first seen in the Inbox, or None when it did not come in time."""
     port = ctx.sources.mail_port(source)
-    inbox = next((f.id for f in port.folders(source) if f.role is FolderRole.INBOX), None)
+    inbox = grants.folders_of(port.folders(source), FolderRole.INBOX)
     polls = int(max(0.0, (deadline - ctx.clock.now()).total_seconds()) / POLL_SECONDS) + 2
     for _ in range(polls):
         left = deadline - ctx.clock.now()
-        if inbox is not None and isinstance(port, FolderSync) and left > timedelta(0):
+        if inbox and isinstance(port, FolderSync) and left > timedelta(0):
             try:
-                port.sync_folders(source, [inbox], min(left, timedelta(seconds=SYNC_SECONDS)))
+                port.sync_folders(source, inbox, min(left, timedelta(seconds=SYNC_SECONDS)))
             except Exception:
                 log_failure(log, "syncing the Inbox of %s for the delivery check failed", source)
         try:
@@ -209,17 +235,19 @@ def _await(ctx: Context, source: str, subject: str, deadline: datetime) -> datet
     return None
 
 
-def _clean(ctx: Context, engine: Engine, source: str, grant: str) -> bool:
+def _clean(ctx: Context, engine: Engine, source: str, grant: str) -> tuple[bool, bool]:
     """Move every copy of this mailbox's delivery-check mail (Inbox, Sent) to Trash.
 
-    One `mail.trash` write per folder per pass; True when none is left. A failure is logged and
-    left for the next probe (the record still names the message)."""
+    One `mail.trash` write per folder per pass. Returns (none is left, an Inbox copy was moved).
+    A failure is logged and left for the next sweep (the record still names the message)."""
     roles = (FolderRole.INBOX, FolderRole.SENT)
+    inbox_moved = False
     try:
         for _ in range(CLEANUP_PASSES):
-            found = [m for role in roles for m in _marked(ctx, source, role)]
+            inbox = _marked(ctx, source, FolderRole.INBOX)
+            found = inbox + _marked(ctx, source, FolderRole.SENT)
             if not found:
-                return True
+                return True, inbox_moved
             by_folder: dict[str, list[MessageSummary]] = {}
             for message in found:
                 by_folder.setdefault(message.folder_id, []).append(message)
@@ -236,10 +264,12 @@ def _clean(ctx: Context, engine: Engine, source: str, grant: str) -> bool:
                 done = engine.run(
                     MailTrash(source=source, messages=handles), actor=grants.ACTOR, grant=grant
                 )
-                progress = progress or (done is not None and done.state is OperationState.CONFIRMED)
+                moved = done is not None and done.state is OperationState.CONFIRMED
+                progress = progress or moved
+                inbox_moved = inbox_moved or (moved and copies[0] in inbox)
             if not progress:
-                return False
-        return not any(_marked(ctx, source, role) for role in roles)
+                return False, inbox_moved
+        return not any(_marked(ctx, source, role) for role in roles), inbox_moved
     except Exception:
         log_failure(log, "moving the delivery-check message of %s to Trash failed", source)
-        return False
+        return False, inbox_moved

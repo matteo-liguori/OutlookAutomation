@@ -206,7 +206,7 @@ def test_a_message_that_does_not_arrive_keeps_the_mailbox_stale_and_the_report_s
     rig.grant()
     started = rig.clock.now()
     rig.tick()
-    assert rig.clock.now() - started <= timedelta(seconds=120 + 30)
+    assert rig.clock.now() - started <= timedelta(seconds=300 + 30)
     assert rig.health() == "stale"
     record = delivery_check.records(rig.ctx.db)[MAIL]
     assert record.result == "missing"
@@ -263,3 +263,32 @@ def test_no_probe_when_unavailable_or_switched_off(rig: Rig, case: str) -> None:
     rig.tick()
     assert rig.sends() == 0
     assert rig.health() == case.replace("switched off", "stale")
+
+
+def test_a_late_arrival_is_swept_at_the_next_tick_even_when_healthy(rig: Rig) -> None:
+    rig.fake.mail.deliver_self_sends(MAIL, False)
+    rig.grant()
+    rig.tick()
+    stray = delivery_check.records(rig.ctx.db)[MAIL].pending
+    assert stray
+    rig.fake.mail.add_message(MAIL, internet_message_id="<late@x>", subject=stray, sender=ME)
+    rig.fake.world.health_override.pop(MAIL)  # healthy now: no new probe, only the sweep
+    rig.clock.advance(minutes=30)
+    rig.tick()
+    assert rig.copies("f-inbox") == []
+    assert delivery_check.records(rig.ctx.db)[MAIL].pending is None
+    assert rig.sends() == 1
+
+
+def test_every_sent_folder_is_cleaned_as_on_exchange(rig: Rig) -> None:
+    from chamberlain.domain.mail import FolderRole
+
+    rig.fake.mail.add_folder(MAIL, "f-sent-items", "Sent Items", FolderRole.SENT)
+    rig.grant()
+    marked = f"{DELIVERY_MARK} {MAIL} 20260105T050000Z"
+    rig.fake.mail.add_message(
+        MAIL, folder_id="f-sent-items", internet_message_id="<copy@x>", subject=marked, sender=ME
+    )
+    rig.tick()
+    assert rig.health() == "ok"
+    assert rig.copies("f-sent-items") == []
