@@ -11,6 +11,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol, Self
 
+from chamberlain.domain.testmark import carries_marker
 from chamberlain.memory.artifacts import ArtifactService, Budgets
 from chamberlain.memory.evidence import EvidenceService
 from chamberlain.memory.refs import RefService
@@ -37,6 +38,29 @@ class SourceRouter:
     contacts: Mapping[str, ContactsPort] = field(default_factory=dict[str, ContactsPort])
     information_only: frozenset[str] = frozenset()
     """Calendars the owner keeps for information (`commitments: false`): no clash checks."""
+
+    test_only: frozenset[str] = frozenset()
+    """Sources only the live test uses (`test_only: true`): daily operation skips them."""
+    hide_test_marked: bool = False
+    """Daily operation: calendar events carrying the live-test marker are left out of views
+    and the calendar collect. The live test's own app leaves this false."""
+
+    def daily_mail(self) -> list[str]:
+        """Mailboxes daily operation works on, sorted: every mail source but test-only ones."""
+        return sorted(s for s in self.mail if s not in self.test_only)
+
+    def is_hidden_event_title(self, title: str) -> bool:
+        """True when daily operation leaves out a calendar event with this title."""
+        return self.hide_test_marked and carries_marker(title)
+
+    def daily_calendars(self) -> list[str]:
+        return sorted(s for s in self.calendar if s not in self.test_only)
+
+    def daily_contacts(self) -> list[str]:
+        return sorted(s for s in self.contacts if s not in self.test_only)
+
+    def daily_source_ids(self) -> list[str]:
+        return [s for s in self.source_ids() if s not in self.test_only]
 
     def mail_port(self, source: str) -> MailPort:
         return _route(self.mail, source)

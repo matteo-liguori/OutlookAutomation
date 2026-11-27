@@ -80,7 +80,7 @@ def main(
             return _report(data_root, run_id, out, as_json)
         if not config.enabled:
             raise _disabled()
-        app = open_app(data_root)
+        app = open_app(data_root, include_test=True)
     except ChamberlainError as error:
         return _fail(out, error)
     try:
@@ -134,7 +134,7 @@ def _dispatch(
         options = replace(
             options,
             progress=_progress_writer(data_root, env, out),
-            open_app=lambda: open_app(data_root),
+            open_app=lambda: open_app(data_root, include_test=True),
         )
     report = execute(app, env, config, options)
     if not options.dry_run and not report.stopped:

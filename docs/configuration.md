@@ -31,6 +31,12 @@ sources:                         # id prefix gives the role: mail:, calendar:, c
                                  # Without any address the calendar sends no invitations.
     commitments: true            # default true. false: a calendar kept for information (a
                                  # family or shared calendar); read and reported, never a clash.
+    test_only: false             # default false, any source. true: only `chamberlain live-test`
+                                 # uses it; daily operation (collect, sync, the pass report, the
+                                 # viewer, `find` without a source) skips it. `find` with that
+                                 # source named still works. Use it on the live test's mailbox and
+                                 # calendar. Calendar events carrying the live-test marker are
+                                 # also left out of the viewer calendar and the clash check.
 
 write_policy: {}                 # optional overrides of the grant rules (G-12a defaults)
 budgets: {}                      # optional storage budgets (M-27 defaults)

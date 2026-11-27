@@ -193,7 +193,7 @@ def ensure_fresh(ctx: Context, source: str) -> Synced | None:
 
 def ensure_all_fresh(ctx: Context) -> None:
     """The freshness guard when an agent starts (A-24)."""
-    for source in sorted(ctx.sources.mail):
+    for source in ctx.sources.daily_mail():
         ensure_fresh(ctx, source)
 
 
@@ -226,7 +226,7 @@ def presync(ctx: Context) -> None:
     lead = _lead(ctx, ctx.clock.now())
     if lead is None:
         return
-    for source in sorted(ctx.sources.mail):
+    for source in ctx.sources.daily_mail():
         try:
             sync_source(ctx, source, max_age=lead)
         except Exception:

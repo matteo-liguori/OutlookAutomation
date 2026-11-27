@@ -46,7 +46,8 @@ class SourceFact:
     newest_mail: str | None
 
 
-def source_facts(db: sqlite3.Connection) -> list[SourceFact]:
+def source_facts(db: sqlite3.Connection, skip: frozenset[str] = frozenset()) -> list[SourceFact]:
+    """Enabled mail and calendar sources, except `skip` (the live test's own)."""
     rows = db.execute(
         "SELECT s.id, s.kind, s.label, h.state AS health, h.checked_at, h.fresh_as_of, "
         "w.covered_through, w.gap_from, w.gap_to, "
@@ -69,6 +70,7 @@ def source_facts(db: sqlite3.Connection) -> list[SourceFact]:
             r["newest_mail"],
         )
         for r in rows
+        if r["id"] not in skip
     ]
 
 

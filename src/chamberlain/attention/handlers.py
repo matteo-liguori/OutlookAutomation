@@ -71,7 +71,7 @@ def _capabilities(ctx: Context, source: str) -> tuple[SourceKind, list[str]]:
 
 def _sources(ctx: Context) -> tuple[SourceStatus, ...]:
     found: list[SourceStatus] = []
-    for source in ctx.sources.source_ids():
+    for source in ctx.sources.daily_source_ids():
         health = source_health(ctx, source)
         state = HealthState.UNAVAILABLE if health is None else health.state
         kind, names = _capabilities(ctx, source)
@@ -252,7 +252,7 @@ def _sync_summary(ctx: Context, unsynced: list[tuple[str, repo.SyncFolder]]) -> 
         for source, _ in unsynced:
             counts[source] = counts.get(source, 0) + 1
         return "; ".join(f"{s}: {n} folder(s) not synced" for s, n in counts.items())[:160]
-    done = [(s, repo.sync_state(ctx.db, s)) for s in sorted(ctx.sources.mail)]
+    done = [(s, repo.sync_state(ctx.db, s)) for s in ctx.sources.daily_mail()]
     last = [f"{s}: {st[0]}" for s, st in done if st is not None and st[0] is not None]
     if not last:
         return "No folder sync has been recorded."

@@ -24,6 +24,17 @@ Only the sources you list in `live_test` (see `docs/configuration.md`).
   one action to it and finishes it at the end. A few extra operations and evidence rows
   appear in the store and age out by the usual lifetime rules.
 
+## Keeping the test out of daily operation
+
+Set `test_only: true` on the dedicated test mailbox and calendar in `connections.yaml`.
+Daily operation then skips them: no health check, mail scan, folder sync, clash check,
+viewer entry or line in the pass report, and `find` without a source ignores them. The live
+test opens the harness with them switched on, so it behaves as before. Naming a test source
+in `find` still works. Rechecks of uncertain writes, export and `doctor` still cover them.
+
+Marked calendar events on any other calendar are also left out of the viewer calendar and
+the clash check. Marked mail is still scanned, because a scenario needs it.
+
 ## Authority: how it is allowed to send
 
 A send to an address the mailbox does not know needs your confirmation in the viewer, and

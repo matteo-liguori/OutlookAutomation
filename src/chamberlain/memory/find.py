@@ -211,7 +211,7 @@ def _mail(ctx: Context, request: FindRequest) -> Snapshot:
         )
         return page, folders
 
-    for source, page, folders in _over_sources(request, ctx.sources.mail, read, gaps):
+    for source, page, folders in _over_sources(request, ctx.sources.daily_mail(), read, gaps):
         # One hit per message: copies in several folders share a Message-ID (P-7).
         copies: dict[str, list[MessageSummary]] = {}
         for item in page.items:
@@ -287,7 +287,7 @@ def _calendar(ctx: Context, request: FindRequest) -> Snapshot:
     gaps: list[CoverageGap] = []
     for source, page, _ in _over_sources(
         request,
-        ctx.sources.calendar,
+        ctx.sources.daily_calendars(),
         lambda source: (ctx.sources.calendar_port(source).events(source, query), None),
         gaps,
     ):
@@ -326,7 +326,7 @@ def _contacts(ctx: Context, request: FindRequest) -> Snapshot:
     gaps: list[CoverageGap] = []
     for source, page, _ in _over_sources(
         request,
-        ctx.sources.contacts,
+        ctx.sources.daily_contacts(),
         lambda source: (ctx.sources.contacts_port(source).search(source, query), None),
         gaps,
     ):

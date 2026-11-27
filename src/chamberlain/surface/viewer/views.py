@@ -67,7 +67,7 @@ def overview(ctx: Context) -> dict[str, Any]:
             "live_events": attention_repo.count_live_events(db),
         },
         "known_recipients": {
-            source: write_repo.recipient_counts(db, source) for source in sorted(ctx.sources.mail)
+            source: write_repo.recipient_counts(db, source) for source in ctx.sources.daily_mail()
         },
         "over_budget": memory_repo.over_budget_flag(db),
     }

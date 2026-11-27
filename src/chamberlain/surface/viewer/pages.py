@@ -233,7 +233,7 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
         _local_row(r, tz)
         for r in local_repo.local_events_between(ctx.db, first.isoformat(), last.isoformat())
     ]
-    for index, source in enumerate(sorted(ctx.sources.calendar)):
+    for index, source in enumerate(ctx.sources.daily_calendars()):
         tone = index % TONES
         note = ""
         complete = False
@@ -242,7 +242,11 @@ def calendar(ctx: Context, zone: str, start: str | None, until: str | None) -> d
             cursor: str | None = None
             for _ in range(PAGES_PER_SOURCE):
                 page = port.events(source, window, cursor)
-                rows.extend(_event_row(e, source, tone, tz, given) for e in page.items)
+                rows.extend(
+                    _event_row(e, source, tone, tz, given)
+                    for e in page.items
+                    if not ctx.sources.is_hidden_event_title(e.fields.title)
+                )
                 complete = page.complete
                 cursor = page.cursor
                 if cursor is None:

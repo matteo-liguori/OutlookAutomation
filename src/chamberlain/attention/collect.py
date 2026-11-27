@@ -65,7 +65,7 @@ def source_health(ctx: Context, source: str) -> SourceHealth | None:
 
 def _health(ctx: Context) -> tuple[SourceSnapshot, ...]:
     snapshots: list[SourceSnapshot] = []
-    for source in ctx.sources.source_ids():
+    for source in ctx.sources.daily_source_ids():
         health = source_health(ctx, source)
         state = HealthState.UNAVAILABLE if health is None else health.state
         fresh = None if health is None or health.fresh_as_of is None else health.fresh_as_of
@@ -85,7 +85,7 @@ def _mail(ctx: Context, snapshots: tuple[SourceSnapshot, ...]) -> set[str]:
     unreadable: set[str] = set()
     states = {s.id: s.state for s in snapshots}
     suggester = Suggester(ctx)
-    for source in sorted(ctx.sources.mail):
+    for source in ctx.sources.daily_mail():
         try:
             if not scan(ctx, source, states.get(source), suggester):
                 unreadable.add(source)
@@ -123,6 +123,8 @@ def _read_calendar(ctx: Context, source: str) -> list[CalendarSlot] | None:
     slots: list[CalendarSlot] = []
     for page in pages(lambda cursor: port.events(source, query, cursor), limit=CONFLICT_PAGES):
         for event in page.items:
+            if ctx.sources.is_hidden_event_title(event.fields.title):
+                continue
             slot = _slot(event)
             if slot is not None:
                 slots.append(slot)
@@ -143,7 +145,7 @@ def _calendars(
     states = {s.id: s.state for s in snapshots}
     slots: list[CalendarSlot] = []
     unreadable: set[str] = set()
-    for source in sorted(ctx.sources.calendar):
+    for source in ctx.sources.daily_calendars():
         if states.get(source) is not HealthState.OK:
             unreadable.add(source)
             continue

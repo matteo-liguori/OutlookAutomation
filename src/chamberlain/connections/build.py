@@ -62,6 +62,7 @@ def build_router(
     clock: Clock,
     *,
     secrets: SecretStore | None = None,
+    include_test: bool = False,
 ) -> SourceRouter:
     """The real connectors for every enabled source. `secrets` defaults to the OS store."""
     mail_sources = connections.of_kind(ThunderbirdMailSource)
@@ -115,11 +116,18 @@ def build_router(
         for sid, source in connections.sources.items()
         if sid in calendar and not getattr(source, "commitments", True)
     )
+    test_only: frozenset[str] = (
+        frozenset()
+        if include_test
+        else frozenset(sid for sid, source in connections.sources.items() if source.test_only)
+    )
     return SourceRouter(
         mail=mail,
         calendar=calendar,
         contacts=contacts,
         information_only=information_only,
+        test_only=test_only,
+        hide_test_marked=not include_test,
     )
 
 
@@ -139,6 +147,7 @@ def build_runtime(
     clock: Clock,
     *,
     secrets: SecretStore | None = None,
+    include_test: bool = False,
 ) -> Runtime:
     policy = policy_of(connections)
     budgets = Budgets(
@@ -146,7 +155,9 @@ def build_runtime(
         total_bytes=connections.budgets.total_bytes,
     )
     return Runtime(
-        sources=build_router(connections, data_root, clock, secrets=secrets),
+        sources=build_router(
+            connections, data_root, clock, secrets=secrets, include_test=include_test
+        ),
         policy=policy,
         budgets=budgets,
     )

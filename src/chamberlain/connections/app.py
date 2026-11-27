@@ -63,16 +63,23 @@ def _review(connections: Connections) -> ReviewSettings | None:
 
 
 def open_app(
-    data_root: Path, *, clock: Clock | None = None, secrets: SecretStore | None = None
+    data_root: Path,
+    *,
+    clock: Clock | None = None,
+    secrets: SecretStore | None = None,
+    include_test: bool = False,
 ) -> App:
     """Load `config/connections.yaml`, build the connectors and assemble the app.
 
     Raises `ChamberlainError(config.invalid)` before the store is touched when the
-    profile is malformed.
+    profile is malformed. `include_test` is for the live test: its `test_only` sources behave
+    normally and live-test-marked calendar events are not hidden.
     """
     the_clock = clock or SystemClock()
     connections = load_connections(data_root)
-    runtime = build_runtime(connections, data_root, the_clock, secrets=secrets)
+    runtime = build_runtime(
+        connections, data_root, the_clock, secrets=secrets, include_test=include_test
+    )
     app = build_app(
         data_root,
         clock=the_clock,

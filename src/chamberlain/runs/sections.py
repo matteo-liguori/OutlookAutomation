@@ -62,7 +62,7 @@ class Facts:
         self.zone = zone
         self.now = stamp(ctx.clock)
         self.since = run.started_at or run.due_at
-        self.sources = repo.source_facts(ctx.db)
+        self.sources = repo.source_facts(ctx.db, ctx.sources.test_only)
         self.filing = repo.filing_facts(ctx.db, self.since)
         self.outside = repo.outside_facts(ctx.db, self.since)
         self.unsynced: dict[str, list[str]] = {}

@@ -34,6 +34,8 @@ class _Source(Model):
     """Calendars only: the owner's own commitments. A calendar kept for information (a family or
     shared calendar) sets this false: it is read and reported, but its events never count as a
     clash (A-26)."""
+    test_only: bool = False
+    """Only the live test uses this source; daily operation skips it."""
 
 
 class ThunderbirdMailSource(ThunderbirdBinding, _Source):
