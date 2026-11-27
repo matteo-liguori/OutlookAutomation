@@ -198,9 +198,12 @@ def _marked(
     Sent folders, as KCL does: "Sent" and "Sent Items")."""
     port = ctx.sources.mail_port(source)
     own = own_addresses(ctx.db, source)
+    since = ctx.clock.now() - GIVE_UP_AFTER - timedelta(hours=1)
     items: list[MessageSummary] = []
     for folder in grants.folders_of(port.folders(source), role):
-        query = MailQuery(folder_id=folder, text=subject or DELIVERY_MARK)
+        # A listing of recent mail, matched here: Thunderbird's text search misses mail that
+        # has just arrived (found live on KCL, 2026-11-27).
+        query = MailQuery(folder_id=folder, since=since, limit=200)
         items.extend(port.search(source, query).items)
     return [
         m
