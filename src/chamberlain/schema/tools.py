@@ -47,6 +47,7 @@ from chamberlain.schema.base import (
     Model,
     NoteHandle,
     OperationHandle,
+    RunHandle,
     SessionHandle,
     Sha256,
     SourceId,
@@ -55,6 +56,9 @@ from chamberlain.schema.base import (
 )
 from chamberlain.schema.envelope import Content, ContentLine, NextStep
 from chamberlain.schema.errors import ErrorCode
+
+OWNER_ASKS_MAX = 5
+"""Asks a start lists, oldest first; the report lists every one."""
 
 
 class ToolRequest(Model):
@@ -91,6 +95,16 @@ class StartRequest(ToolRequest):
     """The local day a scheduled run was meant for, given by the wake adapter (R10)."""
 
 
+class OwnerAsk(Model):
+    """An open action waiting for the owner."""
+
+    action: ActionHandle
+    card: CardHandle
+    title: str = Field(max_length=ACTION_TITLE_MAX)
+    """The ask itself, as written on the action."""
+    since: Timestamp
+
+
 class StartResponse(Model):
     session: SessionHandle
     now: Timestamp
@@ -102,6 +116,12 @@ class StartResponse(Model):
     )
     """What the harness did by itself just now, one line each, for the report: the owner's
     mail clean-up ("Clean-up moved 12 emails to Trash: ...")."""
+    waiting_for_you: tuple[OwnerAsk, ...] | None = Field(default=None, max_length=OWNER_ASKS_MAX)
+    """Open actions waiting for the owner, oldest first; None when there are none."""
+    waiting_more: int = Field(default=0, ge=0)
+    """Asks waiting beyond those listed; the latest report lists every one."""
+    live_report: RunHandle | None = None
+    """Not in a scheduled pass: the run whose report the owner reads now and you may rewrite."""
 
 
 class NextRequest(ToolRequest):

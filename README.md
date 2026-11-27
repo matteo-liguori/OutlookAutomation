@@ -191,16 +191,22 @@ reports sit below the calendar, and any earlier day's open from the date list or
 day. The Schedule tab lists the pass times and each recent pass's state.
 
 - **Who writes what.** The harness writes the sections it can prove from its own records, when the
-  pass ends: access problems per source (red, labelled), important appointments (orange,
+  pass ends: what waits for you (orange, at the top: every open action marked for you, oldest
+  first), access problems per source (red, labelled), important appointments (orange,
   labelled), permission reviews that are due, and a verification table (newest mail, how far mail
   was read, calendar freshness, filing counts, and **Partially verified** when anything is short).
   The assistant writes only the rest, usually the status of each item and what you must do next.
   It is told when its report is due and given an outline of its sections; it keeps the text under
   the run, and the harness never lets that text pose as a red or orange block.
+- **The live report.** The newest pass's report stays live until the next pass starts (the
+  viewer says "Live: updates until the next pass"). Its harness sections show the current state,
+  and when you and the assistant settle something in a chat, it rewrites its part; the newest
+  text replaces the old. When the next pass starts, the report is frozen as it stands.
 - **Your layout.** The standard layout is `src/chamberlain/runs/report_default.yaml`. Your own is
   one private file, `config/report-template.yaml` in the data root; `chamberlain import` writes it
   from your old report template (once, never over an existing file). It names the sections, their
-  order, headings and styles, and the wording the assistant gets for its own sections.
+  order, headings and styles, and the wording the assistant gets for its own sections. A layout
+  without the "Waiting for you" section gets it at the top.
 - **Calendar.** Events show in the colour of their category (work, personal, social, travel,
   health, occasion, home; grey until the assistant gives one, with a short title if the invite is
   vague). **Add local event** keeps an event only in the viewer; no calendar is changed.

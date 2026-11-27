@@ -30,6 +30,7 @@ def test_the_old_report_template_becomes_a_private_layout(
     # The owner's headings and callout styles are kept; the standard layout is not used.
     assert template.title == "Pass summary {date}"
     assert [(s.id, s.by, s.style) for s in template.slots] == [
+        ("waiting_for_you", "harness", "orange"),  # added on load: the old layout had none
         ("access_problems", "harness", "red"),
         ("important_appointments", "harness", "orange"),
         ("open_items", "agent", "plain"),

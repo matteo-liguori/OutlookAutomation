@@ -44,6 +44,11 @@ This page is for the person setting up Chamberlain on their own computer. The co
    days after its day. The report shows below the calendar, the viewer's front page; every run and
    its state is also listed under **Schedule**. The layout is `config/report-template.yaml` (see the README, "The
    report").
+7. The newest pass's report is live until the next pass starts. While it is live the viewer
+   recomposes its harness sections on every read, and any session (a chat or a pass) may keep a
+   new text under its run; the newest replaces the old, which is released. When the next pass
+   starts, the harness takes the sections once more and freezes the report; later text for it is
+   refused with `artifact.owner_ended`, and the error names the live report.
 
 ## Opening the viewer
 

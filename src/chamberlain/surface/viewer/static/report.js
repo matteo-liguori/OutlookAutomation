@@ -28,8 +28,9 @@
       var label = (styled && block.mark ? block.mark + " " : "") + block.heading;
       box.appendChild(el("h2", { class: styled ? "callout-label" : "", text: label }));
     }
-    if (styled && STYLE_WORDS[block.style]) {
-      box.appendChild(el("p", { class: "callout-kind", text: STYLE_WORDS[block.style] }));
+    var kind = block.id === "waiting_for_you" ? "Needs your answer or decision" : STYLE_WORDS[block.style];
+    if (styled && kind) {
+      box.appendChild(el("p", { class: "callout-kind", text: kind }));
     }
     if (block.markdown && V.markdown) box.appendChild(V.markdown(block.markdown));
     return box;
@@ -46,6 +47,7 @@
     var meta = [report.schedule, report.started_at ? V.local(report.started_at) : report.state];
     var line = el("p", { class: "report-time", text: meta.join(" · ") });
     if (report.partial) line.appendChild(el("span", { class: "badge attention", text: "Partial: the pass ended early" }));
+    if (report.live) line.appendChild(el("span", { class: "badge", text: "Live: updates until the next pass" }));
     article.appendChild(line);
     report.blocks.forEach(function (block) {
       if (block.by === "agent" && !block.markdown) return;

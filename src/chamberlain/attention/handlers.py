@@ -18,12 +18,16 @@ from chamberlain.attention.rules import Rule, load_rules, rule_problems
 from chamberlain.attention.tuning import GUIDE_PAGE
 from chamberlain.attention.work import work_item
 from chamberlain.domain.capabilities import HealthState
+from chamberlain.domain.timefmt import parse
 from chamberlain.limits import START_WORK_ITEMS, SUMMARY_MAX
+from chamberlain.runs import repo as runs_repo
+from chamberlain.runs import report_repo
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.envelope import Coverage
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 from chamberlain.schema.safelog import log_failure
 from chamberlain.schema.tools import (
+    OWNER_ASKS_MAX,
     CheckResult,
     DoctorCheck,
     GuideRequest,
@@ -31,6 +35,7 @@ from chamberlain.schema.tools import (
     GuideRule,
     NextRequest,
     NextResponse,
+    OwnerAsk,
     SourceStatus,
     StartRequest,
     StartResponse,
@@ -92,6 +97,8 @@ def start(ctx: Context, request: StartRequest) -> Result:
     )
     housekeeping = _on_start(ctx, request.agent or "")
     work, more = _offer(ctx, row.handle, START_WORK_ITEMS)
+    asks = report_repo.waiting_for_owner(ctx.db)
+    live = None if request.purpose == "scheduled" else runs_repo.live_run(ctx.db)
     response = StartResponse(
         session=row.handle,
         now=ctx.clock.now(),
@@ -99,6 +106,13 @@ def start(ctx: Context, request: StartRequest) -> Result:
         work=work,
         more_work=more,
         housekeeping=housekeeping,
+        waiting_for_you=tuple(
+            OwnerAsk(action=a.action, card=a.card, title=a.title, since=parse(a.since))
+            for a in asks[:OWNER_ASKS_MAX]
+        )
+        or None,
+        waiting_more=max(0, len(asks) - OWNER_ASKS_MAX),
+        live_report=None if live is None else live.handle,
     )
     return Result(response, next=(work[0].next,) if work else ())
 

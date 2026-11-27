@@ -4,7 +4,7 @@ These are the only instructions the agent receives beyond its tiny standing prom
 only when its trigger fires (once per session or per event), within a budget of about 800 characters per
 reply. Command syntax never appears here; the agent gets that from the tool schema.
 
-46 rules, about 9,000 characters in total (budget 12,000; the gate keeps it under three quarters of that).
+48 rules, about 9,700 characters in total (budget 12,000; the gate keeps it under 85% of that).
 
 For each rule: approve it, edit the wording, or strike it. Write notes directly under a rule.
 
@@ -31,6 +31,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'event': 'operation.uncertain'}`; shown operation; priority 96; cap 330 chars
 
 > The harness could not find this change after a day. Look where it should be. If you find it, record that it happened, with what you saw. If it is missing and still wanted, do it again from this one; never write it afresh. If unsure, ask the user. Say which you did in your report.
+
+## owner.waiting: Things wait for the owner
+
+- Trigger: `{'result': 'data.waiting_for_you != null'}`; shown session; priority 92; cap 220 chars
+
+> Actions wait for the owner. Lead with these asks, word for word. When the owner answers, record it as the outcome and finish the action, or move it on. Never say something "remains open" without the ask itself.
 
 ## session.stopped: A session that must stop
 
@@ -72,7 +78,7 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 - Trigger: `{'tool': 'start', 'purpose': 'scheduled'}`; shown session; priority 75; cap 300 chars
 
-> A schedule started this run; the user may not be watching. Do only what the items ask and do not wait for answers. Record anything that needs the user on its card and report it; never assume a permission. End with a short report of what was done and not covered.
+> A schedule started this run; the user may not be watching. Do only what the items ask and do not wait for answers. Make anything that needs the user an action marked for the owner on its card, and report it; never assume a permission. End with a short report of what was done and not covered.
 
 ## error.not_authorised: Not permitted
 
@@ -151,6 +157,12 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'event': 'source.stale'}`; shown event; priority 60; cap 250 chars
 
 > A source is out of date or cannot be reached, so what you read from it may be incomplete. Say so whenever you rely on it, work on with the other sources, and never read an empty result as nothing there.
+
+## report.live: The latest report is still open
+
+- Trigger: `{'result': 'data.live_report != null'}`; shown session; priority 60; cap 220 chars
+
+> The latest pass report stays open until the next pass. When you and the owner settle something it mentions, keep your whole rewritten text as an artifact owned by the live run; the newest text wins.
 
 ## card.over_cap: A card is too big
 
@@ -238,9 +250,9 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 ## mail.unmatched: New mail to triage
 
-- Trigger: `{'event': 'mail.new_unmatched', 'reason': 'received'}`; shown session; priority 40; cap 180 chars
+- Trigger: `{'event': 'mail.new_unmatched', 'reason': 'received'}`; shown session; priority 40; cap 480 chars
 
-> List the new mail and open only what you need. Suggested cards are guesses; you decide each link. A deadline, promise or expected reply needs a card; routine mail can be left.
+> Open only what you need; suggested cards are guesses. A message that needs anything done becomes an action on its card as you read it, never a note. The owner's part (a reply to approve, a question, a decision): an action for the owner, titled with the ask itself. Covered by a grant or standing permission: do it, then finish the action with the outcome. Outside these tools: do it if allowed and finish it, else leave it for the owner. Routine mail needs no card.
 
 ## mail.sent: Mail the owner sent elsewhere
 
@@ -264,7 +276,7 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 
 - Trigger: `{'event': 'report.due'}`; shown event; priority 70; cap 380 chars (new). The event is the last item of a scheduled pass, so this is the moment the report is due.
 
-> The work is done: write the report. Open the item to see which sections are yours: the harness fills sources, newest times, filing counts, appointments and reviews itself. Say what the owner must do next, then what changed, and plainly what you could not cover. Keep it under the named run.
+> The work is done: write the report. Open the item to see which sections are yours: the harness lists what waits for the owner first and fills sources, newest times, filing counts, appointments and reviews itself. Add only context to those asks, then what changed, and plainly what you could not cover. Keep it under the named run.
 
 ## harness.review: Reviewing how you work
 
@@ -283,4 +295,3 @@ For each rule: approve it, edit the wording, or strike it. Write notes directly 
 - Trigger: `{'event': 'storage.orphans'}`; shown event; priority 30; cap 150 chars
 
 > Files the harness does not recognise were set aside and will be deleted after a grace period. Mention it to the user once. Do not touch them.
-

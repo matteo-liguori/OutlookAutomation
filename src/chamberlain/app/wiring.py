@@ -30,6 +30,7 @@ from chamberlain.review.scan import tick_step as review_tick_step
 from chamberlain.runs import maintenance as run_maintenance
 from chamberlain.runs import plan as run_plan
 from chamberlain.runs import updates as run_updates
+from chamberlain.runs.reports import report_keep
 from chamberlain.runs.updates import TagLister
 from chamberlain.schema.base import ToolName
 from chamberlain.schema.safelog import log_failure
@@ -55,6 +56,7 @@ def app_handlers() -> dict[ToolName, Handler]:
     return {
         **attention_handlers.HANDLERS,
         **memory_handlers.HANDLERS,
+        ToolName.KEEP: report_keep(memory_handlers.HANDLERS[ToolName.KEEP]),
         **make_handlers(),
         ToolName.DOCTOR: make_doctor(
             [

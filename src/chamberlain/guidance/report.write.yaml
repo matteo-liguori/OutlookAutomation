@@ -1,12 +1,13 @@
 id: report.write
-version: 2
+version: 3
 title: Writing the pass report
 when: {event: report.due}
 text: >
-  The work is done: write the report. Open the item to see which
-  sections are yours: the harness fills sources, newest times, filing counts,
-  appointments and reviews itself. Say what the owner must do next, then what
-  changed, and plainly what you could not cover. Keep it under the named run.
+  The work is done: write the report. Open the item to see which sections
+  are yours: the harness lists what waits for the owner first and fills
+  sources, newest times, filing counts, appointments and reviews itself.
+  Add only context to those asks, then what changed, and plainly what you
+  could not cover. Keep it under the named run.
 max_chars: 380
 once_per: event
 priority: 70

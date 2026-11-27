@@ -4,7 +4,9 @@ Contract: docs/contracts/06-memory.md (the report section). Three parts meet her
 
 - The layout (`template.py`): which sections, in what order, who writes each.
 - The harness sections, taken when the pass settles and kept in `run_reports` (35 days, with the
-  run). They are facts as of that moment, so a later change of state cannot rewrite history.
+  run). The newest pass's report stays live until the next pass starts: its harness sections are
+  recomposed on every read, and the assistant may replace its text. When the next pass starts the
+  harness takes the sections once more and freezes them, so a later change cannot rewrite history.
 - The assistant's text, which stays a stored item owned by the run (30 days unless it asks for
   less, hash-checked on every read). It is never copied into the database, so a retention rule
   for stored items holds for it too.
@@ -27,6 +29,7 @@ from chamberlain.review import findings as review_findings
 from chamberlain.runs import report_repo as repo
 from chamberlain.runs import sections
 from chamberlain.runs.models import RunRow
+from chamberlain.runs.repo import live_run as live_report_run
 from chamberlain.runs.repo import outline_handle, schedules
 from chamberlain.runs.reports import read_reports
 from chamberlain.runs.template import ReportTemplate, Slot, load_template
@@ -72,8 +75,11 @@ def _title(template: ReportTemplate, run: RunRow, zone: ZoneInfo) -> str:
     )
 
 
-def snapshot(ctx: Context, run: RunRow) -> ComposedReport:
-    """The report's structure with the harness sections filled in as of now."""
+def snapshot(ctx: Context, run: RunRow, *, review: bool = True) -> ComposedReport:
+    """The report's structure with the harness sections filled in as of now.
+
+    `review=False` leaves out the review findings not yet reported (a live recompose: the pass
+    already reported its own, which `live_snapshot` carries over)."""
     template, problem = load_template(ctx.data_root)
     zone = zone_of(ctx, run)
     facts = sections.Facts(ctx, run, zone)
@@ -95,7 +101,7 @@ def snapshot(ctx: Context, run: RunRow) -> ComposedReport:
                 markdown=text,
             )
         )
-    worrying, _ = review_findings.report_lines(ctx)
+    worrying = review_findings.report_lines(ctx)[0] if review else ""
     if worrying:
         blocks.append(
             Block(
@@ -121,6 +127,25 @@ def settle_snapshot(ctx: Context, run: RunRow) -> None:
 def stored_snapshot(ctx: Context, run: str) -> ComposedReport | None:
     raw = repo.get_run_report(ctx.db, run)
     return None if raw is None else ComposedReport.model_validate_json(raw)
+
+
+def live_snapshot(ctx: Context, run: RunRow) -> ComposedReport:
+    """The live report's harness sections recomposed now. The review findings the pass reported
+    when it settled are carried over from its stored sections."""
+    report = snapshot(ctx, run, review=False)
+    stored = stored_snapshot(ctx, run.handle)
+    carried = () if stored is None else tuple(b for b in stored.blocks if b.id == "harness_review")
+    return report.model_copy(update={"blocks": (*report.blocks, *carried)})
+
+
+def freeze(ctx: Context, run: RunRow) -> bool:
+    """The next pass has started: keep the live report's harness sections as of now, once.
+    From then on its text cannot change. False when it was frozen already."""
+    report = live_snapshot(ctx, run)
+    with transaction(ctx.db):
+        return repo.freeze_run_report(
+            ctx.db, run.handle, stamp(ctx.clock), report.model_dump_json()
+        )
 
 
 # --- reading -----------------------------------------------------------------------------------
@@ -150,10 +175,14 @@ def read_composed(ctx: Context, run: RunRow) -> dict[str, object] | None:
     """The report ready to draw: blocks with their markdown, or None when the run has no report.
 
     A run without a snapshot (it finished before reports had one) shows the assistant's text
-    alone. A run whose stored text has expired shows the harness sections and says so.
+    alone. A run whose stored text has expired shows the harness sections and says so. The live
+    report (`live`, the newest pass's until the next starts) has its harness sections recomposed
+    now, so it shows what the owner and the assistant have settled since.
     """
     parts = read_reports(ctx, run.handle)
-    composed = stored_snapshot(ctx, run.handle)
+    live_run = live_report_run(ctx.db)
+    live = live_run is not None and live_run.handle == run.handle
+    composed = live_snapshot(ctx, run) if live else stored_snapshot(ctx, run.handle)
     if composed is None and not parts:
         return None
     text = "\n\n".join(p.text for p in parts).strip()
@@ -194,6 +223,7 @@ def read_composed(ctx: Context, run: RunRow) -> dict[str, object] | None:
         "blocks": blocks,
         "note": note,
         "partial": run.state.value == "incomplete",
+        "live": live,
     }
 
 

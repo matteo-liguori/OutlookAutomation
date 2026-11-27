@@ -1,0 +1,11 @@
+id: owner.waiting
+version: 1
+title: Things wait for the owner
+when: {result: data.waiting_for_you != null}
+text: >
+  Actions wait for the owner. Lead with these asks, word for word. When the
+  owner answers, record it as the outcome and finish the action, or move it
+  on. Never say something "remains open" without the ask itself.
+max_chars: 220
+once_per: session
+priority: 92

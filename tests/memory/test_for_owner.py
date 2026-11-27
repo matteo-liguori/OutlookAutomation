@@ -15,6 +15,10 @@ from chamberlain.store.migrate import discover, migrate
 ASK = "Diana (solicitor, 27 Nov 14:08) asks which Swiss university Giulia graduated from"
 
 
+def named(reply: dict[str, Any], title: str) -> dict[str, Any]:
+    return next(a for a in reply["data"]["card"]["actions"] if a["title"] == title)
+
+
 def call(app: App, **request: Any) -> dict[str, Any]:
     reply = app.call("card", {"session": SESSION, **request})
     return reply.model_dump(mode="json", exclude_none=True)
@@ -30,7 +34,7 @@ def test_a_waiting_for_you_action_round_trips_and_finishes_with_the_answer(app: 
     assert action["for_owner"] is True
     assert action["title"] == ASK
     plain = call(app, op="add_action", card=card["handle"], action_fields={"title": "File it"})
-    assert plain["data"]["card"]["actions"][1]["for_owner"] is False
+    assert named(plain, "File it")["for_owner"] is False
 
     renamed = call(
         app,
@@ -38,7 +42,7 @@ def test_a_waiting_for_you_action_round_trips_and_finishes_with_the_answer(app: 
         action=action["handle"],
         action_fields={"title": ASK + " (asked again)"},
     )
-    assert renamed["data"]["card"]["actions"][0]["for_owner"] is True
+    assert named(renamed, ASK + " (asked again)")["for_owner"] is True
 
     refused = call(app, op="finish_action", action=action["handle"])
     assert refused["ok"] is False  # finishing always needs the owner's answer as the outcome
@@ -51,10 +55,10 @@ def test_a_waiting_for_you_action_round_trips_and_finishes_with_the_answer(app: 
     moved = call(
         app,
         op="update_action",
-        action=plain["data"]["card"]["actions"][1]["handle"],
+        action=named(plain, "File it")["handle"],
         action_fields={"for_owner": True},
     )
-    assert moved["data"]["card"]["actions"][0]["for_owner"] is True
+    assert named(moved, "File it")["for_owner"] is True
 
 
 def test_the_migration_gives_existing_actions_for_owner_0(tmp_path: Path) -> None:

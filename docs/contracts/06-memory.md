@@ -307,6 +307,16 @@ The written report is the owner's front page in the viewer. Three parts make it:
   mail, how far it was read, calendar freshness, filing counts). They are facts as of that moment.
 - **The agent part.** The agent keeps its text with `keep` (`kind: artifact`, `owner` the run). It is
   never copied into the database; it is read from the stored item (hash-checked) and expires with it.
+  A newer text kept under the run replaces the earlier ones, which are released.
+- **The live report.** The newest settled pass's report is live until the next pass starts
+  (`runs.repo.live_run`). Reads recompose its harness sections now (the review findings it reported
+  are carried over) and say `live: true`. Any session may replace its text. When the next pass
+  starts, the harness takes the sections once more, overwrites the stored ones and sets
+  `run_reports.frozen_at` (`compose.freeze`); from then on `keep` under that run is refused with
+  `artifact.owner_ended` and a fix naming the live report.
+- **Waiting for you.** The harness section `waiting_for_you` (orange, first in the standard layout)
+  lists every open action with `for_owner` on an open card, oldest first: the ask in bold, the card,
+  since when. An owner's layout without it gets it at the top.
 
 - **M-39** While a pass is `running` the harness keeps one stored item under the run, named
   `report-outline.txt` (72 hours), that says which sections are the agent's and the owner's wording

@@ -3,12 +3,14 @@
 Contract: docs/contracts/06-memory.md (the report section). The standard layout ships in
 `report_default.yaml`. The owner's own layout is one private file, `config/report-template.yaml`
 in the data root (`chamberlain import` writes it from the old report template); when it is
-there and valid it replaces the standard one as a whole. A private file that cannot be read is
-named in the report's Verification section, and the standard layout is used instead.
+there and valid it replaces the standard one as a whole, except that a layout without the
+"Waiting for you" section gets the standard one at its top (`ALWAYS_FIRST`), so a layout written
+before that section existed still shows what waits for the owner. A private file that cannot be
+read is named in the report's Verification section, and the standard layout is used instead.
 
 A section is written either by the harness (from its own records, when the pass ends) or by the
-assistant (`instructions` is what it is told). The harness knows four sections: `access_problems`,
-`important_appointments`, `permission_reviews` and `verification`.
+assistant (`instructions` is what it is told). The harness knows five sections: `waiting_for_you`,
+`access_problems`, `important_appointments`, `permission_reviews` and `verification`.
 """
 
 from importlib import resources
@@ -22,12 +24,15 @@ from chamberlain.schema.base import Model
 
 PRIVATE_NAME = "report-template.yaml"
 HARNESS_SLOTS: tuple[str, ...] = (
+    "waiting_for_you",
     "access_problems",
     "important_appointments",
     "permission_reviews",
     "verification",
 )
 TEMPLATE_MAX_BYTES = 40_000
+ALWAYS_FIRST = "waiting_for_you"
+"""The harness section every layout has, at the top unless the layout places it itself."""
 
 
 class Slot(Model):
@@ -72,6 +77,14 @@ def default_template() -> ReportTemplate:
     return parse_template(text)
 
 
+def _with_waiting(template: ReportTemplate) -> ReportTemplate:
+    """The owner's layout, with the standard "Waiting for you" section first if it has none."""
+    if any(slot.id == ALWAYS_FIRST for slot in template.slots):
+        return template
+    first = next(s for s in default_template().slots if s.id == ALWAYS_FIRST)
+    return template.model_copy(update={"slots": (first, *template.slots)})
+
+
 def load_template(data_root: Path) -> tuple[ReportTemplate, str | None]:
     """`(template, problem)`: the owner's layout when it is valid, else the standard one."""
     path = private_path(data_root)
@@ -80,6 +93,6 @@ def load_template(data_root: Path) -> tuple[ReportTemplate, str | None]:
     try:
         if path.stat().st_size > TEMPLATE_MAX_BYTES:
             raise ValueError("the file is too large")
-        return parse_template(path.read_text(encoding="utf-8-sig")), None
+        return _with_waiting(parse_template(path.read_text(encoding="utf-8-sig"))), None
     except (OSError, ValueError) as error:
         return default_template(), f"The private report layout could not be used ({error})."

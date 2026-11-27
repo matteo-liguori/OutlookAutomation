@@ -69,7 +69,7 @@ Regression tests include `tests/attention/test_watermark.py::test_a_nothing_is_s
 
 - [ ] All event kinds: `mail.new_unmatched`, `action.due`, `reminder.due`, `card.review_due`, `grant.needed`, `grant.review_due`, `operation.uncertain`, `send.missing`, `source.stale`, `source.sign_in_needed`, `calendar.conflict`, `user.note`, `storage.over_budget`, `storage.orphans`, `update.available`, `schedule.pass_due`, `report.due`, `harness.review`: `tests/attention/test_scenarios.py`, `tests/attention/test_tick.py`, `tests/runs/test_notes_updates.py`, `tests/review/test_review.py`. `tests/domain/test_events.py::test_a1_the_18_event_kinds_have_exact_public_names` checks all 18 public spellings and aliases. Audit each kind's dedupe, expiry and re-raise separately.
 - [ ] Pull, piggyback and wake exit 10: `tests/attention/test_handlers.py`, `tests/viewer/test_server.py::test_tick_prints_the_passes_a_wake_adapter_should_start`; verify exit code assertion.
-- [ ] 46 guidance rules, selection/budgets/once-per, private overrides and owner instruction topics: `tests/guidance/test_rules.py::test_a12_exactly_46_guidance_rules_are_shipped`, `tests/guidance/test_selection.py`, `tests/integration/test_budgets.py`; live `harness.guidance_budgets`.
+- [ ] 48 guidance rules, selection/budgets/once-per, private overrides and owner instruction topics: `tests/guidance/test_rules.py::test_a12_exactly_48_guidance_rules_are_shipped`, `tests/guidance/test_selection.py`, `tests/integration/test_budgets.py`; live `harness.guidance_budgets`.
 - [ ] Watermark all folders except Trash/Junk/Drafts, older-mail question and card suggestions: `tests/attention/test_watermark.py`, `tests/attention/test_older_mail.py`; live `mail.watermark_suggestion`.
 
 ## C6 — Memory

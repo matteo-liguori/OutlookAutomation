@@ -7,6 +7,11 @@
 version: 1
 title: "Mail check {date}"
 slots:
+  - id: waiting_for_you
+    by: harness
+    heading: "WAITING FOR YOU"
+    style: orange
+    mark: "🟧"
   - id: access_problems
     by: harness
     heading: "ACCESS PROBLEM - YOUR CHECK NEEDED"
@@ -21,8 +26,9 @@ slots:
     by: agent
     heading: "Email and tasks"
     instructions: >-
-      Include meaningful changes, every unsnoozed action that waits on the owner, and due
-      reminders. For each item write a bold title and status, then the next step: who needs to do
+      The harness lists what waits for the owner above; add only the context the owner needs
+      to answer. Include meaningful changes, other unsnoozed actions that wait on the owner, and
+      due reminders. For each item write a bold title and status, then the next step: who needs to do
       what, and by when. Add earlier context, new developments or elapsed waiting times only when
       they help the owner act. Keep unchanged reminders brief and call them reminders. Propose
       reply text when it helps. Leave out finished or dismissed items unless something new

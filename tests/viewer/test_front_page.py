@@ -113,6 +113,7 @@ def test_a_scheduled_pass_ends_with_the_owners_report_as_the_front_page(rig: Rig
     page = get(rig, "/api/report")
     report = page["report"]
     assert report["state"] == "finished"
+    assert report["live"] is True  # the newest pass's report, until the next pass starts
     assert report["title"] == "Mail check 05/01/2026"
     blocks = report["blocks"]
     assert [(b["id"], b["style"]) for b in blocks] == [

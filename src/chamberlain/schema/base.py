@@ -58,6 +58,7 @@ SessionHandle = Annotated[str, StringConstraints(pattern=handle_pattern("ses"))]
 MessageHandle = Annotated[str, StringConstraints(pattern=handle_pattern("msg"))]
 CalendarEventHandle = Annotated[str, StringConstraints(pattern=handle_pattern("cev"))]
 ContactHandle = Annotated[str, StringConstraints(pattern=handle_pattern("con"))]
+RunHandle = Annotated[str, StringConstraints(pattern=handle_pattern("run"))]
 
 SOURCE_ID_PATTERN = r"^(mail|calendar|contacts):[a-z0-9-]{1,32}$"
 SourceId = Annotated[str, StringConstraints(pattern=SOURCE_ID_PATTERN)]

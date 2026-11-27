@@ -132,6 +132,25 @@ def set_run_state(
     )
 
 
+def live_run(db: sqlite3.Connection) -> RunRow | None:
+    """The pass whose report is live: the newest pass worked, once it has settled, until the next
+    one starts. None while a pass is being worked, or when the newest report is frozen."""
+    row = db.execute(
+        f"SELECT {_RUN_COLUMNS} FROM runs WHERE state IN (?, ?, ?) "
+        "ORDER BY due_at DESC, handle DESC LIMIT 1",
+        (RunState.RUNNING.value, RunState.FINISHED.value, RunState.INCOMPLETE.value),
+    ).fetchone()
+    if row is None:
+        return None
+    run = _run(row)
+    if run.state is RunState.RUNNING:
+        return None
+    frozen = db.execute(
+        "SELECT 1 FROM run_reports WHERE run = ? AND frozen_at IS NOT NULL", (run.handle,)
+    ).fetchone()
+    return None if frozen else run
+
+
 def delete_runs_before(db: sqlite3.Connection, day: str) -> int:
     return db.execute("DELETE FROM runs WHERE day < ?", (day,)).rowcount
 

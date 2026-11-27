@@ -1,11 +1,15 @@
 id: mail.unmatched
-version: 3
+version: 4
 title: New mail to triage
 when: {event: mail.new_unmatched, reason: received}
 text: >
-  List the new mail and open only what you need. Suggested cards are
-  guesses; you decide each link. A deadline, promise or expected reply needs
-  a card; routine mail can be left.
-max_chars: 180
+  Open only what you need; suggested cards are guesses. A message that needs
+  anything done becomes an action on its card as you read it, never a note.
+  The owner's part (a reply to approve, a question, a decision): an action
+  for the owner, titled with the ask itself. Covered by a grant or standing
+  permission: do it, then finish the action with the outcome. Outside these
+  tools: do it if allowed and finish it, else leave it for the owner.
+  Routine mail needs no card.
+max_chars: 480
 once_per: session
 priority: 40

@@ -1,8 +1,9 @@
 """The sections of a pass report that the harness writes itself, from its own records.
 
-Contract: docs/contracts/06-memory.md (the report section). Nothing here asks the assistant: sources
-and their newest times, how far mail was read, the changes made to mail, calendar freshness,
-upcoming important appointments and permission reviews due are facts the harness already holds.
+Contract: docs/contracts/06-memory.md (the report section). Nothing here asks the assistant:
+what waits for the owner, sources and their newest times, how far mail was read, the changes made
+to mail, calendar freshness, upcoming important appointments and permission reviews due are facts
+the harness already holds.
 Each builder returns markdown, or an empty string when there is nothing to say (the section is
 then left out). All times are shown in the schedule's own zone.
 """
@@ -52,6 +53,13 @@ def _cell(text: str) -> str:
     """Text from cards, grants or sources, made safe to put in a table or a line of markdown:
     no bar, link, emphasis or code can come out of it."""
     plain = text.translate({ord(c): " " for c in "|[]()*`_<>#"})
+    return " ".join(plain.split())
+
+
+def _ask(text: str) -> str:
+    """An ask, made safe like `_cell` but keeping its parentheses ("Diana (solicitor) asks"):
+    without square brackets no link can come out of them."""
+    plain = text.translate({ord(c): " " for c in "|[]*`_<>#"})
     return " ".join(plain.split())
 
 
@@ -143,6 +151,15 @@ def access_problems(facts: Facts) -> str:
             )
             facts.gaps.append(f"{source.id} had folders that did not sync")
     return "\n".join(lines)
+
+
+def waiting_for_you(facts: Facts) -> str:
+    """Every open action waiting for the owner, oldest first: the ask, its card, since when."""
+    return "\n".join(
+        f"- **{_ask(ask.title)}** - Card: {_cell(ask.card_title)}. "
+        f"Waiting since {when(ask.since, facts.zone)}."
+        for ask in repo.waiting_for_owner(facts.ctx.db)
+    )
 
 
 def important_appointments(facts: Facts) -> str:
@@ -264,6 +281,7 @@ def verification(facts: Facts) -> str:
 
 
 BUILDERS = {
+    "waiting_for_you": waiting_for_you,
     "access_problems": access_problems,
     "important_appointments": important_appointments,
     "permission_reviews": permission_reviews,

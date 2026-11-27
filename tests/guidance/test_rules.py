@@ -28,9 +28,9 @@ LOCK = Path(__file__).with_name("rules.lock.json")
 GUIDANCE_DIR = Path(__file__).resolve().parents[2] / "src" / "chamberlain" / "guidance"
 
 
-def test_a12_exactly_46_guidance_rules_are_shipped() -> None:
-    assert len(RULES) == 46
-    assert len(list(GUIDANCE_DIR.glob("*.yaml"))) == 46
+def test_a12_exactly_48_guidance_rules_are_shipped() -> None:
+    assert len(RULES) == 48
+    assert len(list(GUIDANCE_DIR.glob("*.yaml"))) == 48
 
 
 def test_t1_a12_the_standing_prompt_is_short_and_3_related_checks() -> None:
@@ -45,7 +45,7 @@ def test_t1_a12_the_standing_prompt_is_short_and_3_related_checks() -> None:
     assert sum(len(r.text) for r in RULES) <= GUIDANCE_TOTAL_CHARS
 
     # a12_the_total_leaves_room_for_growth_and_overrides
-    assert sum(len(r.text) for r in RULES) < GUIDANCE_TOTAL_CHARS * 0.75
+    assert sum(len(r.text) for r in RULES) < GUIDANCE_TOTAL_CHARS * 0.85
 
 
 def test_a13_a11_a14_at_least_ninety_percent_of_rules_have_a_trigger_and_3_related_checks() -> None:

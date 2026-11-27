@@ -24,6 +24,21 @@ def put_run_report(db: sqlite3.Connection, run: str, composed_at: str, report_js
     )
 
 
+def freeze_run_report(db: sqlite3.Connection, run: str, frozen_at: str, report_json: str) -> bool:
+    """Replace the snapshot once, when the next pass starts. False when it was frozen already."""
+    return (
+        db.execute(
+            "INSERT INTO run_reports (run, composed_at, report_json, frozen_at) "
+            "VALUES (?, ?, ?, ?) ON CONFLICT (run) DO UPDATE SET "
+            "composed_at = excluded.composed_at, report_json = excluded.report_json, "
+            "frozen_at = excluded.frozen_at "
+            "WHERE run_reports.frozen_at IS NULL",
+            (run, frozen_at, report_json, frozen_at),
+        ).rowcount
+        == 1
+    )
+
+
 def get_run_report(db: sqlite3.Connection, run: str) -> str | None:
     row = db.execute("SELECT report_json FROM run_reports WHERE run = ?", (run,)).fetchone()
     return None if row is None else str(row["report_json"])
@@ -129,6 +144,27 @@ class ReviewGrant:
     title: str
     source: str
     review_at: str
+
+
+@dataclass(frozen=True)
+class OwnerAsk:
+    action: str
+    card: str
+    title: str
+    card_title: str
+    since: str
+
+
+def waiting_for_owner(db: sqlite3.Connection) -> list[OwnerAsk]:
+    """Open actions waiting for the owner on open cards, oldest first."""
+    rows = db.execute(
+        "SELECT a.handle, a.card, a.title, c.title AS card_title, a.created_at FROM actions a "
+        "JOIN cards c ON c.handle = a.card WHERE a.state = 'open' AND a.for_owner = 1 "
+        "AND c.state = 'open' ORDER BY a.created_at, a.handle"
+    )
+    return [
+        OwnerAsk(r["handle"], r["card"], r["title"], r["card_title"], r["created_at"]) for r in rows
+    ]
 
 
 def grants_due_for_review(db: sqlite3.Connection, now: str) -> list[ReviewGrant]:

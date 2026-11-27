@@ -7,7 +7,8 @@ writes `events`.
 
 A run is `due` from its time, `running` once a scheduled session has started, then
 `finished` (a report exists), `incomplete` (its session ended without one) or `missed`
-(its day ended first, or the tick first noticed it too late). The wake adapter starts the
+(its day ended first, or the tick first noticed it too late). The newest settled pass's report
+is live until the next pass starts, which freezes it (`compose.freeze`). The wake adapter starts the
 scheduled session with `scheduled_day` set to the run's `day`; a session from another
 local day is stopped by the guard in attention (R10), so a late wake never works a stale
 day.
@@ -86,7 +87,9 @@ def _day_end(day: str, zone: ZoneInfo) -> str:
     return ts(datetime.fromisoformat(day).replace(tzinfo=zone) + timedelta(days=1))
 
 
-def _attach_sessions(ctx: Context) -> None:
+def _attach_sessions(ctx: Context) -> list[RunRow]:
+    """Due passes whose scheduled session has started become `running`. Returns them."""
+    started: list[RunRow] = []
     zones = {schedule.name: schedule.zone for schedule in repo.schedules(ctx.db)}
     for run in repo.runs_in_states(ctx.db, (RunState.DUE.value,)):
         zone = zones.get(run.schedule)
@@ -103,6 +106,8 @@ def _attach_sessions(ctx: Context) -> None:
                 started_at=stamp(ctx.clock),
                 session=session,
             )
+            started.append(run)
+    return started
 
 
 def _miss_late(ctx: Context, now: datetime) -> None:
@@ -153,10 +158,16 @@ def plan_runs(ctx: Context) -> None:
     now = ctx.clock.now()
     with transaction(ctx.db):
         _create_due(ctx, now)
-        _attach_sessions(ctx)
+        live = repo.live_run(ctx.db)
+        started = _attach_sessions(ctx)
         _miss_late(ctx, now)
         _close_old_days(ctx)
         finished, ended = _settle_running(ctx, now)
+    if started and live is not None:
+        try:
+            compose.freeze(ctx, live)  # the next pass started: the live report is final now
+        except Exception:
+            log_failure(log, "freezing the report of %s failed", live.handle)
     for run in ended:
         try:
             store_report(ctx, run.handle, INCOMPLETE_REPORT)

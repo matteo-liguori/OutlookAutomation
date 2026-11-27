@@ -1,0 +1,11 @@
+id: report.live
+version: 1
+title: The latest report is still open
+when: {result: data.live_report != null}
+text: >
+  The latest pass report stays open until the next pass. When you and the
+  owner settle something it mentions, keep your whole rewritten text as an
+  artifact owned by the live run; the newest text wins.
+max_chars: 220
+once_per: session
+priority: 60
