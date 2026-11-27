@@ -275,7 +275,9 @@ class ComposePlan(Model):
                 raise ChamberlainError(
                     ErrorCode.REMOTE_CHANGED,
                     "A related message may already be in Sent, Drafts or Outbox.",
-                    fix="Check Sent and Drafts. Send again only if the owner allows a duplicate.",
+                    fix="Check Sent and Drafts. If it is your own draft of this text, discard it "
+                    "(mail.draft_discard) and then send. Otherwise send again only if the owner "
+                    "allows a duplicate.",
                 )
 
 

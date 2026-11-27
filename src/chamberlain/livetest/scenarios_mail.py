@@ -188,6 +188,13 @@ def draft_flow(lab: Lab, t: Target) -> None:
     )
     drafts = _count(lab, t.source, subject, FolderRole.DRAFTS)
     lab.check(drafts == 1, f"expected exactly one draft after re-saving, found {drafts}")
+    # Sending the draft's own text: the draft goes first, or the duplicate guard rightly refuses
+    # (a draft saved without a window holds exactly the text; found live, 2026-11-27). The test's
+    # grant covers Trash, so it trashes the draft; an assistant uses mail.draft_discard.
+    lab.confirmed(
+        lab.write({"kind": "mail.trash", "source": t.source, "messages": [handle]}),
+        "draft to Trash",
+    )
     lab.send(t.source, address, subject, body(lab, "second version"))
     lab.arrival(t.source, subject)
     _one_sent(lab, t.source, subject)
