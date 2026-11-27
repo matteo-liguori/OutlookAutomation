@@ -599,8 +599,9 @@ class ProposeRequest(ToolRequest):
         default=None,
         description=(
             "A reply drafted for the owner's approval: the open action for the owner that asks "
-            "them to approve it. The exact mail.send then waits for their confirmation in the "
-            "viewer, and Chamberlain sends it once confirmed and finishes the action."
+            "them to approve it, titled 'Approve the reply to <who>: <one-line gist>'. The exact "
+            "mail.send then waits for their confirmation in the viewer, and Chamberlain sends it "
+            "once confirmed and finishes the action."
         ),
     )
 

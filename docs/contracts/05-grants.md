@@ -170,7 +170,7 @@ The writes module provides this endpoint; the viewer serves it.
   | --- | --- |
   | `GET /api/grants?state=` | List grants (handle, kind, state, title, times). |
   | `GET /api/grants/{handle}` | Exactly what would be authorised: for a one-off, the full rendered intent (recipients, subject, body, attachment names and hashes); for standing, the scope and limits; plus `content_sha256`. |
-  | `POST /api/grants/{handle}/confirm` | Body `{content_sha256, expires_at?}`. Activates only if the hash equals the stored one (what the person saw is what is granted); otherwise 409. |
+  | `POST /api/grants/{handle}/confirm` | Body `{content_sha256, expires_at?}`. Activates only if the hash equals the stored one (what the person saw is what is granted); otherwise 409. A one-off `mail.send` is then sent at once and the reply carries `send` (W-49). |
   | `POST /api/grants/{handle}/decline` | `proposed -> declined`. |
   | `POST /api/grants/{handle}/revoke` | `active|suspended -> revoked`. |
   | `POST /api/grants/{handle}/keep` | Review: advances `review_at` (G-7). |
