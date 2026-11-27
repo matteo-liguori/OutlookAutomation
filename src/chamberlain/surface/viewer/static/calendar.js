@@ -215,12 +215,6 @@
       return { start: start, end: plus(start, Number(m)) };
     }
 
-    function markButton(mark) {
-      var b = el("button", { class: "milestone" + importanceClasses(mark, state.today), text: mark.title });
-      b.addEventListener("click", function () { V.appointments.show(mark); });
-      return b;
-    }
-
     function label(event) { return event.display_title || event.title; }
     function catClass(event) { return "cat-" + (event.category || "none") + (event.local ? " local-event" : ""); }
     function tip(event) {
@@ -286,21 +280,13 @@
         if (d.id === state.today) head.setAttribute("aria-current", "date");
         headers.appendChild(head);
         var cell = el("div", { class: "calendar-day" + (read ? "" : " unchecked") });
-        var matched = {};
+        // Only real calendar events are drawn. An important date's reminders are not entries of
+        // their own: they only gild the matching real event and open the pop-up on their days.
         d.timed.forEach(function (event) {
           var mark = d.marks.find(function (m) { return matches(m, event); });
-          if (mark) matched[mark.action] = true;
           cell.appendChild(eventCard(event, mark));
         });
-        d.bands.forEach(function (event) {
-          var mark = d.marks.find(function (m) { return matches(m, event); });
-          if (mark) matched[mark.action] = true;
-        });
-        d.marks.forEach(function (mark) { if (!matched[mark.action]) cell.appendChild(markButton(mark)); });
-        d.dated.forEach(function (item) {
-          cell.appendChild(el("div", { class: "dated-action", title: item.card_title, text: (item.due ? "Due \u00b7 " : "Reminder \u00b7 ") + item.title }));
-        });
-        var note = status || (!d.timed.length && !d.bands.length && !d.marks.length && !d.dated.length ? "No events" : "");
+        var note = status || (!d.timed.length && !d.bands.length ? "No events" : "");
         if (note) cell.appendChild(el("p", { class: "day-note", text: note }));
         cells.appendChild(cell);
         d.bands.forEach(function (event) {
