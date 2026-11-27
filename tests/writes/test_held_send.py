@@ -284,3 +284,23 @@ def test_w49_a_reply_proposed_in_a_chat_opens_the_viewer_on_it(
     assert data.opened_in_viewer is opens
     assert shown == ([("codex", data.grant)] if opens else [])
     assert rig.sent_copies() == 0, "nothing is sent before the click"
+
+
+def test_the_live_test_confirms_only_its_own_marked_reply_to_the_owner(rig: WriteRig) -> None:
+    from types import SimpleNamespace
+
+    from chamberlain.domain.testmark import MARKER
+    from chamberlain.livetest.commands import own_test_grant
+    from support.write_rig import OWNER
+
+    rig.own(MAIL, OWNER)
+    app: Any = SimpleNamespace(context=rig.engine().ctx)
+
+    def grant_for(**kwargs: Any) -> str:
+        proposal = held(rig, owner_action(rig, f"Approve {len(kwargs)} {kwargs}"[:60]), **kwargs)
+        return proposal.grant.handle
+
+    marked = f"{MARKER} 20260105T060000-abcd approved_send a-b"
+    assert own_test_grant(app, grant_for(to=(OWNER,), subject=marked))
+    assert not own_test_grant(app, grant_for(to=(OWNER,), subject="Real reply"))
+    assert not own_test_grant(app, grant_for(to=("stranger@example.org",), subject=marked))

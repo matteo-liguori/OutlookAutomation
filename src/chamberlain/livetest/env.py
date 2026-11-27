@@ -235,7 +235,8 @@ class Environment:
     dispatches: Callable[[], int | None] = field(default=lambda: None)
     """How many writes reached the provider so far, when the environment can count them."""
     owner_confirms: Callable[[str], None] | None = None
-    """The self-test's stand-in for the owner's click in the viewer, given a grant handle. It
-    is set by the tests only; a live run has none and waits for the owner to confirm."""
+    """The stand-in for the owner's click in the viewer, given a grant handle. A live run
+    confirms only its own marked reply to the owner's own address, through the running viewer
+    (the owner's standing self-test permission); with no viewer running it asks the owner."""
     notify: Callable[[str], None] = field(default=lambda text: None)
     """Tell the person running the test something they must do now."""

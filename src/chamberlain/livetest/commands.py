@@ -7,6 +7,7 @@ surface (`surface/cli.py`) calls `main` and prints what it returns.
 import json
 import sys
 import time
+import urllib.request
 from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
@@ -14,6 +15,7 @@ from typing import TextIO
 
 from chamberlain.app.core import App
 from chamberlain.connections import load_connections, open_app
+from chamberlain.domain.testmark import carries_marker
 from chamberlain.livetest.authority import start_standing_proposals
 from chamberlain.livetest.config import LiveTestConfig
 from chamberlain.livetest.env import (
@@ -34,10 +36,79 @@ from chamberlain.livetest.runner import (
 from chamberlain.livetest.sweep import sweep
 from chamberlain.schema.envelope import error_reply
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
+from chamberlain.surface.viewer import presence
+from chamberlain.writes.repo import get_grant, owner_addresses
 
 EXIT_OK = 0
 EXIT_FAILED = 1
 EXIT_STOPPED = 2
+
+
+def own_test_grant(app: App, grant: str) -> bool:
+    """A held reply the live test itself proposed: a marked subject, every recipient one of the
+    owner's own addresses. Only such a grant is confirmed for the owner (their standing
+    self-test permission); anything else waits for their own click."""
+    db = app.context.db
+    found = get_grant(db, grant)
+    if found is None:
+        return False
+    row = db.execute(
+        "SELECT intent_json FROM operations WHERE source_id = ? AND intent_sha256 = ? "
+        "ORDER BY rowid DESC LIMIT 1",
+        (found.source_id, found.content_sha256),
+    ).fetchone()
+    if row is None:
+        return False
+    intent = json.loads(str(row[0]))
+    recipients = [str(a).lower() for key in ("to", "cc", "bcc") for a in intent.get(key) or ()]
+    own = owner_addresses(db)
+    return (
+        intent.get("kind") == "mail.send"
+        and carries_marker(str(intent.get("subject", "")))
+        and bool(recipients)
+        and all(a in own for a in recipients)
+    )
+
+
+def viewer_confirms(app: App, data_root: Path) -> Callable[[str], None] | None:
+    """Confirm the live test's own held reply through the running viewer's real endpoint, as
+    the owner's click would. None when no viewer is running: the run then asks the owner."""
+    run = data_root / "run"
+    try:
+        port = int(json.loads((run / presence.STATE_FILE).read_text("utf-8"))["port"])
+        token = (run / presence.TOKEN_FILE).read_text("utf-8").strip()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    origin = f"http://{presence.BIND_ADDRESS}:{port}"
+
+    def confirm(grant: str) -> None:
+        if not own_test_grant(app, grant):
+            raise ChamberlainError(
+                ErrorCode.REQUEST_INVALID, "Not the live test's own held reply: not confirmed."
+            )
+        headers = {"X-Chamberlain-Token": token}
+        shown = urllib.request.Request(f"{origin}/api/grants/{grant}", headers=headers)
+        with urllib.request.urlopen(shown, timeout=30) as reply:
+            seen = json.loads(reply.read())
+        body = json.dumps({"content_sha256": seen["content_sha256"]}).encode()
+        click = urllib.request.Request(
+            f"{origin}/api/grants/{grant}/confirm",
+            data=body,
+            method="POST",
+            headers={**headers, "Origin": origin, "Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(click, timeout=120) as reply:
+            reply.read()
+        app.context.services.audit.append(
+            actor="system:live-test",
+            kind="grant.confirmed_for_owner",
+            subject=grant,
+            summary="The live test confirmed its own marked reply to the owner's own address "
+            "under the owner's standing self-test permission.",
+        )
+        app.context.db.commit()
+
+    return confirm
 
 
 def real_environment(app: App, data_root: Path, bridge_dir: str | None) -> Environment:
@@ -47,6 +118,7 @@ def real_environment(app: App, data_root: Path, bridge_dir: str | None) -> Envir
         sleep=time.sleep,
         faults=FileFaultInjector(data_root, None if bridge_dir is None else Path(bridge_dir)),
         probe=PortProbe(app.context),
+        owner_confirms=viewer_confirms(app, data_root),
         notify=lambda text: print(text, file=sys.stderr, flush=True),
     )
 
