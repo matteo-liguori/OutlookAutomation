@@ -24,6 +24,7 @@ import webbrowser
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path, PureWindowsPath
 from typing import Final
+from urllib.parse import parse_qs, urlsplit
 
 from chamberlain.ports.clock import SystemClock
 
@@ -32,6 +33,8 @@ TOKEN_FILE: Final = "viewer.token"
 PAGE_FILE: Final = "viewer-page.json"
 REQUEST_FILE: Final = "viewer-requests.json"
 PROFILE_DIR: Final = "viewer-browser"
+LAUNCH_FILE: Final = "viewer-launch.json"
+LAUNCH_GRACE_SECONDS: Final = 30
 BIND_ADDRESS: Final = "127.0.0.1"
 PAGE_ALIVE_SECONDS: Final = 150
 """Chrome slows a minimised window's timers to about one a minute, so a beat may come late;
@@ -236,20 +239,68 @@ def window_opener(
     spawn: Spawner | None = None,
     find: Callable[[], list[str] | None] | None = None,
     fallback: Opener | None = None,
+    close: Callable[[Path], None] | None = None,
+    now: Now = system_seconds,
 ) -> Opener:
-    """An opener that shows an address in the viewer's app window, else in the browser."""
+    """An opener that shows an address in the viewer's app window, else in the browser. Only
+    one viewer window ever: an older one of the viewer's profile is closed first, and a window
+    launched moments ago is not launched again."""
 
     def open_window(url: str) -> object:
         launcher = (find or installed_browser)()
         if launcher:
+            if launched_lately(data_root, now=now):
+                # A window is still coming up: hand it any grant instead of opening another.
+                grant = parse_qs(urlsplit(url).fragment).get("grant", [None])[0]
+                if grant:
+                    queue_grant(data_root, grant, now=now)
+                return True
+            (close or close_profile_windows)(data_root)  # one viewer window, ever
             try:
                 (spawn or _spawn_detached)(app_command(launcher, url, data_root))
+                _write_json(data_root / "run" / LAUNCH_FILE, {"at": now()})
                 return True
             except OSError:
                 pass
         return (fallback or webbrowser.open)(url)
 
     return open_window
+
+
+def launched_lately(data_root: Path, *, now: Now = system_seconds) -> bool:
+    """A viewer window was launched in the last `LAUNCH_GRACE_SECONDS` and may not have sent its
+    first heartbeat yet: two session starts in a row must not open two windows."""
+    at = _read_time(data_root / "run" / LAUNCH_FILE, "at")
+    return at is not None and 0 <= now() - at <= LAUNCH_GRACE_SECONDS
+
+
+def close_profile_windows(data_root: Path, *, wait_seconds: float = 8.0) -> None:
+    """Close every window of the viewer's own browser profile (a stale one left by a viewer
+    restart). The profile holds nothing but the viewer, so nothing of the owner's is touched; a
+    normal close request, never a forced kill."""
+    if sys.platform != "win32":
+        return
+    profile = str(data_root / "run" / PROFILE_DIR)
+    script = (
+        "$p = '" + profile.replace("'", "''") + "';"
+        "$ids = @(Get-CimInstance Win32_Process | Where-Object {"
+        " $_.Name -in @('chrome.exe','msedge.exe')"
+        " -and $_.CommandLine -like ('*--user-data-dir=' + $p + '*')"
+        " -and $_.CommandLine -notlike '*--type=*' } | ForEach-Object { $_.ProcessId });"
+        "foreach ($id in $ids) { taskkill /PID $id | Out-Null };"
+        "$end = (Get-Date).AddSeconds(" + str(wait_seconds) + ");"
+        "while ((Get-Date) -lt $end -and"
+        " @($ids | Where-Object { Get-Process -Id $_ -ErrorAction SilentlyContinue }).Count)"
+        " { Start-Sleep -Milliseconds 250 }"
+    )
+    with contextlib.suppress(OSError, subprocess.SubprocessError):
+        subprocess.run(
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True,
+            timeout=wait_seconds + 20,
+            check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
 
 
 def open_viewer(

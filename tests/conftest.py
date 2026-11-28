@@ -82,3 +82,4 @@ def _no_real_browser_window(  # pyright: ignore[reportUnusedFunction]
     from chamberlain.surface.viewer import presence
 
     monkeypatch.setattr(presence, "installed_browser", lambda: None)
+    monkeypatch.setattr(presence, "close_profile_windows", lambda data_root, **_: None)

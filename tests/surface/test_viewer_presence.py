@@ -274,3 +274,28 @@ def test_a_closing_page_is_gone_at_once_and_a_quiet_one_counts_for_150_seconds(
     assert presence.page_alive(tmp_path, now=lambda: clock[0])
     presence.heartbeat(tmp_path, now=lambda: clock[0], closed=True)
     assert not presence.page_alive(tmp_path, now=lambda: clock[0])
+
+
+def test_only_one_window_an_old_one_is_closed_and_a_fresh_launch_is_not_repeated(
+    tmp_path: Path,
+) -> None:
+    clock = [1000.0]
+    events: list[str] = []
+    opener = presence.window_opener(
+        tmp_path,
+        find=lambda: ["chrome"],
+        spawn=lambda args: events.append("launch"),
+        close=lambda root: events.append("close old"),
+        now=lambda: clock[0],
+    )
+    opener("http://127.0.0.1:1/#token=t")
+    assert events == ["close old", "launch"], "an old viewer window goes before a new one opens"
+    clock[0] += 5
+    opener("http://127.0.0.1:1/#token=t&grant=grant_ab12")
+    assert events == ["close old", "launch"], "a window launched moments ago is not launched again"
+    assert presence.take_grant(tmp_path, now=lambda: clock[0]) == "grant_ab12", (
+        "the grant waits for it"
+    )
+    clock[0] += 31
+    opener("http://127.0.0.1:1/#token=t")
+    assert events == ["close old", "launch", "close old", "launch"]
