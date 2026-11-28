@@ -22,6 +22,10 @@ from typing import Final, Protocol
 from chamberlain.connectors.thunderbird.setup import EXTENSION_ID, addon_version, build_package
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
+TRAY_PREF: Final = "mail.minimizeToTray"
+"""Thunderbird's own Windows setting: a minimised Thunderbird sits in the system tray."""
+_TRAY_LINE: Final = f'user_pref("{TRAY_PREF}", true);'
+
 CLOSE_WAIT_SECONDS: Final = 60
 CLOSE_RETRY_SECONDS: Final = 10
 """A graceful close sometimes needs a second request; it is repeated this often while waiting."""
@@ -107,6 +111,38 @@ def profiles(home: Path) -> list[Path]:
     return found
 
 
+def ensure_tray(home: Path) -> list[Path]:
+    """Turn on minimise-to-tray in every profile that has the add-on, while Thunderbird is
+    closed (it rewrites prefs.js when it quits). Returns the profiles changed."""
+    changed: list[Path] = []
+    for profile in profiles(home):
+        prefs = profile / "prefs.js"
+        if not (profile / "extensions" / f"{EXTENSION_ID}.xpi").is_file() or not prefs.is_file():
+            continue
+        lines = prefs.read_text("utf-8").splitlines()
+        kept = [line for line in lines if f'"{TRAY_PREF}"' not in line]
+        if _TRAY_LINE in lines and len(kept) == len(lines) - 1:
+            continue
+        prefs.write_text("".join(f"{line}\n" for line in [*kept, _TRAY_LINE]), "utf-8")
+        changed.append(profile)
+    return changed
+
+
+# Waits for Thunderbird's main window, then minimises it: with minimise-to-tray on, it goes to
+# the tray. Runs detached, so starting Thunderbird never waits for it.
+_MINIMISE_WHEN_READY: Final = (
+    "Add-Type -Namespace W -Name U -MemberDefinition "
+    '\'[DllImport("user32.dll")] public static extern bool '
+    "ShowWindowAsync(System.IntPtr h, int c);';"
+    "for ($i = 0; $i -lt 120; $i++) {"
+    " $p = Get-Process thunderbird -ErrorAction SilentlyContinue |"
+    " Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1;"
+    " if ($p) { Start-Sleep -Seconds 2;"
+    " [void][W.U]::ShowWindowAsync($p.MainWindowHandle, 6); break }"
+    " Start-Sleep -Milliseconds 500 }"
+)
+
+
 @dataclass
 class UpdateReport:
     version: str
@@ -189,6 +225,9 @@ class SystemDesktop:
                     "Get-Process thunderbird | ForEach-Object { [void]$_.CloseMainWindow() }"
                 )
             )
+            # In the tray Thunderbird has no visible main window to close: a normal close
+            # request to its windows (never /F, never a forced kill) reaches it there.
+            _run(["taskkill", "/IM", "thunderbird.exe"])
         elif sys.platform == "darwin":
             _run(["osascript", "-e", 'quit app "Thunderbird"'])
         else:
@@ -207,7 +246,16 @@ class SystemDesktop:
 
     def start(self) -> None:
         if sys.platform == "win32":
+            ensure_tray(thunderbird_home())
             subprocess.Popen([self._windows_executable()], close_fds=True)
+            subprocess.Popen(
+                list(_powershell(_MINIMISE_WHEN_READY)),
+                close_fds=True,
+                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
         elif sys.platform == "darwin":
             subprocess.Popen(["open", "-a", "Thunderbird"])
         else:
@@ -229,6 +277,7 @@ __all__ = [
     "UpdateReport",
     "close_and_wait",
     "control",
+    "ensure_tray",
     "profiles",
     "thunderbird_home",
     "update_addon",
