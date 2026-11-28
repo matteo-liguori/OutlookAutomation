@@ -160,16 +160,7 @@ a { color: inherit; text-underline-offset: 0.19em; }
   border-bottom: 1px solid var(--line);
 }
 .brand { display: flex; gap: 0.8rem; align-items: center; font-weight: 600; font-size: 0.95rem; padding-bottom: 0.8rem; }
-.mark {
-  display: grid;
-  place-items: center;
-  background: var(--selected);
-  color: var(--selected-ink);
-  height: 36px;
-  width: 36px;
-  border-radius: 10px;
-  font-size: 1.2rem;
-}
+.mark { display: block; height: 36px; width: 36px; }
 nav { display: flex; flex-wrap: wrap; gap: 0.2rem; }
 nav button {
   border: 0;
