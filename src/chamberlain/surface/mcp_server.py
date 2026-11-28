@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from io import TextIOWrapper
 from pathlib import Path
-from typing import Any, BinaryIO, TextIO
+from typing import Any, BinaryIO, TextIO, cast
 
 import chamberlain
 from chamberlain import __version__
@@ -57,6 +57,35 @@ def list_tools() -> list[dict[str, Any]]:
         }
         for spec in TOOLS
     ]
+
+
+_TAKES_SESSION = frozenset(
+    spec.name.value
+    for spec in TOOLS
+    if spec.name.value != "start" and "session" in spec.input_schema().get("properties", {})
+)
+
+
+class SessionMemory:
+    """The session the last successful `start` on this connection opened. A later call that
+    leaves `session` out gets it filled in, so an agent cannot lose it between calls. A call
+    that names a session keeps its own."""
+
+    def __init__(self, call_tool: ToolCaller, session: str | None = None) -> None:
+        self._call = call_tool
+        self.session: str | None = session
+
+    def __call__(self, name: str, arguments: Mapping[str, Any]) -> Any:
+        if self.session and name in _TAKES_SESSION and not arguments.get("session"):
+            arguments = {**arguments, "session": self.session}
+        reply = self._call(name, arguments)
+        if name == "start" and reply.ok:
+            dumped: dict[str, Any] = reply.model_dump(mode="json")
+            data = cast(Mapping[str, Any], dumped.get("data") or {})
+            opened = data.get("session")
+            if isinstance(opened, str):
+                self.session = opened
+        return reply
 
 
 def handle(message: Mapping[str, Any], call_tool: ToolCaller | None) -> dict[str, Any] | None:
@@ -147,7 +176,7 @@ class Reloader:
         self._failed_on = self._fingerprint()
 
 
-Handover = Callable[[bytes, Mapping[str, Any]], int | None]
+Handover = Callable[[bytes, Mapping[str, Any], str | None], int | None]
 
 
 def _stale_answer(message: Mapping[str, Any]) -> dict[str, Any]:
@@ -170,6 +199,7 @@ def serve(
     handover: Handover | None = None,
     first: str | None = None,
     initialize: Mapping[str, Any] | None = None,
+    session: str | None = None,
 ) -> int | None:
     """Read messages line by line until the input ends.
 
@@ -180,6 +210,7 @@ def serve(
     owns the streams. If it returns None, the call gets a stale-code error instead.
     """
     saved: Mapping[str, Any] = initialize or {}
+    memory = SessionMemory(call_tool, session) if call_tool is not None else None
     pending = first
     while True:
         if pending is not None:
@@ -208,13 +239,13 @@ def serve(
             ):
                 code = None
                 if handover is not None and reloader.may_retry():
-                    code = handover(line.encode("utf-8"), saved)
+                    code = handover(line.encode("utf-8"), saved, memory.session if memory else None)
                 if code is not None:
                     return code
                 reloader.note_failure()
                 answer = _stale_answer(message)
             else:
-                answer = handle(message, call_tool)
+                answer = handle(message, memory)
         if answer is not None:
             stdout.write(json.dumps(answer, ensure_ascii=False) + "\n")
             stdout.flush()
@@ -228,7 +259,9 @@ def os_handover(data: str) -> Handover:
     over) when the new code cannot even be imported.
     """
 
-    def hand_over(line: bytes, initialize: Mapping[str, Any]) -> int | None:
+    def hand_over(
+        line: bytes, initialize: Mapping[str, Any], session: str | None = None
+    ) -> int | None:
         try:
             probe = subprocess.run(
                 [sys.executable, "-c", "import chamberlain.surface.mcp_server"],
@@ -242,6 +275,7 @@ def os_handover(data: str) -> Handover:
                 "line": line.decode("utf-8"),
                 "initialize": dict(initialize),
                 "protocol": PROTOCOL_VERSION,
+                "session": session,
             }
             child = subprocess.Popen(
                 [sys.executable, "-m", "chamberlain.surface.mcp_server", "--data", data],
@@ -282,6 +316,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         handover=os_handover(data),
         first=state["line"] if state else None,
         initialize=state.get("initialize") if state else None,
+        session=state.get("session") if state else None,
     )
     return code or 0
 

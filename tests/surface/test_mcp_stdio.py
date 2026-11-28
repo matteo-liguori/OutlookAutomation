@@ -134,7 +134,7 @@ def test_a_failed_handover_answers_with_the_stale_code_error_and_serves_on() -> 
     stdout = io.StringIO()
     tried: list[bytes] = []
 
-    def fail(line: bytes, initialize: Mapping[str, Any]) -> int | None:
+    def fail(line: bytes, initialize: Mapping[str, Any], session: str | None) -> int | None:
         tried.append(line)
         return None
 
@@ -241,3 +241,59 @@ def test_a_server_whose_new_code_cannot_load_answers_with_the_stale_code_error(
         stdin.close()
         server.wait(timeout=60)
         stdout.close()
+
+
+def test_the_session_from_start_is_filled_in_when_a_call_leaves_it_out() -> None:
+    from types import SimpleNamespace
+
+    seen: list[tuple[str, dict[str, Any]]] = []
+
+    def caller(name: str, arguments: Mapping[str, Any]) -> Any:
+        seen.append((name, dict(arguments)))
+        data = {"session": "ses_from_start"} if name == "start" else {}
+        return SimpleNamespace(ok=True, model_dump=lambda **_: {"ok": True, "data": data})
+
+    memory = mcp_server.SessionMemory(caller)
+    memory("find", {"scope": "mail"})
+    memory("start", {"purpose": "interactive"})
+    memory("find", {"scope": "mail"})
+    memory("find", {"scope": "mail", "session": "ses_named"})
+    memory("start", {"purpose": "interactive"})
+    assert seen == [
+        ("find", {"scope": "mail"}),  # nothing remembered yet: left as it is
+        ("start", {"purpose": "interactive"}),  # start never gets one filled in
+        ("find", {"scope": "mail", "session": "ses_from_start"}),
+        ("find", {"scope": "mail", "session": "ses_named"}),  # a named session wins
+        ("start", {"purpose": "interactive"}),
+    ]
+
+
+def test_a_handover_passes_the_remembered_session_on() -> None:
+    from types import SimpleNamespace
+
+    passed: list[str | None] = []
+
+    def caller(name: str, arguments: Mapping[str, Any]) -> Any:
+        dump = {"ok": True, "data": {"session": "ses_x"}}
+        return SimpleNamespace(ok=True, model_dump=lambda **_: dump)
+
+    def hand(line: bytes, initialize: Mapping[str, Any], session: str | None) -> int | None:
+        passed.append(session)
+        return 0
+
+    class Flip:
+        """Unchanged code for `start`, changed code for the `find` after it."""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def __call__(self) -> str:
+            self.calls += 1
+            return "a" if self.calls <= 2 else "b"
+
+    start = {"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": "start"}}
+    find = {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "find"}}
+    stdin = io.StringIO(json.dumps(start) + NEWLINE + json.dumps(find) + NEWLINE)
+    reloader = mcp_server.Reloader(Flip(), interval=0)
+    mcp_server.serve(stdin, io.StringIO(), caller, reloader=reloader, handover=hand)
+    assert passed == ["ses_x"]
