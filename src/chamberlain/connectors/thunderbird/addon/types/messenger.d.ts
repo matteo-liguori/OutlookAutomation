@@ -75,6 +75,7 @@ interface HarnessMailApi {
   takePrompts(tabId: number): Promise<{ prompts: string[] }>;
   claimComposer(tabId: number): Promise<{ claimed: boolean }>;
   countComposers(): Promise<{ own: number; other: number }>;
+  quitApp(): Promise<{ quitting: boolean }>;
   composeHeadless(accountId: string, mailbox: string, spec: HeadlessSpec, files: File[], checkOnly: boolean): Promise<HeadlessDone>;
 }
 

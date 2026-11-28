@@ -1,7 +1,7 @@
 // Command bridge (protocol v3). Credentials stay in Thunderbird. No journal, no retry,
 // no command outside the generated closed list (bridge contract B-2 to B-5).
 
-const ADDON_VERSION = "3.1.4";
+const ADDON_VERSION = "3.1.5";
 const HOST_NAME = "chamberlain_thunderbird_bridge";
 const ASSEMBLY_DEADLINE_MS = 60_000;
 const RECONNECT_MS = 1_500;
@@ -66,7 +66,15 @@ const HANDLERS: { [K in keyof CommandArgs]: (args: CommandArgs[K], ctx: Ctx) => 
   calendar_query: (args) => plain(cmdCalendarQuery(args)),
   calendar_read: (args) => plain(cmdCalendarRead(args)),
   calendar_write: (args, ctx) => plain(cmdCalendarWrite(args, ctx)),
+  quit: () => plain(cmdQuit()),
 };
+
+/** Quit Thunderbird normally (File > Quit): it still asks about unsaved composers. */
+async function cmdQuit(): Promise<{ quitting: boolean }> {
+  const helper = messenger.chamberlainMail;
+  check(typeof helper?.quitApp === "function", "unsupported", "The quit helper is not installed.");
+  return await helper.quitApp();
+}
 
 function runCommand<K extends keyof CommandArgs>(cmd: K, args: CommandArgs[K], ctx: Ctx): Promise<CommandReply<K>> {
   return HANDLERS[cmd](args, ctx);

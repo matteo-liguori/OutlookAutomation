@@ -36,6 +36,7 @@ def test_b2_the_command_list_is_the_one_in_the_brief() -> None:
         "calendar_list",
         "calendar_query",
         "calendar_read",
+        "quit",
     }
     writes = {"compose", "change", "draft_discard", "calendar_write"}
     assert {c.value for c in Command} == reads | writes

@@ -19,12 +19,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final, Protocol
 
+from chamberlain.connectors.thunderbird.client import BridgeClient, RuntimeConnector
+from chamberlain.connectors.thunderbird.protocol import Command, StatusArgs
 from chamberlain.connectors.thunderbird.setup import EXTENSION_ID, addon_version, build_package
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
-TRAY_PREF: Final = "mail.minimizeToTray"
-"""Thunderbird's own Windows setting: a minimised Thunderbird sits in the system tray."""
-_TRAY_LINE: Final = f'user_pref("{TRAY_PREF}", true);'
+TRAY_PREFS: Final = ("mail.closeToTray", "mail.closeToTray.startInTray")
+"""Thunderbird's own settings: it starts in the system tray, and closing its window keeps it
+there. A real quit then goes through the add-on (`Command.QUIT`), as File > Quit does."""
+_OLD_TRAY_PREF: Final = "mail.minimizeToTray"
+"""Set by Chamberlain for a day; current Thunderbird only migrates it. Removed."""
 
 CLOSE_WAIT_SECONDS: Final = 60
 CLOSE_RETRY_SECONDS: Final = 10
@@ -112,35 +116,22 @@ def profiles(home: Path) -> list[Path]:
 
 
 def ensure_tray(home: Path) -> list[Path]:
-    """Turn on minimise-to-tray in every profile that has the add-on, while Thunderbird is
-    closed (it rewrites prefs.js when it quits). Returns the profiles changed."""
+    """Turn on start-in-tray in every profile that has the add-on, while Thunderbird is closed
+    (it rewrites prefs.js when it quits). Returns the profiles changed."""
+    wanted = [f'user_pref("{name}", true);' for name in TRAY_PREFS]
+    names = (*TRAY_PREFS, _OLD_TRAY_PREF)
     changed: list[Path] = []
     for profile in profiles(home):
         prefs = profile / "prefs.js"
         if not (profile / "extensions" / f"{EXTENSION_ID}.xpi").is_file() or not prefs.is_file():
             continue
         lines = prefs.read_text("utf-8").splitlines()
-        kept = [line for line in lines if f'"{TRAY_PREF}"' not in line]
-        if _TRAY_LINE in lines and len(kept) == len(lines) - 1:
+        kept = [line for line in lines if not any(f'"{name}"' in line for name in names)]
+        if [line for line in lines if line not in kept] == wanted:
             continue
-        prefs.write_text("".join(f"{line}\n" for line in [*kept, _TRAY_LINE]), "utf-8")
+        prefs.write_text("".join(f"{line}\n" for line in [*kept, *wanted]), "utf-8")
         changed.append(profile)
     return changed
-
-
-# Waits for Thunderbird's main window, then minimises it: with minimise-to-tray on, it goes to
-# the tray. Runs detached, so starting Thunderbird never waits for it.
-_MINIMISE_WHEN_READY: Final = (
-    "Add-Type -Namespace W -Name U -MemberDefinition "
-    '\'[DllImport("user32.dll")] public static extern bool '
-    "ShowWindowAsync(System.IntPtr h, int c);';"
-    "for ($i = 0; $i -lt 120; $i++) {"
-    " $p = Get-Process thunderbird -ErrorAction SilentlyContinue |"
-    " Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1;"
-    " if ($p) { Start-Sleep -Seconds 2;"
-    " [void][W.U]::ShowWindowAsync($p.MainWindowHandle, 6); break }"
-    " Start-Sleep -Milliseconds 500 }"
-)
 
 
 @dataclass
@@ -205,8 +196,19 @@ def update_addon(
 class SystemDesktop:
     """Thunderbird on this computer, through the operating system's own tools."""
 
-    def __init__(self) -> None:
+    def __init__(self, bridge_dir: Path | None = None) -> None:
         self._executable: str | None = None
+        self._bridge_dir = bridge_dir
+
+    def _quit_through_addon(self) -> bool:
+        """File > Quit through the add-on: in the tray, closing a window only hides it."""
+        if self._bridge_dir is None:
+            return False
+        try:
+            BridgeClient(RuntimeConnector(self._bridge_dir)).call(Command.QUIT, StatusArgs())
+        except ChamberlainError:
+            return False
+        return True
 
     def running(self) -> bool:
         if sys.platform == "win32":
@@ -215,6 +217,8 @@ class SystemDesktop:
         return _run(["pgrep", "-x", "thunderbird"]).strip() != ""
 
     def close(self) -> None:
+        if self._quit_through_addon():
+            return
         if sys.platform == "win32":
             self._executable = (
                 _run(_powershell("(Get-Process thunderbird | Select-Object -First 1).Path")).strip()
@@ -225,9 +229,6 @@ class SystemDesktop:
                     "Get-Process thunderbird | ForEach-Object { [void]$_.CloseMainWindow() }"
                 )
             )
-            # In the tray Thunderbird has no visible main window to close: a normal close
-            # request to its windows (never /F, never a forced kill) reaches it there.
-            _run(["taskkill", "/IM", "thunderbird.exe"])
         elif sys.platform == "darwin":
             _run(["osascript", "-e", 'quit app "Thunderbird"'])
         else:
@@ -248,14 +249,6 @@ class SystemDesktop:
         if sys.platform == "win32":
             ensure_tray(thunderbird_home())
             subprocess.Popen([self._windows_executable()], close_fds=True)
-            subprocess.Popen(
-                list(_powershell(_MINIMISE_WHEN_READY)),
-                close_fds=True,
-                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.DETACHED_PROCESS,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
         elif sys.platform == "darwin":
             subprocess.Popen(["open", "-a", "Thunderbird"])
         else:

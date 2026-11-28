@@ -101,6 +101,12 @@
         ]
       },
       {
+        "name": "quitApp",
+        "type": "function",
+        "async": true,
+        "parameters": []
+      },
+      {
         "name": "countComposers",
         "type": "function",
         "async": true,

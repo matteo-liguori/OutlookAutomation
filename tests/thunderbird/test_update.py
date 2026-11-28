@@ -124,7 +124,7 @@ def test_close_and_wait_asks_again_when_the_first_close_is_ignored() -> None:
     assert close_and_wait(FakeDesktop(running=False), sleep=lambda _: None)
 
 
-def test_minimise_to_tray_is_turned_on_once_only_where_the_add_on_is(tmp_path: Path) -> None:
+def test_start_in_tray_is_turned_on_once_only_where_the_add_on_is(tmp_path: Path) -> None:
     from chamberlain.connectors.thunderbird.update import ensure_tray
 
     home, _ = home_with(tmp_path, installed=True)
@@ -136,8 +136,9 @@ def test_minimise_to_tray_is_turned_on_once_only_where_the_add_on_is(tmp_path: P
     (other / "prefs.js").write_text('user_pref("x.y", 1);\n', encoding="utf-8")
     assert ensure_tray(home) == [profile]
     text = (profile / "prefs.js").read_text("utf-8")
-    assert 'user_pref("mail.minimizeToTray", true);' in text
-    assert "false" not in text
+    assert 'user_pref("mail.closeToTray", true);' in text
+    assert 'user_pref("mail.closeToTray.startInTray", true);' in text
+    assert "minimizeToTray" not in text, "the old setting is removed"
     assert 'user_pref("x.y", 1);' in text, "other settings stay"
     assert ensure_tray(home) == [], "already on: the file is left alone"
-    assert "minimizeToTray" not in (other / "prefs.js").read_text("utf-8")
+    assert "closeToTray" not in (other / "prefs.js").read_text("utf-8")

@@ -490,6 +490,11 @@ var chamberlainMail = class extends ExtensionCommon.ExtensionAPI {
           win.close();
           return { closed: true };
         },
+        async quitApp() {
+          // After the reply is sent: a normal quit, which still asks about unsaved composers.
+          setTimeout(() => Services.startup.quit(Ci.nsIAppStartup.eAttemptQuit), 500);
+          return { quitting: true };
+        },
         async countComposers() {
           // Read-only: composers this add-on opened that are still open, and all the others.
           let own = 0;

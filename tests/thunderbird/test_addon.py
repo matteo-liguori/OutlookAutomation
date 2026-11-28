@@ -94,6 +94,7 @@ def test_b3_the_mail_helper_exposes_only_the_named_functions() -> None:
         "claimComposer",
         "countComposers",
         "composeHeadless",
+        "quitApp",
     }
     assert "execute(" not in api
     schema = (ADDON_DIR / "experiment" / "schema.json").read_text(encoding="utf-8")

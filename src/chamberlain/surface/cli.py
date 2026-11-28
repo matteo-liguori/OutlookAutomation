@@ -339,7 +339,11 @@ def _tick(root: Path, args: argparse.Namespace, out: TextIO) -> int:
 
 
 def _thunderbird(args: argparse.Namespace, out: TextIO) -> int:
-    status, line = control(args.action, SystemDesktop())
+    try:
+        bridge: Path | None = data_root(args.data) / "bridge"
+    except ChamberlainError:
+        bridge = None  # no data root yet (setup): closing falls back to the window
+    status, line = control(args.action, SystemDesktop(bridge))
     out.write(line + "\n")
     return status
 
@@ -475,7 +479,10 @@ def _addon(root: Path, args: argparse.Namespace, out: TextIO) -> int:
     """Build the add-on and put it in place of the installed file in every Thunderbird profile."""
     try:
         report = update_addon(
-            root / "bridge", home=thunderbird_home(), desktop=SystemDesktop(), restart=args.restart
+            root / "bridge",
+            home=thunderbird_home(),
+            desktop=SystemDesktop(root / "bridge"),
+            restart=args.restart,
         )
     except ChamberlainError as error:
         return _plain_fail(out, error)

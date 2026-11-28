@@ -52,6 +52,8 @@ class Command(StrEnum):
     CALENDAR_QUERY = "calendar_query"
     CALENDAR_READ = "calendar_read"
     CALENDAR_WRITE = "calendar_write"
+    QUIT = "quit"
+    """Quit Thunderbird normally, as File > Quit does: in the tray a window close only hides it."""
 
 
 WRITE_COMMANDS = frozenset(
@@ -265,6 +267,10 @@ class FolderInfo(Model):
 
 class StatusArgs(Model):
     pass
+
+
+class QuitResult(Model):
+    quitting: bool
 
 
 class StatusResult(Model):
@@ -637,6 +643,7 @@ class CalendarWriteResult(Model):
 
 COMMAND_MODELS: dict[Command, tuple[type[Model], type[Model]]] = {
     Command.STATUS: (StatusArgs, StatusResult),
+    Command.QUIT: (StatusArgs, QuitResult),
     Command.FOLDERS: (AccountArgs, FoldersResult),
     Command.QUERY: (QueryArgs, QueryResult),
     Command.READ: (ReadArgs, ReadResult),
