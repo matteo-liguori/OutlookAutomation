@@ -49,6 +49,13 @@ On Mac, use `.venv/bin/python` and Mac paths. Other MCP clients take the same
 command and arguments. The server hands the agent the standing instructions at
 connect time, so the agent needs nothing else to start.
 
+### Staying current
+
+The server checks, between requests, whether the Chamberlain code on disk has changed since it
+started. If it has, it starts a fresh server on the same connection and the new code answers the
+call, so an update needs no restart and no new `initialize`. If the new code cannot be loaded,
+the call fails with a message to restart the MCP server (or the Codex app).
+
 ## Command line
 
 For an agent with a shell and no MCP:
