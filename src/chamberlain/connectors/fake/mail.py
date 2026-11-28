@@ -53,7 +53,7 @@ from chamberlain.domain.operations import (
     ReconcileStatus,
     Verification,
 )
-from chamberlain.ports.page import Page
+from chamberlain.ports.page import Gap, Page
 from chamberlain.ports.sync import FOLDER_SECONDS, FolderOutcome, SyncReport, run_sync
 from chamberlain.schema.errors import ChamberlainError, ErrorCode
 
@@ -277,11 +277,18 @@ class FakeMail:
         self, source: str, query: MailQuery, cursor: str | None = None
     ) -> Page[MessageSummary]:
         self._begin_read(source)
-        matches = [
-            m for m in self._world.mail[source] if not m.unsynced and self._matches(m, query)
+        ranged = [
+            m
+            for m in self._world.mail[source]
+            if not m.unsynced and self._matches(m, query.model_copy(update={"text": None}))
         ]
+        cap = self._world.scan_cap.get(source)
+        capped = cap is not None and len(ranged) > cap
+        if cap is not None:
+            ranged = ranged[:cap]
+        matches = [m for m in ranged if self._matches(m, query)]
         matches.sort(key=lambda m: (m.date, m.uid), reverse=True)
-        return self._world.page(
+        page = self._world.page(
             Page[MessageSummary],
             source,
             [self._summary(source, m) for m in matches],
@@ -289,6 +296,10 @@ class FakeMail:
             query.limit,
             "mail store",
         )
+        if not capped:
+            return page
+        gap = Gap(source=source, reason="The search stopped at its scan limit.", narrow=True)
+        return page.model_copy(update={"gaps": (*page.gaps, gap), "complete": False})
 
     def read(self, source: str, locator: str) -> Message:
         self._begin_read(source)

@@ -9,7 +9,7 @@ from typing import Final, Literal, TypedDict
 
 from pydantic import Field
 
-from chamberlain.connectors.thunderbird import protocol
+from chamberlain.connectors.thunderbird import mail_walk, protocol
 from chamberlain.connectors.thunderbird.client import BridgeClient, BridgeFailure, typed
 from chamberlain.connectors.thunderbird.identity import (
     MessageLocator,
@@ -112,6 +112,9 @@ class _Cursor(Model):
     q: str
     d: int
     k: str
+    u: int | None = None
+    """Set by a date-window walk: the walk resumes below this instant (milliseconds, exclusive)
+    and returns only messages older than `d`/`k`. Unset: one plain query continues after `d`/`k`."""
 
 
 def _query_hash(query: MailQuery) -> str:
@@ -151,12 +154,14 @@ class MailReads:
         *,
         limits: MailLimits | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self.client = client
         self._bindings = dict(bindings)
         self.clock = clock
         self.limits = limits or MailLimits()
         self._sleep = sleep
+        self._monotonic = monotonic
         self._fresh: dict[str, datetime] = {}
 
     # --- description ------------------------------------------------------------------
@@ -344,17 +349,45 @@ class MailReads:
     def search(
         self, source: str, query: MailQuery, cursor: str | None = None
     ) -> Page[MessageSummary]:
+        started = self._monotonic()
         binding = self.binding(source)
-        after = None
-        if cursor is not None:
-            decoded = _decode_cursor(cursor, query)
-            after = protocol.QueryCursor(date_ms=decoded.d, key=decoded.k)
+        decoded = None if cursor is None else _decode_cursor(cursor, query)
         gaps: list[Gap] = []
         if not self._vouched(source, binding):
             gaps.append(
                 Gap(source=source, reason="The mail store was not confirmed to be in sync.")
             )
-        # The bridge matches words in headers. Full-text search can exceed its read deadline.
+        if decoded is None or decoded.u is None:
+            # The bridge matches words in headers. Full-text search can exceed its read deadline.
+            after = (
+                None if decoded is None else protocol.QueryCursor(date_ms=decoded.d, key=decoded.k)
+            )
+            result = self._query(binding, query, after=after)
+            if result.complete:
+                next_cursor = None
+                if result.more and result.next is not None:
+                    next_cursor = _encode_cursor(
+                        _Cursor(q=_query_hash(query), d=result.next.date_ms, k=result.next.key)
+                    )
+                return Page[MessageSummary](
+                    items=tuple(self._summary(source, binding, h) for h in result.messages),
+                    cursor=next_cursor,
+                    complete=next_cursor is None and not gaps,
+                    gaps=tuple(gaps),
+                )
+        return self._walked(source, binding, query, decoded, gaps, started)
+
+    def _query(
+        self,
+        binding: ThunderbirdBinding,
+        query: MailQuery,
+        *,
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+        after: protocol.QueryCursor | None = None,
+        limit: int | None = None,
+        max_scan: int = 2000,
+    ) -> protocol.QueryResult:
         args = protocol.QueryArgs(
             **binding.account,
             folder_id=query.folder_id,
@@ -363,23 +396,89 @@ class MailReads:
             else None,
             words=query.text,
             unread=query.unread,
-            since_ms=_ms_opt(query.since),
-            until_ms=_ms_opt(query.until),
-            limit=min(query.limit, self.limits.page_size),
+            since_ms=_ms_opt(query.since) if since_ms is None else since_ms,
+            until_ms=_ms_opt(query.until) if until_ms is None else until_ms,
+            limit=limit or min(query.limit, self.limits.page_size),
             after=after,
+            max_scan=max_scan,
         )
-        result = self.call(Command.QUERY, args, protocol.QueryResult)
-        if not result.complete:
+        return self.call(Command.QUERY, args, protocol.QueryResult)
+
+    def _window(
+        self, binding: ThunderbirdBinding, query: MailQuery, since_ms: int, until_ms: int
+    ) -> tuple[list[Header], bool, int]:
+        """Every match in one date window, paged. The add-on may count a message on a window's
+        edge in both windows, so the walk drops repeats."""
+        found: list[Header] = []
+        after = None
+        while True:
+            result = self._query(
+                binding,
+                query,
+                since_ms=since_ms,
+                until_ms=until_ms,
+                after=after,
+                limit=min(200, self.limits.page_size),
+            )
+            found.extend(result.messages)
+            if not (result.more and result.next is not None):
+                return found, result.complete, result.scanned
+            after = result.next
+
+    def _walked(
+        self,
+        source: str,
+        binding: ThunderbirdBinding,
+        query: MailQuery,
+        decoded: _Cursor | None,
+        gaps: list[Gap],
+        started: float,
+    ) -> Page[MessageSummary]:
+        """A search the add-on could not scan in one go: date windows, newest to oldest."""
+        upper = milliseconds(query.until or self.clock.now())
+        if decoded is not None:
+            upper = min(upper, decoded.u if decoded.u is not None else decoded.d + 1)
+        lower = milliseconds(query.since or mail_walk.FLOOR)
+        after = None if decoded is None else (decoded.d, decoded.k)
+        walked = mail_walk.walk(
+            lambda since, until: self._window(binding, query, since, until),
+            upper_ms=upper,
+            lower_ms=lower,
+            want=query.limit,
+            after=after,
+            monotonic=self._monotonic,
+            started=started,
+        )
+        page = walked.headers[: query.limit]
+        more = len(walked.headers) > query.limit
+        resume: int | None = None
+        if more:
+            resume = page[-1].date_ms + 1
+        elif walked.out_of_time:
+            resume = walked.reached_ms
+            gaps.append(
+                Gap(
+                    source=source,
+                    reason=(
+                        "The search reached back to "
+                        f"{datetime.fromtimestamp(resume / 1000, UTC).date().isoformat()} "
+                        "in the time allowed; continue with the cursor to search further back."
+                    ),
+                )
+            )
+        if walked.scan_limited:
             gaps.append(
                 Gap(source=source, reason="The search stopped at its scan limit.", narrow=True)
             )
         next_cursor = None
-        if result.more and result.next is not None:
-            next_cursor = _encode_cursor(
-                _Cursor(q=_query_hash(query), d=result.next.date_ms, k=result.next.key)
-            )
+        if resume is not None:
+            if page:
+                d, k = mail_walk.sort_key(page[-1])
+            else:
+                d, k = resume, ""
+            next_cursor = _encode_cursor(_Cursor(q=_query_hash(query), d=d, k=k, u=resume))
         return Page[MessageSummary](
-            items=tuple(self._summary(source, binding, header) for header in result.messages),
+            items=tuple(self._summary(source, binding, header) for header in page),
             cursor=next_cursor,
             complete=next_cursor is None and not gaps,
             gaps=tuple(gaps),

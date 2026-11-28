@@ -151,6 +151,9 @@ class FakeWorld:
         self.health_override: dict[str, HealthState] = {}
         self.stuck_folders: dict[str, set[str]] = {}
         """Per mail source, folders whose sync never finishes (a stuck client)."""
+        self.scan_cap: dict[str, int] = {}
+        """Per mail source, how many messages in the searched date range one search scans. A
+        range with more is cut at an arbitrary subset and reported incomplete (a capped scan)."""
         self.sync_log: list[tuple[str, tuple[str, ...]]] = []
         """Every `sync_folders` call: the source and the folders asked, in order."""
         self.delivers_to_self: set[str] = set()

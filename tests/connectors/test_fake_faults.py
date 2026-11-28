@@ -197,3 +197,13 @@ def test_move_prepare_rejects_unknown_destination_and_no_movable_items(fake: Fak
     with pytest.raises(ChamberlainError) as raised:
         _move(fake, locator)
     assert raised.value.code is ErrorCode.REMOTE_AMBIGUOUS
+
+
+def test_a_scan_cap_cuts_a_search_at_an_arbitrary_subset_and_says_so(fake: FakeProvider) -> None:
+    for n in range(5):
+        fake.mail.add_message("mail:test", internet_message_id=f"<cap{n}@x>", subject="Hello")
+    fake.world.scan_cap["mail:test"] = 3
+    page = fake.mail.search("mail:test", MailQuery(limit=10))
+    assert len(page.items) == 3
+    assert not page.complete
+    assert any(gap.narrow for gap in page.gaps)

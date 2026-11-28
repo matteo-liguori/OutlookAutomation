@@ -59,6 +59,9 @@ or recorded transport only), `known_broken`.
   it to halve its time slices (A-20). `Folder.role` is one of `inbox`, `sent`, `drafts`,
   `trash`, `junk`, `archive`, `other`; a scan that covers every folder skips trash, junk and
   drafts.
+  A Thunderbird mail search that one query cannot scan completely walks back in date windows,
+  newest first, so a long-range search may take a while. It stops after about 90 seconds with a
+  gap that names the date reached and a cursor that continues from there.
 - **P-5** `health` returns `{state: ok | stale | sign_in_needed |
   unavailable, checked_at, fresh_as_of?}`. `fresh_as_of` is the time up to
   which the connector can vouch for completeness; a connector that cannot
