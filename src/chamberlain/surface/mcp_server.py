@@ -91,11 +91,18 @@ def handle(message: Mapping[str, Any], call_tool: ToolCaller | None) -> dict[str
     return {"jsonrpc": "2.0", "id": message["id"], "result": result}
 
 
+_WATCHED = ("*.py", "*.yaml", "*.json", "*.sql")
+_IGNORED = frozenset({"node_modules", "build", "__pycache__", "addon"})
+
+
 def code_fingerprint() -> str:
-    """A cheap hash of the package: each `.py` path, size and mtime, plus the version."""
+    """A cheap hash of the package: each code and data file's path, size and mtime, plus the
+    version. Guidance, report layouts and migrations are YAML, JSON and SQL the server loads too;
+    the add-on's own sources and build output are not the server's."""
     root = Path(chamberlain.__file__).resolve().parent
     digest = hashlib.sha256(__version__.encode())
-    for path in sorted(root.rglob("*.py")):
+    files = (p for pattern in _WATCHED for p in root.rglob(pattern))
+    for path in sorted(p for p in files if _IGNORED.isdisjoint(p.relative_to(root).parts)):
         try:
             info = path.stat()
         except OSError:
