@@ -153,3 +153,16 @@ def test_g17_the_mounted_confirmation_routes_sit_behind_the_same_gate(rig: Rig) 
     for path in ["/api/grants", "/api/grants/grant_0123456789abcdef"]:
         assert rig.call("GET", path, token=None).status == 403, path
         assert rig.call("GET", path, host="evil.example").status == 403, path
+
+
+def test_the_presence_heartbeat_needs_the_token_and_hands_over_a_queued_grant(rig: Rig) -> None:
+    from chamberlain.surface.viewer import presence
+
+    assert rig.call("POST", "/api/presence", {}, token=None).status == 403
+    assert rig.call("POST", "/api/presence", {}, token="wrong").status == 403
+    assert not presence.page_alive(rig.ctx.data_root), "a refused beat records nothing"
+    assert rig.call("POST", "/api/presence", {}).body == {"grant": None}
+    assert presence.page_alive(rig.ctx.data_root)
+    presence.queue_grant(rig.ctx.data_root, "grt_ab12")
+    assert rig.call("POST", "/api/presence", {}).body == {"grant": "grt_ab12"}
+    assert rig.call("POST", "/api/presence", {}).body == {"grant": None}

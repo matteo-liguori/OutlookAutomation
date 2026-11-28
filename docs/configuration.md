@@ -57,7 +57,7 @@ tick:                            # the operating system tick (`chamberlain sched
   every_minutes: 60              # housekeeping between passes (default 60); re-run install after a change
 
 viewer:
-  open_on_start: false           # open the viewer in your browser whenever an agent session starts
+  open_on_start: false           # open the viewer whenever an agent session starts (its own app window, reused)
 
 mail_sync:                       # how fresh Thunderbird's folders must be when mail is read
   fresh_minutes: 10              # a folder last synced longer ago is synced again (default 10)

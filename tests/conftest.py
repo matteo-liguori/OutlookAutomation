@@ -71,3 +71,14 @@ def ctx(db: sqlite3.Connection, clock: ManualClock, data_root: Path, fake: FakeP
         sources=sources,
         services=Services.bind(db, clock, data_root, policy=WritePolicy()),
     )
+
+
+@pytest.fixture(autouse=True)
+def _no_real_browser_window(  # pyright: ignore[reportUnusedFunction]
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No test may launch a real Edge or Chrome app window: the viewer falls back to
+    `webbrowser.open`, which tests fake themselves."""
+    from chamberlain.surface.viewer import presence
+
+    monkeypatch.setattr(presence, "installed_browser", lambda: None)

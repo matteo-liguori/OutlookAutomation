@@ -38,7 +38,6 @@ import io
 import json
 import os
 import sys
-import webbrowser
 from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any, TextIO
@@ -539,8 +538,11 @@ def _viewer(root: Path, args: argparse.Namespace, out: TextIO) -> int:
         if print_url:
             out.write(f"Viewer (already running): {running}\n")
         elif not args.no_open:
-            webbrowser.open(running)
-            out.write("The viewer is already running; it has been opened in your browser.\n")
+            if viewer_presence.page_alive(root):
+                out.write("The viewer is already running and its window is open.\n")
+            else:
+                viewer_presence.window_opener(root)(running)
+                out.write("The viewer is already running; it has been opened in its window.\n")
         else:
             out.write("The viewer is already running.\n")
         return EXIT_OK

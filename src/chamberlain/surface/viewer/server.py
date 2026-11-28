@@ -11,7 +11,6 @@ the thread that made them.
 import contextlib
 import socket
 import socketserver
-import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import TextIO
@@ -154,7 +153,7 @@ def launch(
     presence.record(data_root, viewer.port)
     if out is not None and not print_url:
         out.write(f"Viewer: {viewer.url}\n")
-    show = opener or webbrowser.open
+    show = opener or presence.window_opener(data_root)
     opened = open_browser and bool(show(viewer.url_with_token))
     if out is not None:
         if print_url:

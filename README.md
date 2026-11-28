@@ -164,6 +164,9 @@ Python; on macOS or Linux use `.venv/bin/python`.
    [docs/permissions.md](docs/permissions.md#larger-cards)) and read the reports. It opens on the
    calendar, with today's report below it (see [The report](#the-report)). The page keeps
    its token for the tab, so a reload works; a new browser session needs the token link again.
+   The viewer opens as its own app window (Chrome, else Edge, with a separate profile), with no tabs or
+   address bar. It is opened once and reused: a later start, or a reply held for you, shows in that
+   window instead of opening another.
 
 6. Scheduling. `chamberlain schedule install --apply` registers the hourly tick (plus one run
    before each pass), and

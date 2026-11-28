@@ -430,7 +430,46 @@
     });
   }
 
+  // --- one window: tell the viewer this page is alive; it may answer with a reply to open ----
+  var beating = false;
+  var baseTitle = document.title;
+  var flashing = null;
+
+  function flashTitle() {
+    if (flashing) return;
+    var turns = 0;
+    flashing = setInterval(function () {
+      turns += 1;
+      document.title = turns % 2 ? "\u25CF Reply waiting for you" : baseTitle;
+      if (turns >= 12) {
+        clearInterval(flashing);
+        flashing = null;
+        document.title = baseTitle;
+      }
+    }, 1000);
+  }
+
+  function beat() {
+    if (!token) return;
+    api("POST", "/api/presence", {}).then(function (reply) {
+      if (reply && /^[a-z]+_[0-9a-f]+$/.test(reply.grant || "")) {
+        openGrant(reply.grant);
+        try { window.focus(); } catch (ignored) { /* a browser may refuse */ }
+        flashTitle();
+      }
+    }).catch(function () { /* the viewer is gone or the token is old: nothing to do */ });
+  }
+
+  function startHeartbeat() {
+    if (beating) return;
+    beating = true;
+    beat();
+    setInterval(beat, 15000);
+  }
+
   function start() {
+    startHeartbeat();
+
     VIEWS.forEach(function (entry) {
       var button = el("button", { text: entry[1], "data-view": entry[0], onclick: function () { current = entry[0]; render(); } });
       tabsBar.appendChild(button);

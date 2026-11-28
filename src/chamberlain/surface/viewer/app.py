@@ -10,6 +10,8 @@ Contract: docs/contracts/05-grants.md (G-14, G-17 to G-19). Routes:
 - `/api/complex...`: the owner's answers on larger card limits (`complex_api.py`).
 - `/api/report`, `/api/local-events...`, `/api/appointments/...`: the report front page and the
   owner's own calendar actions (`report_api.py`).
+- `POST /api/presence`: the page's 15-second heartbeat (`presence.py`); the reply may carry a
+  `grant` handle the page should open.
 - every other `/api/...` route is a read-only view, plus the person's notes.
 
 Every API request carries the token in `X-Chamberlain-Token`; a POST also needs the viewer's own
@@ -28,7 +30,7 @@ from chamberlain.domain.canonical import sha256_text
 from chamberlain.livetest.viewer import recent_runs
 from chamberlain.runs.notes import add_note, withdraw_note
 from chamberlain.schema.errors import ChamberlainError, ErrorCategory, ErrorCode
-from chamberlain.surface.viewer import complex_api, pages, report_api, views
+from chamberlain.surface.viewer import complex_api, pages, presence, report_api, views
 from chamberlain.surface.viewer.gate import SECURITY_HEADERS, Refusal, check_api, check_basics
 from chamberlain.writes.confirm import MAX_BODY, ConfirmationApp
 from chamberlain.writes.models import WritePolicy
@@ -75,8 +77,10 @@ class ViewerApp:
         token: str,
         origin: str,
         policy: WritePolicy | None = None,
+        now: Callable[[], float] = presence.system_seconds,
     ) -> None:
         self._context = context
+        self._now = now
         self._token = token
         self._origin = origin
         self._host = origin.split("://", 1)[-1]
@@ -160,6 +164,8 @@ class ViewerApp:
             return 200, self._read(ctx, path, query)
         if path.startswith("/api/complex/"):
             return 200, complex_api.decide(ctx, path)
+        if path == "/api/presence":  # the page is alive; reply with any grant waiting for it
+            return 200, presence.heartbeat(ctx.data_root, now=self._now)
         done = report_api.post(ctx, path, _json(body), self._zone)
         if done is not None:
             return 200, done
