@@ -18,7 +18,8 @@ ALLOWED_METHODS = frozenset({"GET", "POST"})
 
 CSP = (
     "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; "
-    "connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"
+    "manifest-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
+    "form-action 'none'"
 )
 
 SECURITY_HEADERS: tuple[tuple[str, str], ...] = (

@@ -1,6 +1,5 @@
 /* The calendar page: colour ribbons per calendar, bands for multi-day events, and the gold,
    pulsing border of an important date. Ported from the old dashboard; nothing is inline. */
-.calendar-page { --important-outline: #bd8a42; }
 .calendar-heading, .controls { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; }
 .calendar-heading { justify-content: space-between; gap: 0.85rem; margin-bottom: 0.9rem; }
 .calendar-heading h2 { margin: 0; }
@@ -31,14 +30,14 @@
 .day-note, .coverage { color: var(--muted); font-size: 0.82rem; }
 .coverage { margin: 0.65rem 0 1rem; }
 
-.tone-0 { --event-colour: #315aaf; }
-.tone-1 { --event-colour: #187b77; }
-.tone-2 { --event-colour: #7751a5; }
-.tone-3 { --event-colour: #a04d24; }
-.tone-4 { --event-colour: #a93d64; }
-.tone-5 { --event-colour: #875b14; }
-.tone-6 { --event-colour: #416e3a; }
-.tone-7 { --event-colour: #596767; }
+.tone-0 { --event-colour: var(--tone-0); }
+.tone-1 { --event-colour: var(--tone-1); }
+.tone-2 { --event-colour: var(--tone-2); }
+.tone-3 { --event-colour: var(--tone-3); }
+.tone-4 { --event-colour: var(--tone-4); }
+.tone-5 { --event-colour: var(--tone-5); }
+.tone-6 { --event-colour: var(--tone-6); }
+.tone-7 { --event-colour: var(--tone-7); }
 .colour-key { display: flex; flex-wrap: wrap; gap: 0.3rem 0.85rem; margin: 0 0 0.65rem; padding: 0; list-style: none; font-size: 0.8rem; color: var(--muted); }
 .colour-key li { display: inline-flex; align-items: center; gap: 0.3rem; }
 .colour-key li::before { content: ""; width: 0.75em; height: 0.75em; background: var(--event-colour, transparent); border-radius: 2px; }
@@ -66,7 +65,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   background: var(--event-colour);
-  color: #fff;
+  color: var(--band-ink);
   font-size: 0.79rem;
   font-weight: 650;
   line-height: 1.25;
@@ -77,9 +76,9 @@
   margin: 0.25rem 0;
   padding: 0.35rem 0.45rem;
   text-align: left;
-  border: 2px solid #ae6230;
+  border: 2px solid var(--orange);
   border-radius: 6px;
-  background: color-mix(in srgb, #ffbf77 24%, var(--panel));
+  background: color-mix(in srgb, var(--orange-tint) 24%, var(--panel));
   font-weight: 650;
   font-size: 0.79rem;
   overflow-wrap: anywhere;
@@ -121,7 +120,7 @@
 .error { background: var(--panel); border: 1px solid var(--warn); color: var(--warn); padding: 1rem; border-radius: 9px; margin-bottom: 1rem; }
 dialog { color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 15px; width: min(32rem, calc(100vw - 2rem)); padding: 1.2rem; }
 dialog::backdrop { background: #0006; }
-.appointment-kicker { color: var(--ink); border-left: 4px solid #b44336; background: color-mix(in srgb, #dd7858 21%, var(--panel)); padding: 0.4rem 0.65rem; font-size: 0.85rem; font-weight: 750; margin-bottom: 0.8rem; }
+.appointment-kicker { color: var(--ink); border-left: 4px solid var(--red); background: color-mix(in srgb, var(--red-tint) 21%, var(--panel)); padding: 0.4rem 0.65rem; font-size: 0.85rem; font-weight: 750; margin-bottom: 0.8rem; }
 
 @media (max-width: 700px) {
   #calendar.four .calendar-week { min-width: 28rem; }
@@ -129,17 +128,17 @@ dialog::backdrop { background: #0006; }
 }
 
 /* Event categories (the agent gives each event one); grey while an event has none. */
-.cat-none { --event-colour: #596767; }
-.cat-work { --event-colour: #315aaf; }
-.cat-personal { --event-colour: #187b77; }
-.cat-social { --event-colour: #7751a5; }
-.cat-travel { --event-colour: #a04d24; }
-.cat-health { --event-colour: #a93d64; }
-.cat-occasion { --event-colour: #875b14; }
-.cat-home { --event-colour: #416e3a; }
+.cat-none { --event-colour: var(--tone-7); }
+.cat-work { --event-colour: var(--tone-0); }
+.cat-personal { --event-colour: var(--tone-1); }
+.cat-social { --event-colour: var(--tone-2); }
+.cat-travel { --event-colour: var(--tone-3); }
+.cat-health { --event-colour: var(--tone-4); }
+.cat-occasion { --event-colour: var(--tone-5); }
+.cat-home { --event-colour: var(--tone-6); }
 .local-event { border-inline-start-style: dashed; }
 .local-remove { font-size: 0.72rem; margin-top: 0.2rem; background: none; border: 1px solid var(--line); border-radius: 5px; color: var(--muted); }
-.dated-action { margin: 0.25rem 0; padding: 0.28rem 0.35rem; border-left: 2px solid #6684b8; background: var(--soft); font-size: 0.76rem; overflow-wrap: anywhere; }
+.dated-action { margin: 0.25rem 0; padding: 0.28rem 0.35rem; border-left: 2px solid var(--accent); background: var(--soft); font-size: 0.76rem; overflow-wrap: anywhere; }
 .appointment-event-title { all: unset; cursor: pointer; display: block; width: 100%; font-weight: 650; font-size: 0.82rem; }
 .appointment-event-title:hover { text-decoration: underline; }
 .event-band.important-event { overflow: visible; }

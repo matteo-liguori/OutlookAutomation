@@ -167,6 +167,7 @@ Python; on macOS or Linux use `.venv/bin/python`.
    The viewer opens as its own app window (Chrome, else Edge, with a separate profile), with no tabs or
    address bar. It is opened once and reused: a later start, or a reply held for you, shows in that
    window instead of opening another.
+   The theme switch in the header offers Match system (the default), Light and Dark; the choice is kept in that window's browser storage.
 
 6. Scheduling. `chamberlain schedule install --apply` registers the hourly tick (plus one run
    before each pass), and

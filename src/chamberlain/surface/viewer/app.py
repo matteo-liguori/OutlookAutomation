@@ -2,7 +2,7 @@
 
 Contract: docs/contracts/05-grants.md (G-14, G-17 to G-19). Routes:
 
-- `GET /` and `GET /static/page.js|page.css|calendar.js|calendar.css`: the shell. They hold no
+- `GET /`, `/icon.svg`, `/manifest.json` and `GET /static/*.js|*.css`: the shell. They hold no
   records, so they need no token, but they still need a loopback peer and the viewer's own
   Host (a rebinding page gets 403).
 - `/api/grants...`: handed to the writes track's `ConfirmationApp` for listing,
@@ -49,6 +49,9 @@ STATIC_FILES: dict[str, tuple[str, str]] = {
     "/static/report.js": ("report.js", "text/javascript; charset=utf-8"),
     "/static/appointments.js": ("appointments.js", "text/javascript; charset=utf-8"),
     "/static/report.css": ("report.css", "text/css; charset=utf-8"),
+    "/static/theme.js": ("theme.js", "text/javascript; charset=utf-8"),
+    "/icon.svg": ("icon.svg", "image/svg+xml"),
+    "/manifest.json": ("manifest.json", "application/manifest+json"),
 }
 _SAFE_PATH = re.compile(r"^/api/[A-Za-z0-9_/.-]{0,70}$")
 _RUN_REPORT = re.compile(r"^/api/runs/(run_[a-z0-9]{8,32})/reports$")

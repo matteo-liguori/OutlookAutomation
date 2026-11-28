@@ -15,25 +15,101 @@
   --accent: #315aaf;
   --gold: #bd8a42;
   --shadow: 0 12px 40px #1c30280b;
+  --teal: #187b77;
+  --red: #a0322c;
+  --red-tint: #dd7858;
+  --red-ink: #a0322c;
+  --orange: #ae6230;
+  --orange-tint: #ffbf77;
+  --orange-ink: #8a4a1f;
+  --danger-btn: #902c29;
+  --danger-btn-hover: #76211e;
+  --on-strong: #fff;
+  --band-ink: #fff;
+  --important-outline: #bd8a42;
+  --focus: #648f80;
+  --tone-0: #315aaf;
+  --tone-1: #187b77;
+  --tone-2: #7751a5;
+  --tone-3: #a04d24;
+  --tone-4: #a93d64;
+  --tone-5: #875b14;
+  --tone-6: #416e3a;
+  --tone-7: #596767;
   font-family: Inter, "Segoe UI", system-ui, sans-serif;
   font-size: 15px;
 }
+/* Dark values: the same variables, used when the system is dark (unless Light is chosen)
+   and whenever Dark is chosen in the theme switch (theme.js sets data-theme on <html>). */
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #181e1c;
-    --panel: #222b27;
-    --ink: #edf1eb;
-    --muted: #a7b3ab;
-    --line: #3a453f;
-    --soft: #303c35;
-    --selected: #d2e6d8;
-    --selected-ink: #1b3024;
-    --warn: #f1aa8d;
-    --ok: #7fd0a0;
-    --accent: #8fb0ee;
-    --gold: #d9a85a;
-    --shadow: none;
+  :root:not([data-theme="light"]) {
+      --bg: #181e1c;
+      --panel: #222b27;
+      --ink: #edf1eb;
+      --muted: #a7b3ab;
+      --line: #3a453f;
+      --soft: #303c35;
+      --selected: #d2e6d8;
+      --selected-ink: #1b3024;
+      --warn: #f1aa8d;
+      --ok: #7fd0a0;
+      --accent: #8fb0ee;
+      --gold: #d9a85a;
+      --shadow: none;
+      --teal: #4fc0bb;
+      --red: #e0685a;
+      --red-ink: #f1aa8d;
+      --orange: #e0924f;
+      --orange-ink: #f0c188;
+      --danger-btn: #b83a35;
+      --danger-btn-hover: #9c2f2b;
+      --band-ink: #10181a;
+      --important-outline: #e3b565;
+      --focus: #9cc6b6;
+      --tone-0: #86a6ea;
+      --tone-1: #4fc0bb;
+      --tone-2: #b494dc;
+      --tone-3: #e0936a;
+      --tone-4: #e07fa0;
+      --tone-5: #d2a24c;
+      --tone-6: #8dc482;
+      --tone-7: #9fb0b0;
   }
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #181e1c;
+  --panel: #222b27;
+  --ink: #edf1eb;
+  --muted: #a7b3ab;
+  --line: #3a453f;
+  --soft: #303c35;
+  --selected: #d2e6d8;
+  --selected-ink: #1b3024;
+  --warn: #f1aa8d;
+  --ok: #7fd0a0;
+  --accent: #8fb0ee;
+  --gold: #d9a85a;
+  --shadow: none;
+  --teal: #4fc0bb;
+  --red: #e0685a;
+  --red-ink: #f1aa8d;
+  --orange: #e0924f;
+  --orange-ink: #f0c188;
+  --danger-btn: #b83a35;
+  --danger-btn-hover: #9c2f2b;
+  --band-ink: #10181a;
+  --important-outline: #e3b565;
+  --focus: #9cc6b6;
+  --tone-0: #86a6ea;
+  --tone-1: #4fc0bb;
+  --tone-2: #b494dc;
+  --tone-3: #e0936a;
+  --tone-4: #e07fa0;
+  --tone-5: #d2a24c;
+  --tone-6: #8dc482;
+  --tone-7: #9fb0b0;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--ink); }
@@ -41,7 +117,7 @@ button, input, select { font: inherit; }
 button, select { cursor: pointer; }
 button { color: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible {
-  outline: 3px solid #648f80;
+  outline: 3px solid var(--focus);
   outline-offset: 3px;
 }
 button.act, nav button, .controls button {
@@ -151,7 +227,7 @@ input[type="text"], input[type="password"] {
   overflow: hidden;
   margin: 0;
 }
-.colour-strip { position: absolute; left: 0; top: 0; right: 0; height: 4px; background: #187b77; }
+.colour-strip { position: absolute; left: 0; top: 0; right: 0; height: 4px; background: var(--teal); }
 .colour-strip.review { background: var(--gold); }
 .colour-strip.overdue, .colour-strip.cap { background: var(--warn); }
 .card-top { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 0.73rem; gap: 0.8rem; margin-bottom: 0.8rem; }
@@ -179,7 +255,7 @@ input[type="text"], input[type="password"] {
   box-shadow: var(--shadow);
 }
 .event.audit { border-left-color: var(--line); }
-.event.action { border-left-color: #187b77; }
+.event.action { border-left-color: var(--teal); }
 .event h3 { font-size: 0.92rem; line-height: 1.5; margin: 0.3rem 0; overflow-wrap: anywhere; }
 .event-top, .event-bottom { display: flex; justify-content: space-between; gap: 0.8rem; font-size: 0.75rem; color: var(--muted); }
 .kind { font-size: 0.69rem; border-radius: 4px; background: var(--soft); padding: 0.18rem 0.4rem; }
@@ -191,3 +267,7 @@ input[type="text"], input[type="password"] {
   .day-title strong { display: inline; margin-right: 0.5rem; }
   .day-items { margin-left: 0.3rem; padding-left: 1rem; }
 }
+
+/* theme switch */
+.theme-switch { display: inline-flex; align-items: center; gap: 0.4rem; padding-bottom: 0.8rem; color: var(--muted); font-size: 0.82rem; }
+.theme-switch select { background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: 8px; padding: 0.3rem 0.5rem; }
