@@ -218,7 +218,7 @@ def test_no_new_window_while_the_page_is_alive_and_one_when_it_is_not(tmp_path: 
     assert open_it() == "reused", "no page seen yet: a window opens"
     assert len(opened) == 1
     presence.mark_page_seen(tmp_path, now=lambda: clock[0])
-    clock[0] += 44
+    clock[0] += 149
     assert open_it() == "already open"
     assert len(opened) == 1
     clock[0] += 2
@@ -263,3 +263,14 @@ def test_the_token_is_never_in_what_open_viewer_returns(tmp_path: Path) -> None:
     presence.mark_page_seen(tmp_path)
     live = presence.open_viewer(tmp_path, opener=lambda u: None, answers=lambda p: True)
     assert "secret-tok" not in spoken + live + json.dumps(presence.heartbeat(tmp_path))
+
+
+def test_a_closing_page_is_gone_at_once_and_a_quiet_one_counts_for_150_seconds(
+    tmp_path: Path,
+) -> None:
+    clock = [1000.0]
+    presence.heartbeat(tmp_path, now=lambda: clock[0])
+    clock[0] += 140  # a minimised window's slowed timer
+    assert presence.page_alive(tmp_path, now=lambda: clock[0])
+    presence.heartbeat(tmp_path, now=lambda: clock[0], closed=True)
+    assert not presence.page_alive(tmp_path, now=lambda: clock[0])

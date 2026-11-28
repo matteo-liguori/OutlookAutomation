@@ -165,7 +165,8 @@ class ViewerApp:
         if path.startswith("/api/complex/"):
             return 200, complex_api.decide(ctx, path)
         if path == "/api/presence":  # the page is alive; reply with any grant waiting for it
-            return 200, presence.heartbeat(ctx.data_root, now=self._now)
+            closed = _json(body).get("closed") is True
+            return 200, presence.heartbeat(ctx.data_root, now=self._now, closed=closed)
         done = report_api.post(ctx, path, _json(body), self._zone)
         if done is not None:
             return 200, done

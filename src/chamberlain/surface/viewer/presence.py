@@ -33,7 +33,9 @@ PAGE_FILE: Final = "viewer-page.json"
 REQUEST_FILE: Final = "viewer-requests.json"
 PROFILE_DIR: Final = "viewer-browser"
 BIND_ADDRESS: Final = "127.0.0.1"
-PAGE_ALIVE_SECONDS: Final = 45
+PAGE_ALIVE_SECONDS: Final = 150
+"""Chrome slows a minimised window's timers to about one a minute, so a beat may come late;
+the page says when it closes, so this long wait never hides a closed window."""
 REQUEST_LIFETIME_SECONDS: Final = 600
 _GRANT = re.compile(r"^[a-z]+_[0-9a-f]+$")
 
@@ -142,7 +144,7 @@ def mark_page_seen(data_root: Path, *, now: Now = system_seconds) -> None:
 
 
 def page_alive(data_root: Path, *, now: Now = system_seconds) -> bool:
-    """True when a viewer page sent a heartbeat in the last 45 seconds."""
+    """True when a viewer page sent a heartbeat recently and has not said it closed."""
     seen = _read_time(data_root / "run" / PAGE_FILE, "seen_at")
     return seen is not None and 0 <= now() - seen <= PAGE_ALIVE_SECONDS
 
@@ -167,8 +169,15 @@ def take_grant(data_root: Path, *, now: Now = system_seconds) -> str | None:
     return grant if fresh and isinstance(grant, str) and _GRANT.match(grant) else None
 
 
-def heartbeat(data_root: Path, *, now: Now = system_seconds) -> dict[str, object]:
-    """The viewer's answer to the page's heartbeat: note it, hand over a waiting grant."""
+def heartbeat(
+    data_root: Path, *, now: Now = system_seconds, closed: bool = False
+) -> dict[str, object]:
+    """The viewer's answer to the page's heartbeat: note it, hand over a waiting grant. A
+    closing page says so, and the next session opens a window again at once."""
+    if closed:
+        with contextlib.suppress(OSError):
+            (data_root / "run" / PAGE_FILE).unlink()
+        return {"grant": None}
     mark_page_seen(data_root, now=now)
     return {"grant": take_grant(data_root, now=now)}
 

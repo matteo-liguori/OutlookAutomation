@@ -465,6 +465,13 @@
     beating = true;
     beat();
     setInterval(beat, 15000);
+    // Closing the window: tell the viewer, so the next session opens a new one at once.
+    window.addEventListener("pagehide", function () {
+      if (!token) return;
+      try {
+        fetch("/api/presence", { method: "POST", keepalive: true, headers: { "X-Chamberlain-Token": token, "Content-Type": "application/json" }, body: JSON.stringify({ closed: true }) });
+      } catch (ignored) { /* nothing to do */ }
+    });
   }
 
   function start() {
